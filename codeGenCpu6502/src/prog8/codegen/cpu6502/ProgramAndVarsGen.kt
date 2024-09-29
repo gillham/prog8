@@ -116,6 +116,15 @@ internal class ProgramAndVarsGen(
                             asmgen.out("  jsr  sys.init_system")
                         asmgen.out("  jsr  sys.init_system_phase2")
                     }
+                    CbmPrgLauncherType.C64OS -> {
+                        asmgen.out("; ---- program with C64 OS header ----")
+                        asmgen.out("* = ${options.loadAddress.toHex()}")
+                        // C64 OS dispatch vector table must be first
+                        asmgen.out("  .word  sys.init_system")
+                        asmgen.out("  .fill  8")
+                        // cx16 virtual registers immediately after vector table
+                        asmgen.out("  .fill  32")
+                    }
                     CbmPrgLauncherType.NONE -> {
                         // this is the same as RAW
                         asmgen.out("; ---- program without basic sys call ----")
@@ -141,7 +150,7 @@ internal class ProgramAndVarsGen(
             }
         }
 
-        if(options.zeropage !in arrayOf(ZeropageType.BASICSAFE, ZeropageType.DONTUSE)) {
+        if(options.zeropage !in arrayOf(ZeropageType.BASICSAFE, ZeropageType.DONTUSE) && compTarget.name != "c64os") {
             asmgen.out("""
                 ; zeropage is clobbered so we need to reset the machine at exit
                 lda  #>sys.reset_system
@@ -161,6 +170,11 @@ internal class ProgramAndVarsGen(
                 asmgen.out("  jsr  p8b_main.p8s_start |  lda  #31 |  sta  $01")
                 asmgen.out("  jmp  sys.cleanup_at_exit")
             }
+            "c64os" -> {
+                // C64 OS needs nothing further
+                asmgen.out("; C64 OS")
+            }
+
             "c128" -> {
                 asmgen.out("  jsr  p8b_main.p8s_start |  lda  #0 |  sta ${"$"}ff00")
                 asmgen.out("  jmp  sys.cleanup_at_exit")
