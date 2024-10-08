@@ -222,8 +222,8 @@ internal class AstChecker(private val program: Program,
                     }
                     DataType.WORD -> {
                         if(iterableDt!= DataType.BYTE && iterableDt!= DataType.WORD &&
-                                iterableDt != DataType.ARRAY_B && iterableDt!= DataType.ARRAY_W &&
-                                iterableDt != DataType.ARRAY_W_SPLIT)
+                                iterableDt != DataType.ARRAY_B && iterableDt != DataType.ARRAY_UB &&
+                                iterableDt != DataType.ARRAY_W && iterableDt != DataType.ARRAY_W_SPLIT)
                             errors.err("word loop variable can only loop over bytes or words", forLoop.position)
                     }
                     DataType.FLOAT -> {
@@ -242,7 +242,7 @@ internal class AstChecker(private val program: Program,
                         val to = range.to as? NumericLiteral
                         if(from != null)
                             checkValueTypeAndRange(loopvar.datatype, from)
-                        else if(range.from.inferType(program) isnot loopvar.datatype)
+                        else if(range.from.inferType(program).isNotAssignableTo(loopvar.datatype))
                             errors.err("range start value is incompatible with loop variable type", range.position)
                         if(to != null)
                             checkValueTypeAndRange(loopvar.datatype, to)
@@ -280,8 +280,13 @@ internal class AstChecker(private val program: Program,
             errors.err("identifiers cannot start with an underscore", block.position)
 
         val addr = block.address
-        if(addr!=null && addr>65535u) {
-            errors.err("block memory address must be valid integer 0..\$ffff", block.position)
+        if (addr!=null) {
+            if (addr > 65535u)
+                errors.err("block address must be valid integer 0..\$ffff", block.position)
+            if(compilerOptions.loadAddress!=0u) {
+                if (addr < compilerOptions.loadAddress + 20u)
+                    errors.err("block address must be at least program load address + 20 (to allow for startup logic)", block.position)
+            }
         }
 
         for (statement in block.statements) {
