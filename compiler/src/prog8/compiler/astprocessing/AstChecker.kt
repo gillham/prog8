@@ -139,8 +139,7 @@ internal class AstChecker(private val program: Program,
                         // you can return a string or array when an uword (pointer) is returned
                     } else if(valueDt istype DataType.UWORD && expectedReturnValues[0]==DataType.STR) {
                         // you can return a uword pointer when the return type is a string
-                    }
-                    else {
+                    } else {
                         errors.err("type $valueDt of return value doesn't match subroutine's return type ${expectedReturnValues[0]}",returnStmt.value!!.position)
                     }
                 }
@@ -550,10 +549,8 @@ internal class AstChecker(private val program: Program,
         fun checkType(target: AssignTarget, value: Expression, augmentable: Boolean) {
             val targetDt = target.inferType(program)
             val valueDt = value.inferType(program)
-            if(valueDt.isKnown && !(valueDt isAssignableTo targetDt)) {
-                if(targetDt.isIterable)
-                    errors.err("cannot assign value to string or array", value.position)
-                else if(!(valueDt istype DataType.STR && targetDt istype DataType.UWORD)) {
+            if(valueDt.isKnown && !(valueDt isAssignableTo targetDt) && !targetDt.isIterable) {
+                if(!(valueDt istype DataType.STR && targetDt istype DataType.UWORD)) {
                     if(targetDt.isUnknown) {
                         if(target.identifier?.targetStatement(program)!=null)
                             errors.err("target datatype is unknown", target.position)
@@ -1011,6 +1008,11 @@ internal class AstChecker(private val program: Program,
                 errors.err("array literal for iteration must contain constants. Try using a separate array variable instead?", array.position)
         }
 
+        if(array.parent is Assignment) {
+            val assignTarget = (array.parent as Assignment).target
+            if(!assignTarget.inferType(program).isArray)
+                errors.err("cannot assign array to a non-array variable", assignTarget.position)
+        }
         super.visit(array)
     }
 
@@ -1843,6 +1845,12 @@ internal class AstChecker(private val program: Program,
         }
         else if(targetDatatype==DataType.BOOL && sourceDatatype!=DataType.BOOL) {
             errors.err("type of value $sourceDatatype doesn't match target $targetDatatype", position)
+        }
+        else if(targetDatatype==DataType.STR) {
+            if(sourceDatatype==DataType.UWORD)
+                errors.err("can't assign UWORD to STR. If the source is a string and you actually want to overwrite the target string, use an explicit string.copy(src,tgt) instead.", position)
+            else
+                errors.err("type of value $sourceDatatype doesn't match target $targetDatatype", position)
         }
         else {
             errors.err("type of value $sourceDatatype doesn't match target $targetDatatype", position)

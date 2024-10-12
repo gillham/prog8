@@ -1,10 +1,6 @@
 TODO
 ====
 
-see github for issues
-
-Regenerate skeleton doc files.
-
 Improve register load order in subroutine call args assignments:
 in certain situations, the "wrong" order of evaluation of function call arguments is done which results
 in overwriting registers that already got their value, which requires a lot of stack juggling (especially on plain 6502 cpu!)
@@ -14,8 +10,7 @@ Maybe this routine can be made more intelligent.  See usesOtherRegistersWhileEva
 Future Things and Ideas
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-- Add a new SublimeText syntax file for prog8, and also install this for bat: https://github.com/sharkdp/bat?tab=readme-ov-file#adding-new-syntaxes--language-definitions
-- callfar() should allow setting an argument in the X register as well?
+- Improve the SublimeText syntax file for prog8, you can also install this for 'bat': https://github.com/sharkdp/bat?tab=readme-ov-file#adding-new-syntaxes--language-definitions
 - Can we support signed % (remainder) somehow?
 - Don't add "random" rts to %asm blocks but instead give a warning about it? (but this breaks existing behavior that others already depend on... command line switch? block directive?)
 - IR: implement missing operators in AssignmentGen  (array shifts etc)
