@@ -1,37 +1,42 @@
-%import palette
+%import monogfx
 %import textio
+%import math
+
 %option no_sysinit
+%zeropage basicsafe
+
 
 main {
-    sub start() {
-        repeat 4 {
-            for cx16.r0L in 0 to 15 {
-                txt.color2(cx16.r0L, cx16.r0L)
-                txt.spc()
-                txt.spc()
-                txt.spc()
-                txt.spc()
-            }
-            txt.nl()
-        }
-        bool changed
-        uword[] colors = [
-            $f00, $800, $200, $000,
-            $f0f, $80f, $20f, $00f
-        ]
-        do {
-            sys.waitvsync()
-            sys.waitvsync()
-            changed = palette.fade_step_colors(0, 8, colors)
-        } until not changed
 
-        sys.wait(60)
-        changed = false
-        do {
-            sys.waitvsync()
-            sys.waitvsync()
-            changed = palette.fade_step_multi(0, 8, $fff)
-        } until not changed
-        sys.wait(60)
+    sub start() {
+        monogfx.lores()
+        demofill()
+    }
+
+    sub demofill() {
+        const uword offsetx = 0
+        const uword offsety = 0
+
+        monogfx.circle(offsetx+160, offsety+120, 110, true)
+        monogfx.rect(offsetx+180, offsety+5, 25, 190, true)
+        monogfx.line(offsetx+100, offsety+150, offsetx+240, offsety+10, true)
+        monogfx.line(offsetx+101, offsety+150, offsetx+241, offsety+10, true)
+        monogfx.rect(offsetx+150, offsety+130, 10, 100, true)
+
+        sys.wait(30)
+
+        cbm.SETTIM(0,0,0)
+        monogfx.fill(offsetx+100,offsety+100,true)
+        monogfx.fill(offsetx+100,offsety+100,false)
+        uword duration = cbm.RDTIM16()
+        sys.wait(30)
+
+        monogfx.textmode()
+        txt.nl()
+        txt.print_uw(duration)
+        txt.print(" jiffies\n")
+
+        ; before optimizations: ~166 jiffies
+
     }
 }

@@ -34,7 +34,10 @@ Data types
   You'll have to add explicit casts to increase the size of the value if required.
   For example when adding two byte variables having values 100 and 200, the result won't be 300, because that doesn't fit in a byte. It will be 44.
   You'll have to cast one or both of the *operands* to a word type first if you want to accomodate the actual result value of 300.
-
+- strings and arrays are allocated once, statically, and never resized.
+- strings and arrays are mutable: you can change their contents, but always keep the original storage size in mind to avoid overwriting memory outside of the buffer.
+- maximum string length is 255 characters + a trailing 0 byte.
+- maximum storage size for arrays is 256 bytes (512 for split word arrays) , the maximum number of elements in the array depends on the size of a single element value.
 
 Variables
 ---------
@@ -71,12 +74,6 @@ Pointers
   Reading is done by assigning it to a variable, writing is done by just assigning the new value to it.
 
 
-Strings and Arrays
-------------------
-- these are allocated once, statically, and never resized.
-- they are mutable: you can change their contents, but always keep the original storage size in mind to avoid overwriting memory outside of the buffer.
-- Maximum size is 256 bytes (512 for split word arrays)
-
 Foreign function interface (external/ROM calls)
 -----------------------------------------------
 - You can use the ``romsub`` keyword to define the call signature of foreign functions (usually ROM routines, hence the name) in a natural way.
@@ -85,10 +82,10 @@ Foreign function interface (external/ROM calls)
 
 Optimizations
 -------------
-- Prog8 contains many compiler optimizations to generate efficent code, but also lacks many optimizations that modern compilers do have.
+- Prog8 contains many compiler optimizations to generate efficient code, but also lacks many optimizations that modern compilers do have.
   While empirical evidence shows that Prog8 generates more efficent code than some C compilers that also target the same 8 bit systems,
-  it still is limited in how sophisticated the optimizations are that it performs on your code.
-- For time critical code, it may be worth it to inspect the generated assembly code to see if you could write things differently
+  the optimizations it makes on your code aren't super sophisticated.
+- For time critical code, it may be worth it to inspect the generated assembly code to see if you can write things differently
   to help the compiler generate more efficient code (or even replace it with hand written inline assembly altogether).
   For example, if you repeat an expression multiple times it will be evaluated every time, so maybe you should store it
   in a variable instead and reuse that variable::
