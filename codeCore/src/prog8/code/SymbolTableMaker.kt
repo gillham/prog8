@@ -95,7 +95,10 @@ class SymbolTableMaker(private val program: PtProgram, private val options: Comp
 //                if(node.type in SplitWordArrayTypes) {
 //                    ... split array also add _lsb and _msb to symboltable?
 //                }
-                StStaticVariable(node.name, node.type, initialNumeric, initialString, initialArray, numElements, node.zeropage, node)
+                val stVar = StStaticVariable(node.name, node.type, initialString, initialArray, numElements, node.zeropage, node)
+                if(initialNumeric!=null)
+                    stVar.setOnetimeInitNumeric(initialNumeric)
+                stVar
             }
             is PtBuiltinFunctionCall -> {
                 if(node.name=="memory") {
@@ -131,7 +134,6 @@ class SymbolTableMaker(private val program: PtProgram, private val options: Comp
                         TODO("address-of array element $it in initial array value")
                     StArrayElement(null, it.identifier.name, null)
                 }
-                is PtIdentifier -> StArrayElement(null, it.name, null)
                 is PtNumber -> StArrayElement(it.number, null, null)
                 is PtBool -> StArrayElement(null, null, it.value)
                 else -> throw AssemblyError("invalid array element $it")

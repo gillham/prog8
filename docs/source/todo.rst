@@ -9,19 +9,13 @@ Maybe this routine can be made more intelligent.  See usesOtherRegistersWhileEva
 
 Future Things and Ideas
 ^^^^^^^^^^^^^^^^^^^^^^^
-
-- remove support for array variable initialization with a single value, just require explicitly creating the value array   [42] * 10   (which is what the compiler now does for you implicitly)
-- should the array-to-array assignment support be removed and instead require an explicit copy function call? What prog8_lib_arraycopy() now does. Or just use memcopy.
-- should we add a cleararray builtin function that can efficiently set every element in the array to the given value
-
-- improve detection that a variable is not read before being written so that initializing it to zero can be omitted  (only happens now if a vardecl is immediately followed by a for loop for instance)
 - Improve the SublimeText syntax file for prog8, you can also install this for 'bat': https://github.com/sharkdp/bat?tab=readme-ov-file#adding-new-syntaxes--language-definitions
 - Can we support signed % (remainder) somehow?
 - Don't add "random" rts to %asm blocks but instead give a warning about it? (but this breaks existing behavior that others already depend on... command line switch? block directive?)
 - IR: implement missing operators in AssignmentGen  (array shifts etc)
 - instead of copy-pasting inline asmsubs, make them into a 64tass macro and use that instead.
   that will allow them to be reused from custom user written assembly code as well.
-- Multidimensional arrays and chained indexing, purely as syntactic sugar over regular arrays.
+- Multidimensional arrays and chained indexing, purely as syntactic sugar over regular arrays. Probaby only useful if we have typed pointers.
 - make a form of "manual generics" possible like: varsub routine(T arg)->T  where T is expanded to a specific type
   (this is already done hardcoded for several of the builtin functions)
 
@@ -52,6 +46,7 @@ Future Things and Ideas
   But all library code written in asm uses .proc already..... (textual search/replace when writing the actual asm?)
   Once new codegen is written that is based on the IR, this point is mostly moot anyway as that will have its own dead code removal on the IR level.
 - Zig-like try-based error handling where the V flag could indicate error condition? and/or BRK to jump into monitor on failure? (has to set BRK vector for that) But the V flag is also set on certain normal instructions
+- Zig-like defer to clean up stuff when leaving the scope. But as we don't have closures, it's more limited. Still useful?
 
 
 Libraries:

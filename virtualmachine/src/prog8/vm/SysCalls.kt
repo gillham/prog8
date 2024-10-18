@@ -50,8 +50,8 @@ SYSCALLS:
 37 = memset
 38 = memsetw
 39 = stringcopy
-40 = ARRAYCOPY_SPLITW_TO_NORMAL
-41 = ARRAYCOPY_NORMAL_TO_SPLITW
+40 = ...unused...
+41 = ...unused...
 42 = memcopy_small
 43 = load
 44 = load_raw
@@ -103,9 +103,6 @@ enum class Syscall {
     MEMSET,
     MEMSETW,
     STRINGCOPY,
-    ARRAYCOPY_SPLITW_TO_NORMAL,
-    ARRAYCOPY_NORMAL_TO_SPLITW,
-    MEMCOPY_SMALL,
     LOAD,
     LOAD_RAW,
     SAVE,
@@ -408,16 +405,6 @@ object SysCalls {
                     vm.memory.setUB(to+offset, vm.memory.getUB(from+offset))
                 }
             }
-            Syscall.MEMCOPY_SMALL -> {
-                val (fromA, toA, countA) = getArgValues(callspec.arguments, vm)
-                val from = (fromA as UShort).toInt()
-                val to = (toA as UShort).toInt()
-                val countV = (countA as UByte).toInt()
-                val count = if(countV==0) 256 else countV
-                for(offset in 0..<count) {
-                    vm.memory.setUB(to+offset, vm.memory.getUB(from+offset))
-                }
-            }
             Syscall.MEMSET -> {
                 val (memA, numbytesA, valueA) = getArgValues(callspec.arguments, vm)
                 val mem = (memA as UShort).toInt()
@@ -444,29 +431,6 @@ object SysCalls {
                 vm.memory.setString(target, string, true)
                 returnValue(callspec.returns.single(), string.length, vm)
             }
-            Syscall.ARRAYCOPY_SPLITW_TO_NORMAL -> {
-                val (fromLsbA, fromMsbA, targetA, bytecountA) = getArgValues(callspec.arguments, vm)
-                val fromLsb = (fromLsbA as UShort).toInt()
-                val fromMsb = (fromMsbA as UShort).toInt()
-                val target = (targetA as UShort).toInt()
-                val bytecount = (bytecountA as UByte).toInt()
-                for(offset in 0..<bytecount) {
-                    vm.memory.setUB(target+offset*2, vm.memory.getUB(fromLsb+offset))
-                    vm.memory.setUB(target+offset*2+1, vm.memory.getUB(fromMsb+offset))
-                }
-            }
-            Syscall.ARRAYCOPY_NORMAL_TO_SPLITW -> {
-                val (fromA, targetLsbA, targetMsbA, bytecountA) = getArgValues(callspec.arguments, vm)
-                val from = (fromA as UShort).toInt()
-                val targetLsb = (targetLsbA as UShort).toInt()
-                val targetMsb = (targetMsbA as UShort).toInt()
-                val bytecount = (bytecountA as UByte).toInt()
-                for(offset in 0..<bytecount) {
-                    vm.memory.setUB(targetLsb+offset, vm.memory.getUB(from+offset*2))
-                    vm.memory.setUB(targetMsb+offset, vm.memory.getUB(from+offset*2+1))
-                }
-            }
-
             Syscall.LOAD -> {
                 val (filenameA, addrA) = getArgValues(callspec.arguments, vm)
                 val filename = vm.memory.getString((filenameA as UShort).toInt())
