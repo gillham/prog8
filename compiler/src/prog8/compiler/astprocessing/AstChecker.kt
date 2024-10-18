@@ -1054,6 +1054,14 @@ internal class AstChecker(private val program: Program,
     }
 
     override fun visit(expr: PrefixExpression) {
+
+        if(expr.expression is IFunctionCall) {
+            val targetStatement = (expr.expression as IFunctionCall).target.targetSubroutine(program)
+            if(targetStatement?.returntypes?.isEmpty()==true) {
+                errors.err("subroutine doesn't return a value", expr.expression.position)
+            }
+        }
+
         checkLongType(expr)
         val dt = expr.expression.inferType(program).getOr(DataType.UNDEFINED)
         if(dt==DataType.UNDEFINED)
@@ -1076,6 +1084,39 @@ internal class AstChecker(private val program: Program,
             }
         }
         super.visit(expr)
+    }
+
+    override fun visit(defer: Defer) {
+        class Searcher: IAstVisitor
+        {
+            var count=0
+
+            override fun visit(returnStmt: Return) {
+                count++
+            }
+            override fun visit(jump: Jump) {
+                val jumpTarget = jump.identifier?.targetStatement(program)
+                if(jumpTarget!=null) {
+                    val sub = jump.definingSubroutine
+                    val targetSub = if(jumpTarget is Subroutine) jumpTarget else jumpTarget.definingSubroutine
+                    if(sub !== targetSub)
+                        count++
+                }
+                else count++
+            }
+
+            override fun visit(inlineAssembly: InlineAssembly) {
+                if(inlineAssembly.hasReturnOrRts())
+                    count++
+            }
+        }
+        val s = Searcher()
+        defer.scope.accept(s)
+        if(s.count>0)
+            errors.err("defer cannot contain jumps or returns", defer.position)
+
+        if(defer.parent !is Subroutine)
+            errors.err("currently defer is only supported in subroutine scope, not in nested scopes", defer.position)       // TODO fix this
     }
 
     override fun visit(expr: BinaryExpression) {
