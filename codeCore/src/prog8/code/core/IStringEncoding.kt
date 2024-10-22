@@ -10,7 +10,7 @@ enum class Encoding(val prefix: String) {
     ISO16("iso16"),             // cx16  (iso-8859-16, eastern european)
     CP437("cp437"),             // cx16  (ibm pc, codepage 437)
     KATAKANA("kata"),           // cx16  (katakana)
-    C64OS("c64os")              // cx16  (katakana)
+    C64OS("c64os")              // c64 (C64 OS)
 }
 
 interface IStringEncoding {
