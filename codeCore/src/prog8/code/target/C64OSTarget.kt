@@ -11,7 +11,7 @@ import prog8.code.target.cbm.CbmMemorySizer
 class C64OSTarget: ICompilationTarget, IStringEncoding by Encoder, IMemSizer by CbmMemorySizer {
     override val name = NAME
     override val machine = C64OSMachineDefinition()
-    override val defaultEncoding = Encoding.PETSCII
+    override val defaultEncoding = Encoding.C64OS
 
     companion object {
         const val NAME = "c64os"

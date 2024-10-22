@@ -323,38 +323,4 @@ object C64osEncoding {
             Err(ce)
         }
     }
-
-    fun c64os2scr(c64os_code: UByte, inverseVideo: Boolean): Result<UByte, CharConversionException> {
-        val code: UInt = when {
-            c64os_code <= 0x1fu -> c64os_code + 128u
-            c64os_code <= 0x3fu -> c64os_code.toUInt()
-            c64os_code <= 0x5fu -> c64os_code - 64u
-            c64os_code <= 0x7fu -> c64os_code - 32u
-            c64os_code <= 0x9fu -> c64os_code + 64u
-            c64os_code <= 0xbfu -> c64os_code - 64u
-            c64os_code <= 0xfeu -> c64os_code - 128u
-            c64os_code == 255.toUByte() -> 95u
-            else -> return Err(CharConversionException("c64os code out of range"))
-        }
-        if(inverseVideo) {
-            return Ok((code or 0x80u).toUByte())
-        }
-        return Ok(code.toUByte())
-    }
-
-    fun scr2c64os(screencode: UByte): Result<UByte, CharConversionException> {
-        val c64os: UInt = when {
-            screencode <= 0x1fu -> screencode + 64u
-            screencode <= 0x3fu -> screencode.toUInt()
-            screencode <= 0x5du -> screencode +123u
-            screencode == 0x5e.toUByte() -> 255u
-            screencode == 0x5f.toUByte() -> 223u
-            screencode <= 0x7fu -> screencode + 64u
-            screencode <= 0xbfu -> screencode - 128u
-            screencode <= 0xfeu -> screencode - 64u
-            screencode == 255.toUByte() -> 191u
-            else -> return Err(CharConversionException("screencode out of range"))
-        }
-        return Ok(c64os.toUByte())
-    }
 }
