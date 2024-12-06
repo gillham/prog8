@@ -348,6 +348,7 @@ enum class OutputType {
 
 enum class CbmPrgLauncherType {
     BASIC,
+    C64OS,
     NONE
 }
 

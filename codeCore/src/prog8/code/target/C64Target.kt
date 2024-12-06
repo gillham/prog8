@@ -23,6 +23,7 @@ class C64Target: ICompilationTarget, IStringEncoding by Encoder, IMemSizer by Cb
 
 val CompilationTargets = listOf(
     C64Target.NAME,
+    C64OSTarget.NAME,
     C128Target.NAME,
     Cx16Target.NAME,
     PETTarget.NAME,
@@ -33,6 +34,7 @@ val CompilationTargets = listOf(
 
 fun getCompilationTargetByName(name: String) = when(name.lowercase()) {
     C64Target.NAME -> C64Target()
+    C64OSTarget.NAME -> C64OSTarget()
     C128Target.NAME -> C128Target()
     Cx16Target.NAME -> Cx16Target()
     PETTarget.NAME -> PETTarget()

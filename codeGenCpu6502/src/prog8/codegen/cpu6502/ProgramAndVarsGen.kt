@@ -120,6 +120,22 @@ internal class ProgramAndVarsGen(
                             asmgen.out("  jsr  p8_sys_startup.init_system")
                         asmgen.out("  jsr  p8_sys_startup.init_system_phase2")
                     }
+                    CbmPrgLauncherType.C64OS -> {
+                        asmgen.out("; ---- C64 OS program/object ----")
+                        asmgen.out("* = ${options.loadAddress.toHex()}")
+                        asmgen.out("prog8_program_start\t; start of program label")
+                        if(options.noSysInit) {
+                            asmgen.out("; ---- C64 OS relocatable object ----")
+                            asmgen.out("  jmp  p8b_main.p8s_start")
+                        } else {
+                            asmgen.out("; ---- C64 OS program with standard header ----")
+                            // C64 OS dispatch vector table must be first
+                            asmgen.out("  .word  p8_sys_startup.init_system")
+                            asmgen.out("  .fill  8")
+                            // cx16 virtual registers immediately after vector table
+                            asmgen.out("  .fill  32")
+                        }
+                    }
                     CbmPrgLauncherType.NONE -> {
                         // this is the same as RAW
                         asmgen.out("; ---- program without basic sys call ----")
@@ -147,7 +163,7 @@ internal class ProgramAndVarsGen(
             }
         }
 
-        if(options.zeropage !in arrayOf(ZeropageType.BASICSAFE, ZeropageType.DONTUSE)) {
+        if(options.zeropage !in arrayOf(ZeropageType.BASICSAFE, ZeropageType.DONTUSE) && compTarget.name != "c64os") {
             asmgen.out("""
                 ; zeropage is clobbered so we need to reset the machine at exit
                 lda  #>sys.reset_system
@@ -166,6 +182,9 @@ internal class ProgramAndVarsGen(
             "c64" -> {
                 asmgen.out("  jsr  p8b_main.p8s_start")
                 asmgen.out("  jmp  p8_sys_startup.cleanup_at_exit")
+            }
+            "c64os" -> {
+                // C64 OS needs nothing further, avoiding the else below.
             }
             "c128" -> {
                 asmgen.out("  jsr  p8b_main.p8s_start")
