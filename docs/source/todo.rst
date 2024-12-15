@@ -1,9 +1,6 @@
 TODO
 ====
 
-update zsmkit to newest version that includes the on_deck routines when stabilized
-
-
 ...
 
 
