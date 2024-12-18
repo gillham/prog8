@@ -19,7 +19,9 @@ fun printAst(root: PtNode, skipLibraries: Boolean, output: (text: String) -> Uni
             is PtBreakpoint -> "%breakpoint"
             is PtConditionalBranch -> "if_${node.condition.name.lowercase()}"
             is PtAddressOf -> {
-                if(node.isFromArrayElement)
+                if(node.isMsbForSplitArray)
+                    "&>"
+                else if(node.isFromArrayElement)
                     "& array-element"
                 else
                     "&"
@@ -30,7 +32,8 @@ fun printAst(root: PtNode, skipLibraries: Boolean, output: (text: String) -> Uni
                         is PtBool -> it.toString()
                         is PtNumber -> it.number.toString()
                         is PtIdentifier -> it.name
-                        else -> "?"
+                        is PtAddressOf -> "& ${it.identifier.name}"
+                        else -> "invalid array element $it"
                     }
                 }
                 "array len=${node.children.size} ${type(node.type)} [ $valuelist ]"
@@ -68,12 +71,7 @@ fun printAst(root: PtNode, skipLibraries: Boolean, output: (text: String) -> Uni
                     "%asm {{ ...${node.assembly.length} characters... }}"
             }
             is PtJump -> {
-                if(node.identifier!=null)
-                    "goto ${node.identifier.name}"
-                else if(node.address!=null)
-                    "goto ${node.address.toHex()}"
-                else
-                    "???"
+                "goto ${txt(node.target)}"
             }
             is PtAsmSub -> {
                 val params = node.parameters.joinToString(", ") {
@@ -132,7 +130,7 @@ fun printAst(root: PtNode, skipLibraries: Boolean, output: (text: String) -> Uni
                 str
             }
             is PtVariable -> {
-                val split = if(node.type.isSplitWordArray) "@split" else ""
+                val split = if(node.type.isSplitWordArray) "" else "@nosplit"
                 val align = when(node.align) {
                     0u -> ""
                     2u -> "@alignword"

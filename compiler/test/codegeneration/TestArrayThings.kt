@@ -95,49 +95,12 @@ main {
         compileText(VMTarget(), false, text, writeAssembly = true) shouldNotBe null
     }
 
-    test("split only for word arrays") {
-        val srcGood = """
-main {
-  uword[10] @split sw
-  word[10] @split sw2
-
-  sub start() {
-  }
-}"""
-        compileText(C64Target(), false, srcGood, writeAssembly = false) shouldNotBe null
-
-        val srcWrong1 = """
-main {
-  ubyte[10] @split sb
-
-  sub start() {
-  }
-}"""
-        val errors = ErrorReporterForTests()
-        compileText(C64Target(), false, srcWrong1, writeAssembly = false, errors=errors) shouldBe null
-        errors.errors.size shouldBe 1
-        errors.errors[0] shouldContain "split can only be used on word arrays"
-
-        val srcWrong2 = """
-%option enable_floats
-main {
-  float[10] @split sf
-
-  sub start() {
-  }
-}"""
-        errors.clear()
-        compileText(C64Target(), false, srcWrong2, writeAssembly = false, errors=errors) shouldBe null
-        errors.errors.size shouldBe 1
-        errors.errors[0] shouldContain "split can only be used on word arrays"
-    }
-
-    test("split word arrays in asm as lsb/msb") {
+    test("split word arrays in asm as lsb/msb, nosplit as single linear") {
         val text = """
 main {
-  uword[10] @split @shared uw
-  word[10] @split @shared sw
-  uword[10] @shared normal
+  uword[10] @shared uw
+  word[10] @shared sw
+  uword[10] @shared @nosplit normal
 
   sub start() {
     %asm {{
@@ -170,7 +133,8 @@ main {
         val text = """
 main {
     sub start() {
-        uword[3] @zp @split @shared thearray
+        uword[3] @zp @shared thearray
+        uword[3] @zp @nosplit @shared thearray2
     } 
 }"""
         val result = compileText(C64Target(), false, text, writeAssembly = true)!!
@@ -178,6 +142,7 @@ main {
         val assembly = assemblyFile.readText()
         assembly shouldContain "thearray_lsb"
         assembly shouldContain "thearray_msb"
+        assembly shouldContain "thearray2"
     }
 
     test("indexing str or pointervar with expression") {
@@ -418,6 +383,28 @@ main {
 }"""
         compileText(VMTarget(), false, src, writeAssembly = true) shouldNotBe null
         compileText(C64Target(), false, src, writeAssembly = true) shouldNotBe null
+    }
+
+    test("taking address of split arrays works") {
+        val src="""
+main {
+    sub start() {
+        cx16.r0L=0
+        if cx16.r0L==0 {
+            uword[] addresses = [scores2, start]
+            uword[] scores1 = [10, 25, 50, 100]
+            uword[] scores2 = [100, 250, 500, 1000]
+
+            cx16.r0 = &scores1
+            cx16.r1 = &scores2
+            cx16.r2 = &addresses
+        }
+    }
+}"""
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(C64Target(), optimize=false, src, writeAssembly=true, errors=errors) shouldNotBe null
+        errors.errors.size shouldBe 0
+        errors.warnings.size shouldBe 0
     }
 })
 

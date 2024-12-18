@@ -39,7 +39,7 @@ private fun compileTheThing(filepath: Path, optimize: Boolean, target: ICompilat
         slabsHighBank = null,
         slabsGolden = false,
         compilationTarget = target.name,
-        splitWordArrays = false,
+        dontSplitWordArrays = false,
         breakpointCpuInstruction = null,
         printAst1 = false,
         printAst2 = false,
@@ -171,6 +171,7 @@ class TestCompilerOnExamplesBothC64andCx16: FunSpec({
         listOf(
             "animals",
             "balls",
+            "coroutines",
             "cube3d",
             "cube3d-float",
             "cube3d-gfx",

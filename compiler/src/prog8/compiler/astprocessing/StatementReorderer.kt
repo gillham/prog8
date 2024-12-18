@@ -217,12 +217,12 @@ internal class StatementReorderer(
                         .map {
                             val newvar = VarDecl(it.type, it.origin, DataType.forDt(BaseDataType.UWORD),
                                 it.zeropage,
+                                it.splitwordarray,
                                 null,
                                 it.name,
                                 emptyList(),
                                 null,
                                 it.sharedWithAsm,
-                                it.splitArray,
                                 it.alignment,
                                 it.dirty,
                                 it.position

@@ -439,8 +439,14 @@ internal class AssignmentAsmGen(
     private fun assignExpression(assign: AsmAssignment, scope: IPtSubroutine?) {
         when(val value = assign.source.expression!!) {
             is PtAddressOf -> {
-                val sourceName = asmgen.asmSymbolName(value.identifier)
                 val arrayDt = value.identifier.type
+                val sourceName =
+                    if(value.isMsbForSplitArray)
+                        asmgen.asmSymbolName(value.identifier) + "_msb"
+                    else if(arrayDt.isSplitWordArray)
+                        asmgen.asmSymbolName(value.identifier) + "_lsb"  // the _lsb split array comes first in memory
+                    else
+                        asmgen.asmSymbolName(value.identifier)
                 assignAddressOf(assign.target, sourceName, arrayDt, value.arrayIndexExpr)
             }
             is PtBool -> throw AssemblyError("source kind should have been literalboolean")
@@ -1339,6 +1345,10 @@ internal class AssignmentAsmGen(
                     if(right.isFromArrayElement) {
                         TODO("address-of array element $symbol at ${right.position}")
                     } else {
+                        if(right.identifier.type.isSplitWordArray) {
+                            TODO("address of split word array")
+                            return true
+                        }
                         assignExpressionToRegister(left, RegisterOrPair.AY, dt.isSigned)
                         if(expr.operator=="+")
                             asmgen.out("""
@@ -1939,11 +1949,17 @@ $endLabel""")
                 asmgen.out("  ldy  #$numElements")
                 asmgen.out("  jsr  prog8_lib.containment_bytearray")
             }
-            dt.isWordArray && !dt.isSplitWordArray -> {
+            dt.isWordArray -> {
                 assignExpressionToVariable(containment.needle, "P8ZP_SCRATCH_W1", elementDt)
-                assignAddressOf(AsmAssignTarget(TargetStorageKind.VARIABLE, asmgen, DataType.forDt(BaseDataType.UWORD), containment.definingISub(), containment.position, "P8ZP_SCRATCH_W2"), symbolName, null, null)
-                asmgen.out("  ldy  #$numElements")
-                asmgen.out("  jsr  prog8_lib.containment_wordarray")
+                if(dt.isSplitWordArray) {
+                    assignAddressOf(AsmAssignTarget(TargetStorageKind.VARIABLE, asmgen, DataType.forDt(BaseDataType.UWORD), containment.definingISub(), containment.position, "P8ZP_SCRATCH_W2"), symbolName+"_lsb", null, null)
+                    asmgen.out("  ldy  #$numElements")
+                    asmgen.out("  jsr  prog8_lib.containment_splitwordarray")
+                } else {
+                    assignAddressOf(AsmAssignTarget(TargetStorageKind.VARIABLE, asmgen, DataType.forDt(BaseDataType.UWORD), containment.definingISub(), containment.position, "P8ZP_SCRATCH_W2"), symbolName, null, null)
+                    asmgen.out("  ldy  #$numElements")
+                    asmgen.out("  jsr  prog8_lib.containment_linearwordarray")
+                }
             }
             else -> throw AssemblyError("invalid dt")
         }

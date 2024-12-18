@@ -123,6 +123,8 @@ peek (address)
 
 peekw (address)
     reads the word value at the given address in memory. Word is read as usual little-endian lsb/msb byte order.
+    Caution: when using peekw to get words out of an array pointer, make sure the array is *not* a split word array
+    (peekw requires the LSB and MSB of the word value to be consecutive in memory).
 
 peekf (address)
     reads the float value at the given address in memory. On CBM machines, this reads 5 bytes.
@@ -391,25 +393,6 @@ sys (part of syslib)
 ``popw ()``
     pops a 16-bit word value off the CPU hardware stack and returns it.
     Low-level function that should normally not be used.
-
-
-anyall
-------
-Routines to check if any or all values in an array or memory buffer are not zero.
-
-``any (arrayptr, num_elements)``
-    true if any of the byte values in the array is not zero, else false.
-
-``all (arrayptr, num_elements)``
-    true if all of the byte values in the array are not zero, else false.
-
-``anyw (arrayptr, num_elements)``
-    true if any of the word values in the array is not zero, else false.
-    Doesn't work on split arrays.
-
-``allw (arrayptr, num_elements)``
-    true if all of the word values in the array are not zero, else false.
-    Doesn't work on split arrays.
 
 
 buffers (experimental)
@@ -969,9 +952,9 @@ On the other targets, it only contains the definition of the 16 memory-mapped vi
 
 bmx  (cx16 only)
 ----------------
-Routines to load and save "BMX" files, the CommanderX16 bitmap file format.
-Specification available here: https://cx16forum.com/forum/viewtopic.php?t=6945
-Only *uncompressed* bitmaps are supported in this library for now.
+Routines to load and save "BMX" files, the CommanderX16 bitmap file format:
+`BMX file format specification <https://cx16forum.com/forum/viewtopic.php?t=6945>`_
+Only the *uncompressed* bitmaps variant is supported in this library for now.
 
 The routines are designed to be fast and bulk load/save the data directly into or from vram,
 without the need to buffer something in main memory.
@@ -1035,6 +1018,9 @@ Available for the Cx16 target. Various routines to set the display color palette
 There are also a few better looking Commodore 64 color palettes available here,
 because the Commander X16's default colors for this (the first 16 colors) are too saturated
 and are quite different than how they looked on a VIC-II chip in a C64.
+
+Some routines may require a colors array as @nosplit (such as fade_step_colors), otherwise wrong colors come out.
+(this is the same for some kernal routines such as cx16.FB_set_palette)
 
 Read the `palette source code <https://github.com/irmen/prog8/tree/master/compiler/res/prog8lib/cx16/palette.p8>`_
 to see what's in there.

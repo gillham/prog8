@@ -63,7 +63,7 @@ interface IAstVisitor {
     }
 
     fun visit(jump: Jump) {
-        jump.identifier?.accept(this)
+        jump.target.accept(this)
     }
 
     fun visit(ifElse: IfElse) {
@@ -180,6 +180,10 @@ interface IAstVisitor {
     fun visit(addressOf: AddressOf) {
         addressOf.identifier.accept(this)
         addressOf.arrayIndex?.accept(this)
+    }
+
+    fun visit(addressOfMsb: AddressOfMsb) {
+        addressOfMsb.identifier.accept(this)
     }
 
     fun visit(inlineAssembly: InlineAssembly) {

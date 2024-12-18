@@ -19,7 +19,8 @@ The language
 - There's usually a single statement per line. There is no statement separator.
 - Semicolon ``;`` is used to start a line comment.  Multi-line comments are also possible by enclosing it all in ``/*`` and ``*/``.
 - Ternary operator ``x ? value1 : value2`` is available in the form of an *if-expression*: ``if x  value1 else value2``
-- Swift/Zig/Go style ``defer`` statement for delayed cleanup is available in the subroutine scope.
+- There's a Swift/Zig/Go style ``defer`` statement for delayed cleanup is available in the subroutine scope.
+- Qualified names are searched from within the top level namespace (so you have to provide the full qualified name). Unqualified names are locally scoped.
 
 
 No linker
@@ -40,6 +41,7 @@ Data types
 - strings and arrays are allocated once, statically, and never resized.
 - strings and arrays are mutable: you can change their contents, but always keep the original storage size in mind to avoid overwriting memory outside of the buffer.
 - maximum string length is 255 characters + a trailing 0 byte.
+- word arrays are split into 2 separate arrays by default (this is configurable): one for the LSBs and one for the MSBs of the words. This enables efficient 6502 instructions to access the words.
 - maximum storage size for arrays is 256 bytes (512 for split word arrays) , the maximum number of elements in the array depends on the size of a single element value.
   you can use larger "arrays" via pointer indexing, see below at Pointers.  One way of obtaining a piece of memory to store
   such an "array" is by using  ``memory()`` builtin function.
@@ -61,6 +63,7 @@ Subroutines
 - Subroutines can be nested. Inner subroutines can directly access variables from their parent.
 - Subroutine parameters are just local variables in the subroutine. (you can access them directly as such via their scoped name, if you want)
 - There is no call stack. So subroutine parameters are overwritten when called again. Thus recursion is not easily possible, but you can do it with manual stack manipulations.
+  There are a couple of example programs that show how to solve this in different ways, among which are fractal-tree.p8, maze.p8 and queens.p8
 - There is no function overloading (except for a couple of builtin functions).
 - Some subroutine types can return multiple return values, and you can multi-assign those in a single statement.
 - Because every declared variable allocates some memory, it might be beneficial to share the same variables over different subroutines

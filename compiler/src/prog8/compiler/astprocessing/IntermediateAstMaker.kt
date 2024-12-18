@@ -79,6 +79,7 @@ class IntermediateAstMaker(private val program: Program, private val errors: IEr
     private fun transformExpression(expr: Expression): PtExpression {
         return when(expr) {
             is AddressOf -> transform(expr)
+            is AddressOfMsb -> transform(expr)
             is ArrayIndexedExpression -> transform(expr)
             is ArrayLiteral -> transform(expr)
             is BinaryExpression -> transform(expr)
@@ -202,7 +203,7 @@ class IntermediateAstMaker(private val program: Program, private val errors: IEr
                     "no_symbol_prefixing" -> noSymbolPrefixing = true
                     "ignore_unused" -> ignoreUnused = true
                     "force_output" -> forceOutput = true
-                    "merge", "splitarrays"  -> { /* ignore this one */ }
+                    "merge" -> { /* ignore this one */ }
                     "verafxmuls" -> veraFxMuls = true
                     else -> throw FatalAstException("weird directive option: ${arg.name}")
                 }
@@ -377,7 +378,7 @@ class IntermediateAstMaker(private val program: Program, private val errors: IEr
                 val scopedEndLabel = (srcIf.definingScope.scopedName + endLabel).joinToString(".")
                 val elseLbl = PtIdentifier(scopedElseLabel, DataType.forDt(BaseDataType.UNDEFINED), srcIf.position)
                 val endLbl = PtIdentifier(scopedEndLabel, DataType.forDt(BaseDataType.UNDEFINED), srcIf.position)
-                ifScope.add(PtJump(elseLbl, null, srcIf.position))
+                ifScope.add(PtJump(srcIf.position).also { it.add(elseLbl) })
                 val elseScope = PtNodeGroup()
                 branch.add(ifScope)
                 branch.add(elseScope)
@@ -385,7 +386,7 @@ class IntermediateAstMaker(private val program: Program, private val errors: IEr
                 for (stmt in srcIf.truepart.statements)
                     nodes.add(transformStatement(stmt))
                 if(srcIf.elsepart.isNotEmpty())
-                    nodes.add(PtJump(endLbl, null, srcIf.position))
+                    nodes.add(PtJump(srcIf.position).also { it.add(endLbl) })
                 nodes.add(PtLabel(elseLabel, srcIf.position))
                 if(srcIf.elsepart.isNotEmpty()) {
                     for (stmt in srcIf.elsepart.statements)
@@ -449,8 +450,8 @@ class IntermediateAstMaker(private val program: Program, private val errors: IEr
     }
 
     private fun transform(srcJump: Jump): PtJump {
-        val identifier = if(srcJump.identifier!=null) transform(srcJump.identifier!!) else null
-        return PtJump(identifier, srcJump.address, srcJump.position)
+        val target = transformExpression(srcJump.target)
+        return PtJump(srcJump.position).also { it.add(target) }
     }
 
     private fun transform(label: Label): PtLabel =
@@ -606,6 +607,12 @@ class IntermediateAstMaker(private val program: Program, private val errors: IEr
         return addr
     }
 
+    private fun transform(src: AddressOfMsb): PtAddressOf {
+        val addr = PtAddressOf(src.position, true)
+        addr.add(transform(src.identifier))
+        return addr
+    }
+
     private fun transform(srcArr: ArrayIndexedExpression): PtArrayIndexer {
         val dt = srcArr.arrayvar.targetVarDecl(program)!!.datatype
         if(!dt.isArray && !dt.isString)
@@ -730,7 +737,15 @@ class IntermediateAstMaker(private val program: Program, private val errors: IEr
 
     private fun transform(srcRange: RangeExpression): PtRange {
         require(srcRange.from.inferType(program)==srcRange.to.inferType(program))
-        val type = srcRange.inferType(program).getOrElse { throw FatalAstException("unknown dt") }
+        var type = srcRange.inferType(program).getOrElse { throw FatalAstException("unknown dt") }
+        if(type.isSplitWordArray) {
+            // ranges are never a split word array!
+            when(type.sub) {
+                is SubSignedWord -> type = DataType.arrayFor(BaseDataType.WORD, false)
+                is SubUnsignedWord -> type = DataType.arrayFor(BaseDataType.UWORD, false)
+                else -> { }
+            }
+        }
         val range=PtRange(type, srcRange.position)
         range.add(transformExpression(srcRange.from))
         range.add(transformExpression(srcRange.to))

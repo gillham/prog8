@@ -15,7 +15,7 @@ import prog8.code.core.*
 internal class VariousCleanups(val program: Program, val errors: IErrorReporter, val options: CompilationOptions): AstWalker() {
 
     override fun after(block: Block, parent: Node): Iterable<IAstModification> {
-        val inheritOptions = block.definingModule.options() intersect setOf("splitarrays", "no_symbol_prefixing", "ignore_unused") subtract block.options()
+        val inheritOptions = block.definingModule.options() intersect setOf("no_symbol_prefixing", "ignore_unused") subtract block.options()
         if(inheritOptions.isNotEmpty()) {
             val directive = Directive("%option", inheritOptions.map{ DirectiveArg(null, it, null, block.position) }, block.position)
             return listOf(IAstModification.InsertFirst(directive, block))
@@ -36,7 +36,8 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
             when(decl.type) {
                 VarDeclType.VAR -> {
                     if(decl.isArray) {
-                        errors.err("value has incompatible type ($valueType) for the variable (${decl.datatype})", decl.value!!.position)
+                        if(decl.datatype.isSplitWordArray)
+                            errors.err("value has incompatible type ($valueType) for the variable (${decl.datatype})", decl.value!!.position)
                     } else {
                         if (valueDt.largerSizeThan(decl.datatype)) {
                             val constValue = decl.value?.constValue(program)
@@ -72,6 +73,43 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
 
         }
 
+        // check splitting of word arrays
+        if(!decl.datatype.isWordArray && decl.splitwordarray != SplitWish.DONTCARE) {
+            if(decl.origin != VarDeclOrigin.ARRAYLITERAL)
+                errors.err("@split and @nosplit are for word arrays only", decl.position)
+        }
+        else if(decl.datatype.isWordArray) {
+            var changeDataType: DataType? = null
+            var changeSplit: SplitWish = decl.splitwordarray
+            when(decl.splitwordarray) {
+                SplitWish.DONTCARE -> {
+                    if(options.dontSplitWordArrays) {
+                        changeDataType = if(decl.datatype.isSplitWordArray) DataType.arrayFor(decl.datatype.elementType().base, false) else null
+                        changeSplit = SplitWish.NOSPLIT
+                    }
+                    else {
+                        changeDataType = if(decl.datatype.isSplitWordArray) null else DataType.arrayFor(decl.datatype.elementType().base, true)
+                        changeSplit = SplitWish.SPLIT
+                    }
+                }
+                SplitWish.SPLIT -> {
+                    changeDataType = if(decl.datatype.isSplitWordArray) null else DataType.arrayFor(decl.datatype.elementType().base, true)
+                }
+                SplitWish.NOSPLIT -> {
+                    changeDataType = if(decl.datatype.isSplitWordArray) DataType.arrayFor(decl.datatype.elementType().base, false) else null
+                }
+            }
+            if(changeDataType!=null) {
+                var value = decl.value
+                if(value is ArrayLiteral && !(value.type istype changeDataType)) {
+                    value = ArrayLiteral(InferredTypes.knownFor(changeDataType), value.value, value.position)
+                }
+                val newDecl = VarDecl(decl.type, decl.origin, changeDataType, decl.zeropage,
+                    changeSplit, decl.arraysize, decl.name, decl.names,
+                    value, decl.sharedWithAsm, decl.alignment, decl.dirty, decl.position)
+                return listOf(IAstModification.ReplaceNode(decl, newDecl, parent))
+            }
+        }
         return noModifications
     }
 
@@ -223,7 +261,7 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
 
                     // replace x==1 or x==2 or x==3  with a containment check  x in [1,2,3]
                     val valueCopies = values.sortedBy { it.number }.map { it.copy() }
-                    val arrayType = DataType.arrayFor(elementType.base)
+                    val arrayType = DataType.arrayFor(elementType.base, true)
                     val valuesArray = ArrayLiteral(InferredTypes.InferredType.known(arrayType), valueCopies.toTypedArray(), expr.position)
                     val containment = ContainmentCheck(needle, valuesArray, expr.position)
                     return listOf(IAstModification.ReplaceNode(expr, containment, parent))

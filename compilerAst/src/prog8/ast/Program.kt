@@ -87,8 +87,9 @@ class Program(val name: String,
         fun addNewInternedStringvar(string: StringLiteral): Pair<List<String>, VarDecl> {
             val varName = "string_${internedStringsBlock.statements.size}"
             val decl = VarDecl(
-                VarDeclType.VAR, VarDeclOrigin.STRINGLITERAL, DataType.forDt(BaseDataType.STR), ZeropageWish.NOT_IN_ZEROPAGE, null, varName, emptyList(), string,
-                sharedWithAsm = false, splitArray = false, alignment = 0u, dirty = false, position = string.position
+                VarDeclType.VAR, VarDeclOrigin.STRINGLITERAL, DataType.forDt(BaseDataType.STR), ZeropageWish.NOT_IN_ZEROPAGE,
+                SplitWish.DONTCARE, null, varName, emptyList(), string,
+                sharedWithAsm = false, alignment = 0u, dirty = false, position = string.position
             )
             internedStringsBlock.statements.add(decl)
             decl.linkParents(internedStringsBlock)
@@ -159,7 +160,6 @@ class Program(val name: String,
     }
 
     fun jumpLabel(label: Label): Jump {
-        val ident = IdentifierReference(listOf(label.name), label.position)
-        return Jump(null, ident, label.position)
+        return Jump(IdentifierReference(listOf(label.name), label.position), label.position)
     }
 }

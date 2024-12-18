@@ -91,8 +91,9 @@ private fun integrateDefers(subdefers: Map<PtSub, List<PtDefer>>, program: PtPro
                         jumpsAndCallsToAugment.add(node)
                 }
                 is PtJump -> {
-                    if (node.identifier != null) {
-                        val stNode = st.lookup(node.identifier!!.name)!!
+                    val identifier = node.target as? PtIdentifier
+                    if (identifier != null) {
+                        val stNode = st.lookup(identifier.name)!!
                         val targetSub = stNode.astNode.definingSub()
                         if (targetSub != node.definingSub())
                             jumpsAndCallsToAugment.add(node)
@@ -188,7 +189,9 @@ private fun integrateDefers(subdefers: Map<PtSub, List<PtDefer>>, program: PtPro
             val skiplabel = "prog8_defer_skip_${idx+1}"
             val branchcc = PtConditionalBranch(BranchCondition.CC, Position.DUMMY)
             branchcc.add(PtNodeGroup().also {
-                it.add(PtJump(PtIdentifier(defersRoutine.scopedName+"."+skiplabel, DataType.forDt(BaseDataType.UBYTE), Position.DUMMY), null, Position.DUMMY))
+                val jump = PtJump(Position.DUMMY)
+                jump.add(PtIdentifier(defersRoutine.scopedName+"."+skiplabel, DataType.forDt(BaseDataType.UBYTE), Position.DUMMY))
+                it.add(jump)
             })
             branchcc.add(PtNodeGroup())
             defersRoutine.add(branchcc)

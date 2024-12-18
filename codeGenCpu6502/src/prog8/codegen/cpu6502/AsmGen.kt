@@ -73,13 +73,6 @@ class AsmGen6502(val prefixSymbols: Boolean, private val lastGeneratedLabelSeque
                         nodesToPrefix += node.parent to index
                     }
                 }
-                is PtJump -> {
-                    val stNode = st.lookup(node.identifier!!.name) ?: throw AssemblyError("name not found ${node.identifier}")
-                    if(stNode.astNode.definingBlock()?.options?.noSymbolPrefixing!=true) {
-                        val index = node.parent.children.indexOf(node)
-                        nodesToPrefix += node.parent to index
-                    }
-                }
                 is PtBlock -> prefixNamedNode(node)
                 is PtConstant -> prefixNamedNode(node)
                 is PtLabel -> prefixNamedNode(node)
@@ -104,7 +97,6 @@ class AsmGen6502(val prefixSymbols: Boolean, private val lastGeneratedLabelSeque
             when(val node = parent.children[index]) {
                 is PtIdentifier -> parent.children[index] = node.prefix(parent, st)
                 is PtFunctionCall ->  throw AssemblyError("PtFunctionCall should be processed in their own list, last")
-                is PtJump -> parent.children[index] = node.prefix(parent, st)
                 is PtVariable -> parent.children[index] = node.prefix(parent, st)
                 else -> throw AssemblyError("weird node to prefix $node")
             }
@@ -172,13 +164,6 @@ private fun PtVariable.prefix(parent: PtNode, st: SymbolTable): PtVariable {
         result
     }
     else this
-}
-
-private fun PtJump.prefix(parent: PtNode, st: SymbolTable): PtJump {
-    val prefixedIdent = identifier!!.prefix(this, st)
-    val jump = PtJump(prefixedIdent, address, position)
-    jump.parent = parent
-    return jump
 }
 
 private fun PtFunctionCall.prefix(parent: PtNode): PtFunctionCall {
@@ -601,8 +586,9 @@ class AsmGen6502Internal (
             }
             is PtAugmentedAssign -> assignmentAsmGen.translate(stmt)
             is PtJump -> {
-                val (asmLabel, indirect) = getJumpTarget(stmt)
-                jmp(asmLabel, indirect)
+                val target = getJumpTarget(stmt)
+                require(!target.needsExpressionEvaluation)
+                jmp(target.asmLabel, target.indirect)
             }
             is PtLabel -> translate(stmt)
             is PtConditionalBranch -> translate(stmt)
@@ -996,16 +982,17 @@ $repeatLabel""")
         if(jump!=null) {
             // branch with only a jump (goto)
             val instruction = branchInstruction(stmt.condition, false)
-            val (asmLabel, indirect) = getJumpTarget(jump)
-            if(indirect) {
+            val target = getJumpTarget(jump)
+            require(!target.needsExpressionEvaluation)
+            if(target.indirect) {
                 val complementedInstruction = branchInstruction(stmt.condition, true)
                 out("""
                     $complementedInstruction +
-                    jmp  ($asmLabel)
+                    jmp  (${target.asmLabel})
 +""")
             }
             else {
-                out("  $instruction  $asmLabel")
+                out("  $instruction  ${target.asmLabel}")
             }
             translate(stmt.falseScope)
         } else {
@@ -1031,20 +1018,29 @@ $repeatLabel""")
         }
     }
 
-    internal fun getJumpTarget(jump: PtJump): Pair<String, Boolean> {
-        val ident = jump.identifier
-        val addr = jump.address
-        return when {
-            ident!=null -> {
-                // can be a label, or a pointer variable
-                val symbol = symbolTable.lookup(ident.name)
-                if(symbol?.type in arrayOf(StNodeType.STATICVAR, StNodeType.MEMVAR, StNodeType.CONSTANT))
-                    Pair(asmSymbolName(ident), true)        // indirect jump if the jump symbol is a variable
-                else
-                    Pair(asmSymbolName(ident), false)
+    class JumpTarget(val asmLabel: String, val indirect: Boolean, val needsExpressionEvaluation: Boolean)
+
+    internal fun getJumpTarget(jump: PtJump, evaluateAddressExpression: Boolean = true): JumpTarget {
+        val ident = jump.target as? PtIdentifier
+        if(ident!=null) {
+            // can be a label, or a pointer variable
+            val symbol = symbolTable.lookup(ident.name)
+            return if(symbol?.type in arrayOf(StNodeType.STATICVAR, StNodeType.MEMVAR, StNodeType.CONSTANT))
+                JumpTarget(asmSymbolName(ident), true, false)        // indirect jump if the jump symbol is a variable
+            else
+                JumpTarget(asmSymbolName(ident), false, false)
+        }
+        val addr = jump.target.asConstInteger()
+        if(addr!=null)
+            return JumpTarget(addr.toHex(), false, false)
+        else {
+            if(evaluateAddressExpression) {
+                // we can do the address evaluation right now and just use a temporary pointer variable
+                assignExpressionToVariable(jump.target, "P8ZP_SCRATCH_W1", DataType.forDt(BaseDataType.UWORD))
+                return JumpTarget("P8ZP_SCRATCH_W1", true, false)
+            } else {
+                return JumpTarget("PROG8_JUMP_TARGET_IS_UNEVALUATED_ADDRESS_EXPRESSION", true, true)
             }
-            addr!=null -> Pair(addr.toHex(), false)
-            else -> Pair("????", false)
         }
     }
 

@@ -261,10 +261,7 @@ class AstToSourceTextConverter(val output: (text: String) -> Unit, val program: 
 
     override fun visit(jump: Jump) {
         output("goto ")
-        when {
-            jump.address!=null -> output(jump.address!!.toHex())
-            jump.identifier!=null -> jump.identifier.accept(this)
-        }
+        jump.target.accept(this)
     }
 
     override fun visit(ifElse: IfElse) {
@@ -473,6 +470,11 @@ class AstToSourceTextConverter(val output: (text: String) -> Unit, val program: 
             addressOf.arrayIndex?.accept(this)
             output("]")
         }
+    }
+
+    override fun visit(addressOfMsb: AddressOfMsb) {
+        output("&>")
+        addressOfMsb.identifier.accept(this)
     }
 
     override fun visit(inlineAssembly: InlineAssembly) {

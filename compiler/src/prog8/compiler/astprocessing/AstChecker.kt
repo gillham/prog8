@@ -223,9 +223,9 @@ internal class AstChecker(private val program: Program,
                             errors.err("byte loop variable can only loop over bytes", forLoop.position)
                     }
                     BaseDataType.WORD -> {
-                        if(!iterableDt.isSignedByte && !iterableDt.isSignedWord &&      // TODO remove byte and word check?
+                        if(!iterableDt.isSignedByte && !iterableDt.isSignedWord &&
                                 !iterableDt.isSignedByteArray && !iterableDt.isUnsignedByteArray &&
-                                !iterableDt.isSignedWordArray && !iterableDt.isSplitWordArray)
+                                !iterableDt.isSignedWordArray && !iterableDt.isUnsignedWordArray)
                             errors.err("word loop variable can only loop over bytes or words", forLoop.position)
                     }
                     BaseDataType.FLOAT -> {
@@ -259,7 +259,7 @@ internal class AstChecker(private val program: Program,
     }
 
     override fun visit(jump: Jump) {
-        val ident = jump.identifier
+        val ident = jump.target as? IdentifierReference
         if(ident!=null) {
             val targetStatement = ident.checkFunctionOrLabelExists(program, jump, errors)
             if(targetStatement!=null) {
@@ -269,11 +269,15 @@ internal class AstChecker(private val program: Program,
             if(targetStatement is Subroutine && targetStatement.parameters.any()) {
                 errors.err("can't jump to a subroutine that takes parameters", jump.position)
             }
-        }
+        } else {
+            val addr = jump.target.constValue(program)?.number
+            if (addr!=null && (addr<0 || addr > 65535))
+                errors.err("goto address must be uword", jump.position)
 
-        val addr = jump.address
-        if(addr!=null && addr > 65535u)
-            errors.err("jump address must be valid integer 0..\$ffff", jump.position)
+            val addressDt = jump.target.inferType(program).getOrUndef()
+            if(!(addressDt.isUnsignedByte || addressDt.isUnsignedWord))
+                errors.err("goto address must be uword", jump.position)
+        }
         super.visit(jump)
     }
 
@@ -340,7 +344,7 @@ internal class AstChecker(private val program: Program,
                 count++
             }
             override fun visit(jump: Jump) {
-                val jumpTarget = jump.identifier?.targetStatement(program)
+                val jumpTarget = (jump.target as? IdentifierReference)?.targetStatement(program)
                 if(jumpTarget!=null) {
                     val sub = jump.definingSubroutine
                     val targetSub = jumpTarget as? Subroutine ?: jumpTarget.definingSubroutine
@@ -699,10 +703,15 @@ internal class AstChecker(private val program: Program,
         if (variable!=null) {
             if (variable.type == VarDeclType.CONST && addressOf.arrayIndex == null)
                 errors.err("invalid pointer-of operand type",addressOf.position)
-            if (variable.splitArray)
-                errors.err("cannot take address of split word array",addressOf.position)
         }
         super.visit(addressOf)
+    }
+
+    override fun visit(addressOfMsb: AddressOfMsb) {
+        val target = addressOfMsb.identifier.targetVarDecl(program)
+        if(target==null || !target.datatype.isSplitWordArray) {
+            errors.err("&> can only be used on split word arrays", addressOfMsb.position)
+        }
     }
 
     override fun visit(ifExpr: IfExpression) {
@@ -799,7 +808,7 @@ internal class AstChecker(private val program: Program,
                                 err("split word array length must be 1-256")
                         dt.isWordArray ->
                             if(arraySize > 128)
-                                err("word array length must be 1-128")
+                                err("regular word array length must be 1-128, use split array to get to 256")
                         dt.isFloatArray ->
                             if(arraySize > 51)
                                 err("float array length must be 1-51")
@@ -873,7 +882,7 @@ internal class AstChecker(private val program: Program,
                     }
                     decl.datatype.isWordArray -> {
                         if (length == 0 || length > 128)
-                            err("word array length must be 1-128")
+                            err("regular word array length must be 1-128, use split array to get to 256")
                     }
                     decl.datatype.isFloatArray -> {
                         if (length == 0 || length > 51)
@@ -884,8 +893,8 @@ internal class AstChecker(private val program: Program,
                 }
             }
 
-            if(decl.splitArray && decl.type==VarDeclType.MEMORY)
-                err("@split can't be used on memory mapped arrays")
+            if(decl.datatype.isSplitWordArray && decl.type==VarDeclType.MEMORY)
+                err("memory mapped word arrays cannot be split, should have @nosplit")
         }
 
         if(decl.datatype.isString) {
@@ -907,7 +916,7 @@ internal class AstChecker(private val program: Program,
         if(compilerOptions.zeropage==ZeropageType.DONTUSE && decl.zeropage == ZeropageWish.REQUIRE_ZEROPAGE)
             err("zeropage usage has been disabled by options")
 
-        if(decl.splitArray) {
+        if(decl.datatype.isSplitWordArray) {
             if (!decl.datatype.isWordArray) {
                 errors.err("split can only be used on word arrays", decl.position)
             }
@@ -1040,14 +1049,14 @@ internal class AstChecker(private val program: Program,
                     err("this directive may only occur in a block or at module level")
                 if(directive.args.isEmpty())
                     err("missing option directive argument(s)")
-                else if(directive.args.map{it.name in arrayOf("enable_floats", "force_output", "no_sysinit", "merge", "verafxmuls", "splitarrays", "no_symbol_prefixing", "ignore_unused")}.any { !it })
+                else if(directive.args.map{it.name in arrayOf("enable_floats", "force_output", "no_sysinit", "merge", "verafxmuls", "no_symbol_prefixing", "ignore_unused")}.any { !it })
                     err("invalid option directive argument(s)")
                 if(directive.parent is Block) {
-                    if(directive.args.any {it.name !in arrayOf("force_output", "merge", "verafxmuls", "splitarrays", "no_symbol_prefixing", "ignore_unused")})
+                    if(directive.args.any {it.name !in arrayOf("force_output", "merge", "verafxmuls", "no_symbol_prefixing", "ignore_unused")})
                         err("using an option that is not valid for blocks")
                 }
                 if(directive.parent is Module) {
-                    if(directive.args.any {it.name !in arrayOf("enable_floats", "no_sysinit", "splitarrays", "no_symbol_prefixing", "ignore_unused")})
+                    if(directive.args.any {it.name !in arrayOf("enable_floats", "no_sysinit", "no_symbol_prefixing", "ignore_unused")})
                         err("using an option that is not valid for modules")
                 }
                 if(directive.args.any { it.name=="verafxmuls" } && compilerOptions.compTarget.name != Cx16Target.NAME)
@@ -1177,7 +1186,7 @@ internal class AstChecker(private val program: Program,
                 count++
             }
             override fun visit(jump: Jump) {
-                val jumpTarget = jump.identifier?.targetStatement(program)
+                val jumpTarget = (jump.target as? IdentifierReference)?.targetStatement(program)
                 if(jumpTarget!=null) {
                     val sub = jump.definingSubroutine
                     val targetSub = jumpTarget as? Subroutine ?: jumpTarget.definingSubroutine
@@ -1927,8 +1936,12 @@ internal class AstChecker(private val program: Program,
             targetDt.isFloatArray -> correct = true
             else -> throw FatalAstException("invalid type $targetDt")
         }
-        if (!correct)
-            errors.err("array element out of range for type $targetDt", value.position)
+        if (!correct) {
+            if (value.parent is VarDecl && !value.value.all { it is NumericLiteral || it is AddressOf })
+                errors.err("array literal for variable initialization contains non-constant elements", value.position)
+            else
+                errors.err("array element out of range for type $targetDt", value.position)
+        }
         return correct
     }
 

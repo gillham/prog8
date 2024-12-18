@@ -285,7 +285,7 @@ _lp2        lda  $ffff,y
             inc  _lp2+2
             dex
             bne  _loop
-            ; !notreached!
+            rts
         }}
 ; original prog8 code:
 ;        uword @requirezp ptr = main.start.buffer
@@ -382,17 +382,16 @@ _lp2        lda  $ffff,y
         %asm {{
             ; copy to vera PSG fifo buffer
             ldy  #0
--           lda  p8v_left,y
+-           lda  p8v_left_lsb,y
             sta  cx16.VERA_AUDIO_DATA
-            lda  p8v_left+1,y
+            lda  p8v_left_msb,y
             sta  cx16.VERA_AUDIO_DATA
-            lda  p8v_right,y
+            lda  p8v_right_lsb,y
             sta  cx16.VERA_AUDIO_DATA
-            lda  p8v_right+1,y
+            lda  p8v_right_msb,y
             sta  cx16.VERA_AUDIO_DATA
             iny
-            iny
-            cpy  #16
+            cpy  #8
             bne  -
         }}
     }

@@ -30,6 +30,8 @@ DEC_INTEGER :  DEC_DIGIT (DEC_DIGIT | '_')* ;
 HEX_INTEGER :  '$' HEX_DIGIT (HEX_DIGIT | '_')* ;
 BIN_INTEGER :  '%' BIN_DIGIT (BIN_DIGIT | '_')* ;
 ADDRESS_OF: '&' ;
+ADDRESS_OF_MSB: '&>' ;
+ADDRESS_OF_LSB: '&<' ;
 INVALID_AND_COMPOSITE: '&&' ;
 
 fragment HEX_DIGIT: ('a'..'f') | ('A'..'F') | ('0'..'9') ;
@@ -62,6 +64,8 @@ ZEROPAGENOT: '@nozp' ;
 SHARED : '@shared' ;
 
 SPLIT: '@split' ;
+
+NOSPLIT: '@nosplit' ;
 
 ALIGNWORD: '@alignword' ;
 
@@ -147,7 +151,7 @@ defer: 'defer' (statement | statement_block) ;
 
 labeldef :  identifier ':'  ;
 
-unconditionaljump :  'goto'  (integerliteral | scoped_identifier) ;
+unconditionaljump :  'goto'  expression ;
 
 directive :
 	directivename=('%output' | '%launcher' | '%zeropage' | '%zpreserved' | '%zpallowed' | '%address' | '%memtop' | '%import' |
@@ -159,7 +163,7 @@ directivearg : stringliteral | identifier | integerliteral ;
 
 vardecl: datatype (arrayindex | ARRAYSIG)? decloptions identifier (',' identifier)* ;
 
-decloptions: (SHARED | ZEROPAGE | ZEROPAGEREQUIRE | ZEROPAGENOT | SPLIT | ALIGNWORD | ALIGN64 | ALIGNPAGE | DIRTY)* ;
+decloptions: (SHARED | ZEROPAGE | ZEROPAGEREQUIRE | ZEROPAGENOT | NOSPLIT | SPLIT | ALIGNWORD | ALIGN64 | ALIGNPAGE | DIRTY)* ;
 
 varinitializer : vardecl '=' expression ;
 
@@ -228,7 +232,7 @@ typecast : 'as' datatype;
 
 directmemory : '@' '(' expression ')';
 
-addressof : <assoc=right> ADDRESS_OF (scoped_identifier | arrayindexed) ;
+addressof : <assoc=right> (ADDRESS_OF | ADDRESS_OF_LSB | ADDRESS_OF_MSB) (scoped_identifier | arrayindexed) ;
 
 functioncall : scoped_identifier '(' expression_list? ')'  ;
 

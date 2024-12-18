@@ -403,7 +403,6 @@ Directives
       Overriding (monkeypatching) happens only if the signature of the subroutine exactly matches the original subroutine, including the exact names and types of the parameters.
       Where blocks with this option are merged into is intricate: it looks for the first other block with the same name that does not have %option merge,
       if that can't be found, select the first occurrence regardless. If no other blocks are found, no merge is done. Blocks in libraries are considered first to merge into.
-    - ``splitarrays`` (block or module) makes all word-arrays in this scope lsb/msb split arrays (as if they all have the @split tag). See Arrays.
     - ``no_symbol_prefixing`` (block or module) makes the compiler *not* use symbol-prefixing when translating prog8 code into assembly.
       Only use this if you know what you're doing because it could result in invalid assembly code being generated.
       This option can be useful when writing library modules that you don't want to be exposing prefixed assembly symbols.
@@ -760,12 +759,13 @@ using qualified "dotted names"::
 
     uword address = $4000
     goto  address         ; jump via address variable
+    goto  address + idx   ; jump to an adress that is the result of an expression
 
 Notice that this is a valid way to end a subroutine (you can either ``return`` from it, or jump
 to another piece of code that eventually returns).
 
-If you jump to an address variable (uword), it is doing an 'indirect' jump: the jump will be done
-to the address that's currently in the variable.
+If you jump to an address variable or expression (uword), it is doing an 'indirect' jump: the jump will be done
+to the address that's currently in the variable, or the result of the expression.
 
 
 Assignments
@@ -942,7 +942,7 @@ containment check:  ``in``
         }
 
 
-address of:  ``&``
+address of:  ``&``,   ``&<``,   ``&>``
     This is a prefix operator that can be applied to a string or array variable or literal value.
     It results in the memory address (UWORD) of that string or array in memory:  ``uword a = &stringvar``
     Sometimes the compiler silently inserts this operator to make it easier for instance
@@ -950,6 +950,11 @@ address of:  ``&``
     This operator can also be used as a prefix to a variable's data type keyword to indicate that
     it is a memory-mapped variable (for instance: ``&ubyte screencolor = $d021``). This is explained
     in the :ref:`variables` chapter.
+
+    ``&<`` and ``&>`` are for use on split word arrays, they give you the address of the LSB byte array
+    and MSB byte array separately, respectively.   Note that ``&<`` is just the same as ``&`` in this case.
+    For more details on split word arrays, see :ref:`arrayvars`.
+
 
 ternary:
     Prog8 doesn't have a ternary operator to choose one of two values (``x? y : z`` in many other languages)
@@ -1001,7 +1006,7 @@ Normally, every subroutine parameter will get its own local variable in the subr
 will be stored when the subroutine is called. In certain situations, this may lead to many variables being allocated.
 You *can* instruct the compiler to not allocate a new variable, but instead to reuse one of the *virtual registers* R0-R15
 (accessible in the code as ``cx16.r0`` - ``cx16.r15``)  for the parameter. This is done by adding a ``@Rx`` tag
-to the parameter. This can only be done for byte and word types.
+to the parameter. This can only be done for booleans, byte, and word types.
 Note: the R0-R15 *virtual registers* are described in more detail below for the Assembly subroutines.
 Here's an example that reuses the R0 and the R1L (lower byte of R1) virtual registers for the paremeters::
 

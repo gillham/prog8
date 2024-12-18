@@ -301,9 +301,7 @@ private fun ReturnstmtContext.toAst() : Return {
 }
 
 private fun UnconditionaljumpContext.toAst(): Jump {
-    val address = integerliteral()?.toAst()?.number?.toUInt()
-    val identifier = scoped_identifier()?.toAst()
-    return Jump(address, identifier, toPosition())
+    return Jump(expression().toAst(), toPosition())
 }
 
 private fun LabeldefContext.toAst(): Statement =
@@ -364,6 +362,16 @@ private fun getZpOption(options: DecloptionsContext?): ZeropageWish {
         options.ZEROPAGE().isNotEmpty() -> ZeropageWish.PREFER_ZEROPAGE
         options.ZEROPAGENOT().isNotEmpty() -> ZeropageWish.NOT_IN_ZEROPAGE
         else -> ZeropageWish.DONTCARE
+    }
+}
+
+private fun getSplitOption(options: DecloptionsContext?): SplitWish {
+    if(options==null)
+        return SplitWish.DONTCARE
+    return when {
+        options.NOSPLIT().isNotEmpty() -> SplitWish.NOSPLIT
+        options.SPLIT().isNotEmpty() -> SplitWish.SPLIT
+        else -> SplitWish.DONTCARE
     }
 }
 
@@ -584,11 +592,21 @@ private fun ExpressionContext.toAst(insideParentheses: Boolean=false) : Expressi
     if(addressof()!=null) {
         val addressOf = addressof()
         val identifier = addressOf.scoped_identifier()
-        val array = addressOf.arrayindexed()
-        return if(identifier!=null)
-            AddressOf(addressof().scoped_identifier().toAst(), null, toPosition())
-        else
-            AddressOf(array.scoped_identifier().toAst(), array.arrayindex().toAst(), toPosition())
+        if(addressOf.ADDRESS_OF_LSB()!=null && identifier==null)
+            throw SyntaxError("&< is only valid on array variables", toPosition())
+        if(addressOf.ADDRESS_OF_MSB()!=null) {
+            return if (identifier != null)
+                AddressOfMsb(addressof().scoped_identifier().toAst(), toPosition())
+            else
+                throw SyntaxError("&> is only valid on array variables", toPosition())
+        } else {
+            return if (identifier != null)
+                AddressOf(addressof().scoped_identifier().toAst(), null, toPosition())
+            else {
+                val array = addressOf.arrayindexed()
+                AddressOf(array.scoped_identifier().toAst(), array.arrayindex().toAst(), toPosition())
+            }
+        }
     }
 
     if(if_expression()!=null) {
@@ -756,29 +774,24 @@ private fun When_choiceContext.toAst(): WhenChoice {
 private fun VardeclContext.toAst(type: VarDeclType, value: Expression?): VarDecl {
     val options = decloptions()
     val zp = getZpOption(options)
+    val split = getSplitOption(options)
     val identifiers = identifier()
     val identifiername = identifiers[0].NAME() ?: identifiers[0].UNDERSCORENAME()
     val name = if(identifiers.size==1) identifiername.text else "<multiple>"
     val isArray = ARRAYSIG() != null || arrayindex() != null
-    val split = options.SPLIT().isNotEmpty()
     val alignword = options.ALIGNWORD().isNotEmpty()
     val align64 = options.ALIGN64().isNotEmpty()
     val alignpage = options.ALIGNPAGE().isNotEmpty()
     if(alignpage && alignword)
         throw SyntaxError("choose a single alignment option", toPosition())
     val baseDt = datatype()?.toAst() ?: BaseDataType.UNDEFINED
-    val origDt = DataType.forDt(baseDt)
-    val dt = if(isArray) {
-        if(split && origDt.isWord)
-            origDt.elementToArray(split)
-        else
-            origDt.elementToArray(false)    // type error will be generated later in the ast check
-    } else origDt
+    val dt = if(isArray) DataType.arrayFor(baseDt, split!=SplitWish.NOSPLIT) else DataType.forDt(baseDt)
 
     return VarDecl(
             type, VarDeclOrigin.USERCODE,
             dt,
             zp,
+            split,
             arrayindex()?.toAst(),
             name,
             if(identifiers.size==1) emptyList() else identifiers.map {
@@ -787,7 +800,6 @@ private fun VardeclContext.toAst(type: VarDeclType, value: Expression?): VarDecl
             },
             value,
             options.SHARED().isNotEmpty(),
-            split,
             if(alignword) 2u else if(align64) 64u else if(alignpage) 256u else 0u,
             options.DIRTY().isNotEmpty(),
             toPosition()

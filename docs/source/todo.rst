@@ -1,18 +1,30 @@
 TODO
 ====
 
+- DONE: make word arrays split by default and add new @nosplit tag to make an array use the old linear storage format
+- DONE: &splitarray  will give you the start address of the lsb-array (which is immediately followed by the msb-array)
+- DONE: add &< and &> operators to get the address of the lsb-array and msb-array, respectively.  (&< is just syntactic sugar for &)
+- DONE: invert -splitarrays command line option: -dontsplitarrays   and remove "splitarrays" %option switch
+- DONE: added sprites.pos_batch_nosplit  when the x/y arrays are linear instead of split word arrays
+- DONE: add palette.set_rgb_nosplit() and set_rbg_be_nosplit()  for linear instead of split word arrays
+- DONE: removed anyall module (unoptimized and didn't work on split arrays)
+- DONE: @split does now always splits a word array even when the dontsplit option is enabled (and @nosplit does the inverse)
+
+- announce prog8 on the 6502.org site?
+
 ...
 
 
 Future Things and Ideas
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-- a syntax to access specific bits in a variable, to avoid manually shifts&ands, something like  variable[4:8] ?  (or something else this may be too similar to regular array indexing)
-- something to reduce the need to use fully qualified names all the time. 'with' ?  Or 'using <prefix>'?
-- Libraries: improve ability to create library files in prog8; for instance there's still stuff injected into the start of the start() routine AND there is separate setup logic going on before calling it.
+- Compiling Libraries: improve ability to create library files in prog8; for instance there's still stuff injected into the start of the start() routine AND there is separate setup logic going on before calling it.
   Make up our mind! Maybe all setup does need to be put into start() ? because the program cannot function correctly when the variables aren't initialized properly bss is not cleared etc. etc.
-  Add a -library $xxxx command line option to preselect every setting that is required to make a library at $xxxx rather than a normal loadable and runnable program?
+  Add a -library $xxxx command line option (and/or some directive) to preselect every setting that is required to make a library at $xxxx rather than a normal loadable and runnable program?
   Need to add some way to generate a stable jump table at a given address.
+- Fix missing cases where regular & has to return the start of the split array in memory whatever byte comes first. Search TODO("address of split word array")
+- Add a syntax to access specific bits in a variable, to avoid manually shifts&ands, something like  variable[4:8] ?  (or something else this may be too similar to regular array indexing)
+- something to reduce the need to use fully qualified names all the time. 'with' ?  Or 'using <prefix>'?
 - Improve register load order in subroutine call args assignments:
   in certain situations, the "wrong" order of evaluation of function call arguments is done which results
   in overwriting registers that already got their value, which requires a lot of stack juggling (especially on plain 6502 cpu!)
@@ -42,6 +54,7 @@ IR/VM
 - fix call() return value handling
 - fix float register parameters (FAC1,FAC2) for extsubs, search for TODO("floating point register parameters not supported")
 - proper code gen for the CALLI instruction and that it (optionally) returns a word value that needs to be assigned to a reg
+- make it possible to jump and branch to a computed address (expression), see TODO("JUMP to expression address"   .  This needs a change in the JUMPI instruction: it has to take a register instead (like CALLI)
 - idea: (but LLVM IR simply keeps the variables, so not a good idea then?...): replace all scalar variables by an allocated register. Keep a table of the variable to register mapping (including the datatype)
   global initialization values are simply a list of LOAD instructions.
   Variables replaced include all subroutine parameters!  So the only variables that remain as variables are arrays and strings.
@@ -56,6 +69,7 @@ IR/VM
 
 Libraries
 ---------
+- monogfx: flood fill should be able to fill stippled
 - pet32 target: make syslib more complete (missing kernal routines)?
 - need help with: PET disk routines (OPEN, SETLFS etc are not exposed as kernal calls)
 - fix the problems in atari target, and flesh out its libraries.
