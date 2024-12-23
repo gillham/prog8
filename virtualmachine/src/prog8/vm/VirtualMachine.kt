@@ -58,7 +58,7 @@ class VirtualMachine(irProgram: IRProgram) {
     var statusNegative = false
     internal var randomGenerator = Random(0xa55a7653)
     internal var randomGeneratorFloats = Random(0xc0d3dbad)
-    internal var mul16_last_upper = 0u
+    internal var mul16LastUpper = 0u
 
     init {
         val (prg, labelAddr) = VmProgramLoader().load(irProgram, memory)
@@ -624,7 +624,9 @@ class VirtualMachine(irProgram: IRProgram) {
     }
 
     private fun InsJUMPI(i: IRInstruction) {
-        val artificialAddress = memory.getUW(i.address!!).toInt()
+        val artificialAddress = registers.getUW(i.reg1!!).toInt()
+        if(!artificialLabelAddresses.contains(artificialAddress))
+            throw IllegalArgumentException("vm program can't jump to system memory address (${i.opcode} ${artificialAddress.toHex()})")
         pcChunk = artificialLabelAddresses.getValue(artificialAddress)
         pcIndex = 0
     }
@@ -1591,7 +1593,7 @@ class VirtualMachine(irProgram: IRProgram) {
             "-" -> result = left - right
             "*" -> {
                 result = left.toUInt() * right
-                mul16_last_upper = result shr 16
+                mul16LastUpper = result shr 16
             }
             else -> throw IllegalArgumentException("operator word $operator")
         }
@@ -1606,7 +1608,7 @@ class VirtualMachine(irProgram: IRProgram) {
             "-" -> result = left - value
             "*" -> {
                 result = left.toUInt() * value
-                mul16_last_upper = result shr 16
+                mul16LastUpper = result shr 16
             }
             else -> throw IllegalArgumentException("operator word $operator")
         }
@@ -1622,7 +1624,7 @@ class VirtualMachine(irProgram: IRProgram) {
             "-" -> result = memvalue - operand
             "*" -> {
                 result = memvalue.toUInt() * operand
-                mul16_last_upper = result shr 16
+                mul16LastUpper = result shr 16
             }
             else -> throw IllegalArgumentException("operator word $operator")
         }

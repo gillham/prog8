@@ -55,25 +55,7 @@ SINGLECHAR :
 	'\'' ( STRING_ESCAPE_SEQ | ~[\\\r\n\f'] ) '\''
 	;
 
-ZEROPAGE : '@zp' ;
-
-ZEROPAGEREQUIRE : '@requirezp' ;
-
-ZEROPAGENOT: '@nozp' ;
-
-SHARED : '@shared' ;
-
-SPLIT: '@split' ;
-
-NOSPLIT: '@nosplit' ;
-
-ALIGNWORD: '@alignword' ;
-
-ALIGN64: '@align64' ;
-
-ALIGNPAGE: '@alignpage' ;
-
-DIRTY: '@dirty' ;
+TAG: '@' ('a'..'z' | '0'..'9')+ ;
 
 ARRAYSIG : '[' [ \t]* ']' ;
 
@@ -161,9 +143,7 @@ directive :
 
 directivearg : stringliteral | identifier | integerliteral ;
 
-vardecl: datatype (arrayindex | ARRAYSIG)? decloptions identifier (',' identifier)* ;
-
-decloptions: (SHARED | ZEROPAGE | ZEROPAGEREQUIRE | ZEROPAGENOT | NOSPLIT | SPLIT | ALIGNWORD | ALIGN64 | ALIGNPAGE | DIRTY)* ;
+vardecl: datatype (arrayindex | ARRAYSIG)? TAG* identifier (',' identifier)* ;
 
 varinitializer : vardecl '=' expression ;
 
@@ -256,7 +236,7 @@ integerliteral :  intpart=(DEC_INTEGER | HEX_INTEGER | BIN_INTEGER) ;
 
 booleanliteral :  'true' | 'false' ;
 
-arrayliteral :  '[' EOL? expression (',' EOL? expression)* EOL? ']' ;       // you can split the values over several lines
+arrayliteral :  '[' EOL? expression (',' EOL? expression)* ','? EOL? ']' ;       // you can split the values over several lines, trailing comma allowed
 
 stringliteral : (encoding=NAME ':')? STRING ;
 
@@ -302,7 +282,7 @@ asmsubroutine :
     ;
 
 extsubroutine :
-    'extsub' ('@bank' (constbank=integerliteral | varbank=scoped_identifier))? address=expression '=' asmsub_decl
+    'extsub' (TAG (constbank=integerliteral | varbank=scoped_identifier))? address=expression '=' asmsub_decl
     ;
 
 asmsub_decl : identifier '(' asmsub_params? ')' asmsub_clobbers? asmsub_returns? ;

@@ -7,6 +7,8 @@ import prog8.ast.statements.*
 import prog8.ast.walk.IAstVisitor
 import prog8.code.ast.PtLabel
 import prog8.code.core.*
+import prog8.code.internedStringsModuleName
+import prog8.code.source.SourceCode
 
 /*********** Everything starts from here, the Program; zero or more modules *************/
 
@@ -151,7 +153,7 @@ class Program(val name: String,
 
     fun makeLabel(postfix: String): String {
         generatedLabelSequenceNumber++
-        return "${PtLabel.GeneratedLabelPrefix}${generatedLabelSequenceNumber}_$postfix"
+        return "${PtLabel.GENERATED_LABEL_PREFIX}${generatedLabelSequenceNumber}_$postfix"
     }
 
     fun makeLabel(postfix: String, position: Position): Label {

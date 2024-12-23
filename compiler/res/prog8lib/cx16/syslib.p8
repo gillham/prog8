@@ -397,7 +397,7 @@ cx16 {
 extsub $ff4a = CLOSE_ALL(ubyte device @A)  clobbers(A,X,Y)
 extsub $ff59 = LKUPLA(ubyte la @A)  clobbers(A,X,Y)
 extsub $ff5c = LKUPSA(ubyte sa @Y)  clobbers(A,X,Y)
-extsub $ff5f = screen_mode(ubyte mode @A, bool getCurrent @Pc) -> ubyte @A, ubyte @X, ubyte @Y, bool @Pc        ; also see SCREEN or get_screen_mode()
+extsub $ff5f = screen_mode(ubyte mode @A, bool getCurrent @Pc) -> ubyte @A, ubyte @X, ubyte @Y, bool @Pc        ; also see SCREEN or get/set_screen_mode()
 extsub $ff62 = screen_set_charset(ubyte charset @A, uword charsetptr @XY)  clobbers(A,X,Y)
 extsub $ff6e = JSRFAR()  ; following word = address to call, byte after that=rom/ram bank it is in
 extsub $ff74 = fetch(ubyte zp_startaddr @A, ubyte bank @X, ubyte index @Y)  clobbers(X) -> ubyte @A
@@ -565,8 +565,8 @@ const ubyte  EXTAPI16_stack_enter_kernal_stack = $03
 const ubyte  EXTAPI16_stack_leave_kernal_stack = $04
 
 
-asmsub set_screen_mode(ubyte mode @A) clobbers(A,X,Y) -> bool @Pc {
-    ; -- convenience wrapper for screen_mode() to just set a new mode (and return success)
+asmsub set_screen_mode(ubyte mode @A) clobbers(A,X,Y) {
+    ; -- convenience wrapper for screen_mode() to just set a new mode and ignore any return values
     %asm {{
         clc
         jmp  screen_mode

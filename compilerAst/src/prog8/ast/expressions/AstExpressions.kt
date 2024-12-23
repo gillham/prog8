@@ -9,6 +9,7 @@ import prog8.ast.statements.*
 import prog8.ast.walk.AstWalker
 import prog8.ast.walk.IAstVisitor
 import prog8.code.core.*
+import prog8.code.internedStringsModuleName
 import prog8.code.target.encodings.JapaneseCharacterConverter
 import java.io.CharConversionException
 import java.util.*
@@ -106,11 +107,11 @@ class PrefixExpression(val operator: String, var expression: Expression, overrid
                 constval.type == BaseDataType.FLOAT -> NumericLiteral(BaseDataType.FLOAT, -constval.number, constval.position)
                 else -> throw ExpressionError("can only take negative of int or float", constval.position)
             }
-            "~" -> when {
-                constval.type == BaseDataType.BYTE -> NumericLiteral(BaseDataType.BYTE, constval.number.toInt().inv().toDouble(), constval.position)
-                constval.type == BaseDataType.UBYTE -> NumericLiteral(BaseDataType.UBYTE, (constval.number.toInt().inv() and 255).toDouble(), constval.position)
-                constval.type == BaseDataType.WORD -> NumericLiteral(BaseDataType.WORD, constval.number.toInt().inv().toDouble(), constval.position)
-                constval.type == BaseDataType.UWORD -> NumericLiteral(BaseDataType.UWORD, (constval.number.toInt().inv() and 65535).toDouble(), constval.position)
+            "~" -> when (constval.type) {
+                BaseDataType.BYTE -> NumericLiteral(BaseDataType.BYTE, constval.number.toInt().inv().toDouble(), constval.position)
+                BaseDataType.UBYTE -> NumericLiteral(BaseDataType.UBYTE, (constval.number.toInt().inv() and 255).toDouble(), constval.position)
+                BaseDataType.WORD -> NumericLiteral(BaseDataType.WORD, constval.number.toInt().inv().toDouble(), constval.position)
+                BaseDataType.UWORD -> NumericLiteral(BaseDataType.UWORD, (constval.number.toInt().inv() and 65535).toDouble(), constval.position)
                 else -> throw ExpressionError("can only take bitwise inversion of int", constval.position)
             }
             "not" -> NumericLiteral.fromBoolean(constval.number==0.0, constval.position)
@@ -253,7 +254,7 @@ class BinaryExpression(
 
             // if left or right is a numeric literal, and its value fits in the type of the other operand, use the other's operand type
             // EXCEPTION: if the numeric value is a word and the other operand is a byte type (to allow   v * $0008  for example)
-            if (left is NumericLiteral) {
+            if (left is NumericLiteral && rightDt.isNumericOrBool) {
                 if(!(leftDt.isWord && rightDt.isByte)) {
                     val optimal = NumericLiteral.optimalNumeric(rightDt.base, null, left.number, left.position)
                     if (optimal.type != leftDt.base && DataType.forDt(optimal.type) isAssignableTo rightDt) {
@@ -261,7 +262,7 @@ class BinaryExpression(
                     }
                 }
             }
-            if (right is NumericLiteral) {
+            if (right is NumericLiteral && leftDt.isNumericOrBool) {
                 if(!(rightDt.isWord && leftDt.isByte)) {
                     val optimal = NumericLiteral.optimalNumeric(leftDt.base, null, right.number, right.position)
                     if (optimal.type != rightDt.base && DataType.forDt(optimal.type) isAssignableTo leftDt) {

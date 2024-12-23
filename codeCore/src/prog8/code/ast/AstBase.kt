@@ -3,7 +3,7 @@ package prog8.code.ast
 import prog8.code.core.IMemSizer
 import prog8.code.core.IStringEncoding
 import prog8.code.core.Position
-import prog8.code.core.SourceCode
+import prog8.code.source.SourceCode
 import java.nio.file.Path
 
 // New simplified AST for the code generator.
@@ -99,7 +99,7 @@ class PtInlineAssembly(val assembly: String, val isIR: Boolean, position: Positi
 class PtLabel(name: String, position: Position) : PtNamedNode(name, position) {
     companion object {
         // all automatically generated labels everywhere need to have the same label name prefix:
-        const val GeneratedLabelPrefix = "p8_label_gen_"
+        const val GENERATED_LABEL_PREFIX = "p8_label_gen_"
     }
 }
 

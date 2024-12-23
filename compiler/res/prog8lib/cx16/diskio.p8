@@ -436,7 +436,9 @@ _line_end   dey     ; get rid of the trailing end-of-line char
             sta  (P8ZP_SCRATCH_W1),y
 _end        jsr  cbm.READST
             pha
+            phy
             jsr  cbm.CLRCHN
+            ply
             pla
             rts
         }}
@@ -666,13 +668,17 @@ io_error:
     ; NOTE: data is read into the current Ram bank if you're reading into banked ram.
     ;       if you require loading into another ram bank, you have to set that
     ;       yourself using cx16.rambank(bank) before calling load().
+    ; NOTE: if the file is loaded in a hiram bank, and fills the bank exactly to the end ($bfff),
+    ;       the return address will still be one higher. Which means, because the Kernal
+    ;       load routine is bank-aware, it will return $a000 and will have switched to the next hiram bank!
+    ;       So you'll have to reset the ram bank with cx16.rambank() to switch back to the bank that the data was put in.
     sub load(uword filenameptr, uword address_override) -> uword {
         return internal_load_routine(filenameptr, address_override, false)
     }
 
     ; Identical to load(), but DOES INCLUDE the first 2 bytes in the file.
     ; No program header is assumed in the file. Everything is loaded.
-    ; See comments on load() for more details.
+    ; See comments on load() for more details. Including the banking behavior on the X16.
     sub load_raw(uword filenameptr, uword startaddress) -> uword {
         return internal_load_routine(filenameptr, startaddress, true)
     }
@@ -734,6 +740,24 @@ io_error:
         void cbm.OPEN()
         cbm.CLRCHN()
         cbm.CLOSE(15)
+    }
+
+    sub get_loadaddress(str filename) -> uword {
+        ; get the load adress from a PRG file (usually $0801 but it can be different)
+
+        cbm.SETNAM(strings.length(filename), filename)
+        cbm.SETLFS(READ_IO_CHANNEL, drivenumber, READ_IO_CHANNEL)
+        void cbm.OPEN()          ; open 12,8,12,"filename"
+        cx16.r0 = 0
+        if_cc {
+            void cbm.CHKIN(READ_IO_CHANNEL)
+            cx16.r0L = cbm.CHRIN()
+            cx16.r0H = cbm.CHRIN()
+            if cbm.READST()!=0
+                cx16.r0 = 0
+        }
+        cbm.CLOSE(READ_IO_CHANNEL)
+        return cx16.r0
     }
 
 
