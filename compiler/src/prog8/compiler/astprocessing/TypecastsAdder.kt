@@ -3,7 +3,7 @@ package prog8.compiler.astprocessing
 import prog8.ast.IFunctionCall
 import prog8.ast.Node
 import prog8.ast.Program
-import prog8.ast.base.FatalAstException
+import prog8.ast.FatalAstException
 import prog8.ast.expressions.*
 import prog8.ast.statements.*
 import prog8.ast.walk.AstWalker
@@ -264,7 +264,7 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                         }
                     } else if(targetDt==BaseDataType.BOOL) {
                         addTypecastOrCastedValueModification(modifications, it.second, BaseDataType.BOOL, call as Node)
-                    } else if(argDt isAssignableTo DataType.forDt(targetDt)) {
+                    } else if(!targetDt.isIterable && argDt isAssignableTo DataType.forDt(targetDt)) {
                         if(!argDt.isString || targetDt!=BaseDataType.UWORD)
                             addTypecastOrCastedValueModification(modifications, it.second, targetDt, call as Node)
                     }

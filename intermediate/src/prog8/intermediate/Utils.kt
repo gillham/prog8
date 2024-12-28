@@ -18,7 +18,7 @@ fun DataType.irTypeString(length: Int?): String {
         BaseDataType.FLOAT -> "float"
         BaseDataType.STR -> "ubyte[$lengthStr]"             // here string doesn't exist as a seperate datatype anymore
         BaseDataType.ARRAY -> {
-            when(this.sub?.dt) {
+            when(this.sub) {
                 BaseDataType.UBYTE -> "ubyte[$lengthStr]"
                 BaseDataType.UWORD -> "uword[$lengthStr]"
                 BaseDataType.BYTE -> "byte[$lengthStr]"
@@ -29,7 +29,7 @@ fun DataType.irTypeString(length: Int?): String {
             }
         }
         BaseDataType.ARRAY_SPLITW -> {
-            when(this.sub?.dt) {
+            when(this.sub) {
                 BaseDataType.UWORD -> "uword[$lengthStr]"       // should be 2 separate byte arrays by now really?
                 BaseDataType.WORD -> "word[$lengthStr]"          // should be 2 separate byte arrays by now really?
                 else -> throw IllegalArgumentException("invalid sub type")
@@ -137,8 +137,8 @@ fun parseIRCodeLine(line: String): Either<IRInstruction, String> {
                 if (fpReg1 == null) fpReg1 = oper.substring(2).toInt()
                 else if (fpReg2 == null) fpReg2 = oper.substring(2).toInt()
                 else throw IRParseException("too many fp register operands")
-            } else if (oper[0].isDigit() || oper[0] == '$' || oper[0] == '%' || oper[0] == '-' || oper.startsWith("0x")) {
-                val value = parseIRValue(oper)
+            } else if (oper[0] in "0123456789$%-#" || oper.startsWith("0x")) {
+                val value = if(oper[0]=='#') parseIRValue(oper.drop(1)) else parseIRValue(oper)
                 if (format.immediate) {
                     if (immediateInt == null && immediateFp == null) {
                         if (type == IRDataType.FLOAT)

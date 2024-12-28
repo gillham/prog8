@@ -7,6 +7,7 @@ import prog8.code.source.ImportFileSystem
 import java.nio.file.Path
 import javax.xml.stream.XMLOutputFactory
 import javax.xml.stream.XMLStreamWriter
+import kotlin.io.path.absolute
 import kotlin.io.path.bufferedWriter
 import kotlin.io.path.div
 
@@ -148,10 +149,13 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
             if(code.sourceLinesPositions.any {it !== Position.DUMMY}) {
                 xml.writeStartElement("P8SRC")
                 val sourceTxt = StringBuilder("\n")
-                code.sourceLinesPositions.filter{ pos -> pos.line>0 }.forEach { pos ->
-                    val line = ImportFileSystem.retrieveSourceLine(pos)
-                    sourceTxt.append("$pos  $line\n")
-                }
+                code.sourceLinesPositions
+                    .filter{ pos -> pos.line > 0 }
+                    .sortedBy { it.line }
+                    .forEach { pos ->
+                        val line = ImportFileSystem.retrieveSourceLine(pos)
+                        sourceTxt.append("$pos  $line\n")
+                    }
                 xml.writeCData(sourceTxt.toString())
                 xml.writeEndElement()
             }
@@ -195,7 +199,7 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
         }
         xml.writeCharacters("loadAddress=${irProgram.options.loadAddress.toHex()}\n")
         xml.writeCharacters("optimize=${irProgram.options.optimize}\n")
-        xml.writeCharacters("outputDir=${irProgram.options.outputDir.toAbsolutePath()}\n")
+        xml.writeCharacters("outputDir=${irProgram.options.outputDir.absolute()}\n")
         // other options not yet useful here?
         xml.writeEndElement()
         xml.writeCharacters("\n\n")
@@ -210,6 +214,17 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
             } else {
                 xml.writeCharacters("${variable.typeString} ${variable.name} zp=${variable.zpwish} align=${variable.align}\n")
             }
+        }
+
+        fun writeConstant(constant: IRStConstant) {
+            val dt = constant.dt
+            val value: String = when {
+                dt.isBool -> constant.value.toInt().toString()
+                dt.isFloat -> constant.value.toString()
+                dt.isInteger -> constant.value.toInt().toHex()
+                else -> throw InternalCompilerException("weird dt")
+            }
+            xml.writeCharacters("${constant.typeString} ${constant.name}=$value\n")
         }
 
         fun writeVarWithInit(variable: IRStStaticVariable) {
@@ -240,7 +255,7 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
                 val value: String = when {
                     dt.isBool -> variable.onetimeInitializationNumericValue?.toInt()?.toString() ?: ""
                     dt.isFloat -> (variable.onetimeInitializationNumericValue ?: "").toString()
-                    dt.isNumeric -> variable.onetimeInitializationNumericValue?.toInt()?.toHex() ?: ""
+                    dt.isInteger -> variable.onetimeInitializationNumericValue?.toInt()?.toHex() ?: ""
                     dt.isString -> {
                         val encoded = irProgram.encoding.encodeString(variable.onetimeInitializationStringValue!!.first, variable.onetimeInitializationStringValue.second) + listOf(0u)
                         encoded.joinToString(",") { it.toInt().toString() }
@@ -285,18 +300,25 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
         for (variable in noinitAligned.sortedBy { it.align }) {
             writeNoInitVar(variable)
         }
-
         xml.writeEndElement()
         xml.writeCharacters("\n")
+
         xml.writeStartElement("VARIABLESWITHINIT")
         xml.writeCharacters("\n")
-
         val (initNotAligned, initAligned) = variablesWithInit.partition { it.align==0 || it.align==1 }
         for (variable in initNotAligned) {
             writeVarWithInit(variable)
         }
         for (variable in initAligned.sortedBy { it.align }) {
             writeVarWithInit(variable)
+        }
+        xml.writeEndElement()
+        xml.writeCharacters("\n")
+
+        xml.writeStartElement("CONSTANTS")
+        xml.writeCharacters("\n")
+        for (constant in irProgram.st.allConstants()) {
+            writeConstant(constant)
         }
         xml.writeEndElement()
         xml.writeCharacters("\n")

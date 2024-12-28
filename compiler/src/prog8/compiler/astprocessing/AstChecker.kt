@@ -1,8 +1,8 @@
 package prog8.compiler.astprocessing
 
 import prog8.ast.*
-import prog8.ast.base.FatalAstException
-import prog8.ast.base.SyntaxError
+import prog8.ast.FatalAstException
+import prog8.ast.SyntaxError
 import prog8.ast.expressions.*
 import prog8.ast.statements.*
 import prog8.ast.walk.IAstVisitor
@@ -533,7 +533,7 @@ internal class AstChecker(private val program: Program,
                 errors.err("identifiers cannot start with an underscore", p.position)
 
             if(p.type.isPassByRef && !p.type.isString && !p.type.isUnsignedByteArray) {
-                errors.err("this pass-by-reference type can't be used as a parameter type. Instead, use an uword to receive the address, or access the variable from the outer scope directly.", p.position)
+                errors.err("this pass-by-reference type can't be used as a parameter type. Instead, use just 'uword' to receive the address, or maybe don't pass the value via a parameter but access it directly.", p.position)
             }
         }
     }
@@ -642,7 +642,7 @@ internal class AstChecker(private val program: Program,
         fcallTarget.returntypes.zip(targets).withIndex().forEach { (index, p) ->
             val (returnType, target) = p
             val targetDt = target.inferType(program).getOrUndef()
-            if (!target.void && !(returnType isAssignableTo targetDt))
+            if (!target.void && returnType != targetDt)
                 errors.err("can't assign returnvalue #${index + 1} to corresponding target; $returnType vs $targetDt", target.position)
         }
     }
@@ -703,7 +703,12 @@ internal class AstChecker(private val program: Program,
         if (variable!=null) {
             if (variable.type == VarDeclType.CONST && addressOf.arrayIndex == null)
                 errors.err("invalid pointer-of operand type",addressOf.position)
+
+            if(addressOf.arrayIndex!=null && variable.datatype.isSplitWordArray) {
+                errors.err("cannot take the adress of a word element that is in a split-word array", addressOf.position)
+            }
         }
+
         super.visit(addressOf)
     }
 
@@ -1467,18 +1472,18 @@ internal class AstChecker(private val program: Program,
             }
 
             if(funcName[0] in InplaceModifyingBuiltinFunctions) {
-                // in-place modification, can't be done on literals
+                // in-place modification, can be done on specific types of arguments only (variables, array elements)
                 if(funcName[0]=="setlsb" || funcName[0]=="setmsb") {
                     val firstArg = functionCallStatement.args[0]
                     if(firstArg !is IdentifierReference && firstArg !is ArrayIndexedExpression)
-                        errors.err("invalid argument to a in-place modifying function", firstArg.position)
+                        errors.err("this function can only act on an identifier or array element", firstArg.position)
                 } else if(funcName[0]=="divmod" || funcName[0].startsWith("divmod__")) {
                     val thirdArg = functionCallStatement.args[2]
                     val fourthArg = functionCallStatement.args[3]
                     if(thirdArg !is IdentifierReference && thirdArg !is ArrayIndexedExpression)
-                        errors.err("invalid argument to a in-place modifying function", thirdArg.position)
+                        errors.err("this function can only act on an identifier or array element", thirdArg.position)
                     if(fourthArg !is IdentifierReference && fourthArg !is ArrayIndexedExpression)
-                        errors.err("invalid argument to a in-place modifying function", fourthArg.position)
+                        errors.err("this function can only act on an identifier or array element", fourthArg.position)
                 } else {
                     if(functionCallStatement.args.any { it !is IdentifierReference && it !is ArrayIndexedExpression && it !is DirectMemoryRead })
                         errors.err("invalid argument to a in-place modifying function", functionCallStatement.args.first().position)

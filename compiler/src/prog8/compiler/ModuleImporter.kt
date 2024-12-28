@@ -3,7 +3,7 @@ package prog8.compiler
 import com.github.michaelbull.result.*
 import prog8.ast.Module
 import prog8.ast.Program
-import prog8.ast.base.SyntaxError
+import prog8.ast.SyntaxError
 import prog8.ast.statements.Directive
 import prog8.ast.statements.DirectiveArg
 import prog8.code.core.IErrorReporter
@@ -135,7 +135,7 @@ class ModuleImporter(private val program: Program,
             if (importingModule == null) { // <=> imported from library module
                 sourcePaths
             } else {
-                val pathFromImportingModule = (Path(importingModule.position.file).parent ?: Path("")).absolute()
+                val pathFromImportingModule = (Path(importingModule.position.file).parent ?: Path("")).absolute().normalize()
                 listOf(pathFromImportingModule) + sourcePaths
             }
 

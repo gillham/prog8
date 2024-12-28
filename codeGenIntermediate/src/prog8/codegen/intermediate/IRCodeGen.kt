@@ -25,7 +25,7 @@ class IRCodeGen(
         verifyNameScoping(program, symbolTable)
         changeGlobalVarInits(symbolTable)
 
-        val irSymbolTable = IRSymbolTable.fromStDuringCodegen(symbolTable)
+        val irSymbolTable = IRSymbolTable.fromAstSymboltable(symbolTable)
         val irProg = IRProgram(program.name, irSymbolTable, options, program.encoding)
 
         // collect global variables initializers
@@ -477,9 +477,8 @@ class IRCodeGen(
                     }
                     else -> {
                         // iterate over regular array
-                        val element = iterable.type.sub!!
-                        val elementDt = element.dt
-                        val elementSize = program.memsizer.memorySize(element)
+                        val elementDt = iterable.type.sub!!
+                        val elementSize = program.memsizer.memorySize(elementDt)
                         val lengthBytes = iterableLength!! * elementSize
                         addInstr(result, IRInstruction(Opcode.LOAD, IRDataType.BYTE, reg1=indexReg, immediate = 0), null)
                         result += IRCodeChunk(loopLabel, null).also {
@@ -487,7 +486,7 @@ class IRCodeGen(
                             it += IRInstruction(Opcode.STOREM, irType(DataType.forDt(elementDt)), reg1=tmpReg, labelSymbol = loopvarSymbol)
                         }
                         result += translateNode(forLoop.statements)
-                        result += addConstReg(IRDataType.BYTE, indexReg, elementSize)
+                        result += addConstIntToReg(IRDataType.BYTE, indexReg, elementSize)
                         result += IRCodeChunk(null, null).also {
                             if(lengthBytes!=256) {
                                 // for length 256, the compare is actually against 0, which doesn't require a separate CMP instruction
@@ -640,7 +639,7 @@ class IRCodeGen(
         return result
     }
 
-    private fun addConstReg(dt: IRDataType, reg: Int, value: Int): IRCodeChunk {
+    private fun addConstIntToReg(dt: IRDataType, reg: Int, value: Int): IRCodeChunk {
         val code = IRCodeChunk(null, null)
         when(value) {
             0 -> { /* do nothing */ }
@@ -1349,7 +1348,7 @@ class IRCodeGen(
 
         val condition = ifElse.condition as? PtBinaryExpression
         if(condition==null || !condition.left.type.isFloat) {
-            return ifWithElse_IntegerCond(ifElse)
+            return ifElse_IntegerCond(ifElse)
         }
 
         // we assume only a binary expression can contain a floating point.
@@ -1409,7 +1408,7 @@ class IRCodeGen(
         return result
     }
 
-    private fun ifWithElse_IntegerCond(ifElse: PtIfElse): List<IRCodeChunkBase> {
+    private fun ifElse_IntegerCond(ifElse: PtIfElse): List<IRCodeChunkBase> {
         val result = mutableListOf<IRCodeChunkBase>()
 
         fun translateSimple(condition: PtExpression, jumpFalseOpcode: Opcode, addCmpiZero: Boolean) {

@@ -61,7 +61,7 @@ private fun prepareTestFiles(source: String, optimize: Boolean, target: ICompila
     }
     val filepath = searchIn.asSequence()
         .map { it.resolve("$source.p8") }
-        .map { it.normalize().absolute() }
+        .map { it.absolute().normalize() }
         .map { workingDir.relativize(it) }
         .first { it.exists() }
     val displayName = "${examplesDir.relativize(filepath.absolute())}: ${target.name}, optimize=$optimize"
@@ -172,7 +172,6 @@ class TestCompilerOnExamplesBothC64andCx16: FunSpec({
         listOf(
             "animals",
             "balls",
-            "coroutines",
             "cube3d",
             "cube3d-float",
             "cube3d-gfx",
@@ -182,6 +181,7 @@ class TestCompilerOnExamplesBothC64andCx16: FunSpec({
             "maze",
             "mandelbrot",
             "mandelbrot-gfx",
+            "multitasking",
             "numbergame",
             "primes",
             "queens",

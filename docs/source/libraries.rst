@@ -221,13 +221,6 @@ callfar2 (bank, address, argA, argX, argY, argCarry) -> uword
     Identical to ``callfar``, except here you can give arguments not only for AY,
     but for each of the A, X and Y registers (each an ubyte) and the Carry status bit as well (a boolean).
 
-syscall (callnr), syscall1 (callnr, arg), syscall2 (callnr, arg1, arg2), syscall3 (callnr, arg1, arg2, arg3)
-    Functions for doing a system call on targets that support this. Currently no actual target
-    uses this though except, possibly, the experimental code generation target!
-    The regular 6502 based compiler targets just use a subroutine call to asmsub Kernal routines at
-    specific memory locations. So these builtin function calls are not useful yet except for
-    experimentation in new code generation targets.
-
 rsave
     Saves all registers including status (or only X) on the stack
     Note: the 16 bit 'virtual' registers of the Commander X16 are *not* saved,
@@ -367,6 +360,19 @@ Routines to convert strings to numbers or vice versa.
 
 Read the `conv source code <https://github.com/irmen/prog8/tree/master/compiler/res/prog8lib/conv.p8>`_
 to see what's in there.
+
+
+coroutines (experimental)
+-------------------------
+Provides a system to make cooperative multitasking programs via coroutines.
+A 'coroutine' is a subroutine whose execution you can pause and resume.
+This library handles the voodoo for you to switch between such coroutines transparently,
+so it can seem that your program is executing many subroutines at the same time.
+
+API is experimental and may change or disappear in a future version.
+
+Read the `coroutines source code <https://github.com/irmen/prog8/tree/master/compiler/res/prog8lib/coroutines.p8>`_
+to see what's in there. And look at the ``multitasking`` example to see how it can be used.
 
 
 cx16
@@ -1079,13 +1085,19 @@ sys (part of syslib)
 
 ``pushw (value)``
     pushes a 16-bit word value on the CPU hardware stack. Low-level function that should normally not be used.
+    Don't assume anything about the order in which the bytes are pushed - popw will make sense of them again.
+
+``push_returnaddress (address)``
+    pushes a 16 bit memory address on the CPU hardware stack in the same byte order as a JSR instruction would,
+    which means the next RTS instruction will jump to that address instead.you
+    You cannot use pushw() for this because the bytes pushed by JSR are different
 
 ``pop ()``
     pops a byte value off the CPU hardware stack and returns it.
     Low-level function that should normally not be used.
 
 ``popw ()``
-    pops a 16-bit word value off the CPU hardware stack and returns it.
+    pops a 16-bit word value off the CPU hardware stack that was pushed before by pushw, and returns it.
     Low-level function that should normally not be used.
 
 

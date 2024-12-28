@@ -1,7 +1,6 @@
 package prog8.ast.statements
 
 import prog8.ast.*
-import prog8.ast.base.FatalAstException
 import prog8.ast.expressions.*
 import prog8.ast.walk.AstWalker
 import prog8.ast.walk.IAstVisitor
@@ -285,8 +284,8 @@ class VarDecl(val type: VarDeclType,
             if(arrayDt.isSplitWordArray) {
                 // autovars for array literals are NOT stored as a split word array!
                 when(arrayDt.sub) {
-                    is SubSignedWord -> arrayDt = DataType.arrayFor(BaseDataType.WORD, false)
-                    is SubUnsignedWord -> arrayDt = DataType.arrayFor(BaseDataType.UWORD, false)
+                    BaseDataType.WORD -> arrayDt = DataType.arrayFor(BaseDataType.WORD, false)
+                    BaseDataType.UWORD -> arrayDt = DataType.arrayFor(BaseDataType.UWORD, false)
                     else -> { }
                 }
             }

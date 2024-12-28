@@ -1,6 +1,5 @@
 package prog8.ast
 
-import prog8.ast.base.FatalAstException
 import prog8.ast.expressions.Expression
 import prog8.ast.expressions.IdentifierReference
 import prog8.ast.expressions.InferredTypes
@@ -384,7 +383,5 @@ fun defaultZero(dt: BaseDataType, position: Position) = when(dt) {
     BaseDataType.FLOAT -> NumericLiteral(BaseDataType.FLOAT, 0.0, position)
     else -> throw FatalAstException("can only determine default zero value for a numeric type")
 }
-
-fun defaultZero(dt: SubType, position: Position) = defaultZero(dt.dt, position)
 
 fun defaultZero(idt: InferredTypes.InferredType, position: Position) = defaultZero(idt.getOrUndef().base, position)
