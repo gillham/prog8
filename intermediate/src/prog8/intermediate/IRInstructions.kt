@@ -1,5 +1,6 @@
 package prog8.intermediate
 
+import prog8.code.core.AssemblyError
 import prog8.code.core.RegisterOrStatusflag
 import prog8.code.core.toHex
 
@@ -40,13 +41,15 @@ loadm       reg1,         address     - load reg1 with value at memory address
 loadi       reg1, reg2                - load reg1 with value at memory indirect, memory pointed to by reg2
 loadx       reg1, reg2,   address     - load reg1 with value at memory address indexed by value in reg2 (only the lsb part used for indexing)
 loadix      reg1, reg2,   pointeraddr - load reg1 with value at memory indirect, pointed to by pointeraddr indexed by value in reg2 (only the lsb part used for indexing)
-loadr       reg1, reg2                - load reg1 with value in register reg2
+loadr       reg1, reg2                - load reg1 with value in register reg2,  "reg1 = reg2"
 loadha      reg1                      - load cpu hardware register A into reg1.b
 loadhx      reg1                      - load cpu hardware register X into reg1.b
 loadhy      reg1                      - load cpu hardware register Y into reg1.b
 loadhax     reg1                      - load cpu hardware register pair AX into reg1.w
 loadhay     reg1                      - load cpu hardware register pair AY into reg1.w
 loadhxy     reg1                      - load cpu hardware register pair XY into reg1.w
+loadfaczero       fpreg1              - load "cpu hardware register" fac0 into freg1.f
+loadfacone        fpreg1              - load "cpu hardware register" fac1 into freg1.f
 storem      reg1,         address     - store reg1 at memory address
 storei      reg1, reg2                - store reg1 at memory indirect, memory pointed to by reg2
 storex      reg1, reg2,   address     - store reg1 at memory address, indexed by value in reg2 (only the lsb part used for indexing)
@@ -60,12 +63,14 @@ storehy     reg1                      - store reg1.b into cpu hardware register 
 storehax    reg1                      - store reg1.w into cpu hardware register pair AX
 storehay    reg1                      - store reg1.w into cpu hardware register pair AY
 storehxy    reg1                      - store reg1.w into cpu hardware register pair XY
+storehfaczero        fpreg1           - store fpreg1.f into "cpu register" fac0
+storehfacone         fpreg1           - store fpreg1.f into "cpu register" fac1
 
 
 CONTROL FLOW
 ------------
 jump                    location      - continue running at instruction at 'location' (label/memory address)
-jumpi       rqg1                      - continue running at memory address in reg1  (indirect jump)
+jumpi       reg1                      - continue running at memory address in reg1  (indirect jump)
 preparecall numparams                 - indicator that the next instructions are the param setup and function call/syscall with <numparams> parameters
 calli       reg1                      - calls a subroutine (without arguments and without return valus) at memory addres in reg1 (indirect jsr)
 call   label(argument register list) [: resultreg.type]
@@ -79,7 +84,8 @@ call   label(argument register list) [: resultreg.type]
 syscall   number (argument register list) [: resultreg.type]
                                       - do a systemcall identified by number, result value(s) are pushed on value stack by the syscall code so
                                         will be POPped off into the given resultregister if any.
-                                        Always preceded by parameter setup and preparecall instructions
+                                        Always preceded by parameter setup and preparecall instructions.
+                                        All register types (arguments + result register) are ALWAYS WORDS.
 return                                - restore last saved instruction location and continue at that instruction. No return value.
 returnr     reg1                      - like return, but also returns the value in reg1 to the caller
 returni            number             - like return, but also returns the immediate value to the caller
@@ -118,22 +124,6 @@ bges        reg1, value,      address   - jump to location in program given by l
 bles        reg1, value,      address   - jump to location in program given by location, if reg1 <= immediate value (signed)
 bgesr       reg1, reg2,       address   - jump to location in program given by location, if reg1 >= reg2 (signed)
 'blesr'     reg1, reg2,       address   - jump to location in program given by location, if reg1 <= reg2 (signed) ==> use bgesr with swapped operands
-
-scc         reg1                        - set reg1=1 if Carry flag is clear, else 0
-scs         reg1                        - set reg1=1 if Carry flag is set, else 0
-sz          reg1, reg2                  - set reg1=1 if reg2==0, else 0
-snz         reg1, reg2                  - set reg1=1 if reg2!=0, else 0
-seq         reg1, reg2, reg3            - set reg1=1 if reg2 == reg3, else 0
-sne         reg1, reg2, reg3            - set reg1=1 if reg2 != reg3, else 0
-slt         reg1, reg2, reg3            - set reg1=1 if reg2 < reg3 (unsigned), else 0
-slts        reg1, reg2, reg3            - set reg1=1 if reg2 < reg3 (signed), else 0
-sle         reg1, reg2, reg3            - set reg1=1 if reg2 <= reg3 (unsigned), else 0
-sles        reg1, reg2, reg3            - set reg1=1 if reg2 <= reg3 (signed), else 0
-sgt         reg1, reg2, reg3            - set reg1=1 if reg2 > reg3 (unsigned), else 0
-sgts        reg1, reg2, reg3            - set reg1=1 if reg2 > reg3 (signed), else 0
-sge         reg1, reg2, reg3            - set reg1=1 if reg2 >= reg3 (unsigned), else 0
-sges        reg1, reg2, reg3            - set reg1=1 if reg2 >= reg3 (signed), else 0
-(note: on the M68k these instructions will set all bits to 1 (so value=-1 instead of 1), but the boolean logic here requires it to be 0 or 1 in this IR)
 
 
 ARITHMETIC
@@ -211,6 +201,7 @@ rorm                     address             - rotate memory right by 1 bits, no
 roxrm                    address             - rotate memory right by 1 bits, using carry  + set Carry to shifted bit
 rolm                     address             - rotate memory left by 1 bits, not using carry  + set Carry to shifted bit
 roxlm                    address             - rotate memory left by 1 bits, using carry,  + set Carry to shifted bit
+bit                      address             - test bits in byte value at address, this is a special instruction available on other systems to optimize testing and branching on bits 7 and 6
 
 
 FLOATING POINT CONVERSIONS AND FUNCTIONS
@@ -246,6 +237,8 @@ cli                                       - clear interrupt disable flag
 sei                                       - set interrupt disable flag
 nop                                       - do nothing
 breakpoint                                - trigger a breakpoint
+align        alignmentvalue               - represents a memory alignment directive
+lsig [b, w]   reg1, reg2                  - reg1 becomes the least significant byte (or word) of the word (or int) in reg2  (.w not yet implemented; requires 32 bits regs)
 msig [b, w]   reg1, reg2                  - reg1 becomes the most significant byte (or word) of the word (or int) in reg2  (.w not yet implemented; requires 32 bits regs)
 concat [b, w] reg1, reg2, reg3            - reg1.w = 'concatenate' two registers: lsb/lsw of reg2 (as msb) and lsb/lsw of reg3 (as lsb) into word or int (int not yet implemented; requires 32bits regs)
 push [b, w, f]   reg1                     - push value in reg1 on the stack
@@ -268,6 +261,8 @@ enum class Opcode {
     LOADHAX,
     LOADHAY,
     LOADHXY,
+    LOADHFACZERO,
+    LOADHFACONE,
     STOREM,
     STOREI,
     STOREX,
@@ -281,6 +276,8 @@ enum class Opcode {
     STOREHAX,
     STOREHAY,
     STOREHXY,
+    STOREHFACZERO,
+    STOREHFACONE,
 
     JUMP,
     JUMPI,
@@ -312,20 +309,6 @@ enum class Opcode {
     BGESR,
     BGES,
     BLES,
-    SCC,
-    SCS,
-    SZ,
-    SNZ,
-    SEQ,
-    SNE,
-    SLT,
-    SLTS,
-    SGT,
-    SGTS,
-    SLE,
-    SLES,
-    SGE,
-    SGES,
 
     INC,
     INCM,
@@ -391,6 +374,7 @@ enum class Opcode {
     ROLM,
     ROXL,
     ROXLM,
+    BIT,
 
     FFROMUB,
     FFROMSB,
@@ -421,9 +405,11 @@ enum class Opcode {
     POP,
     PUSHST,
     POPST,
+    LSIG,
     MSIG,
     CONCAT,
-    BREAKPOINT
+    BREAKPOINT,
+    ALIGN
 }
 
 val OpcodesThatJump = arrayOf(
@@ -466,6 +452,7 @@ val OpcodesThatBranch = arrayOf(
 )
 
 val OpcodesThatSetStatusbitsIncludingCarry = arrayOf(
+    Opcode.BIT,
     Opcode.CMP,
     Opcode.CMPI
 )
@@ -508,23 +495,6 @@ val OpcodesThatDependOnCarry = arrayOf(
     Opcode.ROXLM,
     Opcode.ROXR,
     Opcode.ROXRM,
-)
-
-val OpcodesThatSetRegFromStatusbits = arrayOf(
-    Opcode.SCC,
-    Opcode.SCS,
-    Opcode.SZ,
-    Opcode.SNZ,
-    Opcode.SEQ,
-    Opcode.SNE,
-    Opcode.SLT,
-    Opcode.SLTS,
-    Opcode.SGT,
-    Opcode.SGTS,
-    Opcode.SLE,
-    Opcode.SLES,
-    Opcode.SGE,
-    Opcode.SGES
 )
 
 val OpcodesThatSetStatusbits = OpcodesThatSetStatusbitsButNotCarry + OpcodesThatSetStatusbitsIncludingCarry
@@ -630,6 +600,8 @@ val instructionFormats = mutableMapOf(
     Opcode.LOADHAX    to InstructionFormat.from("W,>r1"),
     Opcode.LOADHAY    to InstructionFormat.from("W,>r1"),
     Opcode.LOADHXY    to InstructionFormat.from("W,>r1"),
+    Opcode.LOADHFACZERO to InstructionFormat.from("F,>fr1"),
+    Opcode.LOADHFACONE  to InstructionFormat.from("F,>fr1"),
     Opcode.STOREM     to InstructionFormat.from("BW,<r1,>a     | F,<fr1,>a"),
     Opcode.STOREI     to InstructionFormat.from("BW,<r1,<r2    | F,<fr1,<r1"),
     Opcode.STOREX     to InstructionFormat.from("BW,<r1,<r2,>a | F,<fr1,<r1,>a"),
@@ -644,6 +616,8 @@ val instructionFormats = mutableMapOf(
     Opcode.STOREHAX   to InstructionFormat.from("W,<r1"),
     Opcode.STOREHAY   to InstructionFormat.from("W,<r1"),
     Opcode.STOREHXY   to InstructionFormat.from("W,<r1"),
+    Opcode.STOREHFACZERO  to InstructionFormat.from("F,<fr1"),
+    Opcode.STOREHFACONE  to InstructionFormat.from("F,<fr1"),
     Opcode.JUMP       to InstructionFormat.from("N,<a"),
     Opcode.JUMPI      to InstructionFormat.from("N,<r1"),
     Opcode.PREPARECALL to InstructionFormat.from("N,<i"),
@@ -673,20 +647,6 @@ val instructionFormats = mutableMapOf(
     Opcode.BGESR      to InstructionFormat.from("BW,<r1,<r2,<a"),
     Opcode.BGES       to InstructionFormat.from("BW,<r1,<i,<a"),
     Opcode.BLES       to InstructionFormat.from("BW,<r1,<i,<a"),
-    Opcode.SCC        to InstructionFormat.from("BW,>r1"),
-    Opcode.SCS        to InstructionFormat.from("BW,>r1"),
-    Opcode.SZ         to InstructionFormat.from("BW,>r1,<r2"),
-    Opcode.SNZ        to InstructionFormat.from("BW,>r1,<r2"),
-    Opcode.SEQ        to InstructionFormat.from("BW,<>r1,<r2,<r3"),
-    Opcode.SNE        to InstructionFormat.from("BW,<>r1,<r2,<r3"),
-    Opcode.SLT        to InstructionFormat.from("BW,<>r1,<r2,<r3"),
-    Opcode.SLTS       to InstructionFormat.from("BW,<>r1,<r2,<r3"),
-    Opcode.SGT        to InstructionFormat.from("BW,<>r1,<r2,<r3"),
-    Opcode.SGTS       to InstructionFormat.from("BW,<>r1,<r2,<r3"),
-    Opcode.SLE        to InstructionFormat.from("BW,<>r1,<r2,<r3"),
-    Opcode.SLES       to InstructionFormat.from("BW,<>r1,<r2,<r3"),
-    Opcode.SGE        to InstructionFormat.from("BW,<>r1,<r2,<r3"),
-    Opcode.SGES       to InstructionFormat.from("BW,<>r1,<r2,<r3"),
     Opcode.INC        to InstructionFormat.from("BW,<>r1      | F,<>fr1"),
     Opcode.INCM       to InstructionFormat.from("BW,<>a       | F,<>a"),
     Opcode.DEC        to InstructionFormat.from("BW,<>r1      | F,<>fr1"),
@@ -750,6 +710,7 @@ val instructionFormats = mutableMapOf(
     Opcode.ROLM       to InstructionFormat.from("BW,<>a"),
     Opcode.ROXL       to InstructionFormat.from("BW,<>r1"),
     Opcode.ROXLM      to InstructionFormat.from("BW,<>a"),
+    Opcode.BIT        to InstructionFormat.from("B,<a"),
 
     Opcode.FFROMUB    to InstructionFormat.from("F,>fr1,<r1"),
     Opcode.FFROMSB    to InstructionFormat.from("F,>fr1,<r1"),
@@ -772,6 +733,7 @@ val instructionFormats = mutableMapOf(
     Opcode.FFLOOR     to InstructionFormat.from("F,>fr1,<fr2"),
     Opcode.FCEIL      to InstructionFormat.from("F,>fr1,<fr2"),
 
+    Opcode.LSIG       to InstructionFormat.from("BW,>r1,<r2"),
     Opcode.MSIG       to InstructionFormat.from("BW,>r1,<r2"),
     Opcode.PUSH       to InstructionFormat.from("BW,<r1       | F,<fr1"),
     Opcode.POP        to InstructionFormat.from("BW,>r1       | F,>fr1"),
@@ -783,6 +745,7 @@ val instructionFormats = mutableMapOf(
     Opcode.CLI        to InstructionFormat.from("N"),
     Opcode.SEI        to InstructionFormat.from("N"),
     Opcode.BREAKPOINT to InstructionFormat.from("N"),
+    Opcode.ALIGN      to InstructionFormat.from("N,<i"),
 )
 
 
@@ -833,11 +796,11 @@ data class IRInstruction(
             }
         }
         if(labelSymbolOffset!=null) require(labelSymbolOffset>0 && labelSymbol!=null) {"labelsymbol offset inconsistency"}
-        require(reg1==null || reg1 in 0..65536) {"reg1 out of bounds"}
-        require(reg2==null || reg2 in 0..65536) {"reg2 out of bounds"}
-        require(reg3==null || reg3 in 0..65536) {"reg3 out of bounds"}
-        require(fpReg1==null || fpReg1 in 0..65536) {"fpReg1 out of bounds"}
-        require(fpReg2==null || fpReg2 in 0..65536) {"fpReg2 out of bounds"}
+        require(reg1==null || reg1 in 0..99999) {"reg1 out of bounds"}
+        require(reg2==null || reg2 in 0..99999) {"reg2 out of bounds"}
+        require(reg3==null || reg3 in 0..99999) {"reg3 out of bounds"}
+        require(fpReg1==null || fpReg1 in 0..99999) {"fpReg1 out of bounds"}
+        require(fpReg2==null || fpReg2 in 0..99999) {"fpReg2 out of bounds"}
         if(reg1!=null && reg2!=null) require(reg1!=reg2) {"reg1 must not be same as reg2"}  // note: this is ok for fpRegs as these are always the same type
         if(reg1!=null && reg3!=null) require(reg1!=reg3) {"reg1 must not be same as reg3"}  // note: this is ok for fpRegs as these are always the same type
         if(reg2!=null && reg3!=null) require(reg2!=reg3) {"reg2 must not be same as reg3"}  // note: this is ok for fpRegs as these are always the same type
@@ -893,6 +856,20 @@ data class IRInstruction(
 
         if(opcode==Opcode.SYSCALL) {
             requireNotNull(immediate) { "syscall needs immediate integer for the syscall number" }
+            val callRegisters = fcallArgs?.arguments?.map { it.reg.registerNum } ?: emptyList()
+            val returnRegisters = fcallArgs?.returns?.map { it.registerNum } ?: emptyList()
+
+            val reused = callRegisters.intersect(returnRegisters)
+            if(reused.isNotEmpty()) {
+                for(r in reused) {
+                    val argType = fcallArgs!!.arguments.single { it.reg.registerNum==r }.reg.dt
+                    val returnType = fcallArgs.returns.single { it.registerNum==r }.dt
+                    if (argType!=IRDataType.FLOAT && returnType!=IRDataType.FLOAT) {
+                        if(argType!=returnType)
+                            throw AssemblyError("syscall cannot reuse argument register as return register with different type $this")
+                    }
+                }
+            }
         }
     }
 
@@ -901,42 +878,48 @@ data class IRInstruction(
         writeRegsCounts: MutableMap<Int, Int>,
         readFpRegsCounts: MutableMap<Int, Int>,
         writeFpRegsCounts: MutableMap<Int, Int>,
-        regsTypes: MutableMap<Int, MutableSet<IRDataType>>
+        regsTypes: MutableMap<Int, IRDataType>,
+        chunk: IRCodeChunk?
     ) {
         when (this.reg1direction) {
             OperandDirection.UNUSED -> {}
             OperandDirection.READ -> {
                 readRegsCounts[this.reg1!!] = readRegsCounts.getValue(this.reg1)+1
-                if(type!=null) {
-                    var types = regsTypes[this.reg1]
-                    if(types==null) types = mutableSetOf()
-                    types += type
-                    regsTypes[this.reg1] = types
+                val actualtype = determineReg1Type()
+                if(actualtype!=null) {
+                    val existingType = regsTypes[reg1]
+                    if (existingType!=null) {
+                        if (existingType != actualtype)
+                            throw IllegalArgumentException("register $reg1 assigned multiple types! $existingType and $actualtype  in label ${chunk?.label} chunk $chunk")
+                    } else
+                        regsTypes[reg1] = actualtype
                 }
             }
             OperandDirection.WRITE -> {
                 writeRegsCounts[this.reg1!!] = writeRegsCounts.getValue(this.reg1)+1
-                if(type!=null) {
-                    var types = regsTypes[this.reg1]
-                    if(types==null) types = mutableSetOf()
-                    types += type
-                    regsTypes[this.reg1] = types
+                val actualtype = determineReg1Type()
+                if(actualtype!=null) {
+                    val existingType = regsTypes[reg1]
+                    if (existingType!=null) {
+                        if (existingType != actualtype)
+                            throw IllegalArgumentException("register $reg1 assigned multiple types! $existingType and $actualtype  in label ${chunk?.label} chunk $chunk")
+                    } else
+                        regsTypes[reg1] = actualtype
+
                 }
             }
             OperandDirection.READWRITE -> {
                 readRegsCounts[this.reg1!!] = readRegsCounts.getValue(this.reg1)+1
-                if(type!=null) {
-                    var types = regsTypes[this.reg1]
-                    if(types==null) types = mutableSetOf()
-                    types += type
-                    regsTypes[this.reg1] = types
-                }
                 writeRegsCounts[this.reg1] = writeRegsCounts.getValue(this.reg1)+1
-                if(type!=null) {
-                    var types = regsTypes[this.reg1]
-                    if(types==null) types = mutableSetOf()
-                    types += type
-                    regsTypes[this.reg1] = types
+                val actualtype = determineReg1Type()
+                if(actualtype!=null) {
+                    val existingType = regsTypes[reg1]
+                    if (existingType!=null) {
+                        if (existingType != actualtype)
+                            throw IllegalArgumentException("register $reg1 assigned multiple types! $existingType and $actualtype  in label ${chunk?.label} chunk $chunk")
+                    } else
+                        regsTypes[reg1] = actualtype
+
                 }
             }
         }
@@ -944,11 +927,14 @@ data class IRInstruction(
             OperandDirection.UNUSED -> {}
             OperandDirection.READ -> {
                 writeRegsCounts[this.reg2!!] = writeRegsCounts.getValue(this.reg2)+1
-                if(type!=null) {
-                    var types = regsTypes[this.reg2]
-                    if(types==null) types = mutableSetOf()
-                    types += type
-                    regsTypes[this.reg2] = types
+                val actualtype = determineReg2Type()
+                if(actualtype!=null) {
+                    val existingType = regsTypes[reg2]
+                    if (existingType!=null) {
+                        if (existingType != actualtype)
+                            throw IllegalArgumentException("register $reg2 assigned multiple types! $existingType and $actualtype  in label ${chunk?.label} chunk $chunk")
+                    } else
+                        regsTypes[reg2] = actualtype
                 }
             }
             else -> throw IllegalArgumentException("reg2 can only be read")
@@ -957,11 +943,14 @@ data class IRInstruction(
             OperandDirection.UNUSED -> {}
             OperandDirection.READ -> {
                 writeRegsCounts[this.reg3!!] = writeRegsCounts.getValue(this.reg3)+1
-                if(type!=null) {
-                    var types = regsTypes[this.reg3]
-                    if(types==null) types = mutableSetOf()
-                    types += type
-                    regsTypes[this.reg3] = types
+                val actualtype = determineReg3Type()
+                if(actualtype!=null) {
+                    val existingType = regsTypes[reg3]
+                    if (existingType!=null) {
+                        if (existingType != actualtype)
+                            throw IllegalArgumentException("register $reg3 assigned multiple types! $existingType and $actualtype  in label ${chunk?.label} chunk $chunk")
+                    } else
+                        regsTypes[reg3] = actualtype
                 }
             }
             else -> throw IllegalArgumentException("reg3 can only be read")
@@ -989,13 +978,12 @@ data class IRInstruction(
                     writeFpRegsCounts[it.registerNum] = writeFpRegsCounts.getValue(it.registerNum) + 1
                 else {
                     writeRegsCounts[it.registerNum] = writeRegsCounts.getValue(it.registerNum) + 1
-                    val types = regsTypes[it.registerNum]
-                    if (types == null) {
-                        regsTypes[it.registerNum] = mutableSetOf(it.dt)
-                    } else {
-                        types += it.dt
-                        regsTypes[it.registerNum] = types
-                    }
+                    val existingType = regsTypes[it.registerNum]
+                    if (existingType!=null) {
+                        if (existingType != it.dt)
+                            throw IllegalArgumentException("register ${it.registerNum} assigned multiple types! $existingType and ${it.dt}  in label ${chunk?.label} chunk $chunk")
+                    } else
+                        regsTypes[it.registerNum] = it.dt
                 }
             }
             fcallArgs.arguments.forEach {
@@ -1003,16 +991,60 @@ data class IRInstruction(
                     readFpRegsCounts[it.reg.registerNum] = readFpRegsCounts.getValue(it.reg.registerNum)+1
                 else {
                     readRegsCounts[it.reg.registerNum] = readRegsCounts.getValue(it.reg.registerNum) + 1
-                    val types = regsTypes[it.reg.registerNum]
-                    if(types==null) {
-                        regsTypes[it.reg.registerNum] = mutableSetOf(it.reg.dt)
-                    } else {
-                        types += it.reg.dt
-                        regsTypes[it.reg.registerNum] = types
-                    }
+                    val existingType = regsTypes[it.reg.registerNum]
+                    if (existingType!=null) {
+                        if (existingType != it.reg.dt)
+                            throw IllegalArgumentException("register ${it.reg.registerNum} assigned multiple types! $existingType and ${it.reg.dt}  in label ${chunk?.label} chunk $chunk")
+                    } else
+                        regsTypes[it.reg.registerNum] = it.reg.dt
                 }
             }
         }
+    }
+
+    private fun determineReg1Type(): IRDataType? {
+        if(type==IRDataType.FLOAT) {
+            // some float instructions have an integer register as well.
+            if(opcode in arrayOf(Opcode.FFROMUB, Opcode.FFROMSB, Opcode.FTOUB, Opcode.FTOSB, Opcode.FCOMP))
+                return IRDataType.BYTE
+            else
+                return IRDataType.WORD
+        }
+        if(opcode==Opcode.JUMPI || opcode==Opcode.CALLI || opcode==Opcode.STOREZI)
+            return IRDataType.WORD
+        if(opcode==Opcode.EXT || opcode==Opcode.EXTS)
+            return when(type) {
+                IRDataType.BYTE -> IRDataType.WORD
+                IRDataType.WORD -> TODO("ext.w into long type")
+                else -> null
+            }
+        if(opcode==Opcode.CONCAT)
+            return when(type) {
+                IRDataType.BYTE -> IRDataType.WORD
+                IRDataType.WORD -> TODO("concat.w from long type")
+                else -> null
+            }
+        if(opcode==Opcode.ASRNM || opcode==Opcode.LSRNM || opcode==Opcode.LSLNM || opcode==Opcode.SQRT)
+            return IRDataType.BYTE
+        return this.type
+    }
+
+    private fun determineReg2Type(): IRDataType? {
+        if(opcode==Opcode.LOADI || opcode==Opcode.STOREI)
+            return IRDataType.WORD
+        if(opcode==Opcode.MSIG || opcode==Opcode.LSIG)
+            return when(type) {
+                IRDataType.BYTE -> IRDataType.WORD
+                IRDataType.WORD -> TODO("msig/lsig.w from long type")
+                else -> null
+            }
+        if(opcode==Opcode.ASRN || opcode==Opcode.LSRN || opcode==Opcode.LSLN)
+            return IRDataType.BYTE
+        return this.type
+    }
+
+    private fun determineReg3Type(): IRDataType? {
+        return this.type
     }
 
     override fun toString(): String {

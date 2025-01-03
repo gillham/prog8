@@ -10,13 +10,10 @@ TODO
 Future Things and Ideas
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-- support &, &< and &> on array elements from split word arrays too not just the array as a whole  (to get rid of the error "&< is only valid on array variables"
-  and "cannot take the adress of a word element that is in a split-word array" and the TODOS "address of element of a split word array")
-- after that: fix leftover asmgen split word array todo's
+- reduce the number of collateral errors reported for undefined symbols
 - Kotlin: can we use inline value classes in certain spots?
 - Improve the SublimeText syntax file for prog8, you can also install this for 'bat': https://github.com/sharkdp/bat?tab=readme-ov-file#adding-new-syntaxes--language-definitions
 
-- don't do BIT instruction tests via makeBittestCall()  fake builtin function. Just do it in the code generator when it encounters the correct bitwise and sequence. (also IR)
 - Compiling Libraries: improve ability to create library files in prog8; for instance there's still stuff injected into the start of the start() routine AND there is separate setup logic going on before calling it.
   Make up our mind! Maybe all setup does need to be put into start() ? because the program cannot function correctly when the variables aren't initialized properly bss is not cleared etc. etc.
   Add a -library $xxxx command line option (and/or some directive) to preselect every setting that is required to make a library at $xxxx rather than a normal loadable and runnable program?
@@ -49,14 +46,21 @@ Future Things and Ideas
 
 IR/VM
 -----
+- getting it in shape for code generation...: the IR file should be able to encode every detail about a prog8 program (the VM doesn't have to actually be able to run all of it though!)
+- registerPool should have separate pools, one for byte and word registers each (and 1 for floats)?
+- add BZ and BNZ instructions?  To replace CMPI #0 + Branch?
 - fix TODO("IR rol/ror on split words array")
 - fix "<< in array" / ">> in array"
+- implement fast code paths for TODO("inplace split....
+- sometimes source lines end up missing in the output p8ir, for example the first assignment is gone in:
+     sub start() {
+         cx16.r0L = cx16.r1 as ubyte
+         cx16.r0sL = cx16.r1s as byte
+     }
 - implement missing operators in AssignmentGen  (array shifts etc)
-- support %align on code chunks
 - fix call() return value handling
-- fix float register parameters (FAC1,FAC2) for extsubs, search for TODO("floating point register parameters not supported")
+- try to get rid of LSIG opcode again (but this will introduce byte reads from word typed registers...)
 - proper code gen for the CALLI instruction and that it (optionally) returns a word value that needs to be assigned to a reg
-- make it possible to jump and branch to a computed address (expression) in all cases, see TODO("JUMP to expression address"
 - idea: (but LLVM IR simply keeps the variables, so not a good idea then?...): replace all scalar variables by an allocated register. Keep a table of the variable to register mapping (including the datatype)
   global initialization values are simply a list of LOAD instructions.
   Variables replaced include all subroutine parameters!  So the only variables that remain as variables are arrays and strings.
@@ -64,15 +68,11 @@ IR/VM
 - the @split arrays are currently also split in _lsb/_msb arrays in the IR, and operations take multiple (byte) instructions that may lead to verbose and slow operation and machine code generation down the line.
   maybe another representation is needed once actual codegeneration is done from the IR...?
 - split word arrays, both _msb and _lsb arrays are tagged with an alignment. This is not what's intended; only the one put in memory first should be aligned (the other one should follow straight after it)
-- getting it in shape for code generation...
-- make optimizeBitTest work for IR too to use the BIT instruction?
-- make sure that a 6502 codegen based off the IR, still generates BIT instructions when testing bit 7 or 6 of a byte var.
 - ExpressionCodeResult:  get rid of the separation between single result register and multiple result registers? maybe not, this requires hundreds of lines to change
 
 
 Libraries
 ---------
-- monogfx: flood fill should be able to fill stippled (it could do this in the past? vm version does it?)
 - Sorting module gnomesort_uw could be optimized more, rewrite in asm? Shellshort seems consistently faster even if most of the words are already sorted.
 - Add split-word array sorting routines to sorting module?
 - pet32 target: make syslib more complete (missing kernal routines)?

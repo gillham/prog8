@@ -104,14 +104,19 @@ io_error:
     }
 
     sub diskname() -> uword {
-        ; returns disk label name or 0 if error
-        cbm.SETNAM(3, "$")
+        ; -- Returns pointer to disk name string or 0 if failure.
+
+        cbm.SETNAM(1, "$")
         cbm.SETLFS(READ_IO_CHANNEL, drivenumber, 0)
-        ubyte status = 1
-        void cbm.OPEN()          ; open 12,8,0,"$=c"
+        bool okay = false
+        void cbm.OPEN()          ; open 12,8,0,"$"
         if_cs
             goto io_error
         reset_read_channel()
+
+        void cbm.CHRIN()
+        if cbm.READST()!=0
+            goto io_error
 
         while cbm.CHRIN()!='"' {
             ; skip up to entry name
@@ -130,14 +135,14 @@ io_error:
             }
             cx16.r0++
         }
-        status = cbm.READST()
+        okay = true
 
 io_error:
-        cbm.CLRCHN()
+        cbm.CLRCHN()        ; restore default i/o devices
         cbm.CLOSE(READ_IO_CHANNEL)
-        if status!=0 and status & $40 == 0
-            return 0
-        return list_filename
+        if okay
+            return &list_filename
+        return 0
     }
 
     ; internal variables for the iterative file lister / loader
@@ -157,6 +162,9 @@ io_error:
         ;    After the last filename one additional 0 byte is placed to indicate the end of the list.
         ;    Returns number of files (it skips 'dir' entries i.e. subdirectories).
         ;    Also sets carry on exit: Carry clear = all files returned, Carry set = directory has more files that didn't fit in the buffer.
+        ;    Note that no list of pointers of some form is returned, the names are just squashed together.
+        ;    If you really need a list of pointers to the names, that is pretty straightforward to construct by iterating over the names
+        ;    and registering when the next one starts after the 0-byte separator.
         uword buffer_start = filenames_buffer
         ubyte files_found = 0
         filenames_buffer[0]=0

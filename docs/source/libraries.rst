@@ -373,6 +373,25 @@ API is experimental and may change or disappear in a future version.
 
 Read the `coroutines source code <https://github.com/irmen/prog8/tree/master/compiler/res/prog8lib/coroutines.p8>`_
 to see what's in there. And look at the ``multitasking`` example to see how it can be used.
+Here is a minimal example (if the library gets more stable, better docs will be written here)::
+
+    %import coroutine
+
+    main {
+        sub start() {
+            coroutines.killall()
+            coroutines.add(&some_task, 1111)
+            ; ... add more tasks here or later
+            coroutines.run(0)
+        }
+
+        sub some_task() {
+            repeat 100 {
+                uword userdata = coroutines.yield()
+                ; ... do something...
+            }
+        }
+    }
 
 
 cx16
@@ -814,10 +833,10 @@ sorting (experimental)
 ----------------------
 Various sorting routines (gnome sort and shell sort variants) for byte, word and string arrays.
 API is experimental and may change or disappear in a future version.
-**NOTE:** all word arrays are assumed to be @nosplit, words and pointers need to be consecutive in memory.
+**NOTE:** all word and str arrays have to be @nosplit! Words and pointers need to be consecutive in memory for now.
 **NOTE:** sorting is done in ascending order.
 Read the `sorting source code <https://github.com/irmen/prog8/tree/master/compiler/res/prog8lib/sorting.p8>`_
-to see what's in there.
+to see what's in there.   Also check out the `sortingbech` example.
 
 
 sprites  (cx16 only)
@@ -946,6 +965,7 @@ Provides string manipulation routines.
 ``pattern_match (string, pattern) -> bool`` (not on Virtual target)
     Returns true if the string matches the pattern, false if not.
     '?' in the pattern matches any one character. '*' in the pattern matches any substring.
+    An empty pattern matches nothing. If you need everything to match, use a single '*'.
 
 ``hash (string) -> ubyte``
     Returns a simple 8 bit hash value for the given string.

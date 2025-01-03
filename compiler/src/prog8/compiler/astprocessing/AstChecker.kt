@@ -702,21 +702,15 @@ internal class AstChecker(private val program: Program,
         val variable=addressOf.identifier.targetVarDecl(program)
         if (variable!=null) {
             if (variable.type == VarDeclType.CONST && addressOf.arrayIndex == null)
-                errors.err("invalid pointer-of operand type",addressOf.position)
+                errors.err("invalid pointer-of operand type", addressOf.position)
+        }
 
-            if(addressOf.arrayIndex!=null && variable.datatype.isSplitWordArray) {
-                errors.err("cannot take the adress of a word element that is in a split-word array", addressOf.position)
-            }
+        if(addressOf.msb) {
+            if(variable!=null && !variable.datatype.isSplitWordArray)
+                errors.err("$> can only be used on split word arrays", addressOf.position)
         }
 
         super.visit(addressOf)
-    }
-
-    override fun visit(addressOfMsb: AddressOfMsb) {
-        val target = addressOfMsb.identifier.targetVarDecl(program)
-        if(target==null || !target.datatype.isSplitWordArray) {
-            errors.err("&> can only be used on split word arrays", addressOfMsb.position)
-        }
     }
 
     override fun visit(ifExpr: IfExpression) {
@@ -1158,24 +1152,23 @@ internal class AstChecker(private val program: Program,
 
         checkLongType(expr)
         val dt = expr.expression.inferType(program).getOrUndef()
-        if(dt.isUndefined)
-            return  // any error should be reported elsewhere
-
-        when (expr.operator) {
-            "-" -> {
-                if (!(dt.isSigned && dt.isNumeric)) {
-                    errors.err("can only take negative of a signed number type", expr.position)
+        if(!dt.isUndefined) {
+            when (expr.operator) {
+                "-" -> {
+                    if (!(dt.isSigned && dt.isNumeric)) {
+                        errors.err("can only take negative of a signed number type", expr.position)
+                    }
                 }
-            }
-            "~" -> {
-                if(!dt.isInteger)
-                    errors.err("can only use bitwise invert on integer types", expr.position)
-                else if(dt.isBool)
-                    errors.err("bitwise invert is for integer types, use 'not' on booleans", expr.position)
-            }
-            "not" -> {
-                if(!dt.isBool) {
-                    errors.err("logical not is for booleans", expr.position)
+                "~" -> {
+                    if(!dt.isInteger)
+                        errors.err("can only use bitwise invert on integer types", expr.position)
+                    else if(dt.isBool)
+                        errors.err("bitwise invert is for integer types, use 'not' on booleans", expr.position)
+                }
+                "not" -> {
+                    if(!dt.isBool) {
+                        errors.err("logical not is for booleans", expr.position)
+                    }
                 }
             }
         }

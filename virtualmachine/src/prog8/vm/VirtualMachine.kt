@@ -56,6 +56,7 @@ class VirtualMachine(irProgram: IRProgram) {
     var statusCarry = false
     var statusZero = false
     var statusNegative = false
+    var statusOverflow = false
     internal var randomGenerator = Random(0xa55a7653)
     internal var randomGeneratorFloats = Random(0xc0d3dbad)
     internal var mul16LastUpper = 0u
@@ -171,9 +172,6 @@ class VirtualMachine(irProgram: IRProgram) {
             }
             is IRInlineAsmChunk -> TODO("branch to inline asm chunk")
             is IRInlineBinaryChunk -> throw IllegalArgumentException("can't branch to inline binary chunk")
-            else -> {
-                throw IllegalArgumentException("VM can't execute code in a non-codechunk: $target")
-            }
         }
     }
 
@@ -191,7 +189,9 @@ class VirtualMachine(irProgram: IRProgram) {
             Opcode.LOADHY,
             Opcode.LOADHAX,
             Opcode.LOADHAY,
-            Opcode.LOADHXY -> throw IllegalArgumentException("VM cannot access actual CPU hardware register")
+            Opcode.LOADHXY,
+            Opcode.LOADHFACZERO,
+            Opcode.LOADHFACONE -> throw IllegalArgumentException("VM cannot access actual CPU hardware register")
             Opcode.STOREM -> InsSTOREM(ins)
             Opcode.STOREX -> InsSTOREX(ins)
             Opcode.STOREIX -> InsSTOREIX(ins)
@@ -204,7 +204,9 @@ class VirtualMachine(irProgram: IRProgram) {
             Opcode.STOREHY,
             Opcode.STOREHAX,
             Opcode.STOREHAY,
-            Opcode.STOREHXY -> throw IllegalArgumentException("VM cannot access actual CPU hardware register")
+            Opcode.STOREHXY,
+            Opcode.STOREHFACZERO,
+            Opcode.STOREHFACONE-> throw IllegalArgumentException("VM cannot access actual CPU hardware register")
             Opcode.JUMP -> InsJUMP(ins)
             Opcode.JUMPI -> InsJUMPI(ins)
             Opcode.PREPARECALL -> nextPc()
@@ -220,7 +222,8 @@ class VirtualMachine(irProgram: IRProgram) {
             Opcode.BSTNE -> InsBSTNE(ins)
             Opcode.BSTNEG -> InsBSTNEG(ins)
             Opcode.BSTPOS -> InsBSTPOS(ins)
-            Opcode.BSTVC, Opcode.BSTVS -> TODO("overflow status flag not yet supported in VM (BSTVC,BSTVS)")
+            Opcode.BSTVC -> InsBSTVC(ins)
+            Opcode.BSTVS -> InsBSTVS(ins)
             Opcode.BGTR -> InsBGTR(ins)
             Opcode.BGTSR -> InsBGTSR(ins)
             Opcode.BGER -> InsBGER(ins)
@@ -233,20 +236,6 @@ class VirtualMachine(irProgram: IRProgram) {
             Opcode.BLE -> InsBLE(ins)
             Opcode.BGES -> InsBGES(ins)
             Opcode.BLES -> InsBLES(ins)
-            Opcode.SCC -> InsSCC(ins)
-            Opcode.SCS -> InsSCS(ins)
-            Opcode.SZ -> InsSZ(ins)
-            Opcode.SNZ -> InsSNZ(ins)
-            Opcode.SEQ -> InsSEQ(ins)
-            Opcode.SNE -> InsSNE(ins)
-            Opcode.SLT -> InsSLT(ins)
-            Opcode.SLTS -> InsSLTS(ins)
-            Opcode.SGT -> InsSGT(ins)
-            Opcode.SGTS -> InsSGTS(ins)
-            Opcode.SLE -> InsSLE(ins)
-            Opcode.SLES -> InsSLES(ins)
-            Opcode.SGE -> InsSGE(ins)
-            Opcode.SGES -> InsSGES(ins)
             Opcode.INC -> InsINC(ins)
             Opcode.INCM -> InsINCM(ins)
             Opcode.DEC -> InsDEC(ins)
@@ -310,6 +299,7 @@ class VirtualMachine(irProgram: IRProgram) {
             Opcode.ROLM -> InsROLM(ins, false)
             Opcode.ROXL -> InsROL(ins, true)
             Opcode.ROXLM -> InsROLM(ins, true)
+            Opcode.LSIG -> InsLSIG(ins)
             Opcode.MSIG -> InsMSIG(ins)
             Opcode.CONCAT -> InsCONCAT(ins)
             Opcode.PUSH -> InsPUSH(ins)
@@ -320,6 +310,7 @@ class VirtualMachine(irProgram: IRProgram) {
             Opcode.CLC -> { statusCarry = false; nextPc() }
             Opcode.SEC -> { statusCarry = true; nextPc() }
             Opcode.CLI, Opcode.SEI -> throw IllegalArgumentException("VM doesn't support interrupt status bit")
+            Opcode.BIT -> InsBIT(ins)
 
             Opcode.FFROMUB -> InsFFROMUB(ins)
             Opcode.FFROMSB -> InsFFROMSB(ins)
@@ -341,8 +332,7 @@ class VirtualMachine(irProgram: IRProgram) {
             Opcode.FFLOOR -> InsFFLOOR(ins)
             Opcode.FCEIL -> InsFCEIL(ins)
             Opcode.FCOMP -> InsFCOMP(ins)
-
-            else -> throw IllegalArgumentException("invalid opcode ${ins.opcode}")
+            Opcode.ALIGN -> nextPc()   // actual alignment ignored in the VM
         }
     }
 
@@ -781,6 +771,20 @@ class VirtualMachine(irProgram: IRProgram) {
             nextPc()
     }
 
+    private fun InsBSTVS(i: IRInstruction) {
+        if(statusOverflow)
+            branchTo(i)
+        else
+            nextPc()
+    }
+
+    private fun InsBSTVC(i: IRInstruction) {
+        if(!statusOverflow)
+            branchTo(i)
+        else
+            nextPc()
+    }
+
     private fun InsBGTR(i: IRInstruction) {
         val (left: UInt, right: UInt) = getBranchOperandsU(i)
         if(left>right)
@@ -875,110 +879,6 @@ class VirtualMachine(irProgram: IRProgram) {
             branchTo(i)
         else
             nextPc()
-    }
-
-    private fun InsSCC(i: IRInstruction) {
-        setResultReg(i.reg1!!, if(statusCarry) 0 else 1, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSCS(i: IRInstruction) {
-        setResultReg(i.reg1!!, if(statusCarry) 1 else 0, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSZ(i: IRInstruction) {
-        val right = when(i.type) {
-            IRDataType.BYTE -> registers.getSB(i.reg2!!).toInt()
-            IRDataType.WORD -> registers.getSW(i.reg2!!).toInt()
-            IRDataType.FLOAT -> throw IllegalArgumentException("can't use float here")
-            null -> throw IllegalArgumentException("need type for branch instruction")
-        }
-        val value = if(right==0) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSNZ(i: IRInstruction) {
-        val right = when(i.type) {
-            IRDataType.BYTE -> registers.getSB(i.reg2!!).toInt()
-            IRDataType.WORD -> registers.getSW(i.reg2!!).toInt()
-            IRDataType.FLOAT -> throw IllegalArgumentException("can't use float here")
-            null -> throw IllegalArgumentException("need type for branch instruction")
-        }
-        val value = if(right!=0) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSEQ(i: IRInstruction) {
-        val (left: Int, right: Int) = getSetOnConditionOperands(i)
-        val value = if(left==right) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSNE(i: IRInstruction) {
-        val (left: Int, right: Int) = getSetOnConditionOperands(i)
-        val value = if(left!=right) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSLT(i: IRInstruction) {
-        val (left, right) = getSetOnConditionOperandsU(i)
-        val value = if(left<right) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSLTS(i: IRInstruction) {
-        val (left, right) = getSetOnConditionOperands(i)
-        val value = if(left<right) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSGT(i: IRInstruction) {
-        val (left, right) = getSetOnConditionOperandsU(i)
-        val value = if(left>right) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSGTS(i: IRInstruction) {
-        val (left, right) = getSetOnConditionOperands(i)
-        val value = if(left>right) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSLE(i: IRInstruction) {
-        val (left, right) = getSetOnConditionOperandsU(i)
-        val value = if(left<=right) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSLES(i: IRInstruction) {
-        val (left, right) = getSetOnConditionOperands(i)
-        val value = if(left<=right) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSGE(i: IRInstruction) {
-        val (left, right) = getSetOnConditionOperandsU(i)
-        val value = if(left>=right) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
-    }
-
-    private fun InsSGES(i: IRInstruction) {
-        val (left, right) = getSetOnConditionOperands(i)
-        val value = if(left>=right) 1 else 0
-        setResultReg(i.reg1!!, value, i.type!!)
-        nextPc()
     }
 
     private fun InsINC(i: IRInstruction) {
@@ -1746,6 +1646,17 @@ class VirtualMachine(irProgram: IRProgram) {
         else -> throw IllegalArgumentException("operator word $operator")
     }
 
+    private fun InsBIT(i: IRInstruction) {
+        if (i.type!! == IRDataType.BYTE) {
+            val value = memory.getUB(i.address!!)
+            statusNegative = value.toInt() and 0x80 != 0
+            statusOverflow = value.toInt() and 0x40 != 0
+            // NOTE: the 'AND' part of the BIT instruction as it does on the 6502 CPU, is not utilized in prog8 so we don't implement it here
+        }
+        else throw IllegalArgumentException("bit needs byte")
+        nextPc()
+    }
+
     private fun InsEXT(i: IRInstruction) {
         when(i.type!!){
             IRDataType.BYTE -> registers.setUW(i.reg1!!, registers.getUB(i.reg2!!).toUShort())
@@ -2260,6 +2171,18 @@ class VirtualMachine(irProgram: IRProgram) {
         }
         nextPc()
         statusCarry = newStatusCarry
+    }
+
+    private fun InsLSIG(i: IRInstruction) {
+        when(i.type!!) {
+            IRDataType.BYTE -> {
+                val value = registers.getUW(i.reg2!!)
+                registers.setUB(i.reg1!!, value.toUByte())
+            }
+            IRDataType.WORD -> throw IllegalArgumentException("lsig.w not yet supported, requires 32-bits registers")
+            IRDataType.FLOAT -> throw IllegalArgumentException("invalid float type for this instruction $i")
+        }
+        nextPc()
     }
 
     private fun InsMSIG(i: IRInstruction) {
