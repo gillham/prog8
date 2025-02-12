@@ -238,12 +238,10 @@ Low-fi variable and subroutine definitions in all available library modules
 These are auto generated and contain no documentation, but provide a view into what's available.
 Grouped per compilation target.
 
-* `atari <_static/symboldumps/skeletons-atari.txt>`_
 * `c64 <_static/symboldumps/skeletons-c64.txt>`_
 * `c128 <_static/symboldumps/skeletons-c128.txt>`_
 * `cx16 <_static/symboldumps/skeletons-cx16.txt>`_
 * `pet32 <_static/symboldumps/skeletons-pet32.txt>`_
-* `neo <_static/symboldumps/skeletons-neo.txt>`_
 * `virtual <_static/symboldumps/skeletons-virtual.txt>`_
 
 
@@ -985,7 +983,7 @@ as ROM/Kernal subroutine definitions, memory location constants, and utility sub
 Many of these definitions overlap for the C64 and Commander X16 targets so it is still possible
 to write programs that work on both targets without modifications.
 
-This module is usually imported automatically and can provide definitions in the ``sys``, ``cbm``, ``c64``, ``cx16``, ``c128``, ``atari`` blocks
+This module is usually imported automatically and can provide definitions in the ``sys``, ``cbm``, ``c64``, ``cx16``, ``c128`` blocks
 depending on the chosen compilation target. Read the `sys lib source code <https://github.com/irmen/prog8/tree/master/compiler/res/prog8lib>`_ for the correct compilation target to see exactly what is there.
 
 
@@ -997,12 +995,12 @@ sys (part of syslib)
     system when the program is running.
     The following return values are currently defined:
 
+    - 7 = Neo6502
     - 8 = Atari 8 bits
     - 16 = Commander X16
     - 64 = Commodore 64
     - 128 = Commodore 128
     - 255 = Virtual machine
-
 
 ``exit (returncode)``
     Immediately stops the program and exits it, with the returncode in the A register.

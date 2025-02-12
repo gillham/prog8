@@ -22,7 +22,6 @@ class C64Target: ICompilationTarget, IStringEncoding by Encoder, IMemSizer by No
 
 
     override val cpu = CpuType.CPU6502
-    override val programType = ProgramType.CBMPRG
 
     override val FLOAT_MAX_POSITIVE = Mflpt5.FLOAT_MAX_POSITIVE
     override val FLOAT_MAX_NEGATIVE = Mflpt5.FLOAT_MAX_NEGATIVE
@@ -91,8 +90,6 @@ val CompilationTargets = listOf(
     C128Target.NAME,
     Cx16Target.NAME,
     PETTarget.NAME,
-    AtariTarget.NAME,
-    Neo6502Target.NAME,
     VMTarget.NAME
 )
 
@@ -101,8 +98,6 @@ fun getCompilationTargetByName(name: String) = when(name.lowercase()) {
     C128Target.NAME -> C128Target()
     Cx16Target.NAME -> Cx16Target()
     PETTarget.NAME -> PETTarget()
-    AtariTarget.NAME -> AtariTarget()
     VMTarget.NAME -> VMTarget()
-    Neo6502Target.NAME -> Neo6502Target()
     else -> throw IllegalArgumentException("invalid compilation target")
 }

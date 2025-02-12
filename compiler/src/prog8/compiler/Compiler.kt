@@ -12,7 +12,10 @@ import prog8.code.ast.verifyFinalAstBeforeAsmGen
 import prog8.code.core.*
 import prog8.code.optimize.optimizeSimplifiedAst
 import prog8.code.source.ImportFileSystem.expandTilde
-import prog8.code.target.*
+import prog8.code.target.ConfigFileTarget
+import prog8.code.target.Cx16Target
+import prog8.code.target.VMTarget
+import prog8.code.target.getCompilationTargetByName
 import prog8.codegen.vm.VmCodeGen
 import prog8.compiler.astprocessing.*
 import prog8.optimizer.*
@@ -240,48 +243,18 @@ fun compileProgram(args: CompilerArguments): CompilationResult? {
 internal fun determineProgramLoadAddress(program: Program, options: CompilationOptions, errors: IErrorReporter) {
     val specifiedAddress = program.toplevelModule.loadAddress
     var loadAddress: UInt? = null
-    if(specifiedAddress!=null) {
+    if(specifiedAddress!=null)
         loadAddress = specifiedAddress.first
-    }
-    else {
-        when(options.output) {
-            OutputType.RAW -> {
-                if(options.compTarget.name==Neo6502Target.NAME)
-                    loadAddress = options.compTarget.PROGRAM_LOAD_ADDRESS
-                // for all other targets, RAW has no predefined load address.
-            }
-            OutputType.PRG -> {
-                if(options.launcher==CbmPrgLauncherType.BASIC) {
-                    loadAddress = options.compTarget.PROGRAM_LOAD_ADDRESS
-                }
-            }
-            OutputType.XEX -> {
-                if(options.launcher!=CbmPrgLauncherType.NONE)
-                    throw AssemblyError("atari xex output can't contain BASIC launcher")
-                loadAddress = options.compTarget.PROGRAM_LOAD_ADDRESS
-            }
-            OutputType.LIBRARY -> {
-                if(options.launcher!=CbmPrgLauncherType.NONE)
-                    throw AssemblyError("library output can't contain BASIC launcher")
-                if(options.zeropage!=ZeropageType.DONTUSE)
-                    throw AssemblyError("library output can't use zeropage")
-                if(options.noSysInit==false)
-                    throw AssemblyError("library output can't have sysinit")
-                // LIBRARY has no predefined load address.
-            }
-        }
-    }
+    else
+        loadAddress = options.compTarget.PROGRAM_LOAD_ADDRESS
+
+
 
     if(options.output==OutputType.PRG && options.launcher==CbmPrgLauncherType.BASIC && options.compTarget.customLauncher.isEmpty()) {
         val expected = options.compTarget.PROGRAM_LOAD_ADDRESS
         if(loadAddress!=expected) {
             errors.err("BASIC output must have load address ${expected.toHex()}", specifiedAddress?.second ?: program.toplevelModule.position)
         }
-    }
-
-    if(loadAddress==null) {
-        errors.err("load address must be specified for the selected output/launcher options", program.toplevelModule.position)
-        return
     }
 
     options.loadAddress = loadAddress
@@ -361,8 +334,6 @@ fun parseMainModule(filepath: Path,
     } else {
         if (compilerOptions.launcher == CbmPrgLauncherType.BASIC && compilerOptions.output != OutputType.PRG)
             errors.err("BASIC launcher requires output type PRG", program.toplevelModule.position)
-        if (compilerOptions.launcher == CbmPrgLauncherType.BASIC && compTarget.name == AtariTarget.NAME)
-            errors.err("atari target cannot use CBM BASIC launcher, use NONE", program.toplevelModule.position)
     }
 
     errors.report()
@@ -409,10 +380,7 @@ internal fun determineCompilationOptions(program: Program, compTarget: ICompilat
         .toList()
 
     val outputType = if (outputTypeStr == null) {
-        if(compTarget is AtariTarget)
-            OutputType.XEX
-        else
-            OutputType.PRG
+        OutputType.PRG
     } else {
         try {
             OutputType.valueOf(outputTypeStr)
@@ -421,12 +389,9 @@ internal fun determineCompilationOptions(program: Program, compTarget: ICompilat
             OutputType.PRG
         }
     }
-    var launcherType = if (launcherTypeStr == null) {
-        when(compTarget) {
-            is AtariTarget -> CbmPrgLauncherType.NONE
-            else -> CbmPrgLauncherType.BASIC
-        }
-    } else {
+    var launcherType = if (launcherTypeStr == null)
+        CbmPrgLauncherType.BASIC
+    else {
         try {
             CbmPrgLauncherType.valueOf(launcherTypeStr)
         } catch (_: IllegalArgumentException) {
