@@ -56,10 +56,21 @@ class CallGraph(private val program: Program) : IAstVisitor {
     override fun visit(directive: Directive) {
         val thisModule = directive.definingModule
         if (directive.directive == "%import") {
-            val importedModule = program.modules.singleOrNull { it.name == directive.args[0].name }     // the module may no longer exist at all due to optimizations
+            val importedModule = program.modules.singleOrNull { it.name == directive.args[0].string }     // the module may no longer exist at all due to optimizations
             if(importedModule!=null) {
                 imports[thisModule] = imports.getValue(thisModule) + importedModule
                 importedBy[importedModule] = importedBy.getValue(importedModule) + thisModule
+            }
+        }
+        else if (directive.directive == "%jmptable") {
+            for(arg in directive.args) {
+                val scopedName = arg.string!!.split('.')
+                val target = directive.definingScope.lookup(scopedName)
+                if(target is Subroutine) {
+                    val identifier = IdentifierReference(scopedName, arg.position)
+                    identifier.linkParents(directive)
+                    visit(identifier)
+                }
             }
         }
 
@@ -107,8 +118,11 @@ class CallGraph(private val program: Program) : IAstVisitor {
 
     override fun visit(identifier: IdentifierReference) {
         val target = identifier.targetStatement(program)
-        if(target!=null)
+        if(target!=null) {
             allIdentifiersAndTargets.add(identifier to target)
+            if(target is Subroutine)
+                notCalledButReferenced += target
+        }
 
         // if it's a scoped identifier, the subroutines in the name are also referenced!
         val scope = identifier.definingScope

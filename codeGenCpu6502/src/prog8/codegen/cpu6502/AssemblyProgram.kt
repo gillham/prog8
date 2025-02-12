@@ -3,8 +3,10 @@ package prog8.codegen.cpu6502
 import prog8.code.ast.PtLabel
 import prog8.code.core.*
 import prog8.code.target.AtariTarget
+import prog8.code.target.C128Target
 import prog8.code.target.C64Target
 import prog8.code.target.Neo6502Target
+import prog8.code.target.PETTarget
 import java.nio.file.Path
 
 
@@ -29,11 +31,8 @@ internal class AssemblyProgram(
             ProgramType.CBMPRG -> {
                 // CBM machines .prg generation.
 
-                // add "-Wlong-branch"  to see warnings about conversion of branch instructions to jumps (default = do this silently)
                 val command = mutableListOf("64tass", "--ascii", "--case-sensitive", "--long-branch",
-                    "-Wall", // "-Wno-strict-bool", "-Werror",
-                    "--dump-labels", "--vice-labels", "--labels=$viceMonListFile"
-                )
+                    "-Wall", "-Wno-implied-reg", "--no-monitor", "--dump-labels", "--vice-labels", "--labels=$viceMonListFile")
 
                 if(options.warnSymbolShadowing)
                     command.add("-Wshadow")
@@ -44,7 +43,7 @@ internal class AssemblyProgram(
                     command.add("--quiet")
 
                 if(options.asmListfile) {
-                    command.addAll(listOf("--list=$listFile", "--no-monitor"))
+                    command.add("--list=$listFile")
                 }
 
                 val outFile = when (options.output) {
@@ -59,12 +58,18 @@ internal class AssemblyProgram(
                         binFile
                     }
                     OutputType.LIBRARY -> {
-                        command.add("--cbm-prg")       // include the 2-byte PRG header on library .bins, so they can be easily loaded on the correct memory address even on C64
-                        println("\nCreating binary library file for target ${compTarget.name}.")
+                        if(compTarget.name in listOf(C64Target.NAME, C128Target.NAME, PETTarget.NAME)) {
+                            println("\nCreating binary library file with header for target ${compTarget.name}.")
+                            command.add("--cbm-prg")
+                        } else {
+                            println("\nCreating binary library file without header for target ${compTarget.name}.")
+                            command.add("--nostart")       // should be headerless bin, because basic has problems doing a normal LOAD"lib",8,1 - need to use BLOAD
+                        }
                         binFile
                     }
                     else -> throw AssemblyError("invalid output type")
                 }
+
                 command.addAll(listOf("--output", outFile.toString(), assemblyFile.toString()))
                 assemblerCommand = command
 
@@ -72,11 +77,7 @@ internal class AssemblyProgram(
             ProgramType.ATARIXEX -> {
                 // Atari800XL .xex generation.
 
-                // TODO are these options okay for atari?
-                val command = mutableListOf("64tass", "--ascii", "--case-sensitive", "--long-branch",
-                    "-Wall", // "-Werror", "-Wno-strict-bool"
-                    "--no-monitor"
-                )
+                val command = mutableListOf("64tass", "--case-sensitive", "--long-branch", "-Wall", "-Wno-implied-reg", "--no-monitor")
 
                 if(options.warnSymbolShadowing)
                     command.add("-Wshadow")
@@ -112,11 +113,7 @@ internal class AssemblyProgram(
                     throw AssemblyError("invalid program compilation options. Neo6502 requires %output raw, %launcher none, %address $0800")
                 }
 
-                // TODO are these options okay for neo?
-                val command = mutableListOf("64tass", "--case-sensitive", "--long-branch",
-                    "-Wall", // "-Werror", "-Wno-strict-bool"
-                    "--no-monitor"
-                )
+                val command = mutableListOf("64tass", "--case-sensitive", "--long-branch", "-Wall", "-Wno-implied-reg", "--no-monitor")
 
                 if(options.warnSymbolShadowing)
                     command.add("-Wshadow")
@@ -142,6 +139,9 @@ internal class AssemblyProgram(
             }
             else -> throw AssemblyError("invalid program type")
         }
+
+        if(options.compTarget.additionalAssemblerOptions!=null)
+            assemblerCommand.add(options.compTarget.additionalAssemblerOptions!!)
 
         val proc = ProcessBuilder(assemblerCommand).inheritIO().start()
         val result = proc.waitFor()

@@ -201,21 +201,32 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
         val directives = srcBlock.statements.filterIsInstance<Directive>()
         for (directive in directives.filter { it.directive == "%option" }) {
             for (arg in directive.args) {
-                when (arg.name) {
+                when (arg.string) {
                     "no_symbol_prefixing" -> noSymbolPrefixing = true
                     "ignore_unused" -> ignoreUnused = true
                     "force_output" -> forceOutput = true
                     "merge" -> { /* ignore this one */ }
                     "verafxmuls" -> veraFxMuls = true
-                    else -> throw FatalAstException("weird directive option: ${arg.name}")
+                    else -> throw FatalAstException("weird directive option: ${arg.string}")
                 }
             }
         }
+
+
         val (vardecls, statements) = srcBlock.statements.partition { it is VarDecl }
         val src = srcBlock.definingModule.source
         val block = PtBlock(srcBlock.name, srcBlock.isInLibrary, src,
             PtBlock.Options(srcBlock.address, forceOutput, noSymbolPrefixing, veraFxMuls, ignoreUnused),
             srcBlock.position)
+
+        for(directive in directives.filter { it.directive == "%jmptable" }) {
+            val table = PtJmpTable(directive.position)
+            directive.args.forEach {
+                table.add(PtIdentifier(it.string!!, DataType.forDt(BaseDataType.UNDEFINED), it.position))
+            }
+            block.add(table)
+        }
+
         makeScopeVarsDecls(vardecls).forEach { block.add(it) }
         for (stmt in statements)
             block.add(transformStatement(stmt))
@@ -253,7 +264,7 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
                 PtAlign(align, directive.position)
             }
             "%asmbinary" -> {
-                val filename = directive.args[0].str!!
+                val filename = directive.args[0].string!!
                 val offset: UInt? = if(directive.args.size>=2) directive.args[1].int!! else null
                 val length: UInt? = if(directive.args.size>=3) directive.args[2].int!! else null
                 val abspath = if(File(filename).isFile) {
@@ -268,7 +279,7 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
                     throw FatalAstException("included file doesn't exist")
             }
             "%asminclude" -> {
-                val result = loadAsmIncludeFile(directive.args[0].str!!, directive.definingModule.source)
+                val result = loadAsmIncludeFile(directive.args[0].string!!, directive.definingModule.source)
                 val assembly = result.getOrElse { throw it }
                 PtInlineAssembly(assembly.trimEnd().trimStart('\r', '\n'), false, directive.position)
             }
@@ -683,7 +694,7 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
                 val constElt = srcCheck.element.constValue(program)?.number
                 val step = range.step.constValue(program)?.number
                 if(constElt!=null && constRange!=null) {
-                    return PtNumber(BaseDataType.UBYTE, if(constRange.first<=constElt && constElt<=constRange.last) 1.0 else 0.0, srcCheck.position)
+                    return PtBool(constRange.first<=constElt && constElt<=constRange.last, srcCheck.position)
                 }
                 else if(step==1.0) {
                     // x in low to high --> low <=x and x <= high
@@ -696,7 +707,7 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
                     return desugar(range)
                 } else {
                     errors.err("cannot use step size different than 1 or -1 in a non constant range containment check", srcCheck.position)
-                    return PtNumber(BaseDataType.BYTE, 0.0, Position.DUMMY)
+                    return PtBool(false, srcCheck.position)
                 }
             }
             else -> throw FatalAstException("iterable in containmentcheck must always be an identifier (referencing string or array) or a range expression $srcCheck")

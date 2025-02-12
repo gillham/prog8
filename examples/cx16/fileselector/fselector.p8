@@ -1,56 +1,54 @@
 %import diskio
-%import textio
 %import strings
-%zeropage basicsafe
-%option no_sysinit
+%import namesorting
+%output library
+%address $A000
+%memtop  $C000
+
+; LOADABLE LIBRARY VERSION
 
 ; A "TUI" for an interactive file selector, that scrolls the selection list if it doesn't fit on the screen.
 ; Returns the name of the selected file.  If it is a directory instead, the name will start and end with a slash '/'.
-; Functions in PETSCII mode and in ISO mode as well (no case folding in ISO mode!)
-; Depends a lot on diskio routines, and uses the drive set in the diskio.drivenumber variable (usually just 8)
+; Works in PETSCII mode and in ISO mode as well (no case folding in ISO mode!)
 
-; Q: should case folding be done in diskio already? A: no, it doesn't know if you are in iso mode or not.
+; ZERO PAGE LOCATIONS USED: R0-R5,R15 ($02-$0d and $20-$21), $7a-$7f are used but are saved and restored.  (can be checked with -dumpvars)
 
-; TODO use "@$:*=p" instead of filtering manually for only dirs use @$:*=d   , but that needs a change in diskio...
+
 ; TODO joystick control? mouse control?
 ; TODO keyboard typing; jump to the first entry that starts with that character?  (but 'q' for quit stops working then, plus scrolling with pageup/down is already pretty fast)
 
-
 main {
+    ; Create a jump table as first thing in the library.
+    ; NOTE: the compiler has inserted a single JMP instruction at the start
+    ; of the 'main' block, that jumps to the start() routine.
+    ; This is convenient because the rest of the jump table simply follows it,
+    ; making the first jump neatly be the required initialization routine
+    ; for the library (initializing variables and BSS region).
+    ; Think of it as the implicit first entry of the jump table.
+    %jmptable (
+        fileselector.configure,
+        fileselector.configure_appearance,
+        fileselector.select
+    )
+
     sub start() {
-        ; some configuration, optional
-        fileselector.configure_settings(%00000011, 2)
-        fileselector.configure_appearance(10, 10, 20, $b3, $d0)
-
-        ; show all files, using just the * wildcard
-        uword chosen = fileselector.select("*")
-
-        txt.nl()
-        txt.nl()
-        if chosen!=0 {
-            txt.print("chosen: ")
-            txt.print(chosen)
-            txt.nl()
-        } else {
-            txt.print("nothing chosen or error!\n")
-            txt.print(diskio.status())
-        }
+        ; has to remain here for initialization
     }
 }
 
 fileselector {
-    %option ignore_unused
+    ; these buffer sizes are chosen to fill up the rest of the hiram bank after the fileselector code
+    const uword filenamesbuf_size = $e40
+    const ubyte max_num_files = 128
 
-    const uword filenamesbuffer = $a000      ; use a HIRAM bank
-    const uword filenamesbuf_size = $1e00    ; leaves room for a 256 entry string pointer table at $be00-$bfff
-    const uword filename_ptrs_start = $be00  ; array of 256 string pointers for each of the names in the buffer. ends with $0000.
+    uword @shared filenamesbuffer = memory("filenames_buffer", filenamesbuf_size, 0)
+    uword @shared filename_pointers = memory("filenames_pointers", max_num_files*2, 0)
 
     ubyte dialog_topx = 10
     ubyte dialog_topy = 10
     ubyte max_lines = 20
     ubyte colors_normal = $b3
     ubyte colors_selected = $d0
-    ubyte buffer_rambank = 1    ; default hiram bank to use for the data buffers
     ubyte show_what = 3         ; dirs and files
     ubyte chr_topleft, chr_topright, chr_botleft, chr_botright, chr_horiz_top, chr_horiz_other, chr_vert, chr_jointleft, chr_jointright
 
@@ -58,14 +56,18 @@ fileselector {
     uword name_ptr
 
 
-    sub configure_settings(ubyte show_types, ubyte rambank) {
-        ; show_types is a bit mask , bit 0 = show files, bit 1 = show dirs
-        buffer_rambank = rambank
+    sub configure(ubyte drivenumber, ubyte show_types) {
+        ; show_types is a bit mask , bit 0 = include files in list, bit 1 = include dirs in list,   0 (or 3)=show everything.
+        ; note: ZP is not used here.
+        diskio.drivenumber = drivenumber
         show_what = show_types
+        if_z
+            show_what = 3
         set_characters(false)
     }
 
-    sub configure_appearance(ubyte column, ubyte row, ubyte max_entries, ubyte normal, ubyte selected) {
+    sub configure_appearance(ubyte column @R0, ubyte row @R1, ubyte max_entries @R2, ubyte normal @R3, ubyte selected @R4) {
+        ; note: ZP is not used here.
         dialog_topx = column
         dialog_topy = row
         max_lines = max_entries
@@ -74,9 +76,16 @@ fileselector {
     }
 
     sub select(str pattern) -> uword {
-        ubyte old_bank = cx16.getrambank()
-        cx16.rambank(buffer_rambank)
-        defer cx16.rambank(old_bank)
+        sys.save_prog8_internals()
+        cx16.r0 = internal_select(pattern)
+        sys.restore_prog8_internals()
+        return cx16.r0
+    }
+
+    sub internal_select(str pattern) -> uword {
+        str defaultpattern="*"
+        if pattern==0
+            pattern = &defaultpattern
 
         num_visible_files = 0
         diskio.list_filename[0] = 0
@@ -106,20 +115,24 @@ fileselector {
         txt.nl()
         txt.column(dialog_topx)
         txt.chrout(chr_vert)
-        txt.print("   scanning directory...      ")
+        txt.print("   scanning directory...")
+        spaces(6)
         txt.chrout(chr_vert)
         txt.nl()
         txt.column(dialog_topx)
         footerline()
 
-        ubyte num_files = get_filenames(pattern, filenamesbuffer, filenamesbuf_size)    ; use Hiram bank to store the files
+        ubyte num_files = get_names(pattern, filenamesbuffer, filenamesbuf_size)    ; use Hiram bank to store the files
         ubyte selected_line
         ubyte top_index
         uword filename_ptrs
 
+        if num_files>max_num_files
+            return 0
+
         construct_name_ptr_array()
         ; sort alphabetically
-        sorting.shellsort_pointers(filename_ptrs_start, num_files)
+        sorting.shellsort_pointers(filename_pointers, num_files)
         num_visible_files = min(max_lines, num_files)
 
         ; initial display
@@ -138,7 +151,8 @@ fileselector {
         txt.nl()
         txt.column(dialog_topx)
         txt.chrout(chr_vert)
-        txt.print(" esc/stop to abort            ")
+        txt.print(" esc/stop to abort")
+        spaces(12)
         txt.chrout(chr_vert)
         txt.nl()
         txt.column(dialog_topx)
@@ -152,7 +166,7 @@ fileselector {
                 txt.column(dialog_topx)
                 txt.chrout(chr_vert)
                 txt.spc()
-                print_filename(peekw(filename_ptrs_start+selected_line*$0002))
+                print_filename(peekw(filename_pointers+selected_line*$0002))
                 txt.column(dialog_topx+31)
                 txt.chrout(chr_vert)
                 txt.nl()
@@ -181,7 +195,7 @@ fileselector {
                 3, 27 -> return 0      ; STOP and ESC  aborts
                 '\n',' ' -> {
                     if num_files>0 {
-                        void strings.copy(peekw(filename_ptrs_start + (top_index+selected_line)*$0002), &diskio.list_filename)
+                        void strings.copy(peekw(filename_pointers + (top_index+selected_line)*$0002), &diskio.list_filename)
                         return diskio.list_filename
                     }
                     return 0
@@ -232,7 +246,7 @@ fileselector {
         ubyte x,y
 
         sub construct_name_ptr_array() {
-            filename_ptrs = filename_ptrs_start
+            filename_ptrs = filename_pointers
             name_ptr = filenamesbuffer
             repeat num_files {
                 pokew(filename_ptrs, name_ptr)
@@ -241,7 +255,8 @@ fileselector {
                     while @(name_ptr)!=0
                         name_ptr++
                 } else {
-                    ; case-folding to avoid petscii shifted characters coming out as symbols  TODO should diskio do this already?
+                    ; case-folding to avoid petscii shifted characters coming out as symbols
+                    ; Q: should diskio do this already? A: no, diskio doesn't know or care about the current charset mode
                     name_ptr += strings.lower(name_ptr)
                 }
                 name_ptr++
@@ -267,7 +282,7 @@ fileselector {
                 scroll_txt_up(dialog_topx+2, dialog_topy+6, 28, max_lines, sc:' ')
                 ; print new name at the bottom of the list
                 txt.plot(dialog_topx+2, dialog_topy+6+max_lines-1)
-                print_filename(peekw(filename_ptrs_start + (top_index+ selected_line)*$0002))
+                print_filename(peekw(filename_pointers + (top_index+ selected_line)*$0002))
             }
         }
 
@@ -278,7 +293,7 @@ fileselector {
                 scroll_txt_down(dialog_topx+2, dialog_topy+6, 28, max_lines, sc:' ')
                 ; print new name at the top of the list
                 txt.plot(dialog_topx+2, dialog_topy+6)
-                print_filename(peekw(filename_ptrs_start + top_index * $0002))
+                print_filename(peekw(filename_pointers + top_index * $0002))
             }
         }
 
@@ -322,7 +337,7 @@ fileselector {
                 else
                     txt.print("(down)")
             else
-                txt.print("      ")
+                spaces(6)
             txt.spc()
             txt.chrout(chr_vert)
             txt.nl()
@@ -358,8 +373,19 @@ fileselector {
         }
     }
 
+    asmsub spaces(ubyte amount @Y) clobbers(A, Y) {
+        %asm {{
+            lda  #' '
+-           jsr  cbm.CHROUT
+            dey
+            bne  -
+            rts
+        }}
+    }
+
     sub set_characters(bool iso_chars) {
         if iso_chars {
+            ; iso characters that kinda draw a pleasant box
             chr_topleft = iso:'í'
             chr_topright = iso:'ì'
             chr_botleft = iso:'`'
@@ -386,17 +412,25 @@ fileselector {
         startrow += dialog_topy
         repeat numlines {
             txt.plot(dialog_topx+1, startrow)
-            repeat 30  txt.chrout(' ')
+            spaces(30)
             txt.nl()
             startrow++
         }
     }
 
-    sub get_filenames(uword pattern_ptr, uword filenames_buffer, uword filenames_buf_size) -> ubyte {
+    sub get_names(uword pattern_ptr, uword filenames_buffer, uword filenames_buf_size) -> ubyte {
         uword buffer_start = filenames_buffer
         ubyte files_found = 0
         filenames_buffer[0]=0
-        if diskio.lf_start_list(pattern_ptr) {
+        bool list_ok
+
+        when show_what {
+            1 -> list_ok = diskio.lf_start_list_files(pattern_ptr)
+            2 -> list_ok = diskio.lf_start_list_dirs(pattern_ptr)
+            else -> list_ok = diskio.lf_start_list(pattern_ptr)
+        }
+
+        if list_ok {
             while diskio.lf_next_entry() {
                 bool is_dir = diskio.list_filetype=="dir"
                 if is_dir and show_what & 2 == 0
@@ -429,54 +463,4 @@ fileselector {
         return files_found
     }
 
-}
-
-
-sorting {
-    ; note: cannot use the sorting library module because that relies on zeropage to be directly available (@requirezp pointer)
-    ;       and this code is meant to be able to being used without zeropage as well (except for R0-R15).
-
-    sub shellsort_pointers(uword stringpointers_array, ubyte num_elements) {
-        ; Comparefunc must be a routine that accepts 2 pointers in R0 and R1, and must return with Carry=1 if R0<=R1, otherwise Carry=0.
-        ; One such function, to compare strings, is provided as 'string_comparator' below.
-        cx16.r2 = stringpointers_array      ; need zeropage pointer
-        num_elements--
-        ubyte gap
-        for gap in [132, 57, 23, 10, 4, 1] {
-            ubyte i
-            for i in gap to num_elements {
-                cx16.r1 = peekw(cx16.r2+i*$0002)
-                ubyte @zp j = i
-                ubyte @zp k = j-gap
-                while j>=gap {
-                    cx16.r0 = peekw(cx16.r2+k*2)
-                    if string_comparator(cx16.r0, cx16.r1)
-                        break
-                    pokew(cx16.r2+j*2, cx16.r0)
-                    j = k
-                    k -= gap
-                }
-                pokew(cx16.r2+j*2, cx16.r1)
-            }
-        }
-
-        asmsub string_comparator(uword string1 @R0, uword string2 @R1) -> bool @Pc {
-            ; R0 and R1 are the two strings, must return Carry=1 when R0<=R1, else Carry=0
-            %asm {{
-                lda  cx16.r1L
-                ldy  cx16.r1H
-                sta  P8ZP_SCRATCH_W2
-                sty  P8ZP_SCRATCH_W2+1
-                lda  cx16.r0L
-                ldy  cx16.r0H
-                jsr  prog8_lib.strcmp_mem
-                cmp  #1
-                bne  +
-                clc
-                rts
-+               sec
-                rts
-            }}
-        }
-    }
 }

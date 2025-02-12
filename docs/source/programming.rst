@@ -362,6 +362,26 @@ Directives
 	You can import modules one at a time, and importing a module more than once has no effect.
 
 
+.. data:: %jmptable ( lib.routine1, lib.routine2, ... )
+
+    Level: block.
+    This builds a compact "jump table" meant to be used in libraries.
+    You can put the elements of the table on different lines if you wish.
+    It outputs a sequence of JMP machine code instructions jumping to each
+    of the given subroutines in the jmptable list::
+
+        jmp  lib.routine1
+        jmp  lib.routine2
+        ...
+
+    This is usually put at the top of the main block so that it ends up at the beginning
+    of the library file. *Note:* the compiler may still insert the required bootstrapping
+    code in front of it, which in the case of a library, is the JMP to the start routine
+    which also does some variable initialization and BSS area clearing. So the first JMP
+    in the jumptable will then end up at offset 3 in the resulting binary. You could consider
+    the JMP start that prog8 inserts as the implicit first entry of the jump table.
+    Check the generated assembly code to see exactly what's up.
+
 .. data:: %launcher <type>
 
 	Level: module.
@@ -419,7 +439,7 @@ Directives
 	- type ``raw`` : no header at all, just the raw machine code data
 	- type ``prg`` : C64 program (with load address header)
 	- type ``xex`` : Atari xex program
-	- type ``library`` : loadable library file (with CBM style load address header) See :ref:`loadable_library`.
+	- type ``library`` : loadable library file. See :ref:`loadable_library`.
 
 
 .. data:: %zeropage <style>

@@ -440,14 +440,24 @@ private fun DatatypeContext.toAst(): BaseDataType {
 private fun ArrayindexContext.toAst() : ArrayIndex =
         ArrayIndex(expression().toAst(), toPosition())
 
-internal fun DirectiveContext.toAst() : Directive =
-        Directive(directivename.text, directivearg().map { it.toAst() }, toPosition())
+internal fun DirectiveContext.toAst() : Directive {
+    if(directivenamelist() != null) {
+        val identifiers = directivenamelist().scoped_identifier().map { DirectiveArg(it.text, null, it.toPosition()) }
+        return Directive(directivename.text, identifiers, toPosition())
+    }
+    else
+        return Directive(directivename.text, directivearg().map { it.toAst() }, toPosition())
+}
 
 private fun DirectiveargContext.toAst() : DirectiveArg {
     val str = stringliteral()
-    if(str?.encoding?.text!=null)
-        throw SyntaxError("don't use a string encoding for directive arguments", toPosition())
-    return DirectiveArg(str?.text?.substring(1, text.length-1), identifier()?.text, integerliteral()?.toAst()?.number?.toUInt(), toPosition())
+    if(str!=null) {
+        if (str.encoding?.text != null)
+            throw SyntaxError("don't use a string encoding for directive arguments", toPosition())
+        return DirectiveArg(str.text.substring(1, text.length-1), integerliteral()?.toAst()?.number?.toUInt(), toPosition())
+    }
+
+    return DirectiveArg(identifier()?.text, integerliteral()?.toAst()?.number?.toUInt(), toPosition())
 }
 
 private fun IntegerliteralContext.toAst(): NumericLiteralNode {

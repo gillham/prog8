@@ -17,7 +17,7 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
     override fun after(block: Block, parent: Node): Iterable<IAstModification> {
         val inheritOptions = block.definingModule.options() intersect setOf("no_symbol_prefixing", "ignore_unused") subtract block.options()
         if(inheritOptions.isNotEmpty()) {
-            val directive = Directive("%option", inheritOptions.map{ DirectiveArg(null, it, null, block.position) }, block.position)
+            val directive = Directive("%option", inheritOptions.map{ DirectiveArg(it, null, block.position) }, block.position)
             return listOf(IAstModification.InsertFirst(directive, block))
         }
 
@@ -38,7 +38,7 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
                     if(decl.isArray) {
                         if(decl.datatype.isSplitWordArray)
                             errors.err("value has incompatible type ($valueType) for the variable (${decl.datatype})", decl.value!!.position)
-                    } else {
+                    } else if(!decl.datatype.isString) {
                         if (valueDt.largerSizeThan(decl.datatype)) {
                             val constValue = decl.value?.constValue(program)
                             if (constValue != null)

@@ -19,6 +19,7 @@ class Cx16Target: ICompilationTarget, IStringEncoding by Encoder, IMemSizer by N
     override val defaultEncoding = Encoding.PETSCII
     override val libraryPath = null
     override val customLauncher: List<String> = emptyList()
+    override val additionalAssemblerOptions = null
 
     companion object {
         const val NAME = "cx16"
@@ -87,7 +88,7 @@ class Cx16Target: ICompilationTarget, IStringEncoding by Encoder, IMemSizer by N
 
     override fun initializeMemoryAreas(compilerOptions: CompilationOptions) {
         zeropage = CX16Zeropage(compilerOptions)
-        golden = GoldenRam(compilerOptions, 0x0400u until 0x0800u)
+        golden = GoldenRam(compilerOptions, BSSGOLDENRAM_START..BSSGOLDENRAM_END)
     }
 
 

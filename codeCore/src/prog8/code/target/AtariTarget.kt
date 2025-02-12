@@ -12,6 +12,7 @@ class AtariTarget: ICompilationTarget, IStringEncoding by Encoder, IMemSizer by 
     override val defaultEncoding = Encoding.ATASCII
     override val libraryPath = null
     override val customLauncher: List<String> = emptyList()
+    override val additionalAssemblerOptions = null
 
     companion object {
         const val NAME = "atari"
@@ -61,7 +62,7 @@ class AtariTarget: ICompilationTarget, IStringEncoding by Encoder, IMemSizer by 
         // TODO monlist?
 
         println("\nStarting Atari800XL emulator $emulatorName...")
-        val processb = ProcessBuilder(cmdline).inheritIO()
+        val processb = ProcessBuilder(cmdline)      // no inheritIO because the emulator destroys the terminal configuration somehow
         val process: Process = processb.start()
         process.waitFor()
     }

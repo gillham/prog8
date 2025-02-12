@@ -13,6 +13,11 @@ import prog8.ast.expressions.NumericLiteral
 import prog8.ast.expressions.RangeExpression
 import prog8.ast.statements.ForLoop
 import prog8.ast.statements.VarDecl
+import prog8.code.ast.PtBinaryExpression
+import prog8.code.ast.PtBool
+import prog8.code.ast.PtIdentifier
+import prog8.code.ast.PtIfElse
+import prog8.code.ast.PtNumber
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
 import prog8.code.core.Encoding
@@ -434,5 +439,63 @@ main{
 }           
         """
         compileText(Cx16Target(), true, src, writeAssembly = true) shouldNotBe null
+    }
+
+    test("range types changed from byte to words if needed by outer containment check") {
+        val src= """
+main {
+    sub start() {
+        bool @shared z1 = cx16.r0 in 1 to 135
+        bool @shared z2 = cx16.r0 in $0001 to 135
+        bool @shared z4 = cx16.r0s in 1 to 135
+        bool @shared z6 = cx16.r0s in 1 to (135 as word)
+        bool @shared z3 = cx16.r0 in 1 to (135 as word)
+        bool @shared z5 = cx16.r0s in $0001 to 135
+    }
+}"""
+        compileText(Cx16Target(), true, src) shouldNotBe null
+    }
+
+    test("constant containmentcheck simplification") {
+        val src="""
+main {
+    sub start() {
+        const word wc = 0
+        if wc in 252 to 272
+            return
+    }
+}"""
+
+        val result = compileText(Cx16Target(), false, src)
+        val st = result!!.codegenAst!!.entrypoint()!!.children
+        st.size shouldBe 3
+        ((st[1] as PtIfElse).condition as PtBool).value shouldBe false
+    }
+
+    test("containmentcheck type casting") {
+        val src="""
+main {
+    sub start() {
+        word @shared ww
+        if ww in 325 to 477
+            return
+    }
+}"""
+
+        val result = compileText(Cx16Target(), false, src)
+        val st = result!!.codegenAst!!.entrypoint()!!.children
+        st.size shouldBe 4
+        val cond = (st[2] as PtIfElse).condition as PtBinaryExpression
+        cond.operator shouldBe "and"
+        val left = cond.left as PtBinaryExpression
+        val right = cond.right as PtBinaryExpression
+        left.operator shouldBe "<="
+        (left.left as PtNumber).type shouldBe DataType.forDt(BaseDataType.WORD)
+        (left.left as PtNumber).number shouldBe 325.0
+        left.right shouldBe instanceOf<PtIdentifier>()
+        right.operator shouldBe "<="
+        (right.right as PtNumber).type shouldBe DataType.forDt(BaseDataType.WORD)
+        (right.right as PtNumber).number shouldBe 477.0
+        right.left shouldBe instanceOf<PtIdentifier>()
     }
 })
