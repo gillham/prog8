@@ -58,8 +58,8 @@ IR/VM
 Libraries
 ---------
 - Sorting module gnomesort_uw could be optimized more by fully rewriting it in asm? Shellshort seems consistently faster even if most of the words are already sorted.
-- See if the raster interrupt handler on the C64 can be tweaked to be a more stable raster irq
 - Add split-word array sorting routines to sorting module?
+- See if the raster interrupt handler on the C64 can be tweaked to be a more stable raster irq
 - add even more general raster irq routines to build some sort of "copper list" , like Oscar64 has?
 - pet32 target: make syslib more complete (missing kernal routines)?
 - need help with: PET disk routines (OPEN, SETLFS etc are not exposed as kernal calls)
@@ -70,7 +70,6 @@ Libraries
 Optimizations
 -------------
 
-- can we optimize const uword in expressions that is actually small enough for ubyte?  Like  const uword x=128     if bytevar>x ...
 - Compare output of some Oscar64 samples to what prog8 does for the equivalent code (see https://github.com/drmortalwombat/OscarTutorials/tree/main and https://github.com/drmortalwombat/oscar64/tree/main/samples)
 - Multi-value returns of normal subroutines: use cpu register A or AY for the first one and only start using virtual registers for the rest.
   Can FAC then be used for floats as well again? Those are now not supported for multi-value returns.
