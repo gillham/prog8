@@ -10,6 +10,7 @@ include(
     ':codeGenCpu6502',
     ':codeGenM68k',
     ':codeGenNew6502',
+    ':codeGenLlvm',
     ':compiler',
     ':languageServer'
 )

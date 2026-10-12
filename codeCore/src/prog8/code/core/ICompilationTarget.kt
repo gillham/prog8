@@ -49,7 +49,13 @@ enum class CpuType(val statusBitsOnMultiByteOps: Boolean) {
      * existing documentation (VirtualMachine.kt top comment) and keeps the
      * behavior consistent across all current targets.
      */
-    VIRTUAL(false)
+    VIRTUAL(false),
+
+    /**
+     * Hosted 64-bit target that emits LLVM IR. LLVM has no status flags, so we use `false`: every
+     * branch then gets an explicit CMP/CMPI, which lowers directly to `icmp` + `br`.
+     */
+    LLVM64(false)
     ;
 
     /** True for the 6502-family targets (plain 6502 and 65C02). */
@@ -57,9 +63,11 @@ enum class CpuType(val statusBitsOnMultiByteOps: Boolean) {
         get() = this == CPU6502 || this == CPU65C02
     val is68k: Boolean
         get() = this == M68000 || this == M68020
+    val isLlvm: Boolean
+        get() = this == LLVM64
     /** True for targets that use the m68k-style hardware-register calling convention (D0-D7, A0-A6, FP0-FP7). */
     val usesM68kConvention: Boolean
-        get() = is68k || this == VIRTUAL
+        get() = is68k || this == VIRTUAL || this == LLVM64
     /** True for big-endian targets. The 6502 family and the VM are little-endian. */
     val isBigEndian: Boolean
         get() = this == M68000 || this == M68020
