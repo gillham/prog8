@@ -5,9 +5,80 @@ import prog8.codegen.llvm.model.CastOperator
 import prog8.codegen.llvm.model.LlvmInstruction
 import prog8.codegen.llvm.model.LlvmType
 import prog8.codegen.llvm.model.LlvmValue
+import prog8.intermediate.AddressBase
 import prog8.intermediate.IRDataType
+import prog8.intermediate.IRInstruction
 import prog8.intermediate.MemoryReference
+import prog8.intermediate.Opcode
+import prog8.intermediate.requireDest
+import prog8.intermediate.requireHardwareSlot
+import prog8.intermediate.requireMemory
+import prog8.intermediate.requireSrcA
 import prog8.intermediate.symbolName
+
+/** Lowers register loads, memory access through a symbol or a fixed address, and the calling convention slots. */
+internal fun FunctionLowering.lowerMemory(ins: IRInstruction) {
+    when (ins.opcode) {
+        Opcode.LOAD -> ins.requireDest().let { write(it, immediate(ins, typeOf(it.type))) }
+        Opcode.LOADR -> write(ins.requireDest(), read(ins.requireSrcA()))
+        Opcode.LOADM -> ins.requireDest().let { write(it, loadMemory(ins, it.register.toString())) }
+        Opcode.STOREM -> storeMemory(ins, read(ins.requireSrcA()))
+        Opcode.STOREIM -> storeMemory(ins, immediate(ins, typeOf(checkNotNull(ins.type))))
+        Opcode.STOREZM -> storeMemory(ins, LlvmValue.ZeroInitializer(typeOf(checkNotNull(ins.type))))
+        Opcode.LOADHR -> {
+            val destination = ins.requireDest()
+            val slot = builder.hardwareSlot(ins.requireHardwareSlot().slot, destination.isFloat)
+            write(destination, derive(destination.register.toString(), if (destination.isFloat) LlvmType.Double else LlvmType.I64) { LlvmInstruction.Load(it, slot) })
+        }
+        Opcode.STOREHR -> {
+            val source = ins.requireSrcA()
+            val slot = builder.hardwareSlot(ins.requireHardwareSlot().slot, source.isFloat)
+            emit(LlvmInstruction.Store(convert(read(source), if (source.isFloat) LlvmType.Double else LlvmType.I64), slot))
+        }
+        else -> throw IllegalArgumentException("${ins.opcode} is no load or store instruction")
+    }
+}
+
+/** The value in memory that [ins] reads, as the instruction's type; [base] names the new value. */
+internal fun FunctionLowering.loadMemory(ins: IRInstruction, base: String): LlvmValue {
+    val memory = ins.requireMemory()
+    val type = checkNotNull(ins.type)
+    pointerArray(memory)?.let { array ->
+        val element = LlvmValue.Local(freshName(base), LlvmType.Ptr)
+        PointerArrayAccess.load(array, type, memory, null, element).forEach { emit(it) }
+        return element
+    }
+    val address = memoryAddress(memory)
+    return derive(base, typeOf(type)) { LlvmInstruction.Load(it, address, align = alignment(typeOf(type))) }
+}
+
+internal fun FunctionLowering.storeMemory(ins: IRInstruction, value: LlvmValue) {
+    val memory = ins.requireMemory()
+    val type = checkNotNull(ins.type)
+    pointerArray(memory)?.let { array ->
+        PointerArrayAccess.store(array, type, memory, null, value, freshName("store")).forEach { emit(it) }
+        return
+    }
+    emit(LlvmInstruction.Store(convert(value, typeOf(type)), memoryAddress(memory), align = alignment(typeOf(type))))
+}
+
+private fun FunctionLowering.pointerArray(memory: MemoryReference): PointerArray? = memory.symbolName?.let { builder.symbols.pointerArrays[it] }
+
+/** Fixed addresses inside memory-mapped variables use their backing storage, all other fixed addresses stay as they are. */
+private fun FunctionLowering.memoryAddress(memory: MemoryReference): LlvmValue {
+    require(memory is MemoryReference.Direct) { "${sub.label} has ${memory::class.simpleName} memory access, which isn't supported yet" }
+    return when (val base = memory.base) {
+        is AddressBase.Symbol -> symbolAddress(base.name, memory.displacement)
+        is AddressBase.Absolute -> {
+            val address = base.address.value.toLong() + memory.displacement
+            builder.symbols.memoryMappedAddress(address) ?: integerConstant(address, LlvmType.Ptr)
+        }
+        is AddressBase.FrameSlot -> throw IllegalArgumentException("${sub.label} uses a stack frame slot, which the llvm64 target doesn't have")
+    }
+}
+
+// IR memory addresses aren't necessarily aligned, think of packed structs and memory-mapped variables
+private fun alignment(type: LlvmType): Int? = if (type == LlvmType.I8) null else 1
 
 /**
  * Lowers IR loads and stores of [PointerArray] elements to `getelementptr ptr` plus `load ptr` or `store ptr`.
