@@ -22,23 +22,26 @@ internal val requiresNativeArm64Mac: (TestCase) -> Enabled = {
 }
 
 /**
- * Builds [ir] into a native executable with clang and runs it; returns the exit code and output of the run, or of clang if that failed.
+ * Builds [ir] into a native executable with clang and runs it with [input] on stdin; returns the exit code and output of the run, or of clang if that failed.
  * Optimizes, because that is when LLVM could fold startup stores back into static data that can't be linked.
  */
-internal fun compileAndRun(ir: String): Pair<Int, String> {
+internal fun compileAndRun(ir: String, input: String = ""): Pair<Int, String> {
     val dir = createTempDirectory("prog8-llvm-native")
     try {
         val source = dir.resolve("program.ll").also { it.writeText(ir) }
         val executable = dir.resolve("program")
+        val stdin = dir.resolve("stdin.txt").also { it.writeText(input) }
         val compiled = execute(checkNotNull(clang).toString(), "-O2", "-Wno-override-module", source.toString(), "-o", executable.toString())
-        return if (compiled.first != 0) compiled else execute(executable.toString())
+        return if (compiled.first != 0) compiled else execute(executable.toString(), stdin = stdin)
     } finally {
         dir.toFile().deleteRecursively()
     }
 }
 
-private fun execute(vararg command: String): Pair<Int, String> {
-    val process = ProcessBuilder(*command).redirectErrorStream(true).start()
+private fun execute(vararg command: String, stdin: Path? = null): Pair<Int, String> {
+    val builder = ProcessBuilder(*command).redirectErrorStream(true)
+    stdin?.let { builder.redirectInput(it.toFile()) }
+    val process = builder.start()
     val output = process.inputStream.bufferedReader().use { it.readText() }
     check(process.waitFor(60, TimeUnit.SECONDS)) { "${command.first()} did not finish" }
     return process.exitValue() to output

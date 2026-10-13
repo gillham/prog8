@@ -148,12 +148,28 @@ class TestLlvmControlFlow: FunSpec({
         module.function("main.hello").lines() shouldHave "  call void @puts(ptr %r2.1)"
     }
 
+    test("a jump or branch into another subroutine, which return f() can become, calls it and returns its result") {
+        val module = TestProgram().apply { tailCallSubs() }.module()
+        val pick = module.function("main.pick").lines()
+        pick shouldHave "  br i1 %cond.1, label %goto.1, label %cont.1"
+        pick shouldHave "  %goto.2 = call i8 @main.eleven()"
+        pick shouldHave "  %cast.1 = zext i8 %goto.2 to i16"
+        pick shouldHave "  ret i16 %cast.1"
+        val bump = module.function("main.bump").lines()
+        bump shouldHave "  br label %goto.1"
+        bump shouldHave "  call void @main.increment()"
+        bump shouldHave "  ret void"
+    }
+
     test("IR that has no LLVM translation yet is rejected with a clear message") {
         fun failure(code: String) = shouldThrow<IllegalArgumentException> {
             TestProgram().apply { sub("main.f", listOf("a" to DataType.UBYTE), code = code); sub("main.g", code = "_main.g:\n_main.g.there:\nreturn") }.module()
         }.message
         failure("_main.f:\nloadm.b r1.b,[main.f.a]\nsyscall 8(r1.b)\nreturn")!! shouldContain "syscall 8"
         failure("_main.f:\njump main.g.there")!! shouldContain "outside of the subroutine"
+        shouldThrow<IllegalArgumentException> {
+            TestProgram().apply { sub("main.f", listOf("a" to DataType.UBYTE), code = "_main.f:\nreturn"); sub("main.g", code = "_main.g:\njump main.f") }.module()
+        }.message!! shouldContain "main.g jumps to main.f, which has parameters"
         val program = TestProgram()
         program.sub("main.f", code = "_main.f:\nreturn")
         program.subroutine("main.f").chunks += IRInlineAsmChunk(null, "nop", false, null)
@@ -293,8 +309,23 @@ private fun TestProgram.classifySub() = sub("main.classify", listOf("w" to DataT
     returni.b #2.b
     """)
 
+/** main.pick returns the byte that main.eleven returns as a word, when its parameter isn't 0; main.bump goes on in main.increment. */
+private fun TestProgram.tailCallSubs() {
+    variable("main.bumps", DataType.UBYTE)
+    sub("main.eleven", returns = listOf(DataType.UBYTE), code = "_main.eleven:\nreturni.b #11.b")
+    sub("main.pick", listOf("first" to DataType.UBYTE), listOf(DataType.UWORD), """
+        _main.pick:
+        loadm.b r1.b,[main.pick.first]
+        cmpi.b r1.b,#0.b
+        bstne main.eleven
+        returni.w #22.w
+        """)
+    sub("main.increment", code = "_main.increment:\nincm.b [main.bumps]\nreturn")
+    sub("main.bump", code = "_main.bump:\njump main.increment")
+}
+
 private fun TestProgram.allSubs() {
-    maxSub(); isZeroSub(); orderSub(); laterSub(); countSub(); repeatSub(); callMaxSub(); pairSub(); usePairSub(); lessSub(); classifySub()
+    maxSub(); isZeroSub(); orderSub(); laterSub(); countSub(); repeatSub(); callMaxSub(); pairSub(); usePairSub(); lessSub(); classifySub(); tailCallSubs()
 }
 
 /** Returns 0 when all the other subroutines work as expected, otherwise the number of the failing check. */
@@ -350,6 +381,18 @@ private fun TestProgram.checkSub() = sub("main.check", returns = listOf(DataType
     call main.callmax():r28.b
     cmpi.b r28.b,#9.b
     bstne main.check.fail10
+    load.b r29.b,#1.b
+    call main.pick(first=r29.b):r30.w
+    cmpi.w r30.w,#11.w
+    bstne main.check.fail11
+    load.b r31.b,#0.b
+    call main.pick(first=r31.b):r32.w
+    cmpi.w r32.w,#22.w
+    bstne main.check.fail11
+    call main.bump()
+    loadm.b r33.b,[main.bumps]
+    cmpi.b r33.b,#1.b
+    bstne main.check.fail11
     returni.b #0.b
     _main.check.fail1:
     returni.b #1.b
@@ -371,4 +414,6 @@ private fun TestProgram.checkSub() = sub("main.check", returns = listOf(DataType
     returni.b #9.b
     _main.check.fail10:
     returni.b #10.b
+    _main.check.fail11:
+    returni.b #11.b
     """)

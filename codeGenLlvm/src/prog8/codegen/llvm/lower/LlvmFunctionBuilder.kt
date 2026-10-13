@@ -148,6 +148,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     private val savedFlags = if (flagSlots) Flag.entries.associateWith { stackSlot("flag.${it.name.lowercase()}", LlvmType.I1) } else emptyMap()
     private lateinit var current: LlvmBlock
     private var endBlock: String? = null
+    private val tailCalls = linkedMapOf<String, String>()
     private var notTaken: (() -> String)? = null
 
     fun lower(): LlvmFunction {
@@ -158,6 +159,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
         val first = sub.chunks.firstOrNull()?.let { blockNames.getValue(it) }
         first?.let { labels.putIfAbsent(sub.label, it) }
         lowerChunks(sub.chunks, after = null)
+        tailCalls.forEach { (callee, block) -> lowerTailCall(callee, block) }
         val entryCode = buildList {
             addAll(allocas)
             // PUSHST also reads flags that were never set; cleared slots keep undef out of the status byte
@@ -272,9 +274,14 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
         return if (offset == 0) base else LlvmValue.ConstantGep(LlvmType.I8, base, listOf(LlvmValue.IntConstant(offset.toLong(), LlvmType.I64)))
     }
 
+    /** The block of a label in this subroutine; a branch to another subroutine goes to a block that tail calls it. */
     fun blockOf(target: CodeReference): String {
         require(target is CodeReference.Label && target.offset == 0) { "${sub.label} branches to $target, which can only be a plain label" }
-        return labels[target.name] ?: throw IllegalArgumentException("${sub.label} branches to ${target.name}, which is outside of the subroutine")
+        labels[target.name]?.let { return it }
+        require(builder.subroutine(target.name) != null || builder.asmSubroutine(target.name) != null) {
+            "${sub.label} branches to ${target.name}, which is outside of the subroutine"
+        }
+        return tailCalls.getOrPut(target.name) { names.fresh("goto") }
     }
 
     /** Where execution continues when the conditional branch being lowered isn't taken. */
@@ -444,6 +451,20 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     }
 
     private fun functionEnd(): String = endBlock ?: names.exact("end").also { endBlock = it }
+
+    /** A jump into another subroutine, which has no parameters (like `return f()` that became `goto f`): calls it and returns what it returns. */
+    private fun lowerTailCall(name: String, block: String) {
+        startBlock(block, inheritsFlags = false)
+        val signature = builder.subroutine(name)?.let { LlvmType.Function(builder.returnType(it), builder.parameterTypes(it)) }
+            ?: builder.declaration(checkNotNull(builder.asmSubroutine(name))).type
+        require(signature.paramTypes.isEmpty()) { "${sub.label} jumps to $name, which has parameters" }
+        val callee = LlvmValue.Global(name)
+        if (signature.returnType == LlvmType.Void || returnType == LlvmType.Void) {
+            emit(LlvmInstruction.Call(null, callee, emptyList(), signature.returnType))
+            emit(LlvmInstruction.Ret(if (returnType == LlvmType.Void) null else LlvmValue.ZeroInitializer(returnType)))
+        } else
+            emit(LlvmInstruction.Ret(convert(derive("goto", signature.returnType) { LlvmInstruction.Call(it, callee, emptyList(), signature.returnType) }, returnType)))
+    }
 
     private fun stackSlot(base: String, type: LlvmType): LlvmValue.Local =
         LlvmValue.Local(names.exact(base), LlvmType.Ptr).also { allocas += LlvmInstruction.Alloca(it, type) }

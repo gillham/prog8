@@ -25,9 +25,10 @@ private const val VM_PRINT_S = 3
 private const val VM_MEMCOPY = 36
 private const val VM_MEMSET = 37
 private const val VM_MEMSETW = 38
+private const val VM_GET_C = 69
 
 /**
- * Lowers the syscalls that the compiler emits for builtin functions and operators, and the exit, console output, memory copy
+ * Lowers the syscalls that the compiler emits for builtin functions and operators, and the exit, console input and output, memory copy
  * and fill syscalls of the virtual target's library. Searches, string comparisons and string output become internal helper functions.
  */
 internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
@@ -40,6 +41,7 @@ internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
         VM_MEMCOPY -> memoryCopy(site, number)
         VM_MEMSET -> memorySet(site, number)
         VM_MEMSETW -> memorySetWords(site, number)
+        VM_GET_C -> getChar(site, number)
         else -> when (IMSyscall.entries.firstOrNull { it.number == number }) {
             IMSyscall.COMPARE_STRINGS -> compareStrings(site, number)
             IMSyscall.STRING_CONTAINS -> stringContains(site, number)
@@ -125,6 +127,13 @@ private fun FunctionLowering.printString(site: CallSite, number: Int) {
 
 // putchar() and not printf() or fputs(): those need a format string, or the platform-specific stdout symbol
 private fun FunctionLowering.putchar(): LlvmValue.Global = external("putchar", LlvmType.I32, listOf(LlvmType.I32))
+
+/** GET_C(): the next byte from stdin, read with C's getchar(); its negative EOF becomes 0, as in the VM. */
+private fun FunctionLowering.getChar(site: CallSite, number: Int) {
+    arguments(site, number, 0)
+    val code = derive("ch", LlvmType.I32) { LlvmInstruction.Call(it, external("getchar", LlvmType.I32, emptyList()), emptyList(), LlvmType.I32) }
+    result(site, convert(intrinsic("llvm.smax.i32", LlvmType.I32, code, LlvmValue.IntConstant(0, LlvmType.I32)), LlvmType.I8, "ch"))
+}
 
 /** MEMCOPY(source, target, number of bytes) becomes memmove, so that overlapping areas don't give undefined behavior. */
 private fun FunctionLowering.memoryCopy(site: CallSite, number: Int) {

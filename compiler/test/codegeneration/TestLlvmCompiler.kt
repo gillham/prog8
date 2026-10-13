@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.io.path.Path
 import kotlin.io.path.exists
 import kotlin.io.path.readLines
+import kotlin.io.path.writeText
 
 
 class TestLlvmCompiler: FunSpec({
@@ -74,7 +75,7 @@ class TestLlvmCompiler: FunSpec({
         test("$name: gives the expected exit code and console output as a native arm64 macOS executable").config(enabledOrReasonIf = requiresNativeLlvm) {
             for (optimize in listOf(false, true)) {
                 withClue("optimize=$optimize") {
-                    val (exitCode, output) = buildAndRun(compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir)))
+                    val (exitCode, output) = buildAndRun(compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir)), program.input)
                     withClue(output) { exitCode shouldBe program.exitCode }
                     output shouldBe program.output
                 }
@@ -235,15 +236,23 @@ private val requiresNativeLlvm: (TestCase) -> Enabled = {
     }
 }
 
-/** Builds the .ll file into an executable with clang -O2 and runs it; returns its exit code and output, or clang's if that failed. */
-private fun buildAndRun(llFile: Path): Pair<Int, String> {
+/**
+ * Builds the .ll file into an executable with clang -O2 and runs it with [input] on stdin;
+ * returns its exit code and output, or clang's if that failed.
+ */
+private fun buildAndRun(llFile: Path, input: String = ""): Pair<Int, String> {
     val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll"))
     val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), "-O2", "-Wno-override-module", llFile.toString(), "-o", executable.toString())
-    return if (compiled.first != 0) compiled else execute(executable.toString())
+    if (compiled.first != 0)
+        return compiled
+    val stdin = executable.resolveSibling("${executable.fileName}.stdin").also { it.writeText(input) }
+    return execute(executable.toString(), stdin = stdin)
 }
 
-private fun execute(vararg command: String): Pair<Int, String> {
-    val process = ProcessBuilder(*command).redirectErrorStream(true).start()
+private fun execute(vararg command: String, stdin: Path? = null): Pair<Int, String> {
+    val builder = ProcessBuilder(*command).redirectErrorStream(true)
+    stdin?.let { builder.redirectInput(it.toFile()) }
+    val process = builder.start()
     val output = process.inputStream.bufferedReader().use { it.readText() }
     check(process.waitFor(60, TimeUnit.SECONDS)) { "${command.first()} did not finish" }
     return process.exitValue() to output
@@ -754,12 +763,90 @@ main {
     sub answer() -> uword {
         return 4242
     }
+}""",
+    "jumps into other subroutines" to """
+main {
+    ubyte @shared counter
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ; return f() of a subroutine f without parameters becomes a jump to f
+        if pick(true) != 11 or pick(false) != 22
+            return 1
+        if widened() != 22
+            return 2
+        bump()
+        if counter != 11
+            return 3
+        return 0
+    }
+
+    sub pick(bool first) -> ubyte {
+        if first
+            return eleven()
+        return twentytwo()
+    }
+
+    sub eleven() -> ubyte {
+        return 11
+    }
+
+    sub twentytwo() -> ubyte {
+        return 22
+    }
+
+    sub widened() -> uword {
+        return twentytwo()
+    }
+
+    sub bump() {
+        counter += 10
+        goto increment
+    }
+
+    sub increment() {
+        counter++
+    }
+}""",
+    "short-circuit conditions and the cx16 virtual registers" to $$"""
+main {
+    ubyte @shared upper = 'A'
+    ubyte @shared lower = 'q'
+    ubyte @shared zero = 0
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        if islower(upper) or not islower(lower)
+            return 1
+        if not isedge(zero) or isedge(upper)
+            return 2
+        cx16.r0 = 1234
+        cx16.r1L = 5
+        cx16.r1H = 6
+        if cx16.r0 != 1234 or cx16.r1 != $0605 or cx16.r0r1sl != $060504d2
+            return 3
+        return 0
+    }
+
+    sub islower(ubyte char) -> bool {
+        return char >= 'a' and char <= 'z'
+    }
+
+    sub isedge(ubyte char) -> bool {
+        return char == 0 or char >= 250
+    }
 }"""
 )
 
 
-/** A complete program that uses the llvm64 library, with the exit code and the console output that it should give. */
-private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0)
+/** A complete program that uses the llvm64 library, with the exit code and the console output that it should give for the [input]. */
+private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0, val input: String = "")
 
 private val outputPrograms = mapOf(
     "text output" to OutputProgram("""
@@ -884,5 +971,376 @@ main {
         sys.die(1, "error message")
         txt.print("not reached\n")
     }
-}""", "about to fail\n\nPROGRAM DIED: error message\n", exitCode = 1)
+}""", "about to fail\n\nPROGRAM DIED: error message\n", exitCode = 1),
+
+    "console input" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    ubyte[81] buffer
+
+    sub start() {
+        txt.print_ub(txt.chrin())
+        txt.nl()
+        ^^ubyte name = txt.prompt("name? ")
+        txt.print("hello ")
+        txt.print(name)
+        txt.print("!\n")
+        txt.print_ub(txt.input_chars(buffer))
+        txt.chrout(':')
+        txt.print(buffer)
+        txt.nl()
+        txt.print(txt.readln())
+        txt.nl()
+        txt.print_ub(txt.input_chars(buffer))
+        txt.nl()
+        txt.print_ub(txt.chrin())
+        txt.nl()
+    }
+}""", "65\nname? hello bc!\n5:World\nline two\n80\n0\n", input = "Abc\nWorld\r\nline two\n" + "x".repeat(90) + "\n"),
+
+    "strings library" to OutputProgram("""
+%import textio
+%import strings
+%zeropage basicsafe
+
+main {
+    str hello = "Hello, World"
+    str buffer = "?" * 40
+    str spaced = "  \t padded text \n "
+    str words = "  the quick  brown\tfox "
+    str csv = "a,b;c"
+    pointer[6] parts
+
+    sub start() {
+        txt.print_ub(strings.length(hello))
+        txt.spc()
+        txt.print_ub(strings.strlen(""))
+        txt.nl()
+        strings.left(hello, 5, buffer)
+        show(buffer)
+        strings.right(hello, 5, buffer)
+        show(buffer)
+        strings.slice(hello, 7, 3, buffer)
+        show(buffer)
+        strings.substr(hello, 2, 0, buffer)
+        show(buffer)
+        txt.nl()
+
+        ubyte idx
+        bool found
+        idx, found = strings.find(hello, 'o')
+        txt.print_ub(idx)
+        txt.print_bool(found)
+        idx, found = strings.find(hello, 'z')
+        txt.print_ub(idx)
+        txt.print_bool(found)
+        idx, found = strings.rfind(hello, 'o')
+        txt.print_ub(idx)
+        txt.print_bool(found)
+        idx, found = strings.find_eol(spaced)
+        txt.print_ub(idx)
+        txt.print_bool(found)
+        txt.print_bool(strings.contains(hello, 'W'))
+        txt.print_bool(strings.strcontains(hello, 'w'))
+        txt.nl()
+
+        txt.print_ub(strings.copy(hello, buffer))
+        show(buffer)
+        txt.print_ub(strings.strcpy("abc", buffer))
+        show(buffer)
+        txt.print_ub(strings.ncopy(hello, buffer, 4))
+        show(buffer)
+        txt.print_ub(strings.append(buffer, "-tail"))
+        show(buffer)
+        txt.print_ub(strings.strcat(buffer, "!"))
+        show(buffer)
+        txt.print_ub(strings.nappend(buffer, "123456", 13))
+        show(buffer)
+        txt.nl()
+
+        txt.print_b(strings.compare("abc", "abd"))
+        txt.print_b(strings.compare("abc", "abc"))
+        txt.print_b(strings.compare("abcd", "abc"))
+        txt.print_b(strings.strcmp("", "a"))
+        txt.print_b(strings.compare("\xff", "a"))
+        txt.print_b(strings.compare_nocase("HeLLo", "hello"))
+        txt.print_b(strings.compare_nocase("abc", "ABD"))
+        txt.nl()
+
+        void strings.copy(hello, buffer)
+        txt.print_ub(strings.lower(buffer))
+        show(buffer)
+        txt.print_ub(strings.strupper(buffer))
+        show(buffer)
+        void strings.strlower(buffer)
+        show(buffer)
+        txt.chrout(strings.upperchar('q'))
+        txt.chrout(strings.lowerchar('Q'))
+        txt.chrout(strings.lowerchar('1'))
+        txt.spc()
+        txt.print_ub(strings.hash(hello))
+        txt.spc()
+        txt.print_ub(strings.hash("prog8"))
+        txt.nl()
+
+        txt.print_bool(strings.isdigit('5'))
+        txt.print_bool(strings.isdigit('a'))
+        txt.print_bool(strings.isxdigit('F'))
+        txt.print_bool(strings.isxdigit('g'))
+        txt.print_bool(strings.isupper('A'))
+        txt.print_bool(strings.islower('A'))
+        txt.print_bool(strings.isletter('z'))
+        txt.print_bool(strings.isspace('\t'))
+        txt.print_bool(strings.isprint(7))
+        txt.nl()
+
+        void strings.copy(spaced, buffer)
+        strings.trim(buffer)
+        show(buffer)
+        void strings.copy(spaced, buffer)
+        strings.strtrim(buffer)
+        show(buffer)
+        void strings.copy(spaced, buffer)
+        strings.strip(buffer)
+        show(buffer)
+        void strings.copy(spaced, buffer)
+        strings.rtrim(buffer)
+        show(buffer)
+        void strings.copy(spaced, buffer)
+        strings.ltrim(buffer)
+        show(buffer)
+        void strings.copy("   ", buffer)
+        strings.rtrim(buffer)
+        show(buffer)
+        show(strings.ltrimmed("   x "))
+        show(strings.lstripped("\x01 y "))
+        txt.nl()
+
+        txt.print_bool(strings.startswith(hello, "Hell"))
+        txt.print_bool(strings.startswith(hello, "hell"))
+        txt.print_bool(strings.endswith(hello, "World"))
+        txt.print_bool(strings.endswith("ld", "World"))
+        txt.spc()
+        txt.print_ub(strings.findstr(hello, "World"))
+        txt.spc()
+        txt.print_ub(strings.findstr(hello, "world"))
+        txt.nl()
+
+        ubyte count = strings.split(words, &parts, len(parts))
+        txt.print_ub(count)
+        ubyte i
+        for i in 0 to count-1
+            show(parts[i])
+        txt.nl()
+        ^^ubyte token = strings.next_token(csv, ",;")
+        while token != 0 {
+            show(token)
+            token = strings.next_token(0, ",;")
+        }
+        txt.nl()
+    }
+
+    sub show(str s) {
+        txt.chrout('[')
+        txt.print(s)
+        txt.chrout(']')
+    }
+}""", "12 0\n[Hello][World][Wor][]\n4true255false8true16truetruefalse\n12[Hello, World]3[abc]4[Hell]9[Hell-tail]10[Hell-tail!]13[Hell-tail!123]\n-101-110-1\n12[hello, world]12[HELLO, WORLD][hello, world]Qq1 3 165\ntruefalsetruefalsetruefalsetruetruefalse\n[padded text][padded text][padded text][  \t padded text][padded text \n ][][x ][y ]\ntruefalsetruefalse 7 255\n4[the][quick][brown][fox]\n[a][b][c]\n"),
+
+    "math library" to OutputProgram($$"""
+%import textio
+%import math
+%zeropage basicsafe
+
+main {
+    str text = "123456789"
+    word @shared negative = -1234
+    long @shared big = -100000
+
+    sub start() {
+        txt.print_ub(math.sin8u(0))
+        txt.spc()
+        txt.print_ub(math.cos8u(192))
+        txt.spc()
+        txt.print_b(math.sin8(64))
+        txt.spc()
+        txt.print_b(math.cos8(128))
+        txt.spc()
+        txt.print_ub(math.sinr8u(45))
+        txt.spc()
+        txt.print_b(math.cosr8(90))
+        txt.nl()
+
+        repeat 5 {
+            txt.print_uw(math.rndw())
+            txt.spc()
+        }
+        txt.nl()
+        math.rndseed($1234, $5678)
+        repeat 5 {
+            txt.print_ub(math.rnd())
+            txt.spc()
+        }
+        repeat 5 {
+            txt.print_ub(math.randrange(10))
+            txt.spc()
+        }
+        repeat 5 {
+            txt.print_uw(math.randrangew(1000))
+            txt.spc()
+        }
+        txt.nl()
+        math.rndseed($c200, $3711)
+        txt.print_uw(math.rndw())
+        txt.nl()
+
+        txt.print_ub(math.log2(1))
+        txt.spc()
+        txt.print_ub(math.log2(200))
+        txt.spc()
+        txt.print_ub(math.log2w(1000))
+        txt.spc()
+        txt.print_ub(math.log2l(100000))
+        txt.spc()
+        txt.print_l(math.mul32(60000, 50000))
+        txt.spc()
+        txt.print_ub(math.diff(3, 10))
+        txt.spc()
+        txt.print_uw(math.diffw(60000, 100))
+        txt.spc()
+        txt.print_l(math.diffl(-5, 100000))
+        txt.nl()
+
+        txt.print_uwhex(math.crc16(text, 9, 0, 0), true)
+        txt.spc()
+        txt.print_uwhex(math.crc16(text, 9, $ffff, 0), true)
+        txt.spc()
+        txt.print_ulhex(math.crc32(text, 9), true)
+        txt.spc()
+        txt.print_uwhex(math.crc16(text, 0, $ffff, $ffff), true)
+        txt.nl()
+
+        txt.print_ub(math.lerp(10, 200, 0))
+        txt.spc()
+        txt.print_ub(math.lerp(10, 200, 128))
+        txt.spc()
+        txt.print_ub(math.lerp(200, 10, 255))
+        txt.spc()
+        txt.print_uw(math.lerpw(1000, 60000, 32768))
+        txt.spc()
+        txt.print_uw(math.lerpw(60000, 1000, 65535))
+        txt.spc()
+        txt.print_ub(math.interpolate(50, 0, 100, 0, 200))
+        txt.spc()
+        txt.print_uw(math.interpolatew(500, 0, 1000, 1000, 3000))
+        txt.nl()
+
+        txt.print_uw(math.gcd(48, 180))
+        txt.spc()
+        txt.print_uw(math.gcd(0, 7))
+        txt.spc()
+        txt.print_uw(math.gcd(17, 5))
+        txt.spc()
+        txt.print_uw(math.lcm(4, 6))
+        txt.spc()
+        txt.print_uw(math.lcm(0, 6))
+        txt.spc()
+        txt.print_uw(math.lcm(21, 6))
+        txt.spc()
+        txt.print_uw(math.lcm(1000, 999))
+        txt.nl()
+
+        txt.print_uw(abs(negative))
+        txt.spc()
+        txt.print_w(min(negative, 5))
+        txt.spc()
+        txt.print_w(max(negative, 5))
+        txt.spc()
+        txt.print_w(clamp(negative, -1000, 1000))
+        txt.spc()
+        txt.print_b(sgn(negative))
+        txt.spc()
+        txt.print_b(sgn(big))
+        txt.spc()
+        txt.print_l(abs(big))
+        txt.nl()
+    }
+}""", $$"128 127 127 -127 255 -127\n2457 21241 1451 8632 49784 \n24 122 135 121 16 6 7 6 0 3 88 713 31 129 416 \n2457\n0 7 9 16 -1294967296 7 59900 100005\n$31c3 $29b1 $cbf43926 $0000\n10 105 10 30500 1000 100 2000\n12 7 1 12 0 42 15960\n1234 -1234 5 -1000 -1 -1 100000\n"),
+
+    "floats library" to OutputProgram("""
+%import textio
+%import floats
+%import math
+%zeropage basicsafe
+
+main {
+    float @shared half = 0.5
+    float @shared two = 2.0
+    float @shared minus = -2.5
+
+    sub start() {
+        show(floats.sin(floats.PI / 6))
+        show(floats.cos(floats.PI / 3))
+        show(floats.tan(floats.PI / 4))
+        show(floats.asin(half))
+        show(floats.asin(1.0))
+        show(floats.asin(-1.0))
+        show(floats.asin(7.0))
+        show(floats.acos(half))
+        show(floats.acos(-1.0))
+        show(floats.atan(1.0))
+        show(floats.atan2(1.0, 1.0))
+        show(floats.atan2(1.0, -1.0))
+        show(floats.atan2(-1.0, -1.0))
+        show(floats.atan2(-1.0, 1.0))
+        show(floats.atan2(1.0, 0.0))
+        show(floats.atan2(-1.0, 0.0))
+        show(floats.atan2(0.0, 0.0))
+        txt.nl()
+        show(sqrt(2.25))
+        show(sqrt(two))
+        show(floats.pow(two, 10.0))
+        show(floats.exp(1.0))
+        show(floats.exp(0.0))
+        show(floats.log(floats.E))
+        show(floats.ln(100.0))
+        show(floats.log2(1024.0))
+        txt.nl()
+        show(floats.floor(minus))
+        show(floats.ceil(minus))
+        show(floats.round(minus))
+        show(floats.round(2.5))
+        show(floats.round(3.5))
+        show(floats.round(2.4))
+        show(floats.floor(2.7))
+        show(floats.ceil(2.1))
+        txt.nl()
+        show(floats.rad(180.0))
+        show(floats.deg(floats.PI))
+        show(floats.secant(0.0))
+        show(floats.csc(floats.PI / 2))
+        show(floats.cot(floats.PI / 4))
+        show(floats.minf(minus, two))
+        show(floats.maxf(minus, two))
+        show(floats.clampf(minus, -1.0, 1.0))
+        show(floats.mod(7.5, 2.0))
+        show(floats.lerp(10.0, 20.0, 0.25))
+        show(math.lerpf_fast(10.0, 20.0, 0.75))
+        show(math.interpolatef(5.0, 0.0, 10.0, 100.0, 200.0))
+        show(floats.TWOPI)
+        txt.nl()
+        txt.print_bool(sys.MAX_FLOAT > 1.0e308)
+        txt.print_bool(sys.MIN_FLOAT < -1.0e308)
+        txt.print_bool(floats.EPSILON > 0.0)
+        txt.nl()
+    }
+
+    sub show(float value) {
+        ; prints the value in millionths, rounded
+        txt.print_l(floats.round(value * 1000000.0) as long)
+        txt.spc()
+    }
+}""", "500000 500000 1000000 523599 1570796 -1570796 1570796 1047198 3141593 785398 785398 2356194 3926991 5497787 1570796 4712389 0 \n1500000 1414214 1024000000 2718282 1000000 1000000 4605170 10000000 \n-3000000 -2000000 -2000000 2000000 4000000 2000000 2000000 3000000 \n3141593 180000000 1000000 1000000 1000000 -2500000 2000000 -1000000 1500000 12500000 17500000 150000000 6283185 \ntruetruetrue\n")
 )

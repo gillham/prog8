@@ -87,8 +87,37 @@ class IRUnusedCodeRemover(
             }
         }
 
+        val accessedMemVars = accessedMemoryMappedVariables(prefix)
         irprog.st.removeTree(blockLabel)
+        accessedMemVars.forEach { irprog.st.add(it) }
         removeBlockInits(irprog, blockLabel)
+    }
+
+    /**
+     * The memory-mapped variables with the prefix that instructions still access: by name, or by an address inside them,
+     * which is how the code accesses them. Targets without memory at fixed addresses, like llvm64, give them storage.
+     */
+    private fun accessedMemoryMappedVariables(prefix: String): List<IRStMemVar> {
+        val memvars = irprog.st.allMemMappedVariables().filter { it.name.startsWith(prefix) }.toList()
+        if(memvars.isEmpty())
+            return emptyList()
+        val symbols = mutableSetOf<String>()
+        val addresses = mutableSetOf<Long>()
+        irprog.forEachInstruction { ins ->
+            ins.referencedSymbol()?.let { symbols += it }
+            val (base, displacement) = when(val memory = ins.memory) {
+                is MemoryReference.Direct -> memory.base to memory.displacement
+                is MemoryReference.Indexed -> memory.base to memory.displacement
+                is MemoryReference.Indirect, null -> return@forEachInstruction
+            }
+            if(base is AddressBase.Absolute)
+                addresses += base.address.value.toLong() + displacement
+        }
+        return memvars.filter { memvar ->
+            val start = memvar.address.toLong()
+            val end = start + irprog.options.compTarget.memorySize(memvar.dt, memvar.length?.toInt())
+            memvar.name in symbols || addresses.any { it >= start && it < end }
+        }
     }
 
     private fun removeBlockInits(code: IRProgram, blockLabel: String) {

@@ -80,6 +80,7 @@ SYSCALLS:     DO NOT RENUMBER THESE OR YOU WILL BREAK EXISTING CODE
 66 = gfx_text ; draw text in graphics window
 67 = SPLIT_WORDARRAY_CONTAINS
 68 = LONGARRAY_CONTAINS
+69 = get_c ; read a single character (byte) from standard input, 0 at the end of the input
 */
 
 enum class Syscall {
@@ -157,6 +158,7 @@ enum class Syscall {
     GFX_TEXT,
     SPLIT_WORDARRAY_CONTAINS,
     LONGARRAY_CONTAINS,
+    GET_C,
     ;
 
     companion object {
@@ -237,6 +239,10 @@ object SysCalls {
             Syscall.PRINT_I32 -> {
                 val value = getArgValues(callspec.arguments, vm).single()
                 print(value)
+            }
+            Syscall.GET_C -> {
+                val char = System.`in`.read()
+                returnValue(callspec.results.single(), max(char, 0), vm)
             }
             Syscall.INPUT -> {
                 val (address, maxlen) = getArgValues(callspec.arguments, vm)

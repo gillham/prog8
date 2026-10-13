@@ -1,6 +1,6 @@
 ; Prog8 definitions for the Text I/O console routines for the llvm64 target.
-; Text goes to stdout; colors, reverse video and cursor movement use ANSI escape sequences.
-; txt.print_f is not here: as on the other targets, it belongs in the floats module (which llvm64 doesn't have yet).
+; Text goes to stdout and input comes from stdin; colors, reverse video and cursor movement use ANSI escape sequences.
+; txt.print_f is not here: as on the other targets, it belongs in the floats module (which can't format floats on llvm64 yet).
 
 %import conv
 %option ignore_unused
@@ -157,6 +157,49 @@ sub  print_l  (long value) {
 sub  print_u32  (long value) {
     ; ---- print the 32 bits of the long, read as an unsigned number, in decimal form, without left padding 0's
     print(conv.str_u32(value))
+}
+
+sub chrin() -> ubyte {
+    ; ---- read the next character (byte) from stdin, waiting for it if needed; 0 at the end of the input
+    %ir {{
+        syscall 69 (): r99100.b
+        returnr.b r99100.b
+    }}
+}
+
+sub  input_line  (str buffer, ubyte maxlength) -> ubyte  {
+    ; ---- read a line from stdin into the buffer, which needs room for maxlength chars and the terminating 0 byte.
+    ;      Returns the length. The line end is not stored, and the rest of a longer line is skipped.
+    ubyte count = 0
+    repeat {
+        ubyte char = chrin()
+        if char == 0 or char == '\n'
+            break
+        if char != '\r' and count < maxlength {
+            buffer[count] = char
+            count++
+        }
+    }
+    buffer[count] = 0
+    return count
+}
+
+sub  input_chars  (str buffer) -> ubyte  {
+    ; ---- Input a string (max. 80 chars) from stdin. Returns length of input. (string is terminated with a 0 byte as well)
+    return input_line(buffer, 80)
+}
+
+sub readln() -> str {
+    ; ---- read a line (max. 255 chars) from stdin, without the line end; the next readln() reuses the returned string
+    ubyte[256] line
+    void input_line(line, 255)
+    return &line
+}
+
+sub prompt(str message) -> str {
+    ; ---- print the message, and readln() the answer
+    print(message)
+    return readln()
 }
 
 sub column(ubyte col) {

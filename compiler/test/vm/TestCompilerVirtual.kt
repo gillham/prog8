@@ -278,6 +278,27 @@ main {
         }
     }
 
+    test("memory-mapped variables that the code still accesses by address stay in the symbol table when their block is removed") {
+        val src = $$"""
+regs {
+    &uword first = $ff0100
+    &ubyte other = $ff0200
+}
+
+main {
+    sub start() {
+        regs.first = 1234
+    }
+}"""
+        val result = compileText(VMTarget(), true, src, outputDir, writeAssembly = true)!!
+        val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        val irProgram = IRFileReader().read(virtfile)
+        irProgram.st.stripAllPrefixes()
+        irProgram.blocks.none { it.label == "regs" } shouldBe true
+        (irProgram.st.lookup("regs.first") as IRStMemVar).address shouldBe 0xff0100u
+        irProgram.st.lookup("regs.other") shouldBe null
+    }
+
     test("memory mapped var as for loop counter") {
         val src = """
 main {
@@ -556,6 +577,46 @@ main {
         val nextInstr = instructions[loadmIdx + 1]
         nextInstr.opcode shouldBe Opcode.CMPI
         nextInstr.immediate?.integerValue shouldBe 0
+    }
+
+    test("short-circuit and/or compare their left operand before branching on it (strict status-bits contract)") {
+        val src = """
+main {
+    sub start() {
+        cx16.r0L = 0
+        cx16.r1L = 0
+        cx16.r2L = 0
+        cx16.r3L = 0
+        if islower(65)
+            cx16.r0L = 1
+        if islower(97)
+            cx16.r1L = 1
+        if isedge(65)
+            cx16.r2L = 1
+        if isedge(0)
+            cx16.r3L = 1
+    }
+
+    sub islower(ubyte char) -> bool {
+        return char >= 97 and char <= 122
+    }
+
+    sub isedge(ubyte char) -> bool {
+        return char == 0 or char >= 250
+    }
+}"""
+        for (optimize in listOf(false, true)) {
+            val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+            val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+            VmRunner().runAndTestProgram(virtfile.readText()) { vm ->
+                withClue("optimize=$optimize") {
+                    vm.memory.getUB(0xff0000u) shouldBe 0u
+                    vm.memory.getUB(0xff0002u) shouldBe 1u
+                    vm.memory.getUB(0xff0004u) shouldBe 0u
+                    vm.memory.getUB(0xff0006u) shouldBe 1u
+                }
+            }
+        }
     }
 
     test("if-expression omits CMPI since CALL now sets flags") {

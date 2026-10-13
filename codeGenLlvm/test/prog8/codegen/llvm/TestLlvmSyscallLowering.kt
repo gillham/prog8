@@ -52,6 +52,23 @@ class TestLlvmSyscallLowering: FunSpec({
         text.count { it.startsWith("define internal void @.print.string(") } shouldBe 1
     }
 
+    test("syscall 69 reads a character with C's getchar, whose negative end of input becomes 0") {
+        val module = TestProgram().apply { readCharSub() }.module()
+        val lines = module.function("main.readchar").lines()
+        lines shouldHave "  %ch.1 = call i32 @getchar()"
+        lines shouldHave "  %smax.1 = call i32 @llvm.smax.i32(i32 %ch.1, i32 0)"
+        lines shouldHave "  %ch.2 = trunc i32 %smax.1 to i8"
+        lines shouldHave "  store i8 %ch.2, ptr %r1.slot"
+        LlvmPrinter.print(module).lines() shouldHave "declare i32 @getchar()"
+    }
+
+    test("the input syscall reads stdin in a native arm64 macOS program, and gives 0 at its end").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+        val module = TestProgram().apply { readCharSub(); echoSub() }.module().withMainCalling("main.echo")
+        val (exitCode, output) = compileAndRun(LlvmPrinter.print(module), input = "hi\n")
+        withClue(output) { exitCode shouldBe 0 }
+        output shouldBe "hi\n"
+    }
+
     test("a program without output syscalls gets neither the putchar declaration nor the string helper") {
         val text = LlvmPrinter.print(TestProgram().apply { silentSub() }.module())
         withClue("putchar") { ("putchar" in text) shouldBe false }
@@ -93,6 +110,24 @@ private fun TestProgram.printStringSub() {
         return
         """)
 }
+
+private fun TestProgram.readCharSub() = sub("main.readchar", returns = listOf(DataType.UBYTE), code = """
+    _main.readchar:
+    syscall 69 ():r1.b
+    returnr.b r1.b
+    """)
+
+/** Writes the characters of stdin to stdout until main.readchar gives 0; returns 0. */
+private fun TestProgram.echoSub() = sub("main.echo", returns = listOf(DataType.UBYTE), code = """
+    _main.echo:
+    call main.readchar():r1.b
+    cmpi.b r1.b,#0.b
+    bsteq main.echo.done
+    syscall 2 (r1.b)
+    jump main.echo
+    _main.echo.done:
+    returni.b #0.b
+    """)
 
 private fun TestProgram.silentSub() = sub("main.silent", returns = listOf(DataType.UBYTE), code = """
     _main.silent:
