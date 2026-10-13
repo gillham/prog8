@@ -5,11 +5,13 @@ import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 import prog8.code.core.*
 import prog8.code.target.LlvmTarget
 import prog8.code.target.VMTarget
 import prog8.codegen.llvm.lower.LlvmDataSymbols
 import prog8.codegen.llvm.lower.LlvmGlobalEmitter
+import prog8.codegen.llvm.lower.PointerArray
 import prog8.codegen.llvm.model.*
 import prog8.codegen.llvm.types.LlvmTypeMapper
 import prog8.intermediate.*
@@ -120,8 +122,8 @@ class TestLlvmGlobalEmission: FunSpec({
         st.add(variable("main.zeros", DataType.arrayFor(BaseDataType.WORD, target), length = 4u))
         val (module, _) = emit(st)
         module.printed("main.bytes") shouldBe "@main.bytes = internal global [3 x i8] [i8 1, i8 2, i8 -1]"
-        module.printed("main.words") shouldBe "@main.words = internal global [2 x i16] [i16 1000, i16 ptrtoint (ptr @main.name to i16)]"
-        module.printed("main.names") shouldBe "@main.names = internal global [2 x i32] [i32 ptrtoint (ptr @.str.0 to i32), i32 ptrtoint (ptr @main.name to i32)]"
+        module.printed("main.words") shouldBe "@main.words = internal global [2 x ptr] [ptr inttoptr (i64 1000 to ptr), ptr @main.name]"
+        module.printed("main.names") shouldBe "@main.names = internal global [2 x ptr] [ptr @.str.0, ptr @main.name]"
         module.printed("main.ptrs") shouldBe "@main.ptrs = internal global [2 x ptr] [ptr @main.name, ptr null]"
         module.printed("main.floats") shouldBe "@main.floats = internal global [2 x double] [double 1.5, double -2.0]"
         module.printed("main.flags") shouldBe "@main.flags = internal global [2 x i8] [i8 1, i8 0]"
@@ -135,6 +137,46 @@ class TestLlvmGlobalEmission: FunSpec({
             add(variable("main.fs", DataType.arrayFor(BaseDataType.FLOAT, target), refs(sym("main.x")), length = 1u))
         }
         shouldThrow<IllegalArgumentException> { emit(floatAddress) }.message shouldContain "main.fs"
+    }
+
+    test("string, address and pointer arrays become native ptr arrays instead of truncated integers") {
+        val st = IRSymbolTable()
+        st.add(variable("main.name", DataType.STR, IRVariableInitializer.Str("hi", Encoding.ISO), length = 3u))
+        st.add(variable("prog8_interned_strings.string_0", DataType.STR, IRVariableInitializer.Str("aa", Encoding.ISO), length = 3u))
+        st.add(variable("prog8_interned_strings.string_1", DataType.STR, IRVariableInitializer.Str("bb", Encoding.ISO), length = 3u))
+        st.add(variable("main.names", DataType.arrayFor(BaseDataType.STR, target), refs(sym("prog8_interned_strings.string_0"), sym("prog8_interned_strings.string_1")), length = 2u))
+        st.add(variable("main.jumps", DataType.arrayFor(BaseDataType.UWORD, target), refs(sym("main.start"), num(0.0)), length = 2u))
+        st.add(variable("main.nodes", DataType.arrayOfPointersTo(BaseDataType.UBYTE), refs(sym("main.name"), num(4096.0)), length = 2u))
+        st.add(variable("main.longs", DataType.arrayFor(BaseDataType.LONG, target), numbers(1.0, 2.0), length = 2u))
+        val (module, symbols) = emit(st)
+        module.printed("main.names") shouldBe "@main.names = internal global [2 x ptr] [ptr @.str.0, ptr @.str.1]"
+        module.printed("main.jumps") shouldBe "@main.jumps = internal global [2 x ptr] [ptr @main.start, ptr null]"
+        module.printed("main.nodes") shouldBe "@main.nodes = internal global [2 x ptr] [ptr @main.name, ptr inttoptr (i64 4096 to ptr)]"
+        module.printed("main.longs") shouldBe "@main.longs = internal global [2 x i32] [i32 1, i32 2]"
+        LlvmPrinter.print(module) shouldNotContain "ptrtoint"
+        symbols.pointerArrays["main.names"] shouldBe PointerArray("main.names", LlvmValue.Global("main.names"), 2, 4)
+        symbols.pointerArrays["main.jumps"] shouldBe PointerArray("main.jumps", LlvmValue.Global("main.jumps"), 2, 2)
+        symbols.pointerArrays["main.nodes"] shouldBe PointerArray("main.nodes", LlvmValue.Global("main.nodes"), 2, 8)
+        symbols.pointerArrays.keys shouldBe setOf("main.names", "main.jumps", "main.nodes")
+    }
+
+    test("an uninitialized str[] becomes a ptr array when the code stores string addresses into it") {
+        val st = IRSymbolTable()
+        st.add(variable("prog8_interned_strings.string_0", DataType.STR, IRVariableInitializer.Str("zz", Encoding.ISO), length = 3u))
+        st.add(variable("main.names", DataType.arrayFor(BaseDataType.STR, target), length = 3u))
+        st.add(variable("main.counts", DataType.arrayFor(BaseDataType.LONG, target), length = 3u))
+        val program = program(st, target)
+        program.addGlobalInits(IRCodeChunk(null, null).apply {
+            this += IRTextCodec.parse("load.p r1.p,#prog8_interned_strings.string_0")
+            this += IRTextCodec.parse("storem.l r1.l,[main.names+4]")
+            this += IRTextCodec.parse("load.l r2.l,#42.l")
+            this += IRTextCodec.parse("storem.l r2.l,[main.counts+4]")
+        })
+        val module = LlvmModule("test")
+        val symbols = LlvmGlobalEmitter(program).emit(module)
+        module.printed("main.names") shouldBe "@main.names = internal global [3 x ptr] zeroinitializer"
+        module.printed("main.counts") shouldBe "@main.counts = internal global [3 x i32] zeroinitializer"
+        symbols.pointerArrays.keys shouldBe setOf("main.names")
     }
 
     test("@shared variables stay external, read-only data is constant, alignment is kept") {
@@ -151,12 +193,45 @@ class TestLlvmGlobalEmission: FunSpec({
     test("struct instances are packed structs, struct arrays hold the instances inline") {
         val (module, symbols) = emit(structSymbols(target))
         val node = "<{ i8, i16, i16, i16, ptr }>"
-        val node1 = "<{ i8 1, i16 10, i16 20, i16 30, ptr @main.name }>"
+        val node1 = "<{ i8 1, i16 10, i16 20, i16 30, ptr null }>"
         module.printed("prog8_struct_instances.node1") shouldBe "@prog8_struct_instances.node1 = internal global $node $node1"
         module.printed("prog8_struct_instances.node2") shouldBe "@prog8_struct_instances.node2 = internal global [15 x i8] zeroinitializer"
         module.printed("prog8_struct_instances.either") shouldBe "@prog8_struct_instances.either = internal global [8 x i8] zeroinitializer"
         module.printed("main.nodes") shouldBe "@main.nodes = internal global [2 x $node] [$node $node1, $node zeroinitializer]"
         symbols.addresses["prog8_struct_instances.node1"] shouldBe LlvmValue.Global("prog8_struct_instances.node1")
+    }
+
+    test("unaligned pointers in packed structs are stored at startup by a volatile module constructor") {
+        val (module, _) = emit(structSymbols(target))
+        module.startupStores() shouldBe listOf(
+            "store volatile ptr @main.name, ptr getelementptr inbounds (i8, ptr @main.nodes, i64 7), align 1",
+            "store volatile ptr @main.name, ptr getelementptr inbounds (i8, ptr @prog8_struct_instances.node1, i64 7), align 1",
+            "ret void")
+        module.functions.single().linkage shouldBe LlvmLinkage.INTERNAL
+        module.printed("llvm.global_ctors") shouldBe
+            "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @.init.addresses, ptr null }]"
+    }
+
+    test("aligned pointers stay static data, integer address fields are stored at startup, constant data becomes writable for that") {
+        val (module, _) = emit(linkSymbols(target))
+        module.printed("prog8_struct_instances.link") shouldBe
+            "@prog8_struct_instances.link = internal global <{ ptr, i16 }> <{ ptr @main.name, i16 0 }>, align 8"
+        module.printed("main.links") shouldBe
+            "@main.links = internal global [1 x <{ ptr, i16 }>] [<{ ptr, i16 }> <{ ptr @main.name, i16 0 }>], align 8"
+        module.startupStores() shouldBe listOf(
+            "store volatile i16 ptrtoint (ptr @main.name to i16), ptr getelementptr inbounds (i8, ptr @main.links, i64 8), align 1",
+            "store volatile i16 ptrtoint (ptr @main.name to i16), ptr getelementptr inbounds (i8, ptr @prog8_struct_instances.link, i64 8), align 1",
+            "ret void")
+
+        val wordAligned = IRSymbolTable().apply {
+            add(variable("main.name", DataType.STR, IRVariableInitializer.Str("hi", Encoding.ISO), length = 3u))
+            add(variable("main.ptrs", DataType.arrayOfPointersTo(BaseDataType.UBYTE), refs(sym("main.name")), length = 1u, align = 2u))
+        }
+        emit(wordAligned).first.printed("main.ptrs") shouldBe "@main.ptrs = internal global [1 x ptr] [ptr @main.name], align 8"
+
+        val (plain, _) = emit(IRSymbolTable().apply { add(variable("main.counter", DataType.UWORD)) })
+        plain.functions shouldBe emptyList()
+        plain.globals.map { it.name } shouldBe listOf("main.counter")
     }
 
     test("memory slabs are zeroed byte arrays with their alignment") {
@@ -189,20 +264,23 @@ class TestLlvmGlobalEmission: FunSpec({
         symbols.memoryMappedAddress(0xd020) shouldBe null
     }
 
-    test("constants become internal constant globals, memory slab constants hold the slab address") {
+    test("constants become internal constant globals, memory slab constants are ptr constants holding the slab address") {
         val st = IRSymbolTable()
         st.add(IRStConstant("main.LIMIT", DataType.UBYTE, 42.0))
         st.add(IRStConstant("main.PI", DataType.FLOAT, 3.25))
         st.add(IRStConstant("main.MINUS", DataType.WORD, -2.0))
         st.add(IRStMemorySlab("prog8_slabs.memory_buf", 16u, 0u))
         st.add(IRStConstant("main.BUF", DataType.UWORD, null, "memory_buf"))
+        st.add(IRStConstant("main.BUFL", DataType.LONG, null, "memory_buf"))
         st.add(IRStConstant("main.BUFPTR", DataType.pointer(BaseDataType.UBYTE), null, "memory_buf"))
         val (module, symbols) = emit(st)
         module.printed("main.LIMIT") shouldBe "@main.LIMIT = internal constant i8 42"
         module.printed("main.PI") shouldBe "@main.PI = internal constant double 3.25"
         module.printed("main.MINUS") shouldBe "@main.MINUS = internal constant i16 -2"
-        module.printed("main.BUF") shouldBe "@main.BUF = internal constant i16 ptrtoint (ptr @prog8_slabs.memory_buf to i16)"
+        module.printed("main.BUF") shouldBe "@main.BUF = internal constant ptr @prog8_slabs.memory_buf"
+        module.printed("main.BUFL") shouldBe "@main.BUFL = internal constant ptr @prog8_slabs.memory_buf"
         module.printed("main.BUFPTR") shouldBe "@main.BUFPTR = internal constant ptr @prog8_slabs.memory_buf"
+        LlvmPrinter.print(module) shouldNotContain "ptrtoint"
         symbols.addresses["main.LIMIT"] shouldBe LlvmValue.Global("main.LIMIT")
 
         val empty = IRSymbolTable().apply { add(IRStConstant("main.NOTHING", DataType.UBYTE, null)) }
@@ -227,29 +305,56 @@ class TestLlvmGlobalEmission: FunSpec({
     }
 
     test("a module with every kind of global is accepted by llvm-as").config(enabledOrReasonIf = requiresLlvmAs) {
-        val st = structSymbols(target)
-        memoryMappedSymbols(target).let { memvars -> memvars.allMemMappedVariables().forEach { st.add(it) } }
-        st.add(variable("prog8_interned_strings.string_1", DataType.STR, IRVariableInitializer.Str("aa", Encoding.ISO), length = 3u))
-        st.add(variable("main.words", DataType.arrayFor(BaseDataType.UWORD, target), refs(num(1000.0), sym("main.name")), length = 2u))
-        st.add(variable("main.names", DataType.arrayFor(BaseDataType.STR, target), refs(sym("prog8_interned_strings.string_1"), sym("main.name")), length = 2u))
-        st.add(variable("main.regs", DataType.arrayOfPointersTo(BaseDataType.UWORD), refs(sym("cx16.r1"), sym("cx16.r0"), num(0.0)), length = 3u))
-        st.add(variable("main.handlers", DataType.arrayOfPointersTo(BaseDataType.UBYTE), refs(sym("main.start")), length = 1u))
-        st.add(variable("main.floats", DataType.arrayFor(BaseDataType.FLOAT, target), numbers(1.5, -2.0), length = 2u))
-        st.add(variable("main.screen", DataType.pointer(BaseDataType.UBYTE), numeric(1024.0)))
-        st.add(variable("main.counter", DataType.UWORD))
-        st.add(variable("txt.sequence", DataType.STR, IRVariableInitializer.Str("ab", Encoding.ISO), length = 3u, shared = true))
-        st.add(variable("main.page", DataType.arrayFor(BaseDataType.UBYTE, target), length = 256u, align = 256u, readonly = true))
-        st.add(IRStMemorySlab("prog8_slabs.memory_buf", 16u, 64u))
-        st.add(IRStConstant("main.BUF", DataType.UWORD, null, "memory_buf"))
-        st.add(IRStConstant("main.PI", DataType.FLOAT, 3.25))
-
-        val module = LlvmModule("globals", target.targetTriple, target.dataLayout)
-        LlvmGlobalEmitter(program(st, target)).emit(module)
-        module.functions += LlvmFunction("main.start", LlvmType.Void, emptyList(), isExternal = true)
-        val (exitCode, output) = runLlvmAs(LlvmPrinter.print(module))
+        val (exitCode, output) = runLlvmAs(LlvmPrinter.print(everyKindOfGlobal(target)))
         withClue(output) { exitCode shouldBe 0 }
     }
+
+    test("every kind of global links into a native arm64 macOS program, whose startup code sets the unaligned struct pointer").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+        val (exitCode, output) = compileAndRun(LlvmPrinter.print(everyKindOfGlobal(target)))
+        withClue(output) { exitCode shouldBe 0 }
+        output shouldBe "hi\n"
+    }
 })
+
+
+/**
+ * One of each kind of global, the subroutine the handler table refers to, and a C `main` that prints the string node1 points to.
+ * The volatile load keeps the optimizer from deleting node1, so its startup-initialized field really reaches the linker.
+ */
+private fun everyKindOfGlobal(target: LlvmTarget): LlvmModule {
+    val st = structSymbols(target)
+    linkSymbols(target).let { links ->
+        links.allStructDefs().forEach { st.add(it) }
+        links.allStructInstances().forEach { st.add(it) }
+        st.add(checkNotNull(links.lookup("main.links")))
+    }
+    memoryMappedSymbols(target).allMemMappedVariables().forEach { st.add(it) }
+    st.add(variable("prog8_interned_strings.string_1", DataType.STR, IRVariableInitializer.Str("aa", Encoding.ISO), length = 3u))
+    st.add(variable("main.words", DataType.arrayFor(BaseDataType.UWORD, target), refs(num(1000.0), sym("main.name")), length = 2u))
+    st.add(variable("main.names", DataType.arrayFor(BaseDataType.STR, target), refs(sym("prog8_interned_strings.string_1"), sym("main.name")), length = 2u))
+    st.add(variable("main.regs", DataType.arrayOfPointersTo(BaseDataType.UWORD), refs(sym("cx16.r1"), sym("cx16.r0"), num(0.0)), length = 3u))
+    st.add(variable("main.handlers", DataType.arrayOfPointersTo(BaseDataType.UBYTE), refs(sym("main.start")), length = 1u))
+    st.add(variable("main.floats", DataType.arrayFor(BaseDataType.FLOAT, target), numbers(1.5, -2.0), length = 2u))
+    st.add(variable("main.screen", DataType.pointer(BaseDataType.UBYTE), numeric(1024.0)))
+    st.add(variable("main.counter", DataType.UWORD))
+    st.add(variable("txt.sequence", DataType.STR, IRVariableInitializer.Str("ab", Encoding.ISO), length = 3u, shared = true))
+    st.add(variable("main.page", DataType.arrayFor(BaseDataType.UBYTE, target), length = 256u, align = 256u, readonly = true))
+    st.add(IRStMemorySlab("prog8_slabs.memory_buf", 16u, 64u))
+    st.add(IRStConstant("main.BUF", DataType.UWORD, null, "memory_buf"))
+    st.add(IRStConstant("main.PI", DataType.FLOAT, 3.25))
+
+    val module = LlvmModule("globals", target.targetTriple, target.dataLayout)
+    LlvmGlobalEmitter(program(st, target)).emit(module)
+    module.functions += LlvmFunction("main.start", LlvmType.Void, emptyList(), mutableListOf(LlvmBlock("entry", mutableListOf(LlvmInstruction.Ret(null)))))
+    module.functions += LlvmFunction("puts", LlvmType.I32, listOf(LlvmValue.Local("text", LlvmType.Ptr)), isExternal = true)
+    val name = LlvmValue.Local("name", LlvmType.Ptr)
+    val nameField = LlvmValue.ConstantGep(LlvmType.I8, LlvmValue.Global("prog8_struct_instances.node1"), listOf(LlvmValue.IntConstant(7, LlvmType.I64)))
+    module.functions += LlvmFunction("main", LlvmType.I32, emptyList(), mutableListOf(LlvmBlock("entry", mutableListOf(
+        LlvmInstruction.Load(name, nameField, align = 1, volatile = true),
+        LlvmInstruction.Call(null, "puts", listOf(name), LlvmType.I32),
+        LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I32))))))
+    return module
+}
 
 
 private object NodeType : ISubType {
@@ -265,6 +370,23 @@ private fun nodeStruct(target: ICompilationTarget) = IRStStructDef("main.Node", 
     IRStStructField(DataType.UBYTE, "id"),
     IRStStructField(DataType.arrayFor(BaseDataType.UWORD, target), "values", 3),
     IRStStructField(DataType.pointer(BaseDataType.UBYTE), "next")), 15u)
+
+private object LinkType : ISubType {
+    override val scopedNameString = "main.Link"
+    override fun memsize(sizer: IMemSizer) = 10
+    override fun sameas(other: ISubType) = other === this
+    override fun getFieldType(name: String): DataType? = null
+}
+
+/** main.Link has a pointer at offset 0, which stays static data, and a uword holding an address at offset 8. */
+private fun linkSymbols(target: ICompilationTarget) = IRSymbolTable().apply {
+    add(variable("main.name", DataType.STR, IRVariableInitializer.Str("hi", Encoding.ISO), length = 3u))
+    add(IRStStructDef("main.Link", listOf(IRStStructField(DataType.pointer(BaseDataType.UBYTE), "next"), IRStStructField(DataType.UWORD, "addr")), 10u))
+    add(IRStStructInstance("prog8_struct_instances.link", "main.Link", listOf(
+        IRStructInitValue(BaseDataType.POINTER, sym("main.name")),
+        IRStructInitValue(BaseDataType.UWORD, sym("main.name"))), 10u))
+    add(variable("main.links", DataType.arrayOfStructs(LinkType), refs(sym("prog8_struct_instances.link")), length = 1u, readonly = true))
+}
 
 private fun structSymbols(target: ICompilationTarget) = IRSymbolTable().apply {
     add(nodeStruct(target))
@@ -309,3 +431,6 @@ private fun emit(st: IRSymbolTable, target: ICompilationTarget = LlvmTarget()): 
 }
 
 private fun LlvmModule.printed(name: String): String = LlvmPrinter.format(globals.single { it.name == name })
+
+private fun LlvmModule.startupStores(): List<String> =
+    functions.single { it.name == ".init.addresses" }.blocks.single().instructions.map { LlvmPrinter.format(it) }

@@ -146,14 +146,14 @@ internal sealed interface LlvmInstruction {
         }
     }
 
-    data class Load(val result: Local, val ptr: LlvmValue, val align: Int? = null) : LlvmInstruction {
+    data class Load(val result: Local, val ptr: LlvmValue, val align: Int? = null, val volatile: Boolean = false) : LlvmInstruction {
         init {
             require(ptr.type == LlvmType.Ptr) { "load address must have type ptr, not ${ptr.type}" }
             requireValidAlignment(align)
         }
     }
 
-    data class Store(val value: LlvmValue, val ptr: LlvmValue, val align: Int? = null) : LlvmInstruction {
+    data class Store(val value: LlvmValue, val ptr: LlvmValue, val align: Int? = null, val volatile: Boolean = false) : LlvmInstruction {
         init {
             require(ptr.type == LlvmType.Ptr) { "store address must have type ptr, not ${ptr.type}" }
             requireValidAlignment(align)
@@ -282,7 +282,7 @@ internal enum class CastOperator {
 }
 
 internal enum class LlvmLinkage {
-    EXTERNAL, PRIVATE, INTERNAL;
+    EXTERNAL, PRIVATE, INTERNAL, APPENDING;
 
     val keyword: String get() = name.lowercase()
 }
@@ -302,6 +302,7 @@ internal data class LlvmFunction(
 ) {
     init {
         require(!isExternal || linkage == LlvmLinkage.EXTERNAL) { "declaration of @$name must have external linkage, not $linkage" }
+        require(linkage != LlvmLinkage.APPENDING) { "function @$name can't have appending linkage" }
     }
 
     val type: LlvmType.Function get() = LlvmType.Function(returnType, parameters.map { it.type })
@@ -321,6 +322,7 @@ internal data class LlvmGlobal(
         require(type.isFirstClass) { "global @$name needs a first-class type, not $type" }
         require(initializer != null || linkage == LlvmLinkage.EXTERNAL) { "declaration of @$name must have external linkage, not $linkage" }
         require(initializer == null || initializer.type == type) { "initializer type ${initializer?.type} of @$name differs from $type" }
+        require(linkage != LlvmLinkage.APPENDING || type is LlvmType.Array) { "appending global @$name must be an array, not $type" }
         requireValidAlignment(align)
     }
 }

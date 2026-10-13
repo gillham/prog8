@@ -76,8 +76,8 @@ internal object LlvmPrinter {
 
     fun format(instruction: LlvmInstruction): String = when (val insn = instruction) {
         is LlvmInstruction.Alloca -> "${format(insn.result)} = alloca ${format(insn.allocatedType)}"
-        is LlvmInstruction.Load -> "${format(insn.result)} = load ${format(insn.result.type)}, ${typed(insn.ptr)}${alignSuffix(insn.align)}"
-        is LlvmInstruction.Store -> "store ${typed(insn.value)}, ${typed(insn.ptr)}${alignSuffix(insn.align)}"
+        is LlvmInstruction.Load -> "${format(insn.result)} = load ${volatilePrefix(insn.volatile)}${format(insn.result.type)}, ${typed(insn.ptr)}${alignSuffix(insn.align)}"
+        is LlvmInstruction.Store -> "store ${volatilePrefix(insn.volatile)}${typed(insn.value)}, ${typed(insn.ptr)}${alignSuffix(insn.align)}"
         is LlvmInstruction.BinaryOp -> "${format(insn.result)} = ${insn.op.keyword} ${typed(insn.lhs)}, ${format(insn.rhs)}"
         is LlvmInstruction.FNeg -> "${format(insn.result)} = fneg ${typed(insn.value)}"
         is LlvmInstruction.Icmp -> "${format(insn.result)} = icmp ${insn.cond.keyword} ${typed(insn.lhs)}, ${format(insn.rhs)}"
@@ -132,10 +132,12 @@ internal object LlvmPrinter {
 
     private fun linkagePrefix(linkage: LlvmLinkage): String = when (linkage) {
         LlvmLinkage.EXTERNAL -> ""
-        LlvmLinkage.PRIVATE, LlvmLinkage.INTERNAL -> "${linkage.keyword} "
+        LlvmLinkage.PRIVATE, LlvmLinkage.INTERNAL, LlvmLinkage.APPENDING -> "${linkage.keyword} "
     }
 
     private fun alignSuffix(align: Int?): String = align?.let { ", align $it" }.orEmpty()
+
+    private fun volatilePrefix(volatile: Boolean): String = if (volatile) "volatile " else ""
 
     private fun structBraces(packed: Boolean, items: List<String>): String = when {
         items.isEmpty() -> if (packed) "<{}>" else "{}"

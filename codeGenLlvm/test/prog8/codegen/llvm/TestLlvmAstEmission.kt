@@ -106,8 +106,11 @@ class TestLlvmAstEmission: FunSpec({
         format(LlvmInstruction.Alloca(p, LlvmType.Array(4, LlvmType.I8))) shouldBe "%p = alloca [4 x i8]"
         format(LlvmInstruction.Load(r16, p)) shouldBe "%r = load i16, ptr %p"
         format(LlvmInstruction.Load(r16, p, align = 1)) shouldBe "%r = load i16, ptr %p, align 1"
+        format(LlvmInstruction.Load(r16, p, align = 1, volatile = true)) shouldBe "%r = load volatile i16, ptr %p, align 1"
         format(LlvmInstruction.Store(a16, LlvmValue.Global("g"))) shouldBe "store i16 %a, ptr @g"
         format(LlvmInstruction.Store(i16(-1), p, align = 2)) shouldBe "store i16 -1, ptr %p, align 2"
+        format(LlvmInstruction.Store(p, LlvmValue.ConstantGep(LlvmType.I8, LlvmValue.Global("g"), listOf(i64(7))), align = 1, volatile = true)) shouldBe
+            "store volatile ptr %p, ptr getelementptr inbounds (i8, ptr @g, i64 7), align 1"
         format(LlvmInstruction.BinaryOp(BinaryOperator.ADD, r16, a16, i16(1))) shouldBe "%r = add i16 %a, 1"
         format(LlvmInstruction.BinaryOp(BinaryOperator.ASHR, r16, a16, b16)) shouldBe "%r = ashr i16 %a, %b"
         format(LlvmInstruction.BinaryOp(BinaryOperator.FDIV, fa, fa, fb)) shouldBe "%fa = fdiv double %fa, %fb"
@@ -156,6 +159,9 @@ class TestLlvmAstEmission: FunSpec({
         LlvmPrinter.format(LlvmGlobal("names", pointers.type, pointers, isConstant = true)) shouldBe
             "@names = constant [2 x ptr] [ptr @.str.0, ptr null]"
         LlvmPrinter.format(LlvmGlobal("counter", LlvmType.I16, i16(0), isConstant = false)) shouldBe "@counter = global i16 0"
+        val ctors = LlvmValue.ArrayConstant(ctorEntryType, listOf(ctorEntry("init")))
+        LlvmPrinter.format(LlvmGlobal("llvm.global_ctors", ctors.type, ctors, isConstant = false, linkage = LlvmLinkage.APPENDING)) shouldBe
+            "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @init, ptr null }]"
     }
 
     test("struct constants, constant expressions and zero values are formatted in LLVM syntax") {
@@ -198,6 +204,8 @@ class TestLlvmAstEmission: FunSpec({
         shouldThrow<IllegalArgumentException> { LlvmInstruction.Load(a16, LlvmValue.Global("g"), align = 3) }
         shouldThrow<IllegalArgumentException> { LlvmGlobal("g", LlvmType.I16, null, isConstant = false, linkage = LlvmLinkage.PRIVATE) }
         shouldThrow<IllegalArgumentException> { LlvmFunction("f", LlvmType.Void, emptyList(), isExternal = true, linkage = LlvmLinkage.INTERNAL) }
+        shouldThrow<IllegalArgumentException> { LlvmFunction("f", LlvmType.Void, emptyList(), linkage = LlvmLinkage.APPENDING) }
+        shouldThrow<IllegalArgumentException> { LlvmGlobal("g", LlvmType.I16, i16(0), isConstant = false, linkage = LlvmLinkage.APPENDING) }
         shouldThrow<IllegalArgumentException> { LlvmType.Struct(listOf(LlvmType.Void), packed = true) }
         shouldThrow<IllegalArgumentException> { LlvmValue.StructConstant(LlvmType.Struct(listOf(LlvmType.I8), packed = true), listOf(i16(1))) }
         shouldThrow<IllegalArgumentException> { LlvmValue.ConstantCast(CastOperator.ZEXT, i8(1), LlvmType.I16) }
@@ -302,6 +310,9 @@ private fun i16(value: Long) = LlvmValue.IntConstant(value, LlvmType.I16)
 private fun i32(value: Long) = LlvmValue.IntConstant(value, LlvmType.I32)
 private fun i64(value: Long) = LlvmValue.IntConstant(value, LlvmType.I64)
 
+private val ctorEntryType = LlvmType.Struct(listOf(LlvmType.I32, LlvmType.Ptr, LlvmType.Ptr), packed = false)
+private fun ctorEntry(function: String) = LlvmValue.StructConstant(ctorEntryType, listOf(i32(65535), LlvmValue.Global(function), LlvmValue.NullPtr()))
+
 private fun goldenModule(): LlvmModule {
     val target = LlvmTarget()
     val a = LlvmValue.Local("a", LlvmType.I16)
@@ -371,6 +382,8 @@ private fun comprehensiveModule(): LlvmModule {
         LlvmGlobal("zerofloat", LlvmType.Double, LlvmValue.ZeroInitializer(LlvmType.Double), isConstant = false),
         LlvmGlobal("zeroptr", LlvmType.Ptr, LlvmValue.ZeroInitializer(LlvmType.Ptr), isConstant = false),
         LlvmGlobal("zeroflag", LlvmType.I1, LlvmValue.ZeroInitializer(LlvmType.I1), isConstant = false))
+    val ctors = LlvmValue.ArrayConstant(ctorEntryType, listOf(ctorEntry("voidfunc")))
+    module.globals += LlvmGlobal("llvm.global_ctors", ctors.type, ctors, isConstant = false, linkage = LlvmLinkage.APPENDING)
 
     val x = LlvmValue.Local("x", LlvmType.I8)
     val widened = LlvmValue.Local("widened", LlvmType.I16)
@@ -399,6 +412,7 @@ private fun exerciseFunction(): LlvmFunction {
     entry += LlvmInstruction.Store(a, element, align = 2)
     entry += LlvmInstruction.Load(loaded, element, align = 2)
     entry += LlvmInstruction.Store(i16(7), LlvmValue.Global("1 weird name"))
+    entry += LlvmInstruction.Store(i16(8), LlvmValue.ConstantGep(LlvmType.I8, LlvmValue.Global("1 weird name"), listOf(i64(1))), align = 1, volatile = true)
     entry += LlvmInstruction.GetElementPtr(local("raw", LlvmType.Ptr), LlvmType.I8, p, listOf(b), inBounds = false)
 
     var intChain: LlvmValue = loaded

@@ -4,12 +4,16 @@ import prog8.code.INTERNED_STRINGS_MODULENAME
 import prog8.code.StMemorySlabBlockName
 import prog8.code.core.BaseDataType
 import prog8.codegen.llvm.model.CastOperator
+import prog8.codegen.llvm.model.LlvmBlock
+import prog8.codegen.llvm.model.LlvmFunction
 import prog8.codegen.llvm.model.LlvmGlobal
+import prog8.codegen.llvm.model.LlvmInstruction
 import prog8.codegen.llvm.model.LlvmLinkage
 import prog8.codegen.llvm.model.LlvmModule
 import prog8.codegen.llvm.model.LlvmType
 import prog8.codegen.llvm.model.LlvmValue
 import prog8.codegen.llvm.types.LlvmTypeMapper
+import prog8.intermediate.IRDataType
 import prog8.intermediate.IRProgram
 import prog8.intermediate.IRStConstant
 import prog8.intermediate.IRStMemVar
@@ -19,6 +23,13 @@ import prog8.intermediate.IRStStructDef
 import prog8.intermediate.IRStStructInstance
 import prog8.intermediate.IRStSymbolicReference
 import prog8.intermediate.IRVariableInitializer
+import prog8.intermediate.Opcode
+import prog8.intermediate.OperandDirection
+import prog8.intermediate.VirtualRegister
+import prog8.intermediate.symbolName
+
+// the leading dot keeps it apart from any Prog8 symbol
+private const val STARTUP_INITIALIZER = ".init.addresses"
 
 /**
  * Emits the module-level globals for the data symbols of an IRProgram, and maps each IR symbol name onto
@@ -56,21 +67,133 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         }
     }
 
+    // word and long arrays holding addresses (str[] is a long[] in the IR) get native ptr elements, so no address is truncated
+    private val pointerArrays: Map<String, PointerArray> by lazy {
+        val storedWithPointers = symbolsStoredWithPointers()
+        st.allVariables().mapNotNull { variable ->
+            val irElementSize = when {
+                variable.dt.isPointerArray -> target.POINTER_MEM_SIZE.toInt()
+                holdsAddresses(variable, storedWithPointers) -> target.memorySize(checkNotNull(variable.dt.sub))
+                else -> null
+            }
+            irElementSize?.let {
+                val length = requireNotNull(variable.length) { "array ${variable.name} has no length" }.toInt()
+                variable.name to PointerArray(variable.name, addresses.getValue(variable.name), length, it)
+            }
+        }.toMap()
+    }
+
     fun emit(module: LlvmModule): LlvmDataSymbols {
         require(target.POINTER_MEM_SIZE == 8u && target.FLOAT_MEM_SIZE == 8u) { "the LLVM backend needs the llvm64 target's 8-byte pointers and floats" }
-        module.globals += buildList {
+        val globals = buildList {
             st.allVariables().mapTo(this) { variableGlobal(it) }
             st.allStructInstances().mapTo(this) { structInstanceGlobal(it) }
             st.allMemorySlabs().mapTo(this) { memorySlabGlobal(it) }
             memoryMappedClusters.mapTo(this) { memoryMappedGlobal(it) }
             st.allConstants().mapTo(this) { constantGlobal(it) }
         }
-        return LlvmDataSymbols(addresses, memoryMappedClusters)
+        val startupStores = mutableListOf<LlvmInstruction>()
+        module.globals += globals.map { withStartupAddresses(it, startupStores) }
+        if (startupStores.isNotEmpty())
+            addStartupInitializer(module, startupStores)
+        return LlvmDataSymbols(addresses, memoryMappedClusters, pointerArrays)
+    }
+
+    /**
+     * Static data can only hold a symbol address as an 8-byte aligned `ptr`, arm64 macOS rejects other relocations.
+     * Other address slots, like unaligned pointer fields of packed structs, are zeroed and get stored at startup instead.
+     */
+    private fun withStartupAddresses(global: LlvmGlobal, startupStores: MutableList<LlvmInstruction>): LlvmGlobal {
+        val initializer = global.initializer ?: return global
+        val deferred = mutableListOf<Pair<Long, LlvmValue>>()
+        val staticInitializer = deferAddresses(initializer, 0L, deferred)
+        for ((offset, value) in deferred) {
+            val base = LlvmValue.Global(global.name)
+            val slot = if (offset == 0L) base else LlvmValue.ConstantGep(LlvmType.I8, base, listOf(LlvmValue.IntConstant(offset, LlvmType.I64)))
+            // volatile, so that LLVM can't fold the store back into the static initializer
+            startupStores += LlvmInstruction.Store(value, slot, align = 1, volatile = true)
+        }
+        val alignment = global.align ?: naturalAlignment(global.type)
+        val align = if (containsAddress(staticInitializer) && alignment < 8) 8 else global.align
+        return global.copy(initializer = staticInitializer, isConstant = global.isConstant && deferred.isEmpty(), align = align)
+    }
+
+    private fun deferAddresses(value: LlvmValue, offset: Long, deferred: MutableList<Pair<Long, LlvmValue>>): LlvmValue = when (value) {
+        is LlvmValue.StructConstant -> {
+            var fieldOffset = offset
+            LlvmValue.StructConstant(value.type, value.fields.map { field ->
+                deferAddresses(field, fieldOffset, deferred).also { fieldOffset += mapper.byteSize(field.type) }
+            })
+        }
+        is LlvmValue.ArrayConstant -> {
+            val elementSize = mapper.byteSize(value.elementType)
+            LlvmValue.ArrayConstant(value.elementType, value.elements.mapIndexed { index, element ->
+                deferAddresses(element, offset + index * elementSize, deferred)
+            })
+        }
+        else ->
+            if (isAddress(value) && (value.type != LlvmType.Ptr || offset % 8 != 0L)) {
+                deferred += offset to value
+                LlvmValue.ZeroInitializer(value.type)
+            } else value
+    }
+
+    private fun isAddress(value: LlvmValue): Boolean = when (value) {
+        is LlvmValue.Global, is LlvmValue.ConstantGep -> true
+        is LlvmValue.ConstantCast -> isAddress(value.value)
+        else -> false
+    }
+
+    private fun containsAddress(value: LlvmValue): Boolean = when (value) {
+        is LlvmValue.StructConstant -> value.fields.any { containsAddress(it) }
+        is LlvmValue.ArrayConstant -> value.elements.any { containsAddress(it) }
+        else -> isAddress(value)
+    }
+
+    private fun naturalAlignment(type: LlvmType): Int = when (type) {
+        is LlvmType.Array -> naturalAlignment(type.elementType)
+        is LlvmType.Struct -> if (type.packed) 1 else type.fields.maxOfOrNull { naturalAlignment(it) } ?: 1
+        else -> mapper.byteSize(type)
+    }
+
+    private fun addStartupInitializer(module: LlvmModule, stores: List<LlvmInstruction>) {
+        val body = LlvmBlock("entry", (stores + LlvmInstruction.Ret(null)).toMutableList())
+        module.functions += LlvmFunction(STARTUP_INITIALIZER, LlvmType.Void, emptyList(), mutableListOf(body), linkage = LlvmLinkage.INTERNAL)
+        val entryType = LlvmType.Struct(listOf(LlvmType.I32, LlvmType.Ptr, LlvmType.Ptr), packed = false)
+        // 65535 is the default constructor priority
+        val entry = LlvmValue.StructConstant(entryType, listOf(LlvmValue.IntConstant(65535, LlvmType.I32), LlvmValue.Global(STARTUP_INITIALIZER), LlvmValue.NullPtr()))
+        val constructors = LlvmValue.ArrayConstant(entryType, listOf(entry))
+        module.globals += LlvmGlobal("llvm.global_ctors", constructors.type, constructors, isConstant = false, linkage = LlvmLinkage.APPENDING)
+    }
+
+    private fun holdsAddresses(variable: IRStStaticVariable, storedWithPointers: Set<String>): Boolean {
+        val dt = variable.dt
+        if (dt.base != BaseDataType.ARRAY || dt.sub !in setOf(BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG))
+            return false
+        val initialValues = (variable.initializationValue as? IRVariableInitializer.Array)?.elements.orEmpty()
+        return variable.name in storedWithPointers || initialValues.any { it is IRStSymbolicReference.Symbol }
+    }
+
+    /** The symbols that the IR code stores pointer-typed registers into, such as string addresses assigned to str[] elements. */
+    private fun symbolsStoredWithPointers(): Set<String> {
+        val pointerRegisters = mutableSetOf<VirtualRegister>()
+        program.forEachInstruction { ins ->
+            ins.registerAccesses.filter { it.direction != OperandDirection.USE && it.type == IRDataType.POINTER }.mapTo(pointerRegisters) { it.register }
+        }
+        val symbols = mutableSetOf<String>()
+        program.forEachInstruction { ins ->
+            if ((ins.opcode == Opcode.STOREM || ins.opcode == Opcode.STOREX) && ins.srcA?.register in pointerRegisters)
+                ins.memory?.symbolName?.let { symbols += it }
+        }
+        return symbols
     }
 
     private fun variableGlobal(variable: IRStStaticVariable): LlvmGlobal {
-        val type = mapper.storageType(variable.dt, variable.length)
-        check(mapper.byteSize(type) == target.memorySize(variable.dt, variable.length?.toInt())) {
+        val pointerArray = pointerArrays[variable.name]
+        val type = pointerArray?.let { LlvmType.Array(it.length, LlvmType.Ptr) } ?: mapper.storageType(variable.dt, variable.length)
+        // a pointer array is bigger than the IR thinks, but the element size the IR uses must still agree with Prog8
+        val sizeSeenByIr = pointerArray?.let { it.length * it.irElementSize } ?: mapper.byteSize(type)
+        check(sizeSeenByIr == target.memorySize(variable.dt, variable.length?.toInt())) {
             "the LLVM type $type of ${variable.name} doesn't match its Prog8 size"
         }
         val internedName = internedStringNames[variable.name]
@@ -110,7 +233,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         val elements = if (variable.dt.sub == BaseDataType.STRUCT_INSTANCE) {
             init.elements.map { structArrayElement(variable, type.elementType, it) }
         } else {
-            val elementBase = variable.dt.elementType().base
+            val elementBase = if (variable.name in pointerArrays) BaseDataType.POINTER else variable.dt.elementType().base
             init.elements.map { slotValue(elementBase, it, variable.name) }
         }
         // an IR file stores string literals as byte arrays; still emit them as c"..." strings
@@ -160,15 +283,15 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
     }
 
     private fun constantGlobal(constant: IRStConstant): LlvmGlobal {
-        val type = mapper.map(constant.dt.base)
         val number = constant.value
         val slab = constant.memorySlabName
         val value = when {
             number != null -> scalarConstant(constant.dt.base, number)
-            slab != null -> addressAs(type, memorySlabAddress(slab, constant.name), constant.name)
+            // an address, so a ptr whatever its Prog8 type; the IR code uses the slab symbol itself, never this global
+            slab != null -> memorySlabAddress(slab, constant.name)
             else -> throw IllegalArgumentException("constant ${constant.name} has neither a value nor a memory slab")
         }
-        return LlvmGlobal(constant.name, type, value, isConstant = true, linkage = LlvmLinkage.INTERNAL)
+        return LlvmGlobal(constant.name, value.type, value, isConstant = true, linkage = LlvmLinkage.INTERNAL)
     }
 
     private fun memorySlabAddress(slab: String, user: String): LlvmValue {
@@ -193,18 +316,25 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
 
     private fun addressAs(type: LlvmType, address: LlvmValue, user: String): LlvmValue = when {
         type == LlvmType.Ptr -> address
-        // deliberately truncates 64-bit addresses: the frontend stores some of them (e.g. str[] elements) in 32-bit long slots
+        // truncates the 64-bit address; static data can't hold that, so withStartupAddresses stores it at startup
         type.isInteger -> LlvmValue.ConstantCast(CastOperator.PTRTOINT, address, type)
         else -> throw IllegalArgumentException("$user can't hold an address in a $type slot")
     }
 }
 
 /** Where the data symbols of an IR program live in the LLVM module: [addresses] maps IR symbol names to constant pointers. */
-internal class LlvmDataSymbols(val addresses: Map<String, LlvmValue>, private val memoryMapped: List<MemoryMappedCluster>) {
+internal class LlvmDataSymbols(
+    val addresses: Map<String, LlvmValue>,
+    private val memoryMapped: List<MemoryMappedCluster>,
+    val pointerArrays: Map<String, PointerArray>
+) {
     /** The backing storage of absolute [address] when a memory-mapped variable covers it (the IR accesses those by address), else null. */
     fun memoryMappedAddress(address: Long): LlvmValue? =
         memoryMapped.firstOrNull { address >= it.start && address < it.end }?.addressAt(address)
 }
+
+/** A global array of native `ptr` elements that the IR addresses as [irElementSize]-byte elements (4 for str[], a long[] in the IR). */
+internal data class PointerArray(val name: String, val address: LlvmValue, val length: Int, val irElementSize: Int)
 
 /** Backing storage shared by memory-mapped variables whose byte ranges overlap or touch, preserving their aliasing and layout. */
 internal class MemoryMappedCluster(val start: Long) {
