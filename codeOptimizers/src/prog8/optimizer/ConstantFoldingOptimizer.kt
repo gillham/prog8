@@ -277,19 +277,15 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
             modifications += AstReplaceNode(expr, result, parent)
         }
 
-        if(leftconst==null && rightconst!=null && rightconst.number<0.0) {
-            if (expr.operator == "-") {
-                // X - -1 ---> X + 1
-                val posNumber = NumericLiteral.optimalNumeric(rightconst.type, null, -rightconst.number, rightconst.position)
-                val plusExpr = BinaryExpression(expr.left, "+", posNumber, expr.position)
-                return listOf(AstReplaceNode(expr, plusExpr, parent))
-            }
-            else if (expr.operator == "+") {
-                // X + -1 ---> X - 1
-                val posNumber = NumericLiteral.optimalNumeric(rightconst.type, null, -rightconst.number, rightconst.position)
-                val plusExpr = BinaryExpression(expr.left, "-", posNumber, expr.position)
-                return listOf(AstReplaceNode(expr, plusExpr, parent))
-            }
+        if(leftconst==null && rightconst!=null && rightconst.number<0.0 && (expr.operator=="-" || expr.operator=="+")) {
+            // X - -1 ---> X + 1,   X + -1 ---> X - 1
+            // a quad keeps its type: the Double number of a large one is inexact, and won't fit in a smaller type
+            val posNumber = if(rightconst.type.isQuad)
+                NumericLiteral.fromQuadBits(BaseDataType.QUAD, -rightconst.integerBits, rightconst.position)
+            else
+                NumericLiteral.optimalNumeric(rightconst.type, null, -rightconst.number, rightconst.position)
+            val flippedExpr = BinaryExpression(expr.left, if(expr.operator=="-") "+" else "-", posNumber, expr.position)
+            return listOf(AstReplaceNode(expr, flippedExpr, parent))
         }
 
 

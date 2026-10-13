@@ -15,6 +15,8 @@ enum class BaseDataType {
     UWORD,              // pass by value            16 bits unsigned
     WORD,               // pass by value            16 bits signed
     LONG,               // pass by value            32 bits signed
+    QUAD,               // pass by value            64 bits signed
+    UQUAD,              // pass by value            64 bits unsigned
     FLOAT,              // pass by value            machine dependent
     BOOL,               // pass by value            bit 0 of an 8-bit byte
     STR,                // pass by reference
@@ -31,6 +33,7 @@ enum class BaseDataType {
             this.isByteOrBool -> false
             this.isWord -> other.isByteOrBool
             this == LONG -> other.isByteOrBool || other.isWord
+            this.isQuad -> other.isByteOrBool || other.isWord || other == LONG
             this == STR && (other == UWORD || other == LONG) || this == UWORD && other == STR -> false
             this.isArray && other.isArray -> false
             this.isArray -> other.isByteOrBool
@@ -47,9 +50,11 @@ enum class BaseDataType {
             this.isByteOrBool -> other.isByteOrBool
             this.isWord -> other.isWord || (other.isPointer && (memsizer == null || memsizer.POINTER_MEM_SIZE == 2u))
             this.isLong -> other.isLong || (other.isPointer && memsizer?.POINTER_MEM_SIZE != null && memsizer.POINTER_MEM_SIZE != 2u)
+            this.isQuad -> other.isQuad || (other.isPointer && memsizer?.POINTER_MEM_SIZE == 8u)
             this.isPointer -> when(memsizer?.POINTER_MEM_SIZE) {
                 null -> other.isWord || other.isPointer
                 2u -> other.isWord || other.isPointer
+                8u -> other.isLong || other.isQuad || other.isPointer
                 else -> other.isLong || other.isPointer
             }
             this == STR && (other == UWORD || other == LONG) || (this == UWORD || this == LONG) && other == STR -> true
@@ -73,8 +78,12 @@ val BaseDataType.isWord get() = this in arrayOf(BaseDataType.UWORD, BaseDataType
 val BaseDataType.isUnsignedWord get() = this == BaseDataType.UWORD
 val BaseDataType.isSignedWord get() = this == BaseDataType.WORD
 val BaseDataType.isLong get() = this == BaseDataType.LONG
+val BaseDataType.isQuad get() = this in arrayOf(BaseDataType.QUAD, BaseDataType.UQUAD)
+val BaseDataType.isUnsignedQuad get() = this == BaseDataType.UQUAD
+val BaseDataType.isSignedQuad get() = this == BaseDataType.QUAD
 val BaseDataType.isFloat get() = this == BaseDataType.FLOAT
-val BaseDataType.isInteger get() = this in setOf(BaseDataType.UBYTE, BaseDataType.BYTE, BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG)
+val BaseDataType.isInteger get() = this in setOf(BaseDataType.UBYTE, BaseDataType.BYTE, BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.UQUAD)
+// a Double can't hold the quad maximums exactly: they round up to 2^63 and 2^64
 val BaseDataType.maxUnsignedValue: Double
     get() = when (this) {
         BaseDataType.UBYTE -> 255.0
@@ -82,13 +91,15 @@ val BaseDataType.maxUnsignedValue: Double
         BaseDataType.UWORD -> 65535.0
         BaseDataType.WORD -> 32767.0
         BaseDataType.LONG -> 2147483647.0
+        BaseDataType.QUAD -> Long.MAX_VALUE.toDouble()
+        BaseDataType.UQUAD -> ULong.MAX_VALUE.toDouble()
         else -> Double.MAX_VALUE
     }
-val BaseDataType.isIntegerOrBool get() = this in setOf(BaseDataType.UBYTE, BaseDataType.BYTE, BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG, BaseDataType.BOOL)
+val BaseDataType.isIntegerOrBool get() = this in setOf(BaseDataType.UBYTE, BaseDataType.BYTE, BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.UQUAD, BaseDataType.BOOL)
 val BaseDataType.isWordOrByteOrBool get() = this in setOf(BaseDataType.UBYTE, BaseDataType.BYTE, BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.BOOL)
 val BaseDataType.isNumeric get() = this == BaseDataType.FLOAT || this.isInteger
 val BaseDataType.isNumericOrBool get() = this == BaseDataType.BOOL || this.isNumeric
-val BaseDataType.isSigned get() = this in setOf(BaseDataType.BYTE, BaseDataType.WORD, BaseDataType.LONG, BaseDataType.FLOAT)
+val BaseDataType.isSigned get() = this in setOf(BaseDataType.BYTE, BaseDataType.WORD, BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.FLOAT)
 val BaseDataType.isUnsigned get() = !this.isSigned
 val BaseDataType.isSignedInteger get() = this.isSigned && this.isInteger
 val BaseDataType.isUnsignedInteger get() = this.isUnsigned && this.isInteger
@@ -182,6 +193,8 @@ class DataType private constructor(
         val UWORD = DataType(BaseDataType.UWORD, null, null, null)
         val WORD = DataType(BaseDataType.WORD, null, null, null)
         val LONG = DataType(BaseDataType.LONG, null, null, null)
+        val QUAD = DataType(BaseDataType.QUAD, null, null, null)
+        val UQUAD = DataType(BaseDataType.UQUAD, null, null, null)
         val FLOAT = DataType(BaseDataType.FLOAT, null, null, null)
         val BOOL = DataType(BaseDataType.BOOL, null, null, null)
         val STR = DataType(BaseDataType.STR, BaseDataType.UBYTE, null, null)
@@ -193,6 +206,8 @@ class DataType private constructor(
             BaseDataType.UWORD to DataType(BaseDataType.UWORD, null, null, null),
             BaseDataType.WORD to DataType(BaseDataType.WORD, null, null, null),
             BaseDataType.LONG to DataType(BaseDataType.LONG, null, null, null),
+            BaseDataType.QUAD to DataType(BaseDataType.QUAD, null, null, null),
+            BaseDataType.UQUAD to DataType(BaseDataType.UQUAD, null, null, null),
             BaseDataType.FLOAT to DataType(BaseDataType.FLOAT, null, null, null),
             BaseDataType.BOOL to DataType(BaseDataType.BOOL, null, null, null),
             BaseDataType.STR to DataType(BaseDataType.STR, BaseDataType.UBYTE, null, null),
@@ -343,6 +358,8 @@ class DataType private constructor(
                 BaseDataType.UBYTE -> "ubyte[]"
                 BaseDataType.UWORD -> "uword[]"
                 BaseDataType.LONG -> "long[]"
+                BaseDataType.QUAD -> "quad[]"
+                BaseDataType.UQUAD -> "uquad[]"
                 BaseDataType.POINTER -> {
                     val pointee = if (subType != null) subType!!.scopedNameString
                         else if (subTypeFromAntlr != null) "$subTypeFromAntlr"
@@ -376,6 +393,8 @@ class DataType private constructor(
         BaseDataType.UWORD -> "uword"
         BaseDataType.WORD -> "word"
         BaseDataType.LONG -> "long"
+        BaseDataType.QUAD -> "quad"
+        BaseDataType.UQUAD -> "uquad"
         BaseDataType.FLOAT -> "float"
         BaseDataType.STR -> "str"
         BaseDataType.POINTER -> {
@@ -402,6 +421,8 @@ class DataType private constructor(
                 BaseDataType.BYTE -> "byte["
                 BaseDataType.WORD -> "@nosplit word["
                 BaseDataType.LONG -> "long["
+                BaseDataType.QUAD -> "quad["
+                BaseDataType.UQUAD -> "uquad["
                 BaseDataType.FLOAT -> "float["
                 BaseDataType.POINTER -> {
                     val pointee = if (subType != null) "^^${subType!!.scopedNameString}["
@@ -430,11 +451,13 @@ class DataType private constructor(
     infix fun isAssignableTo(targetType: DataType) =
         when(base) {
             BaseDataType.BOOL -> targetType.base == BaseDataType.BOOL
-            BaseDataType.UBYTE -> targetType.base in setOf(BaseDataType.UBYTE, BaseDataType.WORD, BaseDataType.UWORD, BaseDataType.LONG, BaseDataType.FLOAT)
-            BaseDataType.BYTE -> targetType.base in setOf(BaseDataType.BYTE, BaseDataType.WORD, BaseDataType.LONG, BaseDataType.FLOAT)
-            BaseDataType.UWORD -> targetType.base in setOf(BaseDataType.UWORD, BaseDataType.LONG, BaseDataType.FLOAT, BaseDataType.POINTER) || targetType.isPointerArray
-            BaseDataType.WORD -> targetType.base in setOf(BaseDataType.WORD, BaseDataType.LONG, BaseDataType.FLOAT)
-            BaseDataType.LONG -> targetType.base in setOf(BaseDataType.LONG, BaseDataType.FLOAT, BaseDataType.POINTER) || targetType.isPointerArray
+            BaseDataType.UBYTE -> targetType.base in setOf(BaseDataType.UBYTE, BaseDataType.WORD, BaseDataType.UWORD, BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.UQUAD, BaseDataType.FLOAT)
+            BaseDataType.BYTE -> targetType.base in setOf(BaseDataType.BYTE, BaseDataType.WORD, BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.FLOAT)
+            BaseDataType.UWORD -> targetType.base in setOf(BaseDataType.UWORD, BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.UQUAD, BaseDataType.FLOAT, BaseDataType.POINTER) || targetType.isPointerArray
+            BaseDataType.WORD -> targetType.base in setOf(BaseDataType.WORD, BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.FLOAT)
+            BaseDataType.LONG -> targetType.base in setOf(BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.FLOAT, BaseDataType.POINTER) || targetType.isPointerArray
+            BaseDataType.QUAD -> targetType.base in setOf(BaseDataType.QUAD, BaseDataType.FLOAT, BaseDataType.POINTER)
+            BaseDataType.UQUAD -> targetType.base in setOf(BaseDataType.UQUAD, BaseDataType.FLOAT, BaseDataType.POINTER)
             BaseDataType.FLOAT -> targetType.base in arrayOf(BaseDataType.FLOAT)
             BaseDataType.STR -> targetType.base in setOf(BaseDataType.STR, BaseDataType.UWORD, BaseDataType.LONG) || (targetType.isPointer && targetType.sub==BaseDataType.UBYTE)
             BaseDataType.ARRAY, BaseDataType.ARRAY_SPLITW -> {
@@ -510,11 +533,17 @@ class DataType private constructor(
     val isUnsignedWordArray = (base == BaseDataType.ARRAY || base == BaseDataType.ARRAY_SPLITW) && sub == BaseDataType.UWORD
     val isSignedWordArray = (base == BaseDataType.ARRAY || base == BaseDataType.ARRAY_SPLITW) && sub == BaseDataType.WORD
     val isLongArray = base == BaseDataType.ARRAY && sub == BaseDataType.LONG
+    val isQuadArray = base == BaseDataType.ARRAY && (sub == BaseDataType.QUAD || sub == BaseDataType.UQUAD)
+    val isUnsignedQuadArray = base == BaseDataType.ARRAY && sub == BaseDataType.UQUAD
+    val isSignedQuadArray = base == BaseDataType.ARRAY && sub == BaseDataType.QUAD
     val isFloatArray = base == BaseDataType.ARRAY && sub == BaseDataType.FLOAT
     val isString = base == BaseDataType.STR
     val isBool = base == BaseDataType.BOOL
     val isFloat = base == BaseDataType.FLOAT
     val isLong = base == BaseDataType.LONG
+    val isQuad = base.isQuad
+    val isUnsignedQuad = base.isUnsignedQuad
+    val isSignedQuad = base.isSignedQuad
     fun isStringly(memsizer: IMemSizer): Boolean =
         base == BaseDataType.STR ||
         (memsizer.POINTER_MEM_SIZE == 2u && base == BaseDataType.UWORD) ||

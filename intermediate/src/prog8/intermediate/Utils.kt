@@ -12,6 +12,7 @@ fun DataType.irTypeString(length: UInt?): String {
         BaseDataType.UWORD -> "uword"
         BaseDataType.WORD -> "word"
         BaseDataType.LONG -> "long"
+        BaseDataType.QUAD, BaseDataType.UQUAD -> throw IllegalArgumentException("64-bit integer types are not supported in the IR yet")
         BaseDataType.FLOAT -> "float"
         BaseDataType.STR -> "ubyte[$lengthStr]"             // here string doesn't exist as a separate datatype anymore
         BaseDataType.POINTER -> "pointer"

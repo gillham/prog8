@@ -7,6 +7,7 @@ import io.kotest.matchers.shouldNotBe
 import prog8.code.core.*
 import prog8.code.target.Amiga500Target
 import prog8.code.target.Cx16Target
+import prog8.code.target.LlvmTarget
 import prog8.code.target.VMTarget
 
 
@@ -328,5 +329,146 @@ class TestDataType: FunSpec({
     test("DataType.toString for arrays") {
         DataType.arrayFor(BaseDataType.UBYTE, tgt).toString() shouldBe "ubyte[]"
         DataType.arrayFor(BaseDataType.WORD, tgt).toString() shouldBe "word[]"
+    }
+
+    // ============================================================================
+    // 64-bit quad and uquad Tests
+    // ============================================================================
+
+    test("quad is the signed and uquad the unsigned 64-bit integer type") {
+        for (quad in listOf(BaseDataType.QUAD, BaseDataType.UQUAD)) {
+            quad.isQuad shouldBe true
+            quad.isInteger shouldBe true
+            quad.isIntegerOrBool shouldBe true
+            quad.isNumeric shouldBe true
+            quad.isNumericOrBool shouldBe true
+            quad.isLong shouldBe false
+            quad.isWordOrByteOrBool shouldBe false
+            quad.isPassByValue shouldBe true
+        }
+        BaseDataType.QUAD.isSignedQuad shouldBe true
+        BaseDataType.QUAD.isUnsignedQuad shouldBe false
+        BaseDataType.QUAD.isSigned shouldBe true
+        BaseDataType.QUAD.isSignedInteger shouldBe true
+        BaseDataType.UQUAD.isUnsignedQuad shouldBe true
+        BaseDataType.UQUAD.isSignedQuad shouldBe false
+        BaseDataType.UQUAD.isSigned shouldBe false
+        BaseDataType.UQUAD.isUnsignedInteger shouldBe true
+        BaseDataType.LONG.isQuad shouldBe false
+        BaseDataType.FLOAT.isQuad shouldBe false
+    }
+
+    test("the maximum values of quad and uquad, as the nearest doubles") {
+        BaseDataType.QUAD.maxUnsignedValue shouldBe 9.223372036854775807E18
+        BaseDataType.UQUAD.maxUnsignedValue shouldBe 1.8446744073709551615E19
+        BaseDataType.LONG.maxUnsignedValue shouldBe 2147483647.0
+    }
+
+    test("quad and uquad are larger than the byte, word and long types, and only equal in size to each other") {
+        for (quad in listOf(BaseDataType.QUAD, BaseDataType.UQUAD)) {
+            for (smaller in listOf(BaseDataType.BOOL, BaseDataType.UBYTE, BaseDataType.BYTE, BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG)) {
+                quad.largerSizeThan(smaller) shouldBe true
+                smaller.largerSizeThan(quad) shouldBe false
+                quad.equalsSize(smaller) shouldBe false
+                smaller.equalsSize(quad) shouldBe false
+            }
+            quad.largerSizeThan(BaseDataType.FLOAT) shouldBe false
+            BaseDataType.FLOAT.largerSizeThan(quad) shouldBe true
+        }
+        BaseDataType.QUAD.largerSizeThan(BaseDataType.UQUAD) shouldBe false
+        BaseDataType.UQUAD.largerSizeThan(BaseDataType.QUAD) shouldBe false
+        BaseDataType.QUAD.equalsSize(BaseDataType.UQUAD) shouldBe true
+        BaseDataType.UQUAD.equalsSize(BaseDataType.QUAD) shouldBe true
+    }
+
+    test("quad and uquad only equal pointers in size when those are 8 bytes") {
+        for (quad in listOf(BaseDataType.QUAD, BaseDataType.UQUAD)) {
+            quad.equalsSize(BaseDataType.POINTER, LlvmTarget()) shouldBe true
+            BaseDataType.POINTER.equalsSize(quad, LlvmTarget()) shouldBe true
+            quad.equalsSize(BaseDataType.POINTER, VMTarget()) shouldBe false
+            BaseDataType.POINTER.equalsSize(quad, VMTarget()) shouldBe false
+            quad.equalsSize(BaseDataType.POINTER) shouldBe false
+            BaseDataType.POINTER.equalsSize(quad) shouldBe false
+        }
+        BaseDataType.POINTER.equalsSize(BaseDataType.LONG, LlvmTarget()) shouldBe true
+    }
+
+    test("quad and uquad DataTypes") {
+        DataType.forDt(BaseDataType.QUAD) shouldBe DataType.QUAD
+        DataType.forDt(BaseDataType.UQUAD) shouldBe DataType.UQUAD
+        DataType.QUAD shouldNotBe DataType.UQUAD
+        DataType.QUAD.isBasic shouldBe true
+        DataType.QUAD.isQuad shouldBe true
+        DataType.QUAD.isSignedQuad shouldBe true
+        DataType.QUAD.isUnsignedQuad shouldBe false
+        DataType.QUAD.isSignedInteger shouldBe true
+        DataType.UQUAD.isQuad shouldBe true
+        DataType.UQUAD.isUnsignedQuad shouldBe true
+        DataType.UQUAD.isSignedQuad shouldBe false
+        DataType.UQUAD.isUnsignedInteger shouldBe true
+        DataType.LONG.isQuad shouldBe false
+    }
+
+    test("quad and uquad arrays") {
+        val quads = DataType.arrayFor(BaseDataType.QUAD, VMTarget())
+        val uquads = DataType.arrayFor(BaseDataType.UQUAD, VMTarget())
+        quads.isQuadArray shouldBe true
+        quads.isSignedQuadArray shouldBe true
+        quads.isUnsignedQuadArray shouldBe false
+        uquads.isQuadArray shouldBe true
+        uquads.isUnsignedQuadArray shouldBe true
+        uquads.isSignedQuadArray shouldBe false
+        DataType.arrayFor(BaseDataType.LONG, VMTarget()).isQuadArray shouldBe false
+        DataType.QUAD.isQuadArray shouldBe false
+        quads.elementType() shouldBe DataType.QUAD
+        uquads.elementType() shouldBe DataType.UQUAD
+        DataType.UQUAD.elementToArray(tgt) shouldBe DataType.arrayFor(BaseDataType.UQUAD, tgt)
+    }
+
+    test("quad and uquad take 8 bytes, whatever the pointer size") {
+        for (target in listOf(Cx16Target(), VMTarget(), LlvmTarget())) {
+            target.memorySize(BaseDataType.QUAD) shouldBe 8
+            target.memorySize(BaseDataType.UQUAD) shouldBe 8
+            DataType.UQUAD.size(target) shouldBe 8
+            target.memorySize(DataType.arrayFor(BaseDataType.QUAD, target), 3) shouldBe 24
+        }
+    }
+
+    test("smaller integers widen to quad without loss, and only the unsigned ones to uquad") {
+        for (dt in listOf(DataType.UBYTE, DataType.BYTE, DataType.UWORD, DataType.WORD, DataType.LONG))
+            dt.isAssignableTo(DataType.QUAD) shouldBe true
+        DataType.UBYTE.isAssignableTo(DataType.UQUAD) shouldBe true
+        DataType.UWORD.isAssignableTo(DataType.UQUAD) shouldBe true
+        DataType.BYTE.isAssignableTo(DataType.UQUAD) shouldBe false
+        DataType.WORD.isAssignableTo(DataType.UQUAD) shouldBe false
+        DataType.LONG.isAssignableTo(DataType.UQUAD) shouldBe false
+        DataType.BOOL.isAssignableTo(DataType.QUAD) shouldBe false
+        DataType.FLOAT.isAssignableTo(DataType.QUAD) shouldBe false
+        DataType.pointer(BaseDataType.UBYTE).isAssignableTo(DataType.UQUAD) shouldBe false
+    }
+
+    test("quad and uquad are assignable to themselves, float and pointers, not to each other or smaller types") {
+        for (quad in listOf(DataType.QUAD, DataType.UQUAD)) {
+            quad.isAssignableTo(quad) shouldBe true
+            quad.isAssignableTo(DataType.FLOAT) shouldBe true
+            quad.isAssignableTo(DataType.pointer(BaseDataType.UBYTE)) shouldBe true
+            for (smaller in listOf(DataType.BOOL, DataType.UBYTE, DataType.BYTE, DataType.UWORD, DataType.WORD, DataType.LONG))
+                quad.isAssignableTo(smaller) shouldBe false
+        }
+        DataType.QUAD.isAssignableTo(DataType.UQUAD) shouldBe false
+        DataType.UQUAD.isAssignableTo(DataType.QUAD) shouldBe false
+    }
+
+    test("quad and uquad toString and sourceString") {
+        DataType.QUAD.toString() shouldBe "quad"
+        DataType.UQUAD.toString() shouldBe "uquad"
+        DataType.arrayFor(BaseDataType.QUAD, tgt).toString() shouldBe "quad[]"
+        DataType.arrayFor(BaseDataType.UQUAD, tgt).toString() shouldBe "uquad[]"
+        DataType.pointer(BaseDataType.UQUAD).toString() shouldBe "^^uquad"
+        DataType.QUAD.sourceString() shouldBe "quad"
+        DataType.UQUAD.sourceString() shouldBe "uquad"
+        DataType.arrayFor(BaseDataType.QUAD, tgt).sourceString() shouldBe "quad["
+        DataType.arrayFor(BaseDataType.UQUAD, tgt).sourceString() shouldBe "uquad["
+        DataType.pointer(BaseDataType.QUAD).sourceString() shouldBe "^^quad"
     }
 })

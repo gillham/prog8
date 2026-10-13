@@ -167,6 +167,8 @@ private fun builtinSizeof(args: List<Expression>, position: Position, program: P
                 "uword" -> return NumericLiteral.optimalInteger(program.target.memorySize(BaseDataType.UWORD), position)
                 "word" -> return NumericLiteral.optimalInteger(program.target.memorySize(BaseDataType.WORD), position)
                 "long" -> return NumericLiteral.optimalInteger(program.target.memorySize(BaseDataType.LONG), position)
+                "quad" -> return NumericLiteral.optimalInteger(program.target.memorySize(BaseDataType.QUAD), position)
+                "uquad" -> return NumericLiteral.optimalInteger(program.target.memorySize(BaseDataType.UQUAD), position)
                 "float" -> return NumericLiteral.optimalInteger(program.target.memorySize(BaseDataType.FLOAT), position)
                 "bool" -> return NumericLiteral.optimalInteger(program.target.memorySize(BaseDataType.BOOL), position)
                 "pointer" -> return NumericLiteral.optimalInteger(program.target.memorySize(BaseDataType.POINTER), position)

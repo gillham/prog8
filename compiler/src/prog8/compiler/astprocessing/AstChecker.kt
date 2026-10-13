@@ -20,6 +20,14 @@ internal class AstChecker(private val program: Program,
                           private val options: CompilationOptions
 ) : IAstVisitor {
 
+    private val quadsSupported = options.compTarget.cpu.isLlvm || options.compTarget.cpu.isVirtual
+
+    private fun checkQuadSupported(dt: DataType, position: Position) {
+        val usesQuad = dt.isQuad || dt.isQuadArray || (dt.isPointer && dt.sub?.isQuad==true) || (dt.isPointerArray && dt.pointeeSub?.isQuad==true)
+        if(usesQuad && !quadsSupported)
+            errors.err("64-bit integer types (quad/uquad) are not supported on target ${options.compTarget.name}", position)
+    }
+
     override fun visit(program: Program) {
         require(program === this.program)
         // there must be a single 'main' block with a 'start' subroutine for the program entry point.
@@ -572,10 +580,12 @@ internal class AstChecker(private val program: Program,
         subroutine.parameters.forEach { param ->
             if(param.type.isPointer || param.type.isStructInstance)
                 checkPrivateTypeAccess(param.type, subroutine.position, currentBlock)
+            checkQuadSupported(param.type, param.position)
         }
         subroutine.returntypes.forEach { rt ->
             if(rt.isPointer || rt.isStructInstance)
                 checkPrivateTypeAccess(rt, subroutine.position, currentBlock)
+            checkQuadSupported(rt, subroutine.position)
         }
 
         super.visit(subroutine)
@@ -1048,6 +1058,10 @@ internal class AstChecker(private val program: Program,
 
         if(decl.datatype.isPointer || decl.datatype.isStructInstance)
             checkPrivateTypeAccess(decl.datatype, decl.position, decl.definingBlock)
+
+        // the subroutine checks its parameters, also those of asmsubs that have no parameter variables
+        if(decl.origin!=VarDeclOrigin.SUBROUTINEPARAM)
+            checkQuadSupported(decl.datatype, decl.position)
 
         if(decl.type!=VarDeclType.CONST && "::" in decl.name)
             errors.err("only enum members can be accessed with '::' syntax", decl.position)
@@ -1907,8 +1921,10 @@ internal class AstChecker(private val program: Program,
                         leftDt.isWord && rightDt.isByte ||
                         leftDt.isWord && rightDt.isWord ||
                         leftDt.isLong && rightDt.isByte ||
-                        leftDt.isLong && rightDt.isWord)) {
-                // exception allowed: shifting a word by a byte, long by a word or byte
+                        leftDt.isLong && rightDt.isWord ||
+                        leftDt.isQuad && rightDt.isByte ||
+                        leftDt.isQuad && rightDt.isWord)) {
+                // exception allowed: shifting a word by a byte, long or quad by a word or byte
             } else if((expr.operator in BitwiseOperators) && (leftDt.isInteger && rightDt.isInteger)) {
                 // exception allowed: bitwise operations with any integers
             } else if(options.compTarget.POINTER_MEM_SIZE==2u && (leftDt.isUnsignedWord && rightDt.isString) || (leftDt.isString && rightDt.isUnsignedWord)) {
@@ -1975,6 +1991,8 @@ internal class AstChecker(private val program: Program,
     override fun visit(typecast: TypecastExpression) {
         if(typecast.type.isPassByRef)
             errors.err("cannot type cast to string or array type", typecast.position)
+
+        checkQuadSupported(typecast.type, typecast.position)
 
         if(!typecast.expression.inferType(program).isKnown)
             errors.err("this expression doesn't return a value", typecast.expression.position)
@@ -2610,6 +2628,7 @@ internal class AstChecker(private val program: Program,
         struct.fields.forEach { field ->
             if(!validFieldType(field))
                 errors.err("invalid struct field type at '${field.name}'", struct.position)
+            checkQuadSupported(field.type, struct.position)
             if(field.isArray) {
                 val size = field.constSize()
                 if(size==null)
@@ -2834,7 +2853,14 @@ internal class AstChecker(private val program: Program,
                     err("integer value expected instead of float; possible loss of precision")
                 val number=value.number
                 if (number < -2147483648.0 || number > 2147483647.0)
-                    return err("value '$number' out of range for long")
+                    return err("value '${value.valueText}' out of range for long")
+            }
+            targetDt.isQuad -> {
+                // the implicit cast checks the exact value, a Double can't tell the limits of a quad apart
+                if(value.type==BaseDataType.FLOAT)
+                    err("integer value expected instead of float; possible loss of precision")
+                else if(!value.cast(targetDt.base, true, options.compTarget).isValid)
+                    return err("value '${value.valueText}' out of range for $targetDt")
             }
             targetDt.isArray -> {
                 return checkValueTypeAndRange(targetDt.elementType(), value)
@@ -2938,6 +2964,8 @@ internal class AstChecker(private val program: Program,
             targetDatatype.isSignedWord -> sourceDatatype.isSignedWord || sourceDatatype.isByte
             targetDatatype.isUnsignedWord -> sourceDatatype.isUnsignedWord || sourceDatatype.isUnsignedByte
             targetDatatype.isLong -> sourceDatatype.isLong || sourceDatatype.isPointer || sourceDatatype.isWord || sourceDatatype.isByte
+            targetDatatype.isSignedQuad -> sourceDatatype.isSignedQuad || sourceDatatype.isLong || sourceDatatype.isWord || sourceDatatype.isByte
+            targetDatatype.isUnsignedQuad -> sourceDatatype.isUnsignedQuad || sourceDatatype.isUnsignedWord || sourceDatatype.isUnsignedByte
             targetDatatype.isFloat -> sourceDatatype.isNumeric
             targetDatatype.isString -> sourceDatatype.isString
             else -> false

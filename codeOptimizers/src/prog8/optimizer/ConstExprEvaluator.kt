@@ -9,10 +9,14 @@ import prog8.code.core.*
 import kotlin.math.*
 
 
+private val QuadArithmeticOperators = setOf("+", "-", "*", "/", "%")
+
 class ConstExprEvaluator {
 
     fun evaluate(left: NumericLiteral, operator: String, right: NumericLiteral): NumericLiteral {
         try {
+            if(operator in QuadArithmeticOperators && (left.type.isQuad || right.type.isQuad) && left.type.isInteger && right.type.isInteger)
+                return quadArithmetic(left, operator, right)
             return when(operator) {
                 "+" -> plus(left, right)
                 "-" -> minus(left, right)
@@ -40,9 +44,48 @@ class ConstExprEvaluator {
         }
     }
 
+    /** The arithmetic with a quad or uquad operand wraps around in 64 bits, as it does at runtime. */
+    private fun quadArithmetic(left: NumericLiteral, operator: String, right: NumericLiteral): NumericLiteral {
+        val resultType = quadResultType(left.type, right.type)
+        val unsigned = resultType==BaseDataType.UQUAD
+        val a = left.integerBits
+        val b = right.integerBits
+        if((operator=="/" || operator=="%") && b==0L)
+            divideByZeroError(right.position)
+        val result = when(operator) {
+            "+" -> a + b
+            "-" -> a - b
+            "*" -> a * b
+            "/" -> if(unsigned) (a.toULong() / b.toULong()).toLong() else a / b
+            "%" -> if(unsigned) (a.toULong() % b.toULong()).toLong() else a % b
+            else -> throw FatalAstException("invalid quad arithmetic operator $operator")
+        }
+        return NumericLiteral.fromQuadBits(resultType, result, left.position)
+    }
+
+    // as in the common datatype of a binary expression: an unsigned result only when both operands are unsigned
+    private fun quadResultType(type1: BaseDataType, type2: BaseDataType): BaseDataType =
+        if(type1.isSignedInteger || type2.isSignedInteger) BaseDataType.QUAD else BaseDataType.UQUAD
+
+    // shifting out all 64 bits or more leaves 0, or all ones for a negative quad shifted right, as at runtime
+    private fun shiftedQuad(left: NumericLiteral, operator: String, amount: NumericLiteral): NumericLiteral {
+        val bits = left.integerBits
+        val count = amount.integerBits
+        val signed = left.type==BaseDataType.QUAD
+        val result = when {
+            count !in 0..63 -> if(operator==">>" && signed && bits<0) -1L else 0L
+            operator=="<<" -> bits shl count.toInt()
+            signed -> bits shr count.toInt()
+            else -> bits ushr count.toInt()
+        }
+        return NumericLiteral.fromQuadBits(left.type, result, left.position)
+    }
+
     private fun shiftedright(left: NumericLiteral, amount: NumericLiteral): NumericLiteral {
         if(!left.type.isInteger || !amount.type.isInteger)
             throw ExpressionError("cannot compute $left >> $amount", left.position)
+        if(left.type.isQuad)
+            return shiftedQuad(left, ">>", amount)
         val result =
                 if(left.type == BaseDataType.UBYTE || left.type == BaseDataType.UWORD)
                     left.number.toInt().ushr(amount.number.toInt())
@@ -54,6 +97,11 @@ class ConstExprEvaluator {
     private fun shiftedleft(left: NumericLiteral, amount: NumericLiteral): NumericLiteral {
         if(!left.type.isInteger || !amount.type.isInteger)
             throw ExpressionError("cannot compute $left << $amount", left.position)
+        if(left.type.isQuad)
+            return shiftedQuad(left, "<<", amount)
+        // an Int shifts by the amount modulo 32, while a value shifted that far needs the 64 bits of a quad
+        if(amount.number >= 32)
+            return NumericLiteral.optimalInteger(if(amount.number >= 64) 0L else left.integerBits shl amount.number.toInt(), left.position)
         val result = left.number.toInt().shl(amount.number.toInt())
 //        when(left.type) {
 //            DataType.BOOL -> result = result and 1
@@ -69,6 +117,8 @@ class ConstExprEvaluator {
     private fun bitwiseOr(left: NumericLiteral, right: NumericLiteral): NumericLiteral {
         if(left.type.isIntegerOrBool && right.type.isIntegerOrBool) {
             val resultType = bitwiseResultType(left.type, right.type)
+            if(resultType.isQuad)
+                return NumericLiteral.fromQuadBits(resultType, left.integerBits or right.integerBits, left.position)
             val result = (left.number.toInt() or right.number.toInt()) and bitwiseMask(resultType)
             return NumericLiteral(resultType, result.toDouble(), left.position)
         }
@@ -78,6 +128,8 @@ class ConstExprEvaluator {
     private fun bitwiseAnd(left: NumericLiteral, right: NumericLiteral): NumericLiteral {
         if(left.type.isIntegerOrBool && right.type.isIntegerOrBool) {
             val resultType = bitwiseResultType(left.type, right.type)
+            if(resultType.isQuad)
+                return NumericLiteral.fromQuadBits(resultType, left.integerBits and right.integerBits, left.position)
             val result = (left.number.toInt() and right.number.toInt()) and bitwiseMask(resultType)
             return NumericLiteral(resultType, result.toDouble(), left.position)
         }
@@ -87,6 +139,8 @@ class ConstExprEvaluator {
     private fun bitwiseXor(left: NumericLiteral, right: NumericLiteral): NumericLiteral {
         if(left.type.isIntegerOrBool && right.type.isIntegerOrBool) {
             val resultType = bitwiseResultType(left.type, right.type)
+            if(resultType.isQuad)
+                return NumericLiteral.fromQuadBits(resultType, left.integerBits xor right.integerBits, left.position)
             val result = (left.number.toInt() xor right.number.toInt()) and bitwiseMask(resultType)
             return NumericLiteral(resultType, result.toDouble(), left.position)
         }
@@ -99,6 +153,7 @@ class ConstExprEvaluator {
             width.isByteOrBool -> BaseDataType.UBYTE
             width.isWord -> BaseDataType.UWORD
             width == BaseDataType.LONG -> BaseDataType.LONG
+            width.isQuad -> BaseDataType.UQUAD
             else -> BaseDataType.UBYTE
         }
     }

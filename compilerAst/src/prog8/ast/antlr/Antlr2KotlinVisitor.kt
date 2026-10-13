@@ -282,6 +282,8 @@ class Antlr2KotlinVisitor(val source: SourceCode, private val target: ICompilati
                 is NumericLiteral -> when(initialvalue.type) {
                     BaseDataType.FLOAT -> DataType.FLOAT
                     BaseDataType.BOOL -> DataType.BOOL
+                    BaseDataType.QUAD -> DataType.QUAD
+                    BaseDataType.UQUAD -> DataType.UQUAD
                     else -> DataType.LONG
                 }
                 is FunctionCallExpression -> {
@@ -489,69 +491,57 @@ class Antlr2KotlinVisitor(val source: SourceCode, private val target: ICompilati
 
     override fun visitIntegerliteral(ctx: IntegerliteralContext): NumericLiteral {
 
-        fun makeLiteral(literalTextWithGrouping: String, radix: Int): Pair<Double, BaseDataType> {
+        fun makeLiteral(literalTextWithGrouping: String, radix: Int): NumericLiteral {
             val literalText = literalTextWithGrouping.replace("_", "")
-            val integer: Long
-            var datatype = BaseDataType.UBYTE
-            when (radix) {
-                10 -> {
-                    integer = try {
-                        literalText.toLong()
-                    } catch(x: NumberFormatException) {
-                        throw SyntaxError("invalid decimal literal ${x.message}", ctx.toPosition())
-                    }
-                    datatype = when(integer) {
-                        in 0..255 -> BaseDataType.UBYTE
-                        in -128..127 -> BaseDataType.BYTE
-                        in 0..65535 -> BaseDataType.UWORD
-                        in -32768..32767 -> BaseDataType.WORD
-                        in -2147483648L..0xffffffffL -> BaseDataType.LONG   // TODO "hack" to allow unsigned long constants to be used as values for signed longs, without needing a cast (max value)
-                        else -> BaseDataType.FLOAT
-                    }
-                }
-                2 -> {
-                    if(literalText.length>16)
-                        datatype = BaseDataType.LONG
-                    else if(literalText.length>8)
-                        datatype = BaseDataType.UWORD
-                    try {
-                        integer = literalText.toLong(2)
-                    } catch(x: NumberFormatException) {
-                        throw SyntaxError("invalid binary literal ${x.message}", ctx.toPosition())
-                    }
-                }
-                16 -> {
-                    if(literalText.length>4)
-                        datatype = BaseDataType.LONG
-                    else if(literalText.length>2)
-                        datatype = BaseDataType.UWORD
-                    try {
-                        integer = literalText.lowercase().toLong(16)
-                    } catch(x: NumberFormatException) {
-                        throw SyntaxError("invalid hexadecimal literal ${x.message}", ctx.toPosition())
-                    }
-                }
+            val radixName = when(radix) {
+                10 -> "decimal"
+                16 -> "hexadecimal"
+                2 -> "binary"
                 else -> throw FatalAstException("invalid radix")
             }
-            return integer.toDouble() to datatype
+            val unsigned = try {
+                literalText.lowercase().toULong(radix)
+            } catch(x: NumberFormatException) {
+                throw SyntaxError("invalid $radixName literal ${x.message}", ctx.toPosition())
+            }
+
+            // more than 32 bits: a quad, or a uquad when the value doesn't fit in a signed quad
+            val is64bits = when(radix) {
+                10 -> unsigned > 0xffffffffu
+                16 -> literalText.length > 8
+                else -> literalText.length > 32
+            }
+            if(is64bits) {
+                val type = if(unsigned > Long.MAX_VALUE.toULong()) BaseDataType.UQUAD else BaseDataType.QUAD
+                return NumericLiteral.fromQuadBits(type, unsigned.toLong(), ctx.toPosition())
+            }
+
+            val integer = unsigned.toLong()
+            val datatype = when(radix) {
+                10 -> when(integer) {
+                    in 0..255 -> BaseDataType.UBYTE
+                    in 0..65535 -> BaseDataType.UWORD
+                    else -> BaseDataType.LONG   // TODO "hack" to allow unsigned long constants to be used as values for signed longs, without needing a cast (max value)
+                }
+                2 -> if(literalText.length>16) BaseDataType.LONG else if(literalText.length>8) BaseDataType.UWORD else BaseDataType.UBYTE
+                else -> if(literalText.length>4) BaseDataType.LONG else if(literalText.length>2) BaseDataType.UWORD else BaseDataType.UBYTE
+            }
+
+            // TODO "hack" to allow unsigned long constants to be used as values for signed longs, without needing a cast
+            if(datatype.isLong && integer > Integer.MAX_VALUE)
+                return NumericLiteral(datatype, integer.toInt().toDouble(), ctx.toPosition())
+
+            return NumericLiteral(datatype, integer.toDouble(), ctx.toPosition())
         }
 
         val terminal: TerminalNode = ctx.children[0] as TerminalNode
         val integerPart = ctx.intpart.text
-        val integer = when (terminal.symbol.type) {
+        return when (terminal.symbol.type) {
             DEC_INTEGER -> makeLiteral(integerPart, 10)
             HEX_INTEGER -> makeLiteral(integerPart.substring(1), 16)
             BIN_INTEGER -> makeLiteral(integerPart.substring(1), 2)
             else -> throw FatalAstException(terminal.text)
         }
-
-        // TODO "hack" to allow unsigned long constants to be used as values for signed longs, without needing a cast
-        if(integer.second.isLong && integer.first > Integer.MAX_VALUE && integer.first <= 0xffffffff) {
-            val signedLong = integer.first.toLong().toInt()
-            return NumericLiteral(integer.second, signedLong.toDouble(), ctx.toPosition())
-        }
-
-        return NumericLiteral(integer.second, integer.first, ctx.toPosition())
     }
 
     override fun visitBooleanliteral(ctx: BooleanliteralContext): NumericLiteral {

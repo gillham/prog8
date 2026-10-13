@@ -223,7 +223,7 @@ constdecl: PRIVATE? PUBLIC? 'const' datatype? identifierlist '=' expression ;
 
 memoryvardecl: ADDRESS_OF varinitializer;
 
-basedatatype:  'ubyte' | 'byte' | 'uword' | 'word' | 'long' | 'float' | 'str' | 'bool' | 'pointer' ;
+basedatatype:  'ubyte' | 'byte' | 'uword' | 'word' | 'long' | 'quad' | 'uquad' | 'float' | 'str' | 'bool' | 'pointer' ;
 
 datatype: pointertype | basedatatype | structtype=scoped_identifier;
 

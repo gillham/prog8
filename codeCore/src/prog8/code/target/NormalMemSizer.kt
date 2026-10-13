@@ -19,6 +19,7 @@ internal class NormalMemSizer(override val FLOAT_MEM_SIZE: UInt, override val PO
                 BaseDataType.UWORD, BaseDataType.WORD  -> numElements * 2
                 BaseDataType.STR, BaseDataType.POINTER -> numElements * pointerSize
                 BaseDataType.LONG -> numElements * 4
+                BaseDataType.QUAD, BaseDataType.UQUAD -> numElements * 8
                 BaseDataType.FLOAT-> numElements * floatSize
                 BaseDataType.STRUCT_INSTANCE -> numElements * (dt.subType?.memsize(this) ?: throw IllegalArgumentException("struct instance array has unresolved subtype"))
                 BaseDataType.UNDEFINED -> throw IllegalArgumentException("undefined has no memory size")
@@ -34,6 +35,7 @@ internal class NormalMemSizer(override val FLOAT_MEM_SIZE: UInt, override val PO
             dt.isByteOrBool -> 1 * (numElements ?: 1)
             dt.isFloat -> floatSize * (numElements ?: 1)
             dt.isLong -> 4 * (numElements ?: 1)
+            dt.isQuad -> 8 * (numElements ?: 1)
             dt.isWord -> 2 * (numElements ?: 1)
             dt.isPointer -> pointerSize * (numElements ?: 1)
             dt.isStructInstance -> dt.subType?.memsize(this) ?: throw IllegalArgumentException("struct instance has unresolved subtype")

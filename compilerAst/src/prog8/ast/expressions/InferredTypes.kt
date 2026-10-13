@@ -60,6 +60,9 @@ object InferredTypes {
         val isBytes = datatype?.isByte==true
         val isWords = datatype?.isWord==true
         val isLong = datatype?.isLong==true
+        val isQuad = datatype?.isQuad==true
+        val isUnsignedQuad = datatype?.isUnsignedQuad==true
+        val isSignedQuad = datatype?.isSignedQuad==true
         val isFloat = datatype?.isFloat==true
         val isPointer = datatype?.isPointer==true
         val isStructInstance = datatype?.isStructInstance==true
@@ -85,6 +88,8 @@ object InferredTypes {
         BaseDataType.UWORD to InferredType.known(BaseDataType.UWORD),
         BaseDataType.WORD to InferredType.known(BaseDataType.WORD),
         BaseDataType.LONG to InferredType.known(BaseDataType.LONG),
+        BaseDataType.QUAD to InferredType.known(BaseDataType.QUAD),
+        BaseDataType.UQUAD to InferredType.known(BaseDataType.UQUAD),
         BaseDataType.FLOAT to InferredType.known(BaseDataType.FLOAT),
         BaseDataType.STR to InferredType.known(BaseDataType.STR),
         BaseDataType.POINTER to InferredType.known(DataType.pointer(BaseDataType.UBYTE)),
@@ -97,6 +102,8 @@ object InferredTypes {
         DataType.UWORD to instancesBaseDt.getValue(BaseDataType.UWORD),
         DataType.WORD to instancesBaseDt.getValue(BaseDataType.WORD),
         DataType.LONG to instancesBaseDt.getValue(BaseDataType.LONG),
+        DataType.QUAD to instancesBaseDt.getValue(BaseDataType.QUAD),
+        DataType.UQUAD to instancesBaseDt.getValue(BaseDataType.UQUAD),
         DataType.FLOAT to instancesBaseDt.getValue(BaseDataType.FLOAT),
         DataType.BOOL to instancesBaseDt.getValue(BaseDataType.BOOL),
         DataType.STR to instancesBaseDt.getValue(BaseDataType.STR),

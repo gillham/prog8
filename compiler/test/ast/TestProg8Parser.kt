@@ -1336,6 +1336,34 @@ main {
         choices.type.subType shouldBe null
     }
 
+    test("'quad' and 'uquad' parse as the 64-bit integer types") {
+        val src = SourceCode.Text("""
+            main {
+                quad big
+                uquad[4] masks
+                ^^uquad maskpointer
+
+                struct Stamp {
+                    quad seconds
+                }
+
+                sub unsigned(quad value, uquad mask) -> uquad {
+                    return value as uquad
+                }
+            }
+        """.trimIndent())
+        val block = parseModule(src, VMTarget()).statements.filterIsInstance<Block>().single()
+        val variables = block.statements.filterIsInstance<VarDecl>().associate { it.name to it.datatype }
+        variables.getValue("big") shouldBe DataType.QUAD
+        variables.getValue("masks") shouldBe DataType.arrayFor(BaseDataType.UQUAD, VMTarget())
+        variables.getValue("maskpointer") shouldBe DataType.pointer(BaseDataType.UQUAD)
+        block.statements.filterIsInstance<StructDecl>().single().fields.single().type shouldBe DataType.QUAD
+        val unsigned = block.statements.filterIsInstance<Subroutine>().single()
+        unsigned.parameters.map { it.type } shouldBe listOf(DataType.QUAD, DataType.UQUAD)
+        unsigned.returntypes shouldBe listOf(DataType.UQUAD)
+        (unsigned.statements.filterIsInstance<Return>().single().values.single() as TypecastExpression).type shouldBe DataType.UQUAD
+    }
+
     test("'^^pointer' also works for variable declarations and sizeof()") {
         val result = compileText(VMTarget(), false, """
             main {

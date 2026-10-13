@@ -1,13 +1,20 @@
 package prog8tests.ast
 
+import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
+import prog8.ast.expressions.NumericLiteral
+import prog8.ast.statements.VarDecl
+import prog8.code.core.BaseDataType
+import prog8.code.core.DataType
 import prog8.code.target.C64Target
 import prog8.code.target.Cx16Target
+import prog8.code.target.LlvmTarget
+import prog8.code.target.Qemu68kTarget
 import prog8.code.target.VMTarget
 import prog8tests.helpers.ErrorReporterForTests
 import prog8tests.helpers.compileText
@@ -900,5 +907,195 @@ main {
         val errors = ErrorReporterForTests()
         compileText(VMTarget(), false, src, outputDir, errors, false) shouldNotBe null
         errors.errors.size shouldBe 0
+    }
+
+    test("quad and uquad are only supported on the virtual and llvm64 targets") {
+        // a variable, an array, a pointer, a struct field, two casts, two parameters and a return type
+        val src = $$"""
+            main {
+                quad @shared big = 5000000000
+                uquad[2] @shared masks = [$ffff_ffff_0000_0000, 1]
+                ^^quad @shared bigpointer
+
+                struct Stamp {
+                    uquad seconds
+                }
+
+                sub start() {
+                    ubyte @shared small = 5
+                    big = combine(small as quad, masks[0])
+                }
+
+                sub combine(quad value, uquad mask) -> quad {
+                    return value + (mask as quad)
+                }
+            }
+        """.trimIndent()
+        for (target in listOf(C64Target(), Cx16Target(), Qemu68kTarget())) {
+            withClue(target.name) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(target, false, src, outputDir, errors, false) shouldBe null
+                errors.errors.size shouldBe 9
+                errors.errors.forEach { it shouldContain "64-bit integer types (quad/uquad) are not supported on target ${target.name}" }
+            }
+        }
+        for (target in listOf(VMTarget(), LlvmTarget())) {
+            for (optimize in listOf(false, true)) {
+                withClue("${target.name} optimize=$optimize") {
+                    compileText(target, optimize, src, outputDir, writeAssembly = false).shouldNotBeNull()
+                }
+            }
+        }
+    }
+
+    test("integer literals wider than 32 bits still work as float values on the targets without quads") {
+        val src = $$"""
+            %import floats
+            %zeropage basicsafe
+            %option enable_floats
+            main {
+                sub start() {
+                    float @shared f = 5000000000
+                    f = f * 3000000000 + 10000000000
+                    long @shared l = $00000001 << 31
+                }
+            }
+        """.trimIndent()
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(C64Target(), optimize, src, outputDir, errors, true).shouldNotBeNull()
+                errors.errors shouldBe emptyList()
+            }
+        }
+    }
+
+    test("quad and uquad expressions, statements and constants pass the checks and optimizations") {
+        val src = $$"""
+            main {
+                quad @shared big = 5000000000
+                uquad @shared mask = $ffff_ffff_0000_0000
+                quad[] @shared values = [1, -2, 5000000000]
+                const quad NEGATIVE = -5000000000
+
+                struct Stamp {
+                    quad seconds
+                    uquad flags
+                }
+
+                sub start() {
+                    quad q = big * 3 - NEGATIVE
+                    q = -big / 7 + big % 7
+                    q <<= 3
+                    q >>= 1
+                    q++
+                    uquad u = mask | $ff
+                    u = ~u >> 4
+                    word @shared w = -5
+                    q = w + big
+                    long @shared l = q as long
+                    ubyte @shared b = u as ubyte
+                    if q > big and u != 0 {
+                        q = 0
+                    }
+                    while q < 10 {
+                        q++
+                    }
+                    when q {
+                        1 -> q = 2
+                        5000000000 -> q = 3
+                        else -> q = 4
+                    }
+                    bool @shared found = 5000000000 in values
+                    ubyte @shared size = sizeof(quad)
+                    ^^quad p = &big
+                    p^^ = 7000000000
+                    ^^Stamp s = ^^Stamp: [5000000000, $ffff_ffff_ffff_ffff]
+                    s.seconds = twice(s.seconds)
+                }
+
+                sub twice(quad value) -> quad {
+                    return value * 2
+                }
+            }
+        """.trimIndent()
+        for (target in listOf(VMTarget(), LlvmTarget())) {
+            for (optimize in listOf(false, true)) {
+                withClue("${target.name} optimize=$optimize") {
+                    val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                    compileText(target, optimize, src, outputDir, errors, false).shouldNotBeNull()
+                    errors.errors shouldBe emptyList()
+                }
+            }
+        }
+    }
+
+    test("integer literals wider than 32 bits are quads, or uquads above the signed range, that keep all 64 bits") {
+        val src = $$"""
+            main {
+                const DECIMAL = 4294967296
+                const SIGNED_MAX = 9223372036854775807
+                const UNSIGNED = 9223372036854775808
+                const UNSIGNED_MAX = 18446744073709551615
+                const HEX = $1_0000_0000
+                const HEX_MASK = $ffff_ffff_ffff_fff0
+                const BINARY = %1_00000000_00000000_00000000_00000001
+                const LONG_DECIMAL = 4294967295
+                const LONG_HEX = $ffff_ffff
+
+                sub start() {
+                }
+            }
+        """.trimIndent()
+        val result = compileText(VMTarget(), false, src, outputDir, writeAssembly = false).shouldNotBeNull()
+        val constants = result.compilerAst.allBlocks.single { it.name == "main" }.statements.filterIsInstance<VarDecl>().associateBy { it.name }
+        fun check(name: String, type: BaseDataType, bits: Long) = withClue(name) {
+            val constant = constants.getValue(name)
+            constant.datatype shouldBe DataType.forDt(type)
+            val value = constant.value as NumericLiteral
+            value.type shouldBe type
+            value.integerBits shouldBe bits
+        }
+        check("DECIMAL", BaseDataType.QUAD, 4294967296L)
+        check("SIGNED_MAX", BaseDataType.QUAD, Long.MAX_VALUE)
+        check("UNSIGNED", BaseDataType.UQUAD, Long.MIN_VALUE)
+        check("UNSIGNED_MAX", BaseDataType.UQUAD, -1L)
+        check("HEX", BaseDataType.QUAD, 0x1_0000_0000L)
+        check("HEX_MASK", BaseDataType.UQUAD, -16L)
+        check("BINARY", BaseDataType.QUAD, 0x1_0000_0001L)
+        // 32-bit unsigned values still become signed longs, as before
+        check("LONG_DECIMAL", BaseDataType.LONG, -1L)
+        check("LONG_HEX", BaseDataType.LONG, -1L)
+    }
+
+    test("quad and uquad values must be in range, and integer literals can't be wider than 64 bits") {
+        val src = """
+            main {
+                sub start() {
+                    quad @shared signed = 9223372036854775808
+                    uquad @shared unsigned = -1
+                    long @shared narrow = 5000000000
+                }
+            }
+        """.trimIndent()
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(VMTarget(), false, src, outputDir, errors, false) shouldBe null
+        errors.errors.filter { "out of range" in it }.map { it.substringAfter(": ") } shouldBe listOf(
+            "value '9223372036854775808' out of range for quad",
+            "value '-1.0' out of range for uquad",
+            "value '5000000000' out of range for long")
+
+        for ((literal, error) in listOf("18446744073709551616" to "invalid decimal literal", $$"$1_0000_0000_0000_0000" to "invalid hexadecimal literal")) {
+            val tooWide = """
+                main {
+                    sub start() {
+                        uquad @shared value = $literal
+                    }
+                }
+            """.trimIndent()
+            val wideErrors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+            compileText(VMTarget(), false, tooWide, outputDir, wideErrors, false) shouldBe null
+            wideErrors.printedErrors.single() shouldContain error
+        }
     }
 })

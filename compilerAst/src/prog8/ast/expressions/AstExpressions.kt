@@ -8,6 +8,7 @@ import prog8.code.INTERNED_STRINGS_MODULENAME
 import prog8.code.core.*
 import prog8.code.target.encodings.JapaneseCharacterConverter
 import java.io.CharConversionException
+import java.math.BigDecimal
 import java.util.Objects
 
 import kotlin.math.abs
@@ -113,6 +114,8 @@ class PrefixExpression(val operator: String, var expression: Expression, overrid
         val converted = when(operator) {
             "+" -> constval
             "-" -> when {
+                // wraps around like the 64-bit negation does at runtime, a uquad becomes a quad
+                constval.type.isQuad -> NumericLiteral.fromQuadBits(BaseDataType.QUAD, -constval.integerBits, constval.position)
                 constval.type.isInteger -> NumericLiteral.optimalInteger(-constval.number.toInt(), constval.position)
                 constval.type == BaseDataType.FLOAT -> NumericLiteral(BaseDataType.FLOAT, -constval.number, constval.position)
                 else -> throw ExpressionError("can only take negative of int or float", constval.position)
@@ -123,6 +126,7 @@ class PrefixExpression(val operator: String, var expression: Expression, overrid
                 BaseDataType.WORD -> NumericLiteral(BaseDataType.WORD, constval.number.toInt().inv().toDouble(), constval.position)
                 BaseDataType.UWORD -> NumericLiteral(BaseDataType.UWORD, (constval.number.toInt().inv() and 65535).toDouble(), constval.position)
                 BaseDataType.LONG -> NumericLiteral(BaseDataType.LONG, constval.number.toInt().inv().toDouble(), constval.position)
+                BaseDataType.QUAD, BaseDataType.UQUAD -> NumericLiteral.fromQuadBits(BaseDataType.UQUAD, constval.integerBits.inv(), constval.position)
                 else -> throw ExpressionError("can only take bitwise inversion of int", constval.position)
             }
             "not" -> NumericLiteral.fromBoolean(constval.number==0.0, constval.position)
@@ -144,12 +148,14 @@ class PrefixExpression(val operator: String, var expression: Expression, overrid
                 if(inferred.isBytes) InferredTypes.knownFor(BaseDataType.UBYTE)
                 else if(inferred.isWords) InferredTypes.knownFor(BaseDataType.UWORD)
                 else if(inferred.isLong) InferredTypes.knownFor(BaseDataType.LONG)          // TODO should be ULONG, but we don't have that type yet
+                else if(inferred.isQuad) InferredTypes.knownFor(BaseDataType.UQUAD)
                 else InferredTypes.unknown()
             }
             "-" -> {
                 if(inferred.isBytes) InferredTypes.knownFor(BaseDataType.BYTE)
                 else if(inferred.isWords) InferredTypes.knownFor(BaseDataType.WORD)
                 else if(inferred.isLong) InferredTypes.knownFor(BaseDataType.LONG)
+                else if(inferred.isQuad) InferredTypes.knownFor(BaseDataType.QUAD)
                 else inferred
             }
             else -> throw FatalAstException("weird prefix expression operator")
@@ -254,6 +260,7 @@ class BinaryExpression(
             "&", "|", "^" -> when(leftDt.getOrUndef()) {
                 DataType.BYTE -> InferredTypes.knownFor(BaseDataType.UBYTE)
                 DataType.WORD -> InferredTypes.knownFor(BaseDataType.UWORD)
+                DataType.QUAD -> InferredTypes.knownFor(BaseDataType.UQUAD)
                 DataType.BOOL -> InferredTypes.knownFor(BaseDataType.UBYTE)
                 else -> leftDt
             }
@@ -326,6 +333,7 @@ class BinaryExpression(
 
 
             // float + anything -> float
+            // quad + anything but float -> quad, uquad + an unsigned type -> uquad
             // long + anything -> long
             // byte + byte -> byte
             // byte + word -> word
@@ -335,7 +343,7 @@ class BinaryExpression(
 
             // if left or right is a numeric literal, and its value fits in the type of the other operand, use the other's operand type
             // EXCEPTION: if the numeric value is a word and the other operand is a byte type (to allow   v * $0008  for example)
-            if (left is NumericLiteral && !left.type.isLong && !left.type.isFloat && rightDt.isNumericOrBool) {
+            if (left is NumericLiteral && !left.type.isLong && !left.type.isQuad && !left.type.isFloat && rightDt.isNumericOrBool) {
                 if(!((leftDt.isWord) && rightDt.isByte)) {
                     val optimal = NumericLiteral.optimalNumeric(rightDt.base, null, left.number, left.position)
                     if (optimal.type != leftDt.base && DataType.forDt(optimal.type) isAssignableTo rightDt) {
@@ -343,7 +351,7 @@ class BinaryExpression(
                     }
                 }
             }
-            if (right is NumericLiteral && !right.type.isLong && !right.type.isFloat && leftDt.isNumericOrBool) {
+            if (right is NumericLiteral && !right.type.isLong && !right.type.isQuad && !right.type.isFloat && leftDt.isNumericOrBool) {
                 if(!((rightDt.isWord) && leftDt.isByte)) {
                     val optimal = NumericLiteral.optimalNumeric(leftDt.base, null, right.number, right.position)
                     if (optimal.type != rightDt.base && DataType.forDt(optimal.type) isAssignableTo leftDt) {
@@ -366,6 +374,8 @@ class BinaryExpression(
                         BaseDataType.UWORD -> Pair(DataType.UWORD, left)
                         BaseDataType.WORD -> Pair(DataType.WORD, left)
                         BaseDataType.LONG -> Pair(DataType.LONG, left)
+                        BaseDataType.QUAD -> Pair(DataType.QUAD, left)
+                        BaseDataType.UQUAD -> Pair(DataType.UQUAD, left)
                         BaseDataType.FLOAT -> Pair(DataType.FLOAT, left)
                         else -> Pair(leftDt, null)      // non-numeric datatype
                     }
@@ -377,6 +387,7 @@ class BinaryExpression(
                         BaseDataType.UWORD -> Pair(DataType.WORD, left)
                         BaseDataType.WORD -> Pair(DataType.WORD, left)
                         BaseDataType.LONG -> Pair(DataType.LONG, left)
+                        BaseDataType.QUAD, BaseDataType.UQUAD -> Pair(DataType.QUAD, left)
                         BaseDataType.FLOAT -> Pair(DataType.FLOAT, left)
                         else -> Pair(leftDt, null)      // non-numeric datatype
                     }
@@ -388,6 +399,8 @@ class BinaryExpression(
                         BaseDataType.UWORD -> Pair(DataType.UWORD, null)
                         BaseDataType.WORD -> Pair(DataType.WORD, left)
                         BaseDataType.LONG -> Pair(DataType.LONG, left)
+                        BaseDataType.QUAD -> Pair(DataType.QUAD, left)
+                        BaseDataType.UQUAD -> Pair(DataType.UQUAD, left)
                         BaseDataType.FLOAT -> Pair(DataType.FLOAT, left)
                         else -> Pair(leftDt, null)      // non-numeric datatype
                     }
@@ -399,6 +412,7 @@ class BinaryExpression(
                         BaseDataType.UWORD -> Pair(DataType.WORD, right)
                         BaseDataType.WORD -> Pair(DataType.WORD, null)
                         BaseDataType.LONG -> Pair(DataType.LONG, left)
+                        BaseDataType.QUAD, BaseDataType.UQUAD -> Pair(DataType.QUAD, left)
                         BaseDataType.FLOAT -> Pair(DataType.FLOAT, left)
                         else -> Pair(leftDt, null)      // non-numeric datatype
                     }
@@ -410,6 +424,25 @@ class BinaryExpression(
                         BaseDataType.UWORD -> Pair(DataType.LONG, right)
                         BaseDataType.WORD -> Pair(DataType.LONG, right)
                         BaseDataType.LONG -> Pair(DataType.LONG, null)
+                        BaseDataType.QUAD, BaseDataType.UQUAD -> Pair(DataType.QUAD, left)
+                        BaseDataType.FLOAT -> Pair(DataType.FLOAT, left)
+                        else -> Pair(leftDt, null)      // non-numeric datatype
+                    }
+                }
+                BaseDataType.QUAD -> {
+                    when (rightDt.base) {
+                        BaseDataType.UBYTE, BaseDataType.BYTE, BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG, BaseDataType.UQUAD -> Pair(DataType.QUAD, right)
+                        BaseDataType.QUAD -> Pair(DataType.QUAD, null)
+                        BaseDataType.FLOAT -> Pair(DataType.FLOAT, left)
+                        else -> Pair(leftDt, null)      // non-numeric datatype
+                    }
+                }
+                BaseDataType.UQUAD -> {
+                    when (rightDt.base) {
+                        BaseDataType.UBYTE, BaseDataType.UWORD -> Pair(DataType.UQUAD, right)
+                        BaseDataType.BYTE, BaseDataType.WORD, BaseDataType.LONG -> Pair(DataType.QUAD, right)
+                        BaseDataType.QUAD -> Pair(DataType.QUAD, left)
+                        BaseDataType.UQUAD -> Pair(DataType.UQUAD, null)
                         BaseDataType.FLOAT -> Pair(DataType.FLOAT, left)
                         else -> Pair(leftDt, null)      // non-numeric datatype
                     }
@@ -764,10 +797,13 @@ class DirectMemoryRead(var addressExpression: Expression, override val position:
     }
 }
 
-class NumericLiteral(val type: BaseDataType,    // only numerical types allowed + bool (there is no separate BooleanLiteral node)
-                     val number: Double,    // can be byte, word or float depending on the type
+class NumericLiteral private constructor(val type: BaseDataType,    // only numerical types allowed + bool (there is no separate BooleanLiteral node)
+                     val number: Double,    // can be byte, word or float depending on the type; only the nearest Double of a quad or uquad value
+                     private val quadBits: Long,    // all 64 bits of a quad or uquad value, two's complement
                      override val position: Position) : Expression() {
     override lateinit var parent: Node
+
+    constructor(type: BaseDataType, number: Double, position: Position) : this(type, number, quadBitsOf(type, number), position)
 
     init {
         when(type) {
@@ -775,7 +811,7 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
             BaseDataType.BYTE -> require(number in -128.0..127.0)
             BaseDataType.UWORD -> require(number in 0.0..65535.0)
             BaseDataType.WORD -> require(number in -32768.0..32767.0)
-            BaseDataType.LONG -> { /*no hard requirement, the range will be checked later to give a proper error message instead of a crash */ }
+            BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.UQUAD -> { /*no hard requirement, the range will be checked later to give a proper error message instead of a crash */ }
             BaseDataType.BOOL -> require(number==0.0 || number==1.0)
             BaseDataType.POINTER -> throw FatalAstException("pointer literals should not be created, should have been UWORD $position")
             else ->  require(type.isNumericOrBool) {"numeric literal type should be numeric or bool: $type at $position" }
@@ -788,11 +824,50 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
 
     override val isSimple = true
     override fun isIORead(target: ICompilationTarget) = false
-    override fun copy() = NumericLiteral(type, number, position)
+    override fun copy() = NumericLiteral(type, number, quadBits, position)
+
+    /** The exact value of an integer or bool literal as 64 bits, two's complement: a uquad above Long.MAX_VALUE is negative here. */
+    val integerBits: Long
+        get() {
+            require(type.isIntegerOrBool) { "$type literal has no integer value at $position" }
+            return if(type.isQuad) quadBits else number.toLong()
+        }
 
     companion object {
         fun fromBoolean(bool: Boolean, position: Position) =
                 NumericLiteral(BaseDataType.BOOL, if(bool) 1.0 else 0.0, position)
+
+        /** A quad or uquad literal that keeps all 64 bits of its value, given in two's complement. */
+        fun fromQuadBits(type: BaseDataType, bits: Long, position: Position): NumericLiteral {
+            require(type.isQuad) { "$type is not a quad type" }
+            return NumericLiteral(type, if(type.isUnsignedQuad) bits.toULong().toDouble() else bits.toDouble(), bits, position)
+        }
+
+        // the bits of a quad value that is only known as a Double, saturated at the limits of its type
+        private fun quadBitsOf(type: BaseDataType, number: Double): Long = when(type) {
+            BaseDataType.QUAD -> number.toLong()
+            BaseDataType.UQUAD -> number.toULong().toLong()
+            else -> 0L
+        }
+
+        private fun integerRange(type: BaseDataType): LongRange = when(type) {
+            BaseDataType.UBYTE -> 0L..255L
+            BaseDataType.BYTE -> -128L..127L
+            BaseDataType.UWORD -> 0L..65535L
+            BaseDataType.WORD -> -32768L..32767L
+            BaseDataType.LONG -> Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()
+            else -> throw IllegalArgumentException("$type is not an integer type of 32 bits or less")
+        }
+
+        // the two's complement truncation that an explicit cast of a 64-bit value to a smaller integer type does
+        private fun truncatedTo(type: BaseDataType, bits: Long): Double = when(type) {
+            BaseDataType.UBYTE -> (bits and 0xff).toDouble()
+            BaseDataType.BYTE -> bits.toByte().toDouble()
+            BaseDataType.UWORD -> (bits and 0xffff).toDouble()
+            BaseDataType.WORD -> bits.toShort().toDouble()
+            BaseDataType.LONG -> bits.toInt().toDouble()
+            else -> throw IllegalArgumentException("$type is not an integer type of 32 bits or less")
+        }
 
         fun optimalNumeric(origType1: BaseDataType, origType2: BaseDataType?, value: Number, position: Position) : NumericLiteral =
             fromOptimal(optimalNumeric(value, position), origType1, origType2, position)
@@ -800,7 +875,12 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
         fun optimalInteger(origType1: BaseDataType, origType2: BaseDataType?, value: Int, position: Position): NumericLiteral =
             fromOptimal(optimalInteger(value, position), origType1, origType2, position)
 
+        fun optimalInteger(origType1: BaseDataType, origType2: BaseDataType?, value: Long, position: Position): NumericLiteral =
+            fromOptimal(optimalInteger(value, position), origType1, origType2, position)
+
         fun optimalNumeric(value: Number, position: Position): NumericLiteral {
+            if(value is Long)
+                return optimalInteger(value, position)
             val digits = floor(value.toDouble()) - value.toDouble()
             return if(value is Double && digits!=0.0) {
                 NumericLiteral(BaseDataType.FLOAT, value, position)
@@ -832,6 +912,13 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
             }
         }
 
+        /** The smallest type for the value, a quad when it doesn't fit in 32 bits. */
+        fun optimalInteger(value: Long, position: Position): NumericLiteral =
+            if(value in Int.MIN_VALUE..Int.MAX_VALUE)
+                optimalInteger(value.toInt(), position)
+            else
+                fromQuadBits(BaseDataType.QUAD, value, position)
+
         fun optimalInteger(value: UInt, position: Position): NumericLiteral {
             return when (value) {
                 in 0u..255u -> NumericLiteral(BaseDataType.UBYTE, value.toDouble(), position)
@@ -849,6 +936,7 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
                         BaseDataType.BOOL -> {}
                         BaseDataType.UBYTE -> largestOrig = BaseDataType.BYTE
                         BaseDataType.UWORD -> largestOrig = BaseDataType.WORD
+                        BaseDataType.UQUAD -> largestOrig = BaseDataType.QUAD
                         else -> throw FatalAstException("invalid dt")
                     }
                 }
@@ -880,7 +968,15 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
     override fun accept(visitor: IAstVisitor) = visitor.visit(this)
     override fun accept(visitor: AstWalker, parent: Node)= visitor.visit(this, parent)
 
-    override fun toString(): String = "NumericLiteral(${type.name}:$number)"
+    override fun toString(): String = "NumericLiteral(${type.name}:$valueText)"
+
+    /** The value as text, exact also for the quad types whose number is only approximate. */
+    val valueText: String
+        get() = when(type) {
+            BaseDataType.QUAD -> quadBits.toString()
+            BaseDataType.UQUAD -> quadBits.toULong().toString()
+            else -> number.toString()
+        }
 
     override fun inferType(program: Program): InferredTypes.InferredType = when(type) {
         BaseDataType.UBYTE -> InferredTypes.knownFor(BaseDataType.UBYTE)
@@ -888,6 +984,8 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
         BaseDataType.UWORD -> InferredTypes.knownFor(BaseDataType.UWORD)
         BaseDataType.WORD -> InferredTypes.knownFor(BaseDataType.WORD)
         BaseDataType.LONG -> InferredTypes.knownFor(BaseDataType.LONG)
+        BaseDataType.QUAD -> InferredTypes.knownFor(BaseDataType.QUAD)
+        BaseDataType.UQUAD -> InferredTypes.knownFor(BaseDataType.UQUAD)
         BaseDataType.FLOAT -> InferredTypes.knownFor(BaseDataType.FLOAT)
         BaseDataType.BOOL -> InferredTypes.knownFor(BaseDataType.BOOL)
         BaseDataType.STR -> InferredTypes.knownFor(BaseDataType.STR)
@@ -899,13 +997,29 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
     override fun equals(other: Any?): Boolean {
         return if(other==null || other !is NumericLiteral)
             false
-        else if(type!=BaseDataType.BOOL && other.type!=BaseDataType.BOOL)
-            number==other.number
+        else if(type!=BaseDataType.BOOL && other.type!=BaseDataType.BOOL) {
+            if(type.isQuad || other.type.isQuad) compareExactly(other)==0 else number==other.number
+        }
         else
             type==other.type && number==other.number
     }
 
-    operator fun compareTo(other: NumericLiteral): Int = number.compareTo(other.number)
+    operator fun compareTo(other: NumericLiteral): Int =
+        (if(type.isQuad || other.type.isQuad) compareExactly(other) else null) ?: number.compareTo(other.number)
+
+    // the Double numbers of large quad values are only approximations, so comparisons that involve a quad use the exact values
+    private fun compareExactly(other: NumericLiteral): Int? {
+        val value = exactValue() ?: return null
+        val otherValue = other.exactValue() ?: return null
+        return value.compareTo(otherValue)
+    }
+
+    private fun exactValue(): BigDecimal? = when {
+        type == BaseDataType.QUAD -> BigDecimal.valueOf(quadBits)
+        type == BaseDataType.UQUAD -> BigDecimal(quadBits.toULong().toString())
+        number.isFinite() -> BigDecimal(number)
+        else -> null
+    }
 
     class ValueAfterCast(val isValid: Boolean, val whyFailed: String?, private val value: NumericLiteral?) {
         fun valueOrZero() = if(isValid) value!! else NumericLiteral(BaseDataType.UBYTE, 0.0, value?.position ?: Position.DUMMY)
@@ -949,7 +1063,7 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
                     return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
                 if(targettype==BaseDataType.FLOAT)
                     return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
-                if(targettype==BaseDataType.LONG)
+                if(targettype==BaseDataType.LONG || targettype.isQuad)
                     return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
                 if(targettype.isPointer) {
                     val ptrType = target.pointerBaseType
@@ -973,8 +1087,10 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
                     return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
                 if(targettype==BaseDataType.FLOAT)
                     return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
-                if(targettype==BaseDataType.LONG)
+                if(targettype==BaseDataType.LONG || targettype==BaseDataType.QUAD)
                     return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
+                if(targettype==BaseDataType.UQUAD && (number>=0.0 || !implicit))
+                    return ValueAfterCast(true, null, fromQuadBits(targettype, number.toLong(), position))
             }
             BaseDataType.UWORD -> {
                 if(targettype==BaseDataType.BYTE && number <= 127)
@@ -985,7 +1101,7 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
                     return ValueAfterCast(true, null, NumericLiteral(targettype, number.toInt().toShort().toDouble(), position))
                 if(targettype==BaseDataType.FLOAT)
                     return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
-                if(targettype==BaseDataType.LONG)
+                if(targettype==BaseDataType.LONG || targettype.isQuad)
                     return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
                 // note: DO NOT reduce a number casted to a pointer, back to a number... that will introduce casting loops
             }
@@ -1006,8 +1122,10 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
                 }
                 if(targettype==BaseDataType.FLOAT)
                     return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
-                if(targettype==BaseDataType.LONG)
+                if(targettype==BaseDataType.LONG || targettype==BaseDataType.QUAD)
                     return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
+                if(targettype==BaseDataType.UQUAD && (number>=0.0 || !implicit))
+                    return ValueAfterCast(true, null, fromQuadBits(targettype, number.toLong(), position))
             }
             BaseDataType.FLOAT -> {
                 try {
@@ -1047,6 +1165,19 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
                             else
                                 ValueAfterCast(true, null, NumericLiteral(targettype, converted, position))
                         }
+                        // the upper limits, 2^63 and 2^64, are just out of range
+                        BaseDataType.QUAD if number >= Long.MIN_VALUE.toDouble() && number < Long.MAX_VALUE.toDouble() -> {
+                            return if(implicit && truncate(number)!=number)
+                                ValueAfterCast(false, "refused truncating of float to avoid loss of precision", this)
+                            else
+                                ValueAfterCast(true, null, fromQuadBits(targettype, number.toLong(), position))
+                        }
+                        BaseDataType.UQUAD if number >= 0.0 && number < ULong.MAX_VALUE.toDouble() -> {
+                            return if(implicit && truncate(number)!=number)
+                                ValueAfterCast(false, "refused truncating of float to avoid loss of precision", this)
+                            else
+                                ValueAfterCast(true, null, fromQuadBits(targettype, number.toULong().toLong(), position))
+                        }
                         else -> {}
                     }
                 } catch (x: ExpressionError) {
@@ -1069,10 +1200,36 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
                         return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
                     if (targettype == BaseDataType.UWORD && number >= 0 && number <= 65535)
                         return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
-                    if(targettype==BaseDataType.FLOAT)
+                    if(targettype==BaseDataType.FLOAT || targettype==BaseDataType.QUAD)
                         return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
+                    if(targettype==BaseDataType.UQUAD && (number>=0.0 || !implicit))
+                        return ValueAfterCast(true, null, fromQuadBits(targettype, number.toLong(), position))
                 } catch (x: ExpressionError) {
                     return ValueAfterCast(false, x.message, null)
+                }
+            }
+            BaseDataType.QUAD, BaseDataType.UQUAD -> {
+                val aboveLongRange = type==BaseDataType.UQUAD && quadBits<0
+                val negative = type==BaseDataType.QUAD && quadBits<0
+                when {
+                    targettype==BaseDataType.QUAD && (!aboveLongRange || !implicit) ->
+                        return ValueAfterCast(true, null, fromQuadBits(targettype, quadBits, position))
+                    targettype==BaseDataType.UQUAD && (!negative || !implicit) ->
+                        return ValueAfterCast(true, null, fromQuadBits(targettype, quadBits, position))
+                    targettype==BaseDataType.FLOAT ->
+                        return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
+                    targettype in arrayOf(BaseDataType.UBYTE, BaseDataType.BYTE, BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG) -> {
+                        if(!aboveLongRange && quadBits in integerRange(targettype))
+                            return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
+                        if(!implicit)
+                            return ValueAfterCast(true, null, NumericLiteral(targettype, truncatedTo(targettype, quadBits), position))
+                    }
+                    // gives the target's address integer type, which doesn't convert back to a pointer, so no casting loop
+                    targettype.isPointer -> {
+                        val ptrType = target.pointerBaseType
+                        if(!aboveLongRange && quadBits in integerRange(ptrType))
+                            return ValueAfterCast(true, null, NumericLiteral(ptrType, number, position))
+                    }
                 }
             }
             else -> {
@@ -1080,7 +1237,7 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
             }
         }
         val implicit = if(implicit) "implicit " else ""
-        return ValueAfterCast(false, "no ${implicit}cast available from $type to $targettype for value $number", null)
+        return ValueAfterCast(false, "no ${implicit}cast available from $type to $targettype for value $valueText", null)
     }
 
     fun castTypeKeepValue(targetDt: BaseDataType, target: ICompilationTarget): ValueAfterCast {
@@ -1091,15 +1248,15 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
             BaseDataType.UBYTE -> {
                 when(targetDt) {
                     BaseDataType.BYTE -> if(number<=127.0) return cast(targetDt, false, target)
-                    BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG, BaseDataType.FLOAT -> return cast(targetDt, false, target)
+                    BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.UQUAD, BaseDataType.FLOAT -> return cast(targetDt, false, target)
                     BaseDataType.POINTER -> return cast(targetDt, false, target)
                     else -> {}
                 }
             }
             BaseDataType.BYTE -> {
                 when(targetDt) {
-                    BaseDataType.UBYTE, BaseDataType.UWORD -> if(number>=0.0) return cast(targetDt, false, target)
-                    BaseDataType.WORD, BaseDataType.LONG, BaseDataType.FLOAT -> return cast(targetDt, false, target)
+                    BaseDataType.UBYTE, BaseDataType.UWORD, BaseDataType.UQUAD -> if(number>=0.0) return cast(targetDt, false, target)
+                    BaseDataType.WORD, BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.FLOAT -> return cast(targetDt, false, target)
                     else -> {}
                 }
             }
@@ -1108,7 +1265,7 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
                     BaseDataType.UBYTE -> if(number<=255.0) return cast(targetDt, false, target)
                     BaseDataType.BYTE -> if(number<=127.0) return cast(targetDt, false, target)
                     BaseDataType.WORD -> if(number<=32767.0) return cast(targetDt, false, target)
-                    BaseDataType.LONG, BaseDataType.FLOAT -> return cast(targetDt, false, target)
+                    BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.UQUAD, BaseDataType.FLOAT -> return cast(targetDt, false, target)
                     BaseDataType.POINTER -> return cast(targetDt, false, target)
                     else -> {}
                 }
@@ -1118,11 +1275,14 @@ class NumericLiteral(val type: BaseDataType,    // only numerical types allowed 
                     BaseDataType.UBYTE -> if(number in 0.0..255.0) return cast(targetDt, false, target)
                     BaseDataType.BYTE -> if(number in -128.0..127.0) return cast(targetDt, false, target)
                     BaseDataType.UWORD -> if(number in 0.0..32767.0) return cast(targetDt, false, target)
-                    BaseDataType.LONG, BaseDataType.FLOAT -> return cast(targetDt, false, target)
+                    BaseDataType.UQUAD -> if(number>=0.0) return cast(targetDt, false, target)
+                    BaseDataType.LONG, BaseDataType.QUAD, BaseDataType.FLOAT -> return cast(targetDt, false, target)
                     else -> {}
                 }
             }
-            BaseDataType.LONG, BaseDataType.FLOAT -> return cast(targetDt, false, target)
+            // an implicit cast to or from a quad type only succeeds when it keeps the value
+            BaseDataType.LONG, BaseDataType.FLOAT -> return cast(targetDt, targetDt.isQuad, target)
+            BaseDataType.QUAD, BaseDataType.UQUAD -> return cast(targetDt, true, target)
             else -> {}
         }
         return ValueAfterCast(false, "no type conversion possible from $type to $targetDt", null)
@@ -1306,6 +1466,10 @@ class ArrayLiteral(val type: InferredTypes.InferredType,     // inferred because
         return when {
             dts.any { it.isFloat } -> InferredTypes.knownFor(DataType.arrayFor(BaseDataType.FLOAT, program.target))
             dts.any { it.isString } -> InferredTypes.knownFor(DataType.arrayFor(BaseDataType.STR, program.target))
+            dts.any { it.isQuad } -> {
+                val quadType = if(dts.all { it.isUnsignedQuad || it.isUnsignedWord || it.isUnsignedByte }) BaseDataType.UQUAD else BaseDataType.QUAD
+                InferredTypes.knownFor(DataType.arrayFor(quadType, program.target))
+            }
             dts.any { it.isLong } -> InferredTypes.knownFor(DataType.arrayFor(BaseDataType.LONG, program.target))
             dts.any { it.isSignedWord } -> InferredTypes.knownFor(DataType.arrayFor(BaseDataType.WORD, program.target))
             dts.any { it.isUnsignedWord } -> InferredTypes.knownFor(DataType.arrayFor(BaseDataType.UWORD, program.target))

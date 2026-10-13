@@ -65,6 +65,8 @@ enum class CpuType(val statusBitsOnMultiByteOps: Boolean) {
         get() = this == M68000 || this == M68020
     val isLlvm: Boolean
         get() = this == LLVM64
+    val isVirtual: Boolean
+        get() = this == VIRTUAL
     /** True for targets that use the m68k-style hardware-register calling convention (D0-D7, A0-A6, FP0-FP7). */
     val usesM68kConvention: Boolean
         get() = is68k || this == VIRTUAL || this == LLVM64

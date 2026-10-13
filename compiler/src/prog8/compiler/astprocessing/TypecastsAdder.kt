@@ -103,7 +103,7 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
         if(leftDt.isKnown && rightDt.isKnown) {
 
             if(expr.operator=="<<" && leftDt.isBytes) {
-                // uword/ulong ww = 1 << shift    -->  make the '1' a word (or long) constant
+                // uword/ulong ww = 1 << shift    -->  make the '1' a word (or long, or quad) constant
                 val leftConst = expr.left.constValue(program)
                 if(leftConst!=null) {
                     val leftConstAsWord =
@@ -119,6 +119,10 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                         }
                         else if (parent.target.inferType(program).isLong) {
                             modifications += AstReplaceNode(expr.left, leftConstAsLong, expr)
+                        }
+                        else if (parent.target.inferType(program).isQuad) {
+                            val leftConstAsQuad = NumericLiteral.fromQuadBits(parent.target.inferType(program).getOrUndef().base, leftConst.integerBits, leftConst.position)
+                            modifications += AstReplaceNode(expr.left, leftConstAsQuad, expr)
                         }
                     } else if (parent is TypecastExpression && parent.type.isUnsignedWord && parent.parent is Assignment) {
                         val assign = parent.parent as Assignment
@@ -137,14 +141,23 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
             if(leftDt!=rightDt) {
                 // convert a negative operand for bitwise operator to the 2's complement positive number instead
                 if(expr.operator in BitwiseOperators && leftDt.isInteger && rightDt.isInteger) {
-                    if(leftCv!=null && leftCv.number<0) {
+                    // in 64 bits, as the Double number of a quad can't be exact
+                    if(leftCv!=null && leftCv.number<0 && rightDt.isQuad) {
+                        val value = NumericLiteral.fromQuadBits(rightDt.getOrUndef().base, leftCv.integerBits, expr.left.position)
+                        return listOf(AstReplaceNode(expr.left, value, expr))
+                    }
+                    if(rightCv!=null && rightCv.number<0 && leftDt.isQuad) {
+                        val value = NumericLiteral.fromQuadBits(leftDt.getOrUndef().base, rightCv.integerBits, expr.right.position)
+                        return listOf(AstReplaceNode(expr.right, value, expr))
+                    }
+                    if(leftCv!=null && leftCv.number<0 && !leftDt.isQuad) {
                         val value = if(rightDt.isBytes) 256+leftCv.number else 65536+leftCv.number
                         return listOf(AstReplaceNode(
                             expr.left,
                             NumericLiteral(rightDt.getOrUndef().base, value, expr.left.position),
                             expr))
                     }
-                    if(rightCv!=null && rightCv.number<0) {
+                    if(rightCv!=null && rightCv.number<0 && !rightDt.isQuad) {
                         val value = if(leftDt.isBytes) 256+rightCv.number else if(leftDt.isWords) 65536+rightCv.number else (0x100000000L+rightCv.number).toLong().toInt().toDouble()
                         return listOf(AstReplaceNode(
                             expr.right,
@@ -592,12 +605,13 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                 listOf(AstReplaceNode(range.step, normalizedStep, range))
         }
 
-        if(fromConst!=null) {
+        // a quad value doesn't fit in an Int, so it is never made smaller here
+        if(fromConst!=null && !fromConst.type.isQuad) {
             val smaller = NumericLiteral.optimalInteger(fromConst.number.toInt(), fromConst.position)
             if(fromDt.base.largerSizeThan(smaller.type)) {
                 val toType = range.to.inferType(program)
                 if(!(toType issimpletype smaller.type)) {
-                    if(toConst!=null) {
+                    if(toConst!=null && !toConst.type.isQuad) {
                         // can we make the to value into the same smaller type?
                         val smallerTo = NumericLiteral.optimalInteger(toConst.number.toInt(), toConst.position)
                         if(smaller.type==smallerTo.type) {
@@ -611,12 +625,12 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                 }
             }
         }
-        if(toConst!=null) {
+        if(toConst!=null && !toConst.type.isQuad) {
             val smaller = NumericLiteral.optimalInteger(toConst.number.toInt(), toConst.position)
             if(toDt.base.largerSizeThan(smaller.type)) {
                 val fromType = range.from.inferType(program)
                 if(!(fromType issimpletype  smaller.type)) {
-                    if(fromConst!=null) {
+                    if(fromConst!=null && !fromConst.type.isQuad) {
                         // can we make the from value into the same smaller type?
                         val smallerFrom = NumericLiteral.optimalInteger(fromConst.number.toInt(), fromConst.position)
                         if(smaller.type==smallerFrom.type) {

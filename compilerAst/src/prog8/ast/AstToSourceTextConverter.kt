@@ -406,7 +406,8 @@ class AstToSourceTextConverter(val output: (text: String) -> Unit, val program: 
         when (numLiteral.type) {
             BaseDataType.BOOL -> output(if(numLiteral.number==0.0) "false" else "true")
             BaseDataType.FLOAT -> output(numLiteral.number.toString())
-            else -> output(numLiteral.number.toLong().toString())
+            BaseDataType.UQUAD -> output(numLiteral.integerBits.toULong().toString())
+            else -> output(numLiteral.integerBits.toString())
         }
     }
 

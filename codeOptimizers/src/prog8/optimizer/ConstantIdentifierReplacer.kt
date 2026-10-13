@@ -200,6 +200,9 @@ class VarConstantValueTypeAdjuster(
             if(t1.isKnown) {
                 val replaceFunc = if(t1.isBytes) {
                     if(t1 issimpletype BaseDataType.BYTE) "clamp__byte" else "clamp__ubyte"
+                } else if(t1.isQuad) {
+                    errors.err("clamp builtin not supported for quad and uquad yet", functionCallExpr.position)
+                    return noModifications
                 } else if(t1.isInteger) {
                     when {
                         t1 issimpletype BaseDataType.WORD -> "clamp__word"
@@ -227,6 +230,9 @@ class VarConstantValueTypeAdjuster(
                         "${funcName}__byte"
                     else
                         "${funcName}__ubyte"
+                } else if(t1.isQuad || t2.isQuad) {
+                    errors.err("min/max not supported for quad and uquad yet", functionCallExpr.position)
+                    return noModifications
                 } else if(t1.isInteger && t2.isInteger) {
                     replaceFunc = when {
                         t1 issimpletype BaseDataType.LONG || t2 issimpletype BaseDataType.LONG -> "${funcName}__long"
@@ -257,6 +263,10 @@ class VarConstantValueTypeAdjuster(
                     dt.isFloat -> "abs__float"
                     dt.isUnsignedByte || dt.isUnsignedWord -> {
                         return listOf(AstReplaceNode(functionCallExpr, functionCallExpr.args[0], parent))
+                    }
+                    dt.isQuad -> {
+                        errors.err("abs builtin not supported for quad and uquad yet", functionCallExpr.position)
+                        return noModifications
                     }
                     else -> {
                         errors.err("expected numeric argument", functionCallExpr.args[0].position)

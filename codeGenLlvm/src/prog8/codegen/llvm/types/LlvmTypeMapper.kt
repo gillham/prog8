@@ -23,6 +23,7 @@ internal class LlvmTypeMapper(private val st: IRSymbolTable) {
         BaseDataType.BOOL, BaseDataType.UBYTE, BaseDataType.BYTE -> LlvmType.I8
         BaseDataType.UWORD, BaseDataType.WORD -> LlvmType.I16
         BaseDataType.LONG -> LlvmType.I32
+        BaseDataType.QUAD, BaseDataType.UQUAD -> LlvmType.I64
         BaseDataType.FLOAT -> LlvmType.Double
         BaseDataType.POINTER -> LlvmType.Ptr
         BaseDataType.STR, BaseDataType.ARRAY, BaseDataType.ARRAY_SPLITW, BaseDataType.STRUCT_INSTANCE, BaseDataType.UNDEFINED ->

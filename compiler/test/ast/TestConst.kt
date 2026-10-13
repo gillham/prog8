@@ -1197,4 +1197,47 @@ main {
         (st[1] as VarDecl).datatype.base shouldBe BaseDataType.FLOAT
         (st[2] as VarDecl).datatype.base shouldBe BaseDataType.BOOL
     }
+
+    test("constant folding of quad and uquad expressions is exact, and wraps around in 64 bits") {
+        val src = $$"""
+main {
+    const uquad ADDED = $ffff_ffff_ffff_fff0 + $f
+    const quad WRAPPED = $7fff_ffff_ffff_ffff + 1
+    const uquad SHIFTED = $ffff_ffff_0000_0000 >> 4
+    const quad SIGNED_SHIFT = -5000000000 >> 1
+    const quad SHIFTED_OUT = 5000000000 << 64
+    const quad PRODUCT = -1 * 5000000001
+    const quad SQUARED = $1_0000_0000 * $1_0000_0000
+    const quad QUOTIENT = 9223372036854775807 / 3
+    const uquad UNSIGNED_QUOTIENT = 18446744073709551615 / 3
+    const quad REMAINDER = -5000000009 % 4
+    const uquad FLIPPED = $0123_4567_89ab_cdef ^ $ffff_ffff_ffff_ffff
+    const uquad INVERTED = ~$0000_0000_0000_00ff
+    const quad NEGATED = -9223372036854775808
+    const uquad WIDE_SHIFT = 1 << 40
+    const bool GREATER = $ffff_ffff_ffff_ffff > $ffff_ffff_ffff_fffe
+    const bool EQUAL = 18446744073709551615 == 18446744073709551614
+    sub start() {}
+}"""
+        val result = compileText(VMTarget(), false, src, outputDir, writeAssembly = false)!!
+        val constants = result.compilerAst.allBlocks.first { it.name=="main" }.statements
+            .filterIsInstance<VarDecl>().associate { it.name to it.value as NumericLiteral }
+        fun bits(name: String) = constants.getValue(name).integerBits
+        bits("ADDED") shouldBe -1L
+        bits("WRAPPED") shouldBe Long.MIN_VALUE
+        bits("SHIFTED") shouldBe 0x0fff_ffff_f000_0000L
+        bits("SIGNED_SHIFT") shouldBe -2500000000L
+        bits("SHIFTED_OUT") shouldBe 0L
+        bits("PRODUCT") shouldBe -5000000001L
+        bits("SQUARED") shouldBe 0L
+        bits("QUOTIENT") shouldBe 3074457345618258602L
+        bits("UNSIGNED_QUOTIENT") shouldBe 6148914691236517205L
+        bits("REMAINDER") shouldBe -1L
+        bits("FLIPPED") shouldBe 0xfedc_ba98_7654_3210uL.toLong()
+        bits("INVERTED") shouldBe -256L
+        bits("NEGATED") shouldBe Long.MIN_VALUE
+        bits("WIDE_SHIFT") shouldBe (1L shl 40)
+        constants.getValue("GREATER").asBooleanValue shouldBe true
+        constants.getValue("EQUAL").asBooleanValue shouldBe false
+    }
 })
