@@ -45,6 +45,7 @@ internal object LlvmPrinter {
         LlvmType.Void -> "void"
         is LlvmType.Array -> "[${type.size} x ${format(type.elementType)}]"
         is LlvmType.Function -> "${format(type.returnType)} (${type.paramTypes.joinToString { format(it) }})"
+        is LlvmType.Struct -> structBraces(type.packed, type.fields.map { format(it) })
     }
 
     fun format(value: LlvmValue): String = when (value) {
@@ -54,8 +55,21 @@ internal object LlvmPrinter {
         is LlvmValue.FloatConstant -> formatDouble(value.value)
         is LlvmValue.StringConstant -> "c" + quote(value.bytes)
         is LlvmValue.NullPtr -> "null"
-        is LlvmValue.ZeroInitializer -> "zeroinitializer"
+        is LlvmValue.ZeroInitializer -> when (val type = value.type) {
+            LlvmType.I1 -> "false"
+            LlvmType.I8, LlvmType.I16, LlvmType.I32, LlvmType.I64 -> "0"
+            LlvmType.Double -> "0.0"
+            LlvmType.Ptr -> "null"
+            is LlvmType.Array, is LlvmType.Struct -> "zeroinitializer"
+            LlvmType.Void, is LlvmType.Function -> error("$type has no zero value")
+        }
         is LlvmValue.ArrayConstant -> value.elements.joinToString(", ", "[", "]") { typed(it) }
+        is LlvmValue.StructConstant -> structBraces(value.type.packed, value.fields.map { typed(it) })
+        is LlvmValue.ConstantCast -> "${value.op.keyword} (${typed(value.value)} to ${format(value.type)})"
+        is LlvmValue.ConstantGep -> {
+            val inBounds = if (value.inBounds) "inbounds " else ""
+            "getelementptr $inBounds(${format(value.baseType)}, ${typed(value.ptr)}${value.indices.joinToString("") { ", ${typed(it)}" }})"
+        }
     }
 
     fun typed(value: LlvmValue): String = "${format(value.type)} ${format(value)}"
@@ -123,13 +137,19 @@ internal object LlvmPrinter {
 
     private fun alignSuffix(align: Int?): String = align?.let { ", align $it" }.orEmpty()
 
+    private fun structBraces(packed: Boolean, items: List<String>): String = when {
+        items.isEmpty() -> if (packed) "<{}>" else "{}"
+        packed -> items.joinToString(", ", "<{ ", " }>")
+        else -> items.joinToString(", ", "{ ", " }")
+    }
+
     private fun formatInteger(constant: LlvmValue.IntConstant): String = when (constant.type) {
         LlvmType.I1 -> if (constant.value != 0L) "true" else "false"
         LlvmType.I8 -> constant.value.toByte().toString()
         LlvmType.I16 -> constant.value.toShort().toString()
         LlvmType.I32 -> constant.value.toInt().toString()
         LlvmType.I64 -> constant.value.toString()
-        LlvmType.Double, LlvmType.Ptr, LlvmType.Void, is LlvmType.Array, is LlvmType.Function ->
+        LlvmType.Double, LlvmType.Ptr, LlvmType.Void, is LlvmType.Array, is LlvmType.Function, is LlvmType.Struct ->
             error("integer constant with non-integer type ${constant.type}")
     }
 

@@ -3,8 +3,6 @@ package prog8.codegen.llvm
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
-import io.kotest.core.test.Enabled
-import io.kotest.core.test.TestCase
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
@@ -12,22 +10,12 @@ import prog8.code.core.CpuType
 import prog8.code.target.LlvmTarget
 import prog8.codegen.llvm.model.*
 import java.nio.file.Path
-import java.util.concurrent.TimeUnit
-import kotlin.io.path.createTempFile
-import kotlin.io.path.deleteIfExists
-import kotlin.io.path.writeText
 
 
 class TestLlvmAstEmission: FunSpec({
 
-    val llvmAs = LlvmToolchain.find("llvm-as")
-    val requiresLlvmAs: (TestCase) -> Enabled = {
-        if (llvmAs != null) Enabled.enabled
-        else Enabled.disabled("llvm-as not found on the PATH or in ${LlvmToolchain.homebrewLlvmBin}")
-    }
-
     fun assertAcceptedByLlvmAs(module: LlvmModule) {
-        val (exitCode, output) = runLlvmAs(checkNotNull(llvmAs), LlvmPrinter.print(module))
+        val (exitCode, output) = runLlvmAs(LlvmPrinter.print(module))
         withClue(output) { exitCode shouldBe 0 }
     }
 
@@ -43,6 +31,9 @@ class TestLlvmAstEmission: FunSpec({
         LlvmPrinter.format(LlvmType.Array(2, LlvmType.Array(3, LlvmType.I8))) shouldBe "[2 x [3 x i8]]"
         LlvmPrinter.format(LlvmType.Function(LlvmType.I16, listOf(LlvmType.I8, LlvmType.Ptr))) shouldBe "i16 (i8, ptr)"
         LlvmPrinter.format(LlvmType.Function(LlvmType.Void, emptyList())) shouldBe "void ()"
+        LlvmPrinter.format(LlvmType.Struct(listOf(LlvmType.I8, LlvmType.Ptr), packed = true)) shouldBe "<{ i8, ptr }>"
+        LlvmPrinter.format(LlvmType.Struct(listOf(LlvmType.I8, LlvmType.Ptr), packed = false)) shouldBe "{ i8, ptr }"
+        LlvmPrinter.format(LlvmType.Struct(emptyList(), packed = true)) shouldBe "<{}>"
         LlvmFunction("f", LlvmType.I16, listOf(LlvmValue.Local("x", LlvmType.I8))).type shouldBe
             LlvmType.Function(LlvmType.I16, listOf(LlvmType.I8))
         LlvmType.I32.bitWidth shouldBe 32
@@ -167,6 +158,27 @@ class TestLlvmAstEmission: FunSpec({
         LlvmPrinter.format(LlvmGlobal("counter", LlvmType.I16, i16(0), isConstant = false)) shouldBe "@counter = global i16 0"
     }
 
+    test("struct constants, constant expressions and zero values are formatted in LLVM syntax") {
+        val packed = LlvmType.Struct(listOf(LlvmType.I8, LlvmType.Ptr), packed = true)
+        LlvmPrinter.format(LlvmValue.StructConstant(packed, listOf(i8(1), LlvmValue.NullPtr()))) shouldBe "<{ i8 1, ptr null }>"
+        val unpacked = LlvmType.Struct(listOf(LlvmType.I16, LlvmType.Double), packed = false)
+        LlvmPrinter.format(LlvmValue.StructConstant(unpacked, listOf(i16(2), LlvmValue.FloatConstant(0.5)))) shouldBe "{ i16 2, double 0.5 }"
+        LlvmPrinter.format(LlvmValue.StructConstant(LlvmType.Struct(emptyList(), packed = true), emptyList())) shouldBe "<{}>"
+        val x = LlvmValue.Global("x")
+        LlvmPrinter.format(LlvmValue.ConstantCast(CastOperator.PTRTOINT, x, LlvmType.I32)) shouldBe "ptrtoint (ptr @x to i32)"
+        LlvmPrinter.format(LlvmValue.ConstantCast(CastOperator.INTTOPTR, i64(1024), LlvmType.Ptr)) shouldBe "inttoptr (i64 1024 to ptr)"
+        LlvmPrinter.format(LlvmValue.ConstantCast(CastOperator.TRUNC, LlvmValue.ConstantCast(CastOperator.PTRTOINT, x, LlvmType.I64), LlvmType.I16)) shouldBe
+            "trunc (i64 ptrtoint (ptr @x to i64) to i16)"
+        LlvmPrinter.typed(LlvmValue.ConstantGep(LlvmType.I8, x, listOf(i64(2)))) shouldBe "ptr getelementptr inbounds (i8, ptr @x, i64 2)"
+        LlvmPrinter.format(LlvmValue.ConstantGep(LlvmType.Array(4, LlvmType.I16), x, listOf(i64(0), i64(3)), inBounds = false)) shouldBe
+            "getelementptr ([4 x i16], ptr @x, i64 0, i64 3)"
+        LlvmPrinter.format(LlvmValue.ZeroInitializer(LlvmType.I1)) shouldBe "false"
+        LlvmPrinter.format(LlvmValue.ZeroInitializer(LlvmType.I32)) shouldBe "0"
+        LlvmPrinter.format(LlvmValue.ZeroInitializer(LlvmType.Double)) shouldBe "0.0"
+        LlvmPrinter.format(LlvmValue.ZeroInitializer(LlvmType.Ptr)) shouldBe "null"
+        LlvmPrinter.format(LlvmValue.ZeroInitializer(packed)) shouldBe "zeroinitializer"
+    }
+
     test("constructing invalid IR is rejected") {
         val a8 = LlvmValue.Local("a", LlvmType.I8)
         val a16 = LlvmValue.Local("a", LlvmType.I16)
@@ -186,6 +198,13 @@ class TestLlvmAstEmission: FunSpec({
         shouldThrow<IllegalArgumentException> { LlvmInstruction.Load(a16, LlvmValue.Global("g"), align = 3) }
         shouldThrow<IllegalArgumentException> { LlvmGlobal("g", LlvmType.I16, null, isConstant = false, linkage = LlvmLinkage.PRIVATE) }
         shouldThrow<IllegalArgumentException> { LlvmFunction("f", LlvmType.Void, emptyList(), isExternal = true, linkage = LlvmLinkage.INTERNAL) }
+        shouldThrow<IllegalArgumentException> { LlvmType.Struct(listOf(LlvmType.Void), packed = true) }
+        shouldThrow<IllegalArgumentException> { LlvmValue.StructConstant(LlvmType.Struct(listOf(LlvmType.I8), packed = true), listOf(i16(1))) }
+        shouldThrow<IllegalArgumentException> { LlvmValue.ConstantCast(CastOperator.ZEXT, i8(1), LlvmType.I16) }
+        shouldThrow<IllegalArgumentException> { LlvmValue.ConstantCast(CastOperator.PTRTOINT, i16(1), LlvmType.I32) }
+        shouldThrow<IllegalArgumentException> { LlvmValue.ConstantCast(CastOperator.PTRTOINT, LlvmValue.Local("p", LlvmType.Ptr), LlvmType.I64) }
+        shouldThrow<IllegalArgumentException> { LlvmValue.ConstantGep(LlvmType.I8, LlvmValue.Global("g"), listOf(a16)) }
+        shouldThrow<IllegalArgumentException> { LlvmValue.ConstantGep(LlvmType.I8, LlvmValue.Local("p", LlvmType.Ptr), listOf(i64(1))) }
     }
 
     test("a block's terminator is its last instruction, if that is a terminator") {
@@ -272,7 +291,7 @@ class TestLlvmAstEmission: FunSpec({
     test("llvm-as rejects a block without a terminator, so the validation is not vacuous").config(enabledOrReasonIf = requiresLlvmAs) {
         val broken = LlvmFunction("f", LlvmType.Void, emptyList(), mutableListOf(
             LlvmBlock("entry", mutableListOf(LlvmInstruction.Alloca(LlvmValue.Local("p", LlvmType.Ptr), LlvmType.I8)))))
-        val (exitCode, _) = runLlvmAs(checkNotNull(llvmAs), LlvmPrinter.print(LlvmModule("broken", functions = mutableListOf(broken))))
+        val (exitCode, _) = runLlvmAs(LlvmPrinter.print(LlvmModule("broken", functions = mutableListOf(broken))))
         exitCode shouldNotBe 0
     }
 })
@@ -282,19 +301,6 @@ private fun i8(value: Long) = LlvmValue.IntConstant(value, LlvmType.I8)
 private fun i16(value: Long) = LlvmValue.IntConstant(value, LlvmType.I16)
 private fun i32(value: Long) = LlvmValue.IntConstant(value, LlvmType.I32)
 private fun i64(value: Long) = LlvmValue.IntConstant(value, LlvmType.I64)
-
-private fun runLlvmAs(llvmAs: Path, ir: String): Pair<Int, String> {
-    val file = createTempFile("prog8-llvm-test", ".ll")
-    try {
-        file.writeText(ir)
-        val process = ProcessBuilder(llvmAs.toString(), "-disable-output", file.toString()).redirectErrorStream(true).start()
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        check(process.waitFor(30, TimeUnit.SECONDS)) { "llvm-as did not finish" }
-        return process.exitValue() to output
-    } finally {
-        file.deleteIfExists()
-    }
-}
 
 private fun goldenModule(): LlvmModule {
     val target = LlvmTarget()
@@ -344,6 +350,27 @@ private fun comprehensiveModule(): LlvmModule {
         LlvmGlobal("big", LlvmType.I64, i64(Long.MIN_VALUE), isConstant = false),
         LlvmGlobal("nan", LlvmType.Double, LlvmValue.FloatConstant(Double.NaN), isConstant = true),
         LlvmGlobal("tenth", LlvmType.Double, LlvmValue.FloatConstant(0.1), isConstant = true))
+
+    val packed = LlvmType.Struct(listOf(LlvmType.I8, LlvmType.I16, LlvmType.Ptr, LlvmType.Double), packed = true)
+    val unpacked = LlvmType.Struct(listOf(LlvmType.I8, LlvmType.I32), packed = false)
+    val nodes = LlvmValue.ArrayConstant(packed, listOf(
+        LlvmValue.StructConstant(packed, listOf(i8(1), i16(2), LlvmValue.Global("small"), LlvmValue.FloatConstant(1.5))),
+        LlvmValue.ZeroInitializer(packed)))
+    val nestedRef = LlvmValue.Global("nested")
+    module.globals += listOf(
+        LlvmGlobal("nodes", nodes.type, nodes, isConstant = false, linkage = LlvmLinkage.INTERNAL),
+        LlvmGlobal("pair32", unpacked, LlvmValue.StructConstant(unpacked, listOf(i8(7), i32(-1))), isConstant = true),
+        LlvmGlobal("truncated", LlvmType.I32, LlvmValue.ConstantCast(CastOperator.PTRTOINT, LlvmValue.Global("small"), LlvmType.I32), isConstant = false),
+        LlvmGlobal("narrowed", LlvmType.I16,
+            LlvmValue.ConstantCast(CastOperator.TRUNC, LlvmValue.ConstantCast(CastOperator.PTRTOINT, LlvmValue.Global("small"), LlvmType.I64), LlvmType.I16), isConstant = false),
+        LlvmGlobal("absolute", LlvmType.Ptr, LlvmValue.ConstantCast(CastOperator.INTTOPTR, i64(0xd020), LlvmType.Ptr), isConstant = true),
+        LlvmGlobal("same", LlvmType.Ptr, LlvmValue.ConstantCast(CastOperator.BITCAST, LlvmValue.Global("small"), LlvmType.Ptr), isConstant = true),
+        LlvmGlobal("element", LlvmType.Ptr, LlvmValue.ConstantGep(LlvmType.Array(2, LlvmType.Array(2, LlvmType.I8)), nestedRef, listOf(i64(0), i64(1), i64(1))), isConstant = true),
+        LlvmGlobal("byteoffset", LlvmType.Ptr, LlvmValue.ConstantGep(LlvmType.I8, nestedRef, listOf(i64(3)), inBounds = false), isConstant = true),
+        LlvmGlobal("zeroword", LlvmType.I16, LlvmValue.ZeroInitializer(LlvmType.I16), isConstant = false),
+        LlvmGlobal("zerofloat", LlvmType.Double, LlvmValue.ZeroInitializer(LlvmType.Double), isConstant = false),
+        LlvmGlobal("zeroptr", LlvmType.Ptr, LlvmValue.ZeroInitializer(LlvmType.Ptr), isConstant = false),
+        LlvmGlobal("zeroflag", LlvmType.I1, LlvmValue.ZeroInitializer(LlvmType.I1), isConstant = false))
 
     val x = LlvmValue.Local("x", LlvmType.I8)
     val widened = LlvmValue.Local("widened", LlvmType.I16)

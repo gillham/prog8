@@ -25,6 +25,13 @@ internal sealed interface LlvmType {
         }
     }
 
+    /** A literal struct type; [packed] structs have no alignment padding between their fields. */
+    data class Struct(val fields: List<LlvmType>, val packed: Boolean) : LlvmType {
+        init {
+            require(fields.all { it.isFirstClass }) { "struct field types must be first-class: $fields" }
+        }
+    }
+
     val bitWidth: Int?
         get() = when (this) {
             I1 -> 1
@@ -32,7 +39,7 @@ internal sealed interface LlvmType {
             I16 -> 16
             I32 -> 32
             I64 -> 64
-            Double, Ptr, Void, is Array, is Function -> null
+            Double, Ptr, Void, is Array, is Function, is Struct -> null
         }
 
     val isInteger: Boolean get() = bitWidth != null
@@ -102,6 +109,31 @@ internal sealed interface LlvmValue {
 
         override val type: LlvmType.Array get() = LlvmType.Array(elements.size, elementType)
     }
+
+    data class StructConstant(override val type: LlvmType.Struct, val fields: List<LlvmValue>) : LlvmValue {
+        init {
+            require(fields.map { it.type } == type.fields) { "struct field values ${fields.map { it.type }} do not match $type" }
+        }
+    }
+
+    /** A constant cast expression such as `ptrtoint (ptr @x to i32)`; LLVM still accepts only these casts as constants. */
+    data class ConstantCast(val op: CastOperator, val value: LlvmValue, override val type: LlvmType) : LlvmValue {
+        init {
+            require(op in setOf(CastOperator.TRUNC, CastOperator.PTRTOINT, CastOperator.INTTOPTR, CastOperator.BITCAST)) { "${op.keyword} is not a constant expression" }
+            require(value !is Local) { "constant ${op.keyword} needs a constant operand, not $value" }
+            require(isValidCast(op, value.type, type)) { "invalid ${op.keyword} from ${value.type} to $type" }
+        }
+    }
+
+    /** A constant address expression such as `getelementptr inbounds (i8, ptr @g, i64 2)`. */
+    data class ConstantGep(val baseType: LlvmType, val ptr: LlvmValue, val indices: List<LlvmValue>, val inBounds: Boolean = true) : LlvmValue {
+        override val type: LlvmType get() = LlvmType.Ptr
+
+        init {
+            require(ptr.type == LlvmType.Ptr && ptr !is Local) { "constant getelementptr needs a constant pointer, not $ptr" }
+            require(indices.all { it is IntConstant }) { "constant getelementptr indices must be integer constants: $indices" }
+        }
+    }
 }
 
 internal sealed interface LlvmInstruction {
@@ -159,18 +191,7 @@ internal sealed interface LlvmInstruction {
     data class Cast(val op: CastOperator, val result: Local, val value: LlvmValue, val targetType: LlvmType) : LlvmInstruction {
         init {
             require(result.type == targetType) { "${op.keyword} result type ${result.type} differs from target type $targetType" }
-            val from = value.type.bitWidth
-            val to = targetType.bitWidth
-            val valid = when (op) {
-                CastOperator.TRUNC -> from != null && to != null && to < from
-                CastOperator.ZEXT, CastOperator.SEXT -> from != null && to != null && to > from
-                CastOperator.UITOFP, CastOperator.SITOFP -> from != null && targetType == LlvmType.Double
-                CastOperator.FPTOUI, CastOperator.FPTOSI -> value.type == LlvmType.Double && to != null
-                CastOperator.PTRTOINT -> value.type == LlvmType.Ptr && to != null
-                CastOperator.INTTOPTR -> from != null && targetType == LlvmType.Ptr
-                CastOperator.FPTRUNC, CastOperator.FPEXT, CastOperator.BITCAST -> true
-            }
-            require(valid) { "invalid ${op.keyword} from ${value.type} to $targetType" }
+            require(isValidCast(op, value.type, targetType)) { "invalid ${op.keyword} from ${value.type} to $targetType" }
         }
     }
 
@@ -315,3 +336,17 @@ internal data class LlvmModule(
 
 private fun requireValidAlignment(align: Int?) =
     require(align == null || align > 0 && align.countOneBits() == 1) { "alignment must be a power of two: $align" }
+
+private fun isValidCast(op: CastOperator, from: LlvmType, to: LlvmType): Boolean {
+    val fromBits = from.bitWidth
+    val toBits = to.bitWidth
+    return when (op) {
+        CastOperator.TRUNC -> fromBits != null && toBits != null && toBits < fromBits
+        CastOperator.ZEXT, CastOperator.SEXT -> fromBits != null && toBits != null && toBits > fromBits
+        CastOperator.UITOFP, CastOperator.SITOFP -> fromBits != null && to == LlvmType.Double
+        CastOperator.FPTOUI, CastOperator.FPTOSI -> from == LlvmType.Double && toBits != null
+        CastOperator.PTRTOINT -> from == LlvmType.Ptr && toBits != null
+        CastOperator.INTTOPTR -> fromBits != null && to == LlvmType.Ptr
+        CastOperator.FPTRUNC, CastOperator.FPEXT, CastOperator.BITCAST -> true
+    }
+}
