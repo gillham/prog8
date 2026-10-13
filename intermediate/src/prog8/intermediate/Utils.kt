@@ -12,7 +12,8 @@ fun DataType.irTypeString(length: UInt?): String {
         BaseDataType.UWORD -> "uword"
         BaseDataType.WORD -> "word"
         BaseDataType.LONG -> "long"
-        BaseDataType.QUAD, BaseDataType.UQUAD -> throw IllegalArgumentException("64-bit integer types are not supported in the IR yet")
+        BaseDataType.QUAD -> "quad"
+        BaseDataType.UQUAD -> "uquad"
         BaseDataType.FLOAT -> "float"
         BaseDataType.STR -> "ubyte[$lengthStr]"             // here string doesn't exist as a separate datatype anymore
         BaseDataType.POINTER -> "pointer"
@@ -29,6 +30,8 @@ fun DataType.irTypeString(length: UInt?): String {
                 BaseDataType.BYTE -> "byte[$lengthStr]"
                 BaseDataType.WORD -> "word[$lengthStr]"
                 BaseDataType.LONG -> "long[$lengthStr]"
+                BaseDataType.QUAD -> "quad[$lengthStr]"
+                BaseDataType.UQUAD -> "uquad[$lengthStr]"
                 BaseDataType.BOOL -> "bool[$lengthStr]"
                 BaseDataType.FLOAT -> "float[$lengthStr]"
                 BaseDataType.POINTER -> {
@@ -61,6 +64,7 @@ fun convertIRType(typestr: String): IRDataType? {
         ".l" -> IRDataType.LONG
         ".f" -> IRDataType.FLOAT
         ".p" -> IRDataType.POINTER
+        ".q" -> IRDataType.QUAD
         else -> throw IRParseException("invalid type $typestr")
     }
 }
@@ -82,6 +86,29 @@ fun parseIRValue(value: String): Double {
         throw IRParseException("address-of @ should have been handled earlier")
     else
         value.toDouble()
+}
+
+/** the exact text of a 64-bit quad value: the two's complement bits as unsigned hexadecimal */
+fun quadValueText(bits: Long): String =
+    if(bits in 0..15) bits.toString() else "$" + bits.toULong().toString(16)
+
+/** the nearest Double of a quad value, or with [unsigned] of a uquad value, given as its 64 bits */
+fun quadBitsToDouble(bits: Long, unsigned: Boolean): Double = if(unsigned) bits.toULong().toDouble() else bits.toDouble()
+
+/** parse an exact 64-bit quad value, signed or unsigned, into its two's complement bits */
+fun parseIRQuadValue(value: String): Long {
+    if(value.startsWith("-"))
+        return -parseIRQuadValue(value.substring(1))
+    try {
+        return when {
+            value.startsWith('$') -> value.substring(1).toULong(16).toLong()
+            value.startsWith('%') -> value.substring(1).toULong(2).toLong()
+            value.startsWith("0x") -> value.substring(2).toULong(16).toLong()
+            else -> value.toULong().toLong()
+        }
+    } catch(_: NumberFormatException) {
+        throw IRParseException("invalid quad value: $value")
+    }
 }
 
 

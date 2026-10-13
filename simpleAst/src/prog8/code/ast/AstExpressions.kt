@@ -2,6 +2,7 @@ package prog8.code.ast
 
 import prog8.code.core.*
 
+import java.math.BigDecimal
 import java.util.Objects
 
 import kotlin.math.abs
@@ -80,7 +81,7 @@ sealed class PtExpression(val type: DataType, position: Position) : PtNode(posit
             is PtIdentifier -> other is PtIdentifier && other.type==type && other.name==name
             is PtIrRegister -> other is PtIrRegister && other.type==type && other.register==register
             is PtMemoryByte -> other is PtMemoryByte && other.address isSameAs address
-            is PtNumber -> other is PtNumber && other.type==type && other.number==number
+            is PtNumber -> other is PtNumber && other.type==type && other==this
             is PtBool -> other is PtBool && other.value==value
             is PtPrefix -> other is PtPrefix && other.type==type && other.operator==operator && other.value isSameAs value
             is PtRange -> other is PtRange && other.type==type && other.from==from && other.to==to && other.step==step
@@ -106,7 +107,7 @@ sealed class PtExpression(val type: DataType, position: Position) : PtNode(posit
     fun asConstInteger(): Int? {
         return when(this) {
             is PtBool -> asInt()
-            is PtNumber -> number.toInt()
+            is PtNumber -> if(type.isQuad && number !in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble()) null else number.toInt()
             is PtTypeCast -> value.asConstInteger()
             else -> null
         }
@@ -204,13 +205,13 @@ sealed class PtExpression(val type: DataType, position: Position) : PtNode(posit
             is PtBinaryExpression -> TODO("clone: cannot clone ${this::class} (not a simple expression)")
             is PtBranchCondExpression -> withClonedChildrenFrom(this, PtBranchCondExpression(condition, type, position))
             is PtContainmentCheck -> TODO("clone: cannot clone ${this::class} (not a simple expression)")
-            is PtConstant -> withClonedChildrenFrom(this, PtConstant(name, type, value, memorySlab, position))
+            is PtConstant -> withClonedChildrenFrom(this, PtConstant(name, type, value, memorySlab, position, quadBits))
             is PtFunctionCall -> withClonedChildrenFrom(this, PtFunctionCall(name, builtin, hasNoSideEffects, returntypes, position))
             is PtIdentifier -> withClonedChildrenFrom(this, PtIdentifier(name, type, position))
             is PtIrRegister -> withClonedChildrenFrom(this, PtIrRegister(register, type, position))
             is PtMemoryByte -> withClonedChildrenFrom(this, PtMemoryByte(position))
             is PtBool -> withClonedChildrenFrom(this, PtBool(value, position))
-            is PtNumber -> withClonedChildrenFrom(this, PtNumber(type.base, number, position))
+            is PtNumber -> withClonedChildrenFrom(this, copy())
             is PtPrefix -> withClonedChildrenFrom(this, PtPrefix(operator, type, position))
             is PtRange -> withClonedChildrenFrom(this, PtRange(type, position))
             is PtString -> withClonedChildrenFrom(this, PtString(value, encoding, position))
@@ -389,11 +390,28 @@ class PtBool(val value: Boolean, position: Position) : PtExpression(DataType.BOO
 }
 
 
-class PtNumber(type: BaseDataType, val number: Double, position: Position) : PtExpression(DataType.forDt(type), position) {
+class PtNumber private constructor(type: BaseDataType,
+                                   val number: Double,     // only the nearest Double of a quad or uquad value
+                                   private val quadBits: Long,     // all 64 bits of a quad or uquad value, two's complement
+                                   position: Position) : PtExpression(DataType.forDt(type), position) {
+
+    constructor(type: BaseDataType, number: Double, position: Position) : this(type, number, quadBitsOf(type, number), position)
 
     companion object {
         fun fromBoolean(bool: Boolean, position: Position): PtNumber =
             PtNumber(BaseDataType.UBYTE, if(bool) 1.0 else 0.0, position)
+
+        /** A quad or uquad number that keeps all 64 bits of its value, given in two's complement. */
+        fun fromQuadBits(type: BaseDataType, bits: Long, position: Position): PtNumber {
+            require(type.isQuad) { "$type is not a quad type" }
+            return PtNumber(type, if(type.isUnsignedQuad) bits.toULong().toDouble() else bits.toDouble(), bits, position)
+        }
+
+        private fun quadBitsOf(type: BaseDataType, number: Double): Long = when(type) {
+            BaseDataType.QUAD -> number.toLong()
+            BaseDataType.UQUAD -> number.toULong().toLong()
+            else -> 0L
+        }
     }
 
     init {
@@ -410,26 +428,63 @@ class PtNumber(type: BaseDataType, val number: Double, position: Position) : PtE
             BaseDataType.UWORD -> require(number in 0.0..65535.0)
             BaseDataType.WORD -> require(number in -32768.0..32767.0)
             BaseDataType.LONG -> require(number in -2147483648.0..2147483647.0)
+            BaseDataType.QUAD -> require(number in -9.223372036854775808E18..9.223372036854775807E18)
+            BaseDataType.UQUAD -> require(number in 0.0..1.8446744073709551615E19)
             else ->  require(type.isNumeric) { "numeric literal type should be numeric: $type" }
         }
     }
+
+    /** The exact value of an integer number as 64 bits, two's complement: a uquad above Long.MAX_VALUE is negative here. */
+    val integerBits: Long
+        get() {
+            require(type.isInteger) { "$type number has no integer value at $position" }
+            return if(type.isQuad) quadBits else number.toLong()
+        }
+
+    val quadBitsOrNull: Long?
+        get() = if(type.isQuad) quadBits else null
+
+    /** The value as text, exact also for the quad types whose number is only approximate. */
+    val valueText: String
+        get() = when(type.base) {
+            BaseDataType.QUAD -> quadBits.toString()
+            BaseDataType.UQUAD -> quadBits.toULong().toString()
+            else -> number.toString()
+        }
 
     override fun hashCode(): Int = Objects.hash(type, number)
 
     override fun equals(other: Any?): Boolean {
         return if(other==null || other !is PtNumber)
             false
+        else if(type.isQuad || other.type.isQuad)
+            compareExactly(other)==0
         else if(!type.isBool && !other.type.isBool)
             number==other.number
         else
             type==other.type && number==other.number
     }
 
-    operator fun compareTo(other: PtNumber): Int = number.compareTo(other.number)
+    operator fun compareTo(other: PtNumber): Int =
+        (if(type.isQuad || other.type.isQuad) compareExactly(other) else null) ?: number.compareTo(other.number)
 
-    override fun toString() = "PtNumber:$type:$number"
+    // the Double numbers of large quad values are only approximations, so comparisons that involve a quad use the exact values
+    private fun compareExactly(other: PtNumber): Int? {
+        val value = exactValue() ?: return null
+        val otherValue = other.exactValue() ?: return null
+        return value.compareTo(otherValue)
+    }
 
-    override fun copy() = PtNumber(type.base, number, position)
+    private fun exactValue(): BigDecimal? = when {
+        type.base == BaseDataType.QUAD -> BigDecimal.valueOf(quadBits)
+        type.base == BaseDataType.UQUAD -> BigDecimal(quadBits.toULong().toString())
+        number.isFinite() -> BigDecimal(number)
+        else -> null
+    }
+
+    override fun toString() = "PtNumber:$type:$valueText"
+
+    override fun copy() = PtNumber(type.base, number, quadBits, position)
 }
 
 
@@ -475,9 +530,9 @@ class PtRange(type: DataType, position: Position) : PtExpression(type, position)
         val toLv = to as? PtNumber
         if(fromLv==null || toLv==null)
             return null
-        val fromVal = fromLv.number.toInt()
-        val toVal = toLv.number.toInt()
-        val stepVal = step.asConstInteger()!!
+        val fromVal = fromLv.asConstInteger() ?: return null
+        val toVal = toLv.asConstInteger() ?: return null
+        val stepVal = step.asConstInteger() ?: return null
         return makeRange(fromVal, toVal, stepVal)
     }
 }

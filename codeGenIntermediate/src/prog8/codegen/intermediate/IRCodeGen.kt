@@ -147,7 +147,7 @@ class IRCodeGen(
                     }
                     is PtNumber -> {
                         require(initValue.number!=0.0 || variable.zpwish!=ZeropageWish.NOT_IN_ZEROPAGE) { "non-zp variable should not be initialized with 0, it will already be zeroed as part of BSS clear, initializer=$initialization" }
-                        variable.setOnetimeInitNumeric(initValue.number)
+                        variable.setOnetimeInitNumeric(initValue.number, initValue.quadBitsOrNull)
                         initsToRemove += block to initialization
                     }
                     is PtArray, is PtString -> throw AssemblyError("array or string initialization values should already be part of the vardecl, not a separate assignment")
@@ -172,7 +172,7 @@ class IRCodeGen(
                     is IRVariableInitializer.Numeric -> {
                         val dt = irType(variable.dt)
                         val chunk = IRCodeChunk(null, null)
-                        chunk += IRInstructions.storeImmediate(dt, initValue.value.toInt(), IRMemory.direct(variable.name))
+                        chunk += IRInstructions.storeImmediate(dt, initValue.quadBits ?: initValue.value.toInt().toLong(), IRMemory.direct(variable.name))
                         irProg.addGlobalInits(chunk)
                         // replace with uninitialized version so it goes to NOINIT section
                         replacements += IRStStaticVariable(
@@ -661,7 +661,7 @@ class IRCodeGen(
                     // no statements for this choice value, jump to the end immediately
                     choice.values.children.map { v -> v as PtNumber }.sortedBy { v -> v.number }.forEach { value ->
                         result += IRCodeChunk(null, null).also { chunk ->
-                            chunk += IRInstructions.compareImmediate(valueDt, valueTr.resultReg, value.number.toInt())
+                            chunk += IRInstructions.compareImmediate(valueDt, valueTr.resultReg, value.integerBits)
                             chunk += IRInstructions.branch(Opcode.BSTEQ, codeLabel(endLabel))
                         }
                     }
@@ -677,7 +677,7 @@ class IRCodeGen(
                     }
                     choice.values.children.map { v -> v as PtNumber }.sortedBy { v -> v.number }.forEach { value ->
                         result += IRCodeChunk(null, null).also { chunk ->
-                            chunk += IRInstructions.compareImmediate(valueDt, valueTr.resultReg, value.number.toInt())
+                            chunk += IRInstructions.compareImmediate(valueDt, valueTr.resultReg, value.integerBits)
                             chunk += IRInstructions.branch(Opcode.BSTEQ, codeLabel(branchLabel))
                         }
                     }
@@ -1241,12 +1241,14 @@ class IRCodeGen(
         return code
     }
 
-    internal fun multiplyByConst(dt: DataType, reg: Int, factor: Int): IRCodeChunk {
+    internal fun multiplyByConst(dt: DataType, reg: Int, factor: Int): IRCodeChunk = multiplyByConst(dt, reg, factor.toLong())
+
+    internal fun multiplyByConst(dt: DataType, reg: Int, factor: Long): IRCodeChunk {
         val irdt = irType(dt)
         val code = IRCodeChunk(null, null)
-        if(factor==1)
+        if(factor==1L)
             return code
-        val pow2 = powersOfTwoInt.indexOf(factor)
+        val pow2 = powerOfTwo(factor)
         if(pow2==1) {
             // just shift 1 bit
             code += IRInstructions.unary(Opcode.LSL, irdt, reg)
@@ -1255,7 +1257,7 @@ class IRCodeGen(
             // just shift multiple bits
             code += IRInstructions.binaryImmediate(Opcode.LSLI, irdt, reg, pow2)
         } else {
-            code += if (factor == 0) {
+            code += if (factor == 0L) {
                 IRInstructions.load(irdt, reg, 0)
             } else {
                 val opcode = if(dt.isSigned) Opcode.MULS else Opcode.MUL
@@ -1265,11 +1267,14 @@ class IRCodeGen(
         return code
     }
 
-    internal fun multiplyByConstInplace(dt: IRDataType, signed: Boolean, knownAddress: UInt?, symbol: String?, factor: Int): IRCodeChunk {
+    internal fun multiplyByConstInplace(dt: IRDataType, signed: Boolean, knownAddress: UInt?, symbol: String?, factor: Int): IRCodeChunk =
+        multiplyByConstInplace(dt, signed, knownAddress, symbol, factor.toLong())
+
+    internal fun multiplyByConstInplace(dt: IRDataType, signed: Boolean, knownAddress: UInt?, symbol: String?, factor: Long): IRCodeChunk {
         val code = IRCodeChunk(null, null)
-        if(factor==1)
+        if(factor==1L)
             return code
-        val pow2 = powersOfTwoInt.indexOf(factor)
+        val pow2 = powerOfTwo(factor)
         if(pow2==1) {
             // just shift 1 bit
             code += IRInstructions.memoryOp(Opcode.LSLM, dt, mem(knownAddress, symbol))
@@ -1280,7 +1285,7 @@ class IRCodeGen(
             code += IRInstructions.load(IRDataType.BYTE, pow2reg, pow2)
             code += IRInstructions.memoryOp(Opcode.LSLNM, dt, mem(knownAddress, symbol), pow2reg)
         } else {
-            if (factor == 0) {
+            if (factor == 0L) {
                 code += IRInstructions.storeZero(Opcode.STOREZM, dt, mem(knownAddress, symbol))
             }
             else {
@@ -1292,6 +1297,9 @@ class IRCodeGen(
         }
         return code
     }
+
+    // a quad factor can be far beyond the table, and must not be truncated into a false power of two
+    private fun powerOfTwo(factor: Long): Int = if(factor in 1..65536) powersOfTwoInt.indexOf(factor.toInt()) else -1
 
     internal fun divideByConstFloat(fpReg: Int, factor: Double): IRCodeChunk {
         val code = IRCodeChunk(null, null)
@@ -1321,11 +1329,13 @@ class IRCodeGen(
         return code
     }
 
-    internal fun divideByConst(dt: IRDataType, reg: Int, factor: Int, signed: Boolean): IRCodeChunk {
+    internal fun divideByConst(dt: IRDataType, reg: Int, factor: Int, signed: Boolean): IRCodeChunk = divideByConst(dt, reg, factor.toLong(), signed)
+
+    internal fun divideByConst(dt: IRDataType, reg: Int, factor: Long, signed: Boolean): IRCodeChunk {
         val code = IRCodeChunk(null, null)
-        if(factor==1)
+        if(factor==1L)
             return code
-        val pow2 = powersOfTwoInt.indexOf(factor)
+        val pow2 = powerOfTwo(factor)
         if(pow2>=0 && !signed) {
             // unsigned division by a power of two: logical shift right (correct)
             if(pow2==1) {
@@ -1348,7 +1358,7 @@ class IRCodeGen(
 
         // regular div (also used for signed division by a power of two on non-6502 targets: >> floors,
         // whereas / truncates toward zero for negative dividends, so a plain shift is wrong)
-        code += if (factor == 0) {
+        code += if (factor == 0L) {
             IRInstructions.load(dt, reg, 0xffff)
         } else {
             if(signed)
@@ -1359,11 +1369,14 @@ class IRCodeGen(
         return code
     }
 
-    internal fun divideByConstInplace(dt: IRDataType, knownAddress: UInt?, symbol: String?, factor: Int, signed: Boolean): IRCodeChunk {
+    internal fun divideByConstInplace(dt: IRDataType, knownAddress: UInt?, symbol: String?, factor: Int, signed: Boolean): IRCodeChunk =
+        divideByConstInplace(dt, knownAddress, symbol, factor.toLong(), signed)
+
+    internal fun divideByConstInplace(dt: IRDataType, knownAddress: UInt?, symbol: String?, factor: Long, signed: Boolean): IRCodeChunk {
         val code = IRCodeChunk(null, null)
-        if(factor==1)
+        if(factor==1L)
             return code
-        val pow2 = powersOfTwoInt.indexOf(factor)
+        val pow2 = powerOfTwo(factor)
         if(pow2>=0 && !signed) {
             // unsigned division by a power of two: logical shift right (correct)
             if(pow2==1) {
@@ -1402,7 +1415,7 @@ class IRCodeGen(
 //            }
 
             // regular div
-            if (factor == 0) {
+            if (factor == 0L) {
                 val reg = registers.next(dt)
                 code += IRInstructions.load(dt, reg, 0xffff)
                 code += if(knownAddress!=null)
@@ -1572,13 +1585,13 @@ class IRCodeGen(
         }
 
         val signed = condition.left.type.isSigned
-        val number = (condition.right as? PtNumber)?.number?.toInt()
+        val number = (condition.right as? PtNumber)?.integerBits
         val leftTr = expressionEval.translateExpression(condition.left)
         val branchDt = leftTr.dt
         addToResult(result, leftTr, leftTr.resultReg, -1)
 
         if (number != null) {
-            val isComparingWithZero = number == 0
+            val isComparingWithZero = number == 0L
             val lastInstr = leftTr.chunks.lastOrNull()?.instructions?.lastOrNull()
             // Skip the CMPI only if the target honors the "multi-byte ops set Z correctly"
             // contract. On 8-bit targets a 16/32-bit op like DEC only sets Z from the last
@@ -1697,7 +1710,7 @@ class IRCodeGen(
         }
     }
 
-    private fun emitIntegerComparisonBranch(result: MutableList<IRCodeChunkBase>, opcode: Opcode, useCmpi: Boolean, dt: IRDataType, reg: Int, immediate: Int, label: String?, address: MemoryAddress?) {
+    private fun emitIntegerComparisonBranch(result: MutableList<IRCodeChunkBase>, opcode: Opcode, useCmpi: Boolean, dt: IRDataType, reg: Int, immediate: Long, label: String?, address: MemoryAddress?) {
         if (useCmpi) {
             result += IRCodeChunk(null, null).also {
                 it += IRInstructions.compareImmediate(dt, reg, immediate)
@@ -2328,6 +2341,7 @@ class IRCodeGen(
             BaseDataType.UWORD, BaseDataType.WORD -> IRDataType.WORD
             BaseDataType.POINTER -> IRDataType.POINTER
             BaseDataType.LONG -> IRDataType.LONG
+            BaseDataType.QUAD, BaseDataType.UQUAD -> IRDataType.QUAD
             BaseDataType.FLOAT -> IRDataType.FLOAT
             BaseDataType.STRUCT_INSTANCE -> throw AssemblyError("no support for struct instances yet so no IR datatype for $type")
             else -> throw AssemblyError("no IR datatype for $type")

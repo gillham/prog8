@@ -24,8 +24,8 @@ sealed interface IRToken {
 
 object IRTextCodec {
 
-    private val instructionPattern = Regex("""([a-zA-Z_]+)(\.b|\.w|\.l|\.f|\.p)?\s*(.*)""", RegexOption.IGNORE_CASE)
-    private val typeSuffixPattern = Regex("""(.+)\.([bwlfp])""", RegexOption.IGNORE_CASE)
+    private val instructionPattern = Regex("""([a-zA-Z_]+)(\.b|\.w|\.l|\.f|\.p|\.q)?\s*(.*)""", RegexOption.IGNORE_CASE)
+    private val typeSuffixPattern = Regex("""(.+)\.([bwlfpq])""", RegexOption.IGNORE_CASE)
     private val registerPattern = Regex("""(f?)r(\d+)""", RegexOption.IGNORE_CASE)
     private val hardwareSlotPattern = Regex("""s(\d+)""", RegexOption.IGNORE_CASE)
 
@@ -63,6 +63,7 @@ object IRTextCodec {
         IRDataType.LONG -> "l"
         IRDataType.FLOAT -> "f"
         IRDataType.POINTER -> "p"
+        IRDataType.QUAD -> "q"
     }
 
     fun printRegister(operand: RegisterOperand): String =
@@ -70,6 +71,7 @@ object IRTextCodec {
 
     fun printImmediate(immediate: ImmediateOperand): String = when (immediate) {
         is ImmediateOperand.Integer -> "#${immediate.value.toHex()}.${typeSuffix(immediate.type)}"
+        is ImmediateOperand.QuadValue -> "#${quadValueText(immediate.value)}.q"
         is ImmediateOperand.FloatValue -> "#${immediate.value}.f"
         is ImmediateOperand.SymbolAddress ->
             if (immediate.offset == 0) "#${immediate.symbol}" else "#${immediate.symbol}+${immediate.offset}"
@@ -337,6 +339,8 @@ object IRTextCodec {
             ?: throw IRParseException("${schema.opcode}: immediate operand needs an explicit type: $token")
         if (type == IRDataType.FLOAT)
             return ImmediateOperand.FloatValue(parseIRValue(valueText))
+        if (type == IRDataType.QUAD)
+            return ImmediateOperand.QuadValue(parseIRQuadValue(valueText))
         val value = parseInteger(valueText, "${schema.opcode}: invalid integer immediate")
         return ImmediateOperand.Integer(value, type)
     }

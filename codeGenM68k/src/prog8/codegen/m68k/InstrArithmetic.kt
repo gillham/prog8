@@ -84,6 +84,7 @@ internal fun AsmGen.translateArithmetic(insn: IRInstruction) {
                 emitLine("addq$sv  #$value,$target")
             } else {
                 when (type) {
+                    IRDataType.QUAD -> quadNotSupported()
                     IRDataType.BYTE -> {
                         require(value in 2..255)
                         emitLine("add$sv  #$value,$target")
@@ -137,6 +138,7 @@ internal fun AsmGen.translateArithmetic(insn: IRInstruction) {
                 emitLine("subq$sv  #$value,$target")
             } else {
                 when (type) {
+                    IRDataType.QUAD -> quadNotSupported()
                     IRDataType.BYTE -> {
                         require(value in 2..255)
                         emitLine("sub$sv  #$value,$target")
@@ -201,6 +203,7 @@ internal fun AsmGen.translateArithmetic(insn: IRInstruction) {
             val dstReg = insn.requireIntDest().intNumber
             val srcReg = insn.requireIntSourceA().intNumber
             when (type) {
+                IRDataType.QUAD -> quadNotSupported()
                 IRDataType.BYTE -> {
                     emitLine("move.b  ${regAddr(srcReg)}, math._sqrt_ub.value", "sqrt byte")
                     invalidateD0Cache()
@@ -225,6 +228,7 @@ internal fun AsmGen.translateArithmetic(insn: IRInstruction) {
             val dstReg = insn.requireIntDest().intNumber
             val srcReg = insn.requireIntSourceA().intNumber
             when (type) {
+                IRDataType.QUAD -> quadNotSupported()
                 IRDataType.BYTE -> {
                     emitLoadD0(srcReg, IRDataType.BYTE)
                     emitLine($$"and.l  #\$ff, d0", "zero extend")

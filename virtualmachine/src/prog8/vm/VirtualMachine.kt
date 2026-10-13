@@ -272,6 +272,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
             println("[$chunkLabel:$pcIndex] $ins")
         }
         when(ins.opcode) {
+            Opcode.EXTQ, Opcode.EXTQS, Opcode.LSIGL, Opcode.FFROMSQ, Opcode.FFROMUQ, Opcode.FTOSQ, Opcode.FTOUQ -> quadNotSupported()
             Opcode.NOP -> nextPc()
             Opcode.LOAD -> InsLOAD(ins)
             Opcode.LOADM -> InsLOADM(ins)
@@ -453,6 +454,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         // always emits an explicit CMPI before any branch that depends on the result.
         // See CpuType.statusBitsOnMultiByteOps for the rationale.
         when(type) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 registers.setUB(reg, value.toUByte())
             }
@@ -493,6 +495,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
 
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = registers.getUB(src)
                 valueStack.add(value)
@@ -520,6 +523,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsPOP(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> setResultReg(dest, valueStack.removeLast().toInt(), i.type!!)
             IRDataType.WORD -> setResultReg(dest, valueStack.popw().toInt(), i.type!!)
             IRDataType.POINTER -> setResultReg(dest, valueStack.popl(), i.type!!)
@@ -558,6 +562,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
             if(value.dt==null)
                 break
             when(value.dt!!) {
+                IRDataType.QUAD -> quadNotSupported()
                 IRDataType.BYTE -> valueStack.add(value.value as UByte)
                 IRDataType.WORD -> valueStack.pushw(value.value as UShort)
                 IRDataType.POINTER -> valueStack.pushl(value.value as Int)
@@ -587,6 +592,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val imm = i.requireImmediate()
         if(i.type==IRDataType.FLOAT) {
             when(imm) {
+                is ImmediateOperand.QuadValue -> quadNotSupported()
                 is ImmediateOperand.FloatValue -> registers.setFloat(dest, imm.value)
                 is ImmediateOperand.Integer -> registers.setFloat(dest, imm.value.toDouble())
                 is ImmediateOperand.SymbolAddress -> throw IllegalArgumentException("expected LOAD of a resolved immediate or address, got unresolved symbol '${imm.symbol}'")
@@ -594,6 +600,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         }
         else {
             when(imm) {
+                is ImmediateOperand.QuadValue -> quadNotSupported()
                 is ImmediateOperand.Integer -> setResultReg(dest, imm.value, i.type!!)
                 is ImmediateOperand.SymbolAddress -> throw IllegalArgumentException("expected LOAD of a resolved address, got unresolved symbol '${imm.symbol}'")
                 is ImmediateOperand.FloatValue -> throw IllegalArgumentException("unexpected float immediate for non-float LOAD")
@@ -606,6 +613,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = memory.getUB(address)
                 registers.setUB(dest, value)
@@ -634,6 +642,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         require(offset in 0..65535)
         val baseAddr = mem.pointer.readPointerValue()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.FLOAT -> {
                 val value = memory.getFloat(baseAddr + offset.toUInt())
                 registers.setFloat(dest, value)
@@ -651,6 +660,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val ptrVarAddr = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         val ptr = memory.getSL(ptrVarAddr).toUInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setUB(dest, memory.getUB(ptr))
             IRDataType.WORD -> registers.setUW(dest, memory.getUW(ptr))
             IRDataType.POINTER -> registers.setUL(dest, memory.getUL(ptr))
@@ -673,6 +683,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val ptrVarAddr = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         val ptr = memory.getSL(ptrVarAddr).toUInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> memory.setUB(ptr, registers.getUB(src))
             IRDataType.WORD -> memory.setUW(ptr, registers.getUW(src))
             IRDataType.POINTER -> memory.setUL(ptr, registers.getUL(src))
@@ -697,6 +708,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val index = mem.index.readIndexValue()
         val address = base + index * scale
         when (i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setUB(dest, memory.getUB(address))
             IRDataType.WORD -> registers.setUW(dest, memory.getUW(address))
             IRDataType.POINTER -> registers.setUL(dest, memory.getUL(address))
@@ -710,6 +722,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = registers.getUB(src)
                 registers.setUB(dest, value)
@@ -735,6 +748,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val src = i.requireSrcA().registerNumber
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> memory.setUB(address, registers.getUB(src))
             IRDataType.WORD -> memory.setUW(address, registers.getUW(src))
             IRDataType.POINTER -> memory.setSL(address, registers.getSL(src))
@@ -751,6 +765,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         require(offset in 0..65535)
         val baseAddr = mem.pointer.readPointerValue()
         when (i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.FLOAT -> memory.setFloat(baseAddr + offset.toUInt(), registers.getFloat(src))
             IRDataType.BYTE -> memory.setUB(baseAddr + offset.toUInt(), registers.getUB(src))
             IRDataType.WORD -> memory.setUW(baseAddr + offset.toUInt(), registers.getUW(src))
@@ -768,6 +783,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val index = mem.index.readIndexValue()
         val address = base + index * scale
         when (i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> memory.setUB(address, registers.getUB(src))
             IRDataType.WORD -> memory.setUW(address, registers.getUW(src))
             IRDataType.POINTER -> memory.setUL(address, registers.getUL(src))
@@ -780,6 +796,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsSTOREZM(i: IRInstruction) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> memory.setUB(address, 0u)
             IRDataType.WORD -> memory.setUW(address, 0u)
             IRDataType.POINTER -> memory.setSL(address, 0)
@@ -793,6 +810,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val addr = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         val imm = i.requireImmediate()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> memory.setUB(addr, (i.requireImmediateInt() and 0xff).toUByte())
             IRDataType.WORD -> memory.setUW(addr, (i.requireImmediateInt() and 0xffff).toUShort())
             IRDataType.POINTER -> memory.setSL(addr, i.requireImmediateInt())
@@ -808,6 +826,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         require(offset in 0..65535)
         val baseAddr = mem.pointer.readPointerValue()
         when (i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> memory.setUB(baseAddr + offset.toUInt(), 0u)
             IRDataType.WORD -> memory.setUW(baseAddr + offset.toUInt(), 0u)
             IRDataType.POINTER -> memory.setUL(baseAddr + offset.toUInt(), 0u)
@@ -824,6 +843,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val base = mem.resolvedBaseAddress()
         val address = base + index * scale
         when (i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> memory.setUB(address, 0u)
             IRDataType.WORD -> memory.setUW(address, 0u)
             IRDataType.POINTER -> memory.setUL(address, 0u)
@@ -856,6 +876,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
                 ?: throw IllegalArgumentException("argument variable should have been given its memory address as well")
             val address = requireNotNull(location.address) { "argument variable should have been given its memory address as well" }
             when(arg.source.type) {
+                IRDataType.QUAD -> quadNotSupported()
                 IRDataType.BYTE -> memory.setUB(address.value, registers.getUB(arg.source.registerNumber))
                 IRDataType.WORD -> memory.setUW(address.value, registers.getUW(arg.source.registerNumber))
                 IRDataType.POINTER -> memory.setSL(address.value, registers.getSL(arg.source.registerNumber))
@@ -886,6 +907,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
             val context = callStack.removeLast()
             val returns = context.callSite.results
             when (i.type!!) {
+                IRDataType.QUAD -> quadNotSupported()
                 IRDataType.BYTE -> {
                     if(returns.isNotEmpty()) {
                         val value = i.requireImmediateInt().toUByte()
@@ -949,6 +971,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
             val returns = context.callSite.results
             val src = i.requireSrcA().registerNumber
             when (i.type!!) {
+                IRDataType.QUAD -> quadNotSupported()
                 IRDataType.BYTE -> {
                     if(returns.isNotEmpty()) {
                         val value = registers.getUB(src)
@@ -1159,6 +1182,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsINC(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = (registers.getUB(dest)+1u).toUByte()
                 registers.setUB(dest, value)
@@ -1183,6 +1207,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsINCM(i: IRInstruction) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = (memory.getUB(address)+1u).toUByte()
                 memory.setUB(address, value)
@@ -1207,6 +1232,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsDEC(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = (registers.getUB(dest)-1u).toUByte()
                 registers.setUB(dest, value)
@@ -1231,6 +1257,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsDECM(i: IRInstruction) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = (memory.getUB(address)-1u).toUByte()
                 memory.setUB(address, value)
@@ -1255,6 +1282,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsNEG(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = -registers.getUB(dest).toInt()
                 registers.setUB(dest, value.toUByte())
@@ -1279,6 +1307,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsNEGM(i: IRInstruction) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = -memory.getUB(address).toInt()
                 memory.setUB(address, value.toUByte())
@@ -1304,6 +1333,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> plusMinusMultAnyByte("+", dest, src)
             IRDataType.WORD -> plusMinusMultAnyWord("+", dest, src)
             IRDataType.POINTER -> plusMinusMultAnyLong("+", dest, src)
@@ -1321,6 +1351,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsADD(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> plusMinusMultConstByte("+", dest, i.requireImmediateInt().toUByte())
             IRDataType.WORD -> plusMinusMultConstWord("+", dest, i.requireImmediateInt().toUShort())
             IRDataType.POINTER -> plusMinusMultConstLong("+", dest, i.requireImmediateInt())
@@ -1338,6 +1369,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val src = i.requireSrcA().registerNumber
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> plusMinusMultAnyByteInplace("+", src, address)
             IRDataType.WORD -> plusMinusMultAnyWordInplace("+", src, address)
             IRDataType.POINTER -> plusMinusMultAnyLongInplace("+", src, address)
@@ -1355,6 +1387,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsADDIM(i: IRInstruction) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> plusMinusMultConstByteInplace("+", i.requireImmediateInt().toUByte(), address)
             IRDataType.WORD -> plusMinusMultConstWordInplace("+", i.requireImmediateInt().toUShort(), address)
             IRDataType.POINTER -> plusMinusMultConstLongInplace("+", i.requireImmediateInt(), address)
@@ -1372,6 +1405,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> plusMinusMultAnyByte("-", dest, src)
             IRDataType.WORD -> plusMinusMultAnyWord("-", dest, src)
             IRDataType.POINTER -> plusMinusMultAnyLong("-", dest, src)
@@ -1389,6 +1423,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsSUB(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> plusMinusMultConstByte("-", dest, i.requireImmediateInt().toUByte())
             IRDataType.WORD -> plusMinusMultConstWord("-", dest, i.requireImmediateInt().toUShort())
             IRDataType.POINTER -> plusMinusMultConstLong("-", dest, i.requireImmediateInt())
@@ -1406,6 +1441,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val src = i.requireSrcA().registerNumber
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> plusMinusMultAnyByteInplace("-", src, address)
             IRDataType.WORD -> plusMinusMultAnyWordInplace("-", src, address)
             IRDataType.POINTER -> plusMinusMultAnyLongInplace("-", src, address)
@@ -1423,6 +1459,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsSUBIM(i: IRInstruction) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> plusMinusMultConstByteInplace("-", i.requireImmediateInt().toUByte(), address)
             IRDataType.WORD -> plusMinusMultConstWordInplace("-", i.requireImmediateInt().toUShort(), address)
             IRDataType.POINTER -> plusMinusMultConstLongInplace("-", i.requireImmediateInt(), address)
@@ -1440,6 +1477,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> plusMinusMultAnyByte("*", dest, src)
             IRDataType.WORD -> plusMinusMultAnyWord("*", dest, src)
             IRDataType.POINTER -> plusMinusMultAnyLong("*", dest, src)
@@ -1457,6 +1495,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsMUL(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> plusMinusMultConstByte("*", dest, i.requireImmediateInt().toUByte())
             IRDataType.WORD -> plusMinusMultConstWord("*", dest, i.requireImmediateInt().toUShort())
             IRDataType.POINTER -> plusMinusMultConstLong("*", dest, i.requireImmediateInt())
@@ -1474,6 +1513,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val src = i.requireSrcA().registerNumber
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> plusMinusMultAnyByteInplace("*", src, address)
             IRDataType.WORD -> plusMinusMultAnyWordInplace("*", src, address)
             IRDataType.POINTER -> plusMinusMultAnyLongInplace("*", src, address)
@@ -1492,6 +1532,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> multiplyAnyByteSigned(dest, src)
             IRDataType.WORD -> multiplyAnyWordSigned(dest, src)
             IRDataType.POINTER -> multiplyAnyLongSigned(dest, src)
@@ -1509,6 +1550,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsMULS(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> multiplyConstByteSigned(dest, i.requireImmediateInt().toByte())
             IRDataType.WORD -> multiplyConstWordSigned(dest, i.requireImmediateInt().toShort())
             IRDataType.POINTER -> multiplyConstLongSigned(dest, i.requireImmediateInt())
@@ -1526,6 +1568,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val src = i.requireSrcA().registerNumber
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> multiplyAnyByteSignedInplace(src, address)
             IRDataType.WORD -> multiplyAnyWordSignedInplace(src, address)
             IRDataType.POINTER -> multiplyAnyLongSignedInplace(src, address)
@@ -1544,6 +1587,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divOrModByteUnsigned("/", dest, src)
             IRDataType.WORD -> divOrModWordUnsigned("/", dest, src)
             IRDataType.POINTER -> throw IllegalArgumentException("divr unsigned pointer not supported")
@@ -1556,6 +1600,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsDIV(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divOrModConstByteUnsigned("/", dest, i.requireImmediateInt().toUByte())
             IRDataType.WORD -> divOrModConstWordUnsigned("/", dest, i.requireImmediateInt().toUShort())
             IRDataType.POINTER -> throw IllegalArgumentException("div unsigned pointer not supported")
@@ -1569,6 +1614,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val src = i.requireSrcA().registerNumber
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divModByteUnsignedInplace("/", src, address)
             IRDataType.WORD -> divModWordUnsignedInplace("/", src, address)
             IRDataType.POINTER -> throw IllegalArgumentException("divm unsigned pointer not supported")
@@ -1582,6 +1628,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divModByteSigned("/", dest, src)
             IRDataType.WORD -> divModWordSigned("/", dest, src)
             IRDataType.POINTER -> divModLongSigned("/", dest, src)
@@ -1599,6 +1646,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsDIVS(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divModConstByteSigned("/", dest, i.requireImmediateInt().toByte())
             IRDataType.WORD -> divModConstWordSigned("/", dest, i.requireImmediateInt().toShort())
             IRDataType.POINTER -> divModConstLongSigned("/", dest, i.requireImmediateInt())
@@ -1616,6 +1664,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val src = i.requireSrcA().registerNumber
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divModByteSignedInplace("/", src, address)
             IRDataType.WORD -> divModWordSignedInplace("/", src, address)
             IRDataType.POINTER -> divModLongSignedInplace("/", src, address)
@@ -1634,6 +1683,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divOrModByteUnsigned("%", dest, src)
             IRDataType.WORD -> divOrModWordUnsigned("%", dest, src)
             IRDataType.POINTER -> throw IllegalArgumentException("modr unsigned pointer not supported")
@@ -1646,6 +1696,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsMOD(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divOrModConstByteUnsigned("%", dest, i.requireImmediateInt().toUByte())
             IRDataType.WORD -> divOrModConstWordUnsigned("%", dest, i.requireImmediateInt().toUShort())
             IRDataType.POINTER -> throw IllegalArgumentException("mod unsigned pointer not supported")
@@ -1659,6 +1710,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divModByteSigned("%", dest, src)
             IRDataType.WORD -> divModWordSigned("%", dest, src)
             IRDataType.POINTER -> divModLongSigned("%", dest, src)
@@ -1671,6 +1723,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsMODS(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divModConstByteSigned("%", dest, i.requireImmediateInt().toByte())
             IRDataType.WORD -> divModConstWordSigned("%", dest, i.requireImmediateInt().toShort())
             IRDataType.POINTER -> divModConstLongSigned("%", dest, i.requireImmediateInt())
@@ -1684,6 +1737,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val quotient = i.requireDest().registerNumber
         val remainder = i.requireDestB().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divAndModUByte(quotient, remainder)
             IRDataType.WORD -> divAndModUWord(quotient, remainder)
             IRDataType.POINTER -> throw IllegalArgumentException("divmodr unsigned pointer not supported")
@@ -1697,6 +1751,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val quotient = i.requireDest().registerNumber
         val remainder = i.requireDestB().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divAndModConstUByte(quotient, remainder, i.requireImmediateInt().toUByte())
             IRDataType.WORD -> divAndModConstUWord(quotient, remainder, i.requireImmediateInt().toUShort())
             IRDataType.POINTER -> throw IllegalArgumentException("divmod unsigned pointer not supported")
@@ -1710,6 +1765,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val quotient = i.requireDest().registerNumber
         val remainder = i.requireDestB().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divAndModSByte(quotient, remainder)
             IRDataType.WORD -> divAndModSWord(quotient, remainder)
             IRDataType.POINTER -> throw IllegalArgumentException("divmodr signed pointer not supported")
@@ -1723,6 +1779,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val quotient = i.requireDest().registerNumber
         val remainder = i.requireDestB().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> divAndModConstSByte(quotient, remainder, i.requireImmediateInt().toByte())
             IRDataType.WORD -> divAndModConstSWord(quotient, remainder, i.requireImmediateInt().toShort())
             IRDataType.POINTER -> throw IllegalArgumentException("divmod signed pointer not supported")
@@ -1736,6 +1793,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         val sign: Int = when (i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.getSB(src).toInt().sign
             IRDataType.WORD -> registers.getSW(src).toInt().sign
             IRDataType.POINTER -> registers.getSL(src).sign
@@ -1751,6 +1809,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setUB(dest, sqrt(registers.getUB(src).toDouble()).toInt().toUByte())
             IRDataType.WORD -> registers.setUB(dest, sqrt(registers.getUW(src).toDouble()).toInt().toUByte())
             IRDataType.POINTER -> {
@@ -1772,6 +1831,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = registers.getUB(src).toInt()
                 registers.setUB(dest, (value*value).toUByte())
@@ -1801,6 +1861,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val leftReg = i.requireSrcA().registerNumber
         val rightReg = i.requireSrcB().registerNumber
         val left = when(type) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.getUB(leftReg).toInt()
             IRDataType.WORD -> registers.getUW(leftReg).toInt()
             IRDataType.POINTER -> registers.getSL(leftReg)
@@ -1808,6 +1869,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
             IRDataType.FLOAT -> throw IllegalArgumentException("invalid float type for this instruction $i")
         }
         val right = when(type) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.getUB(rightReg).toInt()
             IRDataType.WORD -> registers.getUW(rightReg).toInt()
             IRDataType.POINTER -> registers.getSL(rightReg)
@@ -1822,6 +1884,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val type = i.type!!
         val leftReg = i.requireSrcA().registerNumber
         val left = when(type) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.getUB(leftReg).toInt()
             IRDataType.WORD -> registers.getUW(leftReg).toInt()
             IRDataType.POINTER -> registers.getSL(leftReg)
@@ -1829,6 +1892,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
             IRDataType.FLOAT -> throw IllegalArgumentException("invalid float type for this instruction $i")
         }
         val right = when(type) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> i.requireImmediateInt() and 0xff
             IRDataType.WORD -> i.requireImmediateInt() and 0xffff
             IRDataType.POINTER -> i.requireImmediateInt()
@@ -1864,6 +1928,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val src = i.requireSrcA().registerNumber
         val mask = 1 shl i.requireImmediateInt()
         val value: Int = when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.getUB(src).toInt()
             IRDataType.WORD -> registers.getUW(src).toInt()
             IRDataType.POINTER -> registers.getSL(src)
@@ -1878,6 +1943,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val mask = 1 shl i.requireImmediateInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = registers.getUB(dest).toInt() or mask
                 registers.setUB(dest, value.toUByte())
@@ -1903,6 +1969,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val mask = 1 shl i.requireImmediateInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = registers.getUB(dest).toInt() and mask.inv()
                 registers.setUB(dest, value.toUByte())
@@ -1928,6 +1995,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val mask = 1 shl i.requireImmediateInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = registers.getUB(dest).toInt() xor mask
                 registers.setUB(dest, value.toUByte())
@@ -1953,6 +2021,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!){
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setUW(dest, registers.getUB(src).toUShort())
             IRDataType.WORD -> registers.setSL(dest, registers.getUW(src).toInt())
             IRDataType.POINTER -> throw IllegalArgumentException("ext.p makes no sense, 32 bits is already the widest you can get")
@@ -1966,6 +2035,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         when(i.type!!){
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setSW(dest, registers.getSB(src).toShort())
             IRDataType.WORD -> registers.setSL(dest, registers.getSW(src).toInt())
             IRDataType.POINTER -> throw IllegalArgumentException("exts.p makes no sense, 32 bits is already the widest you can get")
@@ -1994,6 +2064,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val (left: UInt, right: UInt) = getLogicalOperandsU(i)
         val value = (left and right).toInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setUB(dest, value.toUByte())
             IRDataType.WORD -> registers.setUW(dest, value.toUShort())
             IRDataType.POINTER -> registers.setSL(dest, value)
@@ -2007,6 +2078,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val value: Int
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 value = registers.getUB(dest).toInt() and i.requireImmediateInt()
                 registers.setUB(dest, value.toUByte())
@@ -2033,6 +2105,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         val value: Int
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val left = memory.getUB(address)
                 val right = registers.getUB(src)
@@ -2067,6 +2140,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val (left: UInt, right: UInt) = getLogicalOperandsU(i)
         val value = (left or right).toInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setUB(dest, value.toUByte())
             IRDataType.WORD -> registers.setUW(dest, value.toUShort())
             IRDataType.POINTER -> registers.setSL(dest, value)
@@ -2080,6 +2154,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val value: Int
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 value = registers.getUB(dest).toInt() or i.requireImmediateInt()
                 registers.setUB(dest, value.toUByte())
@@ -2106,6 +2181,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         val value: Int
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val left = memory.getUB(address)
                 val right = registers.getUB(src)
@@ -2140,6 +2216,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val (left: UInt, right: UInt) = getLogicalOperandsU(i)
         val value = (left xor right).toInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setUB(dest, value.toUByte())
             IRDataType.WORD -> registers.setUW(dest, value.toUShort())
             IRDataType.POINTER -> registers.setSL(dest, value)
@@ -2153,6 +2230,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val value: Int
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 value = registers.getUB(dest).toInt() xor i.requireImmediateInt()
                 registers.setUB(dest, value.toUByte())
@@ -2179,6 +2257,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         val value: Int
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val left = memory.getUB(address)
                 val right = registers.getUB(src)
@@ -2211,6 +2290,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsINV(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setUB(dest, registers.getUB(dest).inv())
             IRDataType.WORD -> registers.setUW(dest, registers.getUW(dest).inv())
             IRDataType.POINTER -> registers.setSL(dest, registers.getSL(dest).inv())
@@ -2223,6 +2303,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsINVM(i: IRInstruction) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> memory.setUB(address, memory.getUB(address).inv())
             IRDataType.WORD -> memory.setUW(address, memory.getUW(address).inv())
             IRDataType.POINTER -> memory.setSL(address, memory.getSL(address).inv())
@@ -2256,6 +2337,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val (left: Int, right: Int) = getLogicalOperandsS(i)
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setSB(dest, shiftRightArithmetic(left, right, 8).toByte())
             IRDataType.WORD -> registers.setSW(dest, shiftRightArithmetic(left, right, 16).toShort())
             IRDataType.POINTER -> registers.setSL(dest, shiftRightArithmetic(left, right, 32))
@@ -2270,6 +2352,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val left = getLogicalOperandS(i)
         val right = i.requireImmediateInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setSB(dest, shiftRightArithmetic(left, right, 8).toByte())
             IRDataType.WORD -> registers.setSW(dest, shiftRightArithmetic(left, right, 16).toShort())
             IRDataType.POINTER -> registers.setSL(dest, shiftRightArithmetic(left, right, 32))
@@ -2283,6 +2366,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         val operand = registers.getUB(i.requireSrcA().registerNumber).toInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val memvalue = memory.getSB(address).toInt()
                 memory.setSB(address, shiftRightArithmetic(memvalue, operand, 8).toByte())
@@ -2307,6 +2391,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsASR(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = registers.getSB(dest).toInt()
                 statusCarry = (value and 1)!=0
@@ -2335,6 +2420,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsASRM(i: IRInstruction) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = memory.getSB(address).toInt()
                 statusCarry = (value and 1)!=0
@@ -2364,6 +2450,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val (left: UInt, right: UInt) = getLogicalOperandsU(i)
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setUB(dest, shiftRightLogical(left, right.toInt(), 8).toUByte())
             IRDataType.WORD -> registers.setUW(dest, shiftRightLogical(left, right.toInt(), 16).toUShort())
             IRDataType.POINTER -> registers.setSL(dest, shiftRightLogical(left, right.toInt(), 32).toInt())
@@ -2378,6 +2465,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val left = getLogicalOperandU(i)
         val right = i.requireImmediateInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setUB(dest, shiftRightLogical(left, right, 8).toUByte())
             IRDataType.WORD -> registers.setUW(dest, shiftRightLogical(left, right, 16).toUShort())
             IRDataType.POINTER -> registers.setSL(dest, shiftRightLogical(left, right, 32).toInt())
@@ -2391,6 +2479,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         val operand = registers.getUB(i.requireSrcA().registerNumber).toInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val memvalue = memory.getUB(address).toInt()
                 memory.setUB(address, shiftRightLogical(memvalue.toUInt(), operand, 8).toUByte())
@@ -2415,6 +2504,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsLSR(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = registers.getUB(dest).toInt()
                 statusCarry = (value and 1)!=0
@@ -2443,6 +2533,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsLSRM(i: IRInstruction) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = memory.getUB(address).toInt()
                 statusCarry = (value and 1)!=0
@@ -2472,6 +2563,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val (left: UInt, right: UInt) = getLogicalOperandsU(i)
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 registers.setUB(dest, shiftLeft(left, right.toInt(), 8).toUByte())
             }
@@ -2494,6 +2586,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val left = getLogicalOperandU(i)
         val right = i.requireImmediateInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> registers.setUB(dest, shiftLeft(left, right, 8).toUByte())
             IRDataType.WORD -> registers.setUW(dest, shiftLeft(left, right, 16).toUShort())
             IRDataType.POINTER -> registers.setSL(dest, shiftLeft(left, right, 32).toInt())
@@ -2507,6 +2600,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         val operand = registers.getUB(i.requireSrcA().registerNumber).toInt()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val memvalue = memory.getUB(address).toInt()
                 memory.setUB(address, shiftLeft(memvalue.toUInt(), operand, 8).toUByte())
@@ -2531,6 +2625,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsLSL(i: IRInstruction) {
         val dest = i.requireDest().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = registers.getUB(dest).toInt()
                 statusCarry = (value and 0x80)!=0
@@ -2559,6 +2654,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
     private fun InsLSLM(i: IRInstruction) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val value = memory.getUB(address).toInt()
                 statusCarry = (value and 0x80)!=0
@@ -2588,6 +2684,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val newStatusCarry: Boolean
         when (i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val orig = registers.getUB(dest)
                 newStatusCarry = (orig.toInt() and 1) != 0
@@ -2640,6 +2737,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         val newStatusCarry: Boolean
         when (i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val orig = memory.getUB(address)
                 newStatusCarry = (orig.toInt() and 1) != 0
@@ -2692,6 +2790,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val newStatusCarry: Boolean
         when (i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val orig = registers.getUB(dest)
                 newStatusCarry = (orig.toInt() and 0x80) != 0
@@ -2744,6 +2843,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val address = (i.requireMemory() as MemoryReference.Direct).resolvedAddress()
         val newStatusCarry: Boolean
         when (i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val orig = memory.getUB(address)
                 newStatusCarry = (orig.toInt() and 0x80) != 0
@@ -2887,6 +2987,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val msbReg = i.requireSrcA().registerNumber
         val lsbReg = i.requireSrcB().registerNumber
         when(i.type!!) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 val msb = registers.getUB(msbReg)
                 val lsb = registers.getUB(lsbReg)
@@ -3173,3 +3274,5 @@ class VmRunner: IVirtualMachineRunner {
         test(vm)
     }
 }
+
+internal fun quadNotSupported(): Nothing = throw IllegalArgumentException("64-bit quad values are not supported by the virtual machine yet")

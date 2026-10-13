@@ -109,7 +109,8 @@ class IRStMemorySlab(
 ):  IRStNode(name, IRStNodeType.MEMORYSLAB)
 
 
-class IRStConstant(name: String, val dt: DataType, val value: Double?, val memorySlabName: String? = null, val noPrefix: Boolean = false) : IRStNode(name, IRStNodeType.CONST) {
+class IRStConstant(name: String, val dt: DataType, val value: Double?, val memorySlabName: String? = null, val noPrefix: Boolean = false,
+                   val quadBits: Long? = null) : IRStNode(name, IRStNodeType.CONST) {
     val typeString: String = dt.irTypeString(null)
 }
 
@@ -118,7 +119,8 @@ class IRStConstant(name: String, val dt: DataType, val value: Double?, val memor
  * Replaces the previous parallel nullable properties (numericValue, stringValue, arrayValue).
  */
 sealed class IRVariableInitializer {
-    data class Numeric(val value: Double) : IRVariableInitializer()
+    /** [quadBits] holds all 64 bits of a quad or uquad value, because its Double is only approximate */
+    data class Numeric(val value: Double, val quadBits: Long? = null) : IRVariableInitializer()
     data class Str(val text: String, val encoding: Encoding) : IRVariableInitializer()
     data class Array(val elements: IRStArray) : IRVariableInitializer()
 }
@@ -153,7 +155,8 @@ class IRStStaticVariable(name: String,
  */
 sealed class IRStSymbolicReference {
     data class BoolValue(val value: Boolean) : IRStSymbolicReference()
-    data class Numeric(val value: Double) : IRStSymbolicReference()
+    /** [quadBits] holds all 64 bits of a quad or uquad value, because its Double is only approximate */
+    data class Numeric(val value: Double, val quadBits: Long? = null) : IRStSymbolicReference()
     data class Symbol(val name: String) : IRStSymbolicReference() {
         init {
             require('.' in name) { "symbol name must be a scoped name" }

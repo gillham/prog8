@@ -48,7 +48,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                 }
                 else {
                     val resultRegister = codeGen.registers.next(vmDt)
-                    code += IRInstructions.load(vmDt, resultRegister, expr.number.toInt())
+                    code += IRInstructions.load(vmDt, resultRegister, expr.integerBits)
                     ExpressionCodeResult(code, vmDt, resultRegister, -1)
                 }
             }
@@ -562,6 +562,19 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                 addInstr(result, IRInstructions.compareImmediate(IRDataType.BYTE, resultReg, 0), null)
                 return ExpressionCodeResult(result, IRDataType.BYTE, resultReg, -1)
             }
+            haystackVar.type.isQuadArray -> {
+                val elementTr = translateExpression(check.needle)
+                addToResult(result, elementTr, elementTr.resultReg, -1)
+                val iterableTr = translateExpression(haystackVar)
+                addToResult(result, iterableTr, iterableTr.resultReg, -1)
+                val lengthReg = codeGen.registers.next(IRDataType.WORD)
+                val resultReg = codeGen.registers.next(IRDataType.BYTE)
+                val iterableLength = codeGen.symbolTable.getLength(haystackVar.name)
+                addInstr(result, IRInstructions.load(IRDataType.WORD, lengthReg, iterableLength!!), null)
+                result += codeGen.makeSyscall(IMSyscall.QUADARRAY_CONTAINS, listOf(IRDataType.QUAD to elementTr.resultReg, addressDt to iterableTr.resultReg, IRDataType.WORD to lengthReg), IRDataType.BYTE to resultReg)
+                addInstr(result, IRInstructions.compareImmediate(IRDataType.BYTE, resultReg, 0), null)
+                return ExpressionCodeResult(result, IRDataType.BYTE, resultReg, -1)
+            }
             haystackVar.type.isFloatArray -> {
                 val elementTr = translateExpression(check.needle)
                 addToResult(result, elementTr, -1, elementTr.resultFpReg)
@@ -747,6 +760,10 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                         addInstr(result, IRInstructions.compareImmediate(IRDataType.LONG, tr.resultReg, 0), null)
                         actualResultReg2 = loadStatusAsBooleanResult(Opcode.BSTNE, result)
                     }
+                    valueDt.isQuad -> {
+                        addInstr(result, IRInstructions.compareImmediate(IRDataType.QUAD, tr.resultReg, 0), null)
+                        actualResultReg2 = loadStatusAsBooleanResult(Opcode.BSTNE, result)
+                    }
                     valueDt.isFloat -> {
                         actualResultReg2 = codeGen.registers.next(IRDataType.BYTE)
                         result += IRCodeChunk(null, null).also {
@@ -770,6 +787,10 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                         actualResultReg2 = codeGen.registers.next(IRDataType.BYTE)
                         addInstr(result, IRInstructions.binary(Opcode.LSIGB, IRDataType.LONG, actualResultReg2, tr.resultReg), null)
                     }
+                    BaseDataType.QUAD, BaseDataType.UQUAD -> {
+                        actualResultReg2 = codeGen.registers.next(IRDataType.BYTE)
+                        addInstr(result, IRInstructions.binary(Opcode.LSIGB, IRDataType.QUAD, actualResultReg2, tr.resultReg), null)
+                    }
                     BaseDataType.FLOAT -> {
                         actualResultReg2 = codeGen.registers.next(IRDataType.BYTE)
                         addInstr(result, IRInstructions.binary(Opcode.FTOUB, IRDataType.FLOAT, actualResultReg2, tr.resultFpReg), null)
@@ -789,6 +810,10 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     BaseDataType.LONG -> {
                         actualResultReg2 = codeGen.registers.next(IRDataType.BYTE)
                         addInstr(result, IRInstructions.binary(Opcode.LSIGB, IRDataType.LONG, actualResultReg2, tr.resultReg), null)
+                    }
+                    BaseDataType.QUAD, BaseDataType.UQUAD -> {
+                        actualResultReg2 = codeGen.registers.next(IRDataType.BYTE)
+                        addInstr(result, IRInstructions.binary(Opcode.LSIGB, IRDataType.QUAD, actualResultReg2, tr.resultReg), null)
                     }
                     BaseDataType.FLOAT -> {
                         actualResultReg2 = codeGen.registers.next(IRDataType.BYTE)
@@ -815,6 +840,10 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     BaseDataType.LONG -> {
                         actualResultReg2 = codeGen.registers.next(IRDataType.WORD)
                         addInstr(result, IRInstructions.binary(Opcode.LSIGW, IRDataType.LONG, actualResultReg2, tr.resultReg), null)
+                    }
+                    BaseDataType.QUAD, BaseDataType.UQUAD -> {
+                        actualResultReg2 = codeGen.registers.next(IRDataType.WORD)
+                        addInstr(result, IRInstructions.binary(Opcode.LSIGW, IRDataType.QUAD, actualResultReg2, tr.resultReg), null)
                     }
                     BaseDataType.FLOAT -> {
                         actualResultReg2 = codeGen.registers.next(IRDataType.WORD)
@@ -844,6 +873,10 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     BaseDataType.LONG -> {
                         actualResultReg2 = codeGen.registers.next(IRDataType.WORD)
                         addInstr(result, IRInstructions.binary(Opcode.LSIGW, IRDataType.LONG, actualResultReg2, tr.resultReg), null)
+                    }
+                    BaseDataType.QUAD, BaseDataType.UQUAD -> {
+                        actualResultReg2 = codeGen.registers.next(IRDataType.WORD)
+                        addInstr(result, IRInstructions.binary(Opcode.LSIGW, IRDataType.QUAD, actualResultReg2, tr.resultReg), null)
                     }
                     BaseDataType.FLOAT -> {
                         actualResultReg2 = codeGen.registers.next(IRDataType.WORD)
@@ -879,7 +912,35 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     BaseDataType.POINTER -> {
                         actualResultReg2 = tr.resultReg
                     }
+                    BaseDataType.QUAD, BaseDataType.UQUAD -> {
+                        actualResultReg2 = codeGen.registers.next(IRDataType.LONG)
+                        addInstr(result, IRInstructions.binary(Opcode.LSIGL, IRDataType.QUAD, actualResultReg2, tr.resultReg), null)
+                    }
                     else -> throw AssemblyError("weird cast $valueDt to long ${cast.position}")
+                }
+            }
+            BaseDataType.QUAD, BaseDataType.UQUAD -> {
+                val extend = when(valueDt.base) {
+                    BaseDataType.BOOL, BaseDataType.UBYTE -> Opcode.EXTQ to IRDataType.BYTE
+                    BaseDataType.BYTE -> Opcode.EXTQS to IRDataType.BYTE
+                    BaseDataType.UWORD -> Opcode.EXTQ to IRDataType.WORD
+                    BaseDataType.WORD -> Opcode.EXTQS to IRDataType.WORD
+                    BaseDataType.LONG -> Opcode.EXTQS to IRDataType.LONG
+                    BaseDataType.POINTER -> Opcode.EXTQ to IRDataType.POINTER
+                    else -> null
+                }
+                when {
+                    extend != null -> {
+                        actualResultReg2 = codeGen.registers.next(IRDataType.QUAD)
+                        addInstr(result, IRInstructions.binary(extend.first, extend.second, actualResultReg2, tr.resultReg), null)
+                    }
+                    valueDt.isQuad -> actualResultReg2 = tr.resultReg
+                    valueDt.isFloat -> {
+                        actualResultReg2 = codeGen.registers.next(IRDataType.QUAD)
+                        val opcode = if(cast.type.isSignedQuad) Opcode.FTOSQ else Opcode.FTOUQ
+                        addInstr(result, IRInstructions.binary(opcode, IRDataType.FLOAT, actualResultReg2, tr.resultFpReg), null)
+                    }
+                    else -> throw AssemblyError("weird cast $valueDt to quad ${cast.position}")
                 }
             }
             BaseDataType.FLOAT -> {
@@ -899,6 +960,12 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     }
                     BaseDataType.LONG ->  {
                         addInstr(result, IRInstructions.binary(Opcode.FFROMSL, IRDataType.FLOAT, actualResultFpReg2, tr.resultReg), null)
+                    }
+                    BaseDataType.QUAD ->  {
+                        addInstr(result, IRInstructions.binary(Opcode.FFROMSQ, IRDataType.FLOAT, actualResultFpReg2, tr.resultReg), null)
+                    }
+                    BaseDataType.UQUAD ->  {
+                        addInstr(result, IRInstructions.binary(Opcode.FFROMUQ, IRDataType.FLOAT, actualResultFpReg2, tr.resultReg), null)
                     }
                     else -> throw AssemblyError("weird cast value type ${cast.position}")
                 }
@@ -922,6 +989,14 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                             addInstr(result, IRInstructions.binary(Opcode.EXT, IRDataType.WORD, r, tr.resultReg), null)
                             r
                         } else tr.resultReg
+                    }
+                    BaseDataType.QUAD, BaseDataType.UQUAD -> {
+                        // a 64-bit pointer holds all bits of the quad, a narrower pointer only the low long
+                        actualResultReg2 = if(codeGen.options.compTarget.POINTER_MEM_SIZE >= 8u) tr.resultReg else {
+                            val r = codeGen.registers.next(IRDataType.LONG)
+                            addInstr(result, IRInstructions.binary(Opcode.LSIGL, IRDataType.QUAD, r, tr.resultReg), null)
+                            r
+                        }
                     }
                     else -> {
                         require(valueDt.isUnsignedWord || valueDt.isPointer || valueDt.isLong)
@@ -1300,7 +1375,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     } else {
                         if (greaterEquals) Opcode.BGE else Opcode.BGT
                     }
-                    val resultReg = compareImmediateAsBooleanResult(branch, leftTr.dt, leftTr.resultReg, rightConst.toInt(), result)
+                    val resultReg = compareImmediateAsBooleanResult(branch, leftTr.dt, leftTr.resultReg, constImmediate(binExpr.right, rightConst), result)
                     return ExpressionCodeResult(result, IRDataType.BYTE, resultReg, -1)
                 } else {
                     val leftTr = translateExpression(binExpr.left)
@@ -1349,7 +1424,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     } else {
                         if (lessEquals) Opcode.BLE else Opcode.BLT
                     }
-                    val resultReg = compareImmediateAsBooleanResult(branch, leftTr.dt, leftTr.resultReg, rightConst.toInt(), result)
+                    val resultReg = compareImmediateAsBooleanResult(branch, leftTr.dt, leftTr.resultReg, constImmediate(binExpr.right, rightConst), result)
                     return ExpressionCodeResult(result, IRDataType.BYTE, resultReg, -1)
                 } else {
                     val leftTr = translateExpression(binExpr.left)
@@ -1398,7 +1473,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                             && lastInstr != null
                             && lastInstr.opcode in OpcodesThatSetZeroFlagOnM68k
                     if (!skipCmpi) {
-                        addInstr(result, IRInstructions.compareImmediate(leftTr.dt, leftTr.resultReg, rightConst.toInt()), null)
+                        addInstr(result, IRInstructions.compareImmediate(leftTr.dt, leftTr.resultReg, constImmediate(binExpr.right, rightConst)), null)
                     }
                     val resultReg = loadStatusAsBooleanResult(if(notEquals) Opcode.BSTNE else Opcode.BSTEQ, result)
                     ExpressionCodeResult(result, IRDataType.BYTE, resultReg, -1)
@@ -1413,6 +1488,12 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                 }
             }
         }
+    }
+
+    // the immediate value of a constant integer operand: exact for a quad, whose Double is only approximate
+    private fun constImmediate(expr: PtExpression, value: Double): Long {
+        val number = expr as? PtNumber ?: (expr as? PtTypeCast)?.value as? PtNumber
+        return if(number!=null && number.type.isQuad) number.integerBits else value.toInt().toLong()
     }
 
     private fun loadStatusAsBooleanResult(branchForTrue: Opcode, result: MutableList<IRCodeChunkBase>): Int {
@@ -1447,7 +1528,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
         return resultReg
     }
 
-    private fun compareImmediateAsBooleanResult(branchForTrue: Opcode, dt: IRDataType, reg1: Int, imm: Int, result: MutableList<IRCodeChunkBase>): Int {
+    private fun compareImmediateAsBooleanResult(branchForTrue: Opcode, dt: IRDataType, reg1: Int, imm: Long, result: MutableList<IRCodeChunkBase>): Int {
         val labelTrue = codeGen.createLabelName()
         val labelDone = codeGen.createLabelName()
         val resultReg = codeGen.registers.next(IRDataType.BYTE)
@@ -1544,7 +1625,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
         addToResult(result, tr, tr.resultReg, -1)
         return when (binExpr.right) {
             is PtNumber -> {
-                addInstr(result, IRInstructions.binaryImmediate(Opcode.XOR, vmDt, tr.resultReg, (binExpr.right as PtNumber).number.toInt()), null)
+                addInstr(result, IRInstructions.binaryImmediate(Opcode.XOR, vmDt, tr.resultReg, (binExpr.right as PtNumber).integerBits), null)
                 ExpressionCodeResult(result, vmDt, tr.resultReg, -1)
             }
             is PtBool -> {
@@ -1579,7 +1660,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
             addToResult(result, tr, tr.resultReg, -1)
             return when (binExpr.right) {
                 is PtNumber -> {
-                    addInstr(result, IRInstructions.binaryImmediate(Opcode.AND, vmDt, tr.resultReg, (binExpr.right as PtNumber).number.toInt()), null)
+                    addInstr(result, IRInstructions.binaryImmediate(Opcode.AND, vmDt, tr.resultReg, (binExpr.right as PtNumber).integerBits), null)
                     ExpressionCodeResult(result, vmDt, tr.resultReg, -1)
                 }
                 is PtBool -> {
@@ -1615,7 +1696,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
             addToResult(result, tr, tr.resultReg, -1)
             return when (binExpr.right) {
                 is PtNumber -> {
-                    addInstr(result, IRInstructions.binaryImmediate(Opcode.OR, vmDt, tr.resultReg, (binExpr.right as PtNumber).number.toInt()), null)
+                    addInstr(result, IRInstructions.binaryImmediate(Opcode.OR, vmDt, tr.resultReg, (binExpr.right as PtNumber).integerBits), null)
                     ExpressionCodeResult(result, vmDt, tr.resultReg, -1)
                 }
                 is PtBool -> {
@@ -1640,7 +1721,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
             val tr = translateExpression(binExpr.left)
             addToResult(result, tr, tr.resultReg, -1)
             val opcode = if(isSigned) Opcode.MODS else Opcode.MOD
-            addInstr(result, IRInstructions.binaryImmediate(opcode, vmDt, tr.resultReg, (binExpr.right as PtNumber).number.toInt()), null)
+            addInstr(result, IRInstructions.binaryImmediate(opcode, vmDt, tr.resultReg, (binExpr.right as PtNumber).integerBits), null)
             ExpressionCodeResult(result, vmDt, tr.resultReg, -1)
         } else {
             val leftTr = translateExpression(binExpr.left)
@@ -1680,7 +1761,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
             return if(constFactorRight!=null && !constFactorRight.type.isFloat) {
                 val tr = translateExpression(binExpr.left)
                 addToResult(result, tr, tr.resultReg, -1)
-                val factor = constFactorRight.number.toInt()
+                val factor = constFactorRight.integerBits
                 result += codeGen.divideByConst(vmDt, tr.resultReg, factor, dt.isSigned)
                 ExpressionCodeResult(result, vmDt, tr.resultReg, -1)
             } else {
@@ -1739,13 +1820,13 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
             return if(constFactorLeft!=null && !constFactorLeft.type.isFloat) {
                 val tr = translateExpression(binExpr.right)
                 addToResult(result, tr, tr.resultReg, -1)
-                val factor = constFactorLeft.number.toInt()
+                val factor = constFactorLeft.integerBits
                 result += codeGen.multiplyByConst(dt, tr.resultReg, factor)
                 ExpressionCodeResult(result, vmDt, tr.resultReg, -1)
             } else if(constFactorRight!=null && !constFactorRight.type.isFloat) {
                 val tr = translateExpression(binExpr.left)
                 addToResult(result, tr, tr.resultReg, -1)
-                val factor = constFactorRight.number.toInt()
+                val factor = constFactorRight.integerBits
                 result += codeGen.multiplyByConst(dt, tr.resultReg, factor)
                 ExpressionCodeResult(result, vmDt, tr.resultReg, -1)
             } else {
@@ -1795,7 +1876,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                 return if(binExpr.right is PtNumber) {
                     val tr = translateExpression(binExpr.left)
                     addToResult(result, tr, tr.resultReg, -1)
-                    addInstr(result, IRInstructions.binaryImmediate(Opcode.SUB, vmDt, tr.resultReg, (binExpr.right as PtNumber).number.toInt()), null)
+                    addInstr(result, IRInstructions.binaryImmediate(Opcode.SUB, vmDt, tr.resultReg, (binExpr.right as PtNumber).integerBits), null)
                     ExpressionCodeResult(result, vmDt, tr.resultReg, -1)
                 } else {
                     val leftTr = translateExpression(binExpr.left)
@@ -1856,7 +1937,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                 return if(binExpr.right is PtNumber) {
                     val tr = translateExpression(binExpr.left)
                     addToResult(result, tr, tr.resultReg, -1)
-                    addInstr(result, IRInstructions.binaryImmediate(Opcode.ADD, vmDt, tr.resultReg, (binExpr.right as PtNumber).number.toInt()), null)
+                    addInstr(result, IRInstructions.binaryImmediate(Opcode.ADD, vmDt, tr.resultReg, (binExpr.right as PtNumber).integerBits), null)
                     ExpressionCodeResult(result, vmDt, tr.resultReg, -1)
                 } else {
                     val leftTr = translateExpression(binExpr.left)

@@ -52,6 +52,33 @@ class TestIRPeepholeOpt: FunSpec({
         irProg.chunks().single().instructions.size shouldBe 1
     }
 
+    test("folded quad loads keep all 64 bits") {
+        val big = 0x123456789abcdef0L
+        val irProg = makeIRProgram(listOf(
+            IRInstructions.load(IRDataType.QUAD, 1, big),
+            IRInstructions.storeMemory(Opcode.STOREM, IRDataType.QUAD, 1, IRMemory.direct("main.q")),
+            IRInstructions.load(IRDataType.QUAD, 2, -1L),
+            IRInstructions.returnRegister(IRDataType.QUAD, 2)
+        ))
+        IRPeepholeOptimizer(irProg, false).optimize(true, ErrorReporterForTests())
+        val instructions = irProg.chunks().single().instructions
+        instructions.map { it.opcode } shouldBe listOf(Opcode.STOREIM, Opcode.RETURNI)
+        instructions[0].requireImmediateQuad() shouldBe big
+        instructions[1].requireImmediateQuad() shouldBe -1L
+    }
+
+    test("quad pointer accesses are not fused into post-increment loads") {
+        val irProg = makeIRProgram(listOf(
+            IRInstructions.loadMemory(Opcode.LOADM, IRDataType.POINTER, 1, IRMemory.direct("main.ptr")),
+            IRInstructions.loadMemory(Opcode.LOADI, IRDataType.QUAD, 2, IRMemory.indirect(1)),
+            IRInstructions.memoryOp(Opcode.INCM, IRDataType.POINTER, IRMemory.direct("main.ptr")),
+            IRInstructions.storeMemory(Opcode.STOREM, IRDataType.QUAD, 2, IRMemory.direct("main.q"))
+        ))
+        IRPeepholeOptimizer(irProg, false).optimize(true, ErrorReporterForTests())
+        val opcodes = irProg.chunks().single().instructions.map { it.opcode }
+        opcodes shouldBe listOf(Opcode.LOADM, Opcode.LOADI, Opcode.INCM, Opcode.STOREM)
+    }
+
     test("remove jmp to label below but keep labels") {
         val c1 = IRCodeChunk("p8b_main.p8s_start", null)
         c1 += IRInstructions.jump(codeLabel("label"))

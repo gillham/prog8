@@ -79,14 +79,20 @@ data class RegisterOperand(
 }
 
 
-/** an immediate (constant) operand: an integer, a float, or the address of a symbol */
+/** an immediate (constant) operand: an integer, a quad, a float, or the address of a symbol */
 sealed interface ImmediateOperand {
     val type: IRDataType
 
     data class Integer(val value: Int, override val type: IRDataType) : ImmediateOperand {
         init {
             require(type != IRDataType.FLOAT) { "integer immediate can't have float type" }
+            require(type != IRDataType.QUAD) { "quad immediate must be a QuadValue" }
         }
+    }
+
+    /** all 64 bits of a quad immediate, in two's complement */
+    data class QuadValue(val value: Long) : ImmediateOperand {
+        override val type: IRDataType get() = IRDataType.QUAD
     }
 
     data class FloatValue(val value: Double) : ImmediateOperand {

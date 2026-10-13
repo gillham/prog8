@@ -134,6 +134,7 @@ internal fun AsmGen.translateControl(insn: IRInstruction) {
             } else {
                 val reg = insn.requireIntSourceA().intNumber
                 when (type) {
+                    IRDataType.QUAD -> quadNotSupported()
                     IRDataType.BYTE -> {
                         emitLine("lda  ${regAddrLo(reg)}")
                     }
@@ -167,6 +168,7 @@ internal fun AsmGen.translateControl(insn: IRInstruction) {
             } else {
                 val value = insn.requireImmediateInt()
                 when (type) {
+                    IRDataType.QUAD -> quadNotSupported()
                     IRDataType.BYTE -> {
                         emitLine("lda  #${value and 0xff}")
                     }
@@ -200,6 +202,7 @@ internal fun AsmGen.translateControl(insn: IRInstruction) {
             } else {
                 val reg = insn.requireIntSourceA().intNumber
                 when (type) {
+                    IRDataType.QUAD -> quadNotSupported()
                     IRDataType.BYTE -> {
                         emitLine("lda  ${regAddrLo(reg)}")
                         emitLine("pha")
@@ -238,6 +241,7 @@ internal fun AsmGen.translateControl(insn: IRInstruction) {
             } else {
                 val reg = insn.requireIntDest().intNumber
                 when (type) {
+                    IRDataType.QUAD -> quadNotSupported()
                     IRDataType.BYTE -> {
                         emitLine("pla")
                         emitLine("sta  ${regAddrLo(reg)}")
@@ -682,6 +686,7 @@ private fun AsmGen.translateArgument(arg: CallArgument, argIndex: Int = -1, fnLa
 /** store an argument that lives in virtual register [regNum] to a fixed memory location */
 private fun AsmGen.storeArgumentTo(target: String, regNum: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(regNum)}")
             emitLine("sta  $target")
@@ -761,6 +766,7 @@ private fun AsmGen.translateReturnValue(ret: CallResult) {
         }
         null -> {
             when (destination.type) {
+                IRDataType.QUAD -> quadNotSupported()
                 IRDataType.BYTE -> {
                     emitLine("sta  ${regAddrLo(regNum)}")
                 }

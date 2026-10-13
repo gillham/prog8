@@ -19,6 +19,7 @@ internal fun VirtualMachine.statusbitsComparison(left: Int, right: Int, type: IR
     val comparison = left - right
     statusZero = comparison == 0
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             statusNegative = (comparison and 0x80) != 0
             statusCarry = (left and 0xff) >= (right and 0xff)
@@ -39,6 +40,7 @@ internal fun VirtualMachine.statusbitsComparisonWithOverflow(left: Int, right: I
     statusbitsComparison(left, right, type)
     val comparison = left - right
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             val signBit = 0x80
             val leftSign = left and signBit
@@ -510,6 +512,7 @@ internal fun VirtualMachine.getBranchOperands(i: IRInstruction): Pair<Int, Int> 
     val left = i.requireSrcA().registerNumber
     val right = i.requireSrcB().registerNumber
     return when(i.type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> Pair(registers.getSB(left).toInt(), registers.getSB(right).toInt())
         IRDataType.WORD -> Pair(registers.getSW(left).toInt(), registers.getSW(right).toInt())
         IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left), registers.getSL(right))
@@ -524,6 +527,7 @@ internal fun VirtualMachine.getBranchOperandsImm(i: IRInstruction): Pair<Int, In
     val left = i.requireSrcA().registerNumber
     val right = i.requireImmediateInt()
     return when(i.type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> Pair(registers.getSB(left).toInt(), right)
         IRDataType.WORD -> Pair(registers.getSW(left).toInt(), right)
         IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left), right)
@@ -538,6 +542,7 @@ internal fun VirtualMachine.getBranchOperandsU(i: IRInstruction): Pair<UInt, UIn
     val left = i.requireSrcA().registerNumber
     val right = i.requireSrcB().registerNumber
     return when(i.type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> Pair(registers.getUB(left).toUInt(), registers.getUB(right).toUInt())
         IRDataType.WORD -> Pair(registers.getUW(left).toUInt(), registers.getUW(right).toUInt())
         IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left).toUInt(), registers.getSL(right).toUInt())
@@ -552,6 +557,7 @@ internal fun VirtualMachine.getBranchOperandsImmU(i: IRInstruction): Pair<UInt, 
     val left = i.requireSrcA().registerNumber
     val right = i.requireImmediateInt().toUInt()
     return when(i.type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> Pair(registers.getUB(left).toUInt(), right)
         IRDataType.WORD -> Pair(registers.getUW(left).toUInt(), right)
         IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left).toUInt(), right)
@@ -566,6 +572,7 @@ internal fun VirtualMachine.getLogicalOperandsU(i: IRInstruction): Pair<UInt, UI
     val left = i.requireDest().registerNumber
     val right = i.requireSrcA().registerNumber
     return when(i.type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> Pair(registers.getUB(left).toUInt(), registers.getUB(right).toUInt())
         IRDataType.WORD -> Pair(registers.getUW(left).toUInt(), registers.getUW(right).toUInt())
         IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left).toUInt(), registers.getSL(right).toUInt())
@@ -579,6 +586,7 @@ internal fun VirtualMachine.getLogicalOperandsU(i: IRInstruction): Pair<UInt, UI
 internal fun VirtualMachine.getLogicalOperandU(i: IRInstruction): UInt {
     val reg = i.requireDest().registerNumber
     return when(i.type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> registers.getUB(reg).toUInt()
         IRDataType.WORD -> registers.getUW(reg).toUInt()
         IRDataType.LONG, IRDataType.POINTER -> registers.getSL(reg).toUInt()
@@ -591,6 +599,7 @@ internal fun VirtualMachine.getLogicalOperandsS(i: IRInstruction): Pair<Int, Int
     val left = i.requireDest().registerNumber
     val right = i.requireSrcA().registerNumber
     return when(i.type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> Pair(registers.getSB(left).toInt(), registers.getSB(right).toInt())
         IRDataType.WORD -> Pair(registers.getSW(left).toInt(), registers.getSW(right).toInt())
         IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left), registers.getSL(right))
@@ -604,6 +613,7 @@ internal fun VirtualMachine.getLogicalOperandsS(i: IRInstruction): Pair<Int, Int
 internal fun VirtualMachine.getLogicalOperandS(i: IRInstruction): Int {
     val reg = i.requireDest().registerNumber
     return when(i.type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> registers.getSB(reg).toInt()
         IRDataType.WORD -> registers.getSW(reg).toInt()
         IRDataType.LONG, IRDataType.POINTER -> registers.getSL(reg)

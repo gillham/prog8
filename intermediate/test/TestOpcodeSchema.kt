@@ -127,9 +127,34 @@ class TestOpcodeSchema: FunSpec({
 
     test("word schemas also cover the pointer type") {
         OpcodeSchemas.typesFor(Opcode.LOADM) shouldBe setOf(
-            IRDataType.BYTE, IRDataType.WORD, IRDataType.POINTER, IRDataType.LONG, IRDataType.FLOAT
+            IRDataType.BYTE, IRDataType.WORD, IRDataType.POINTER, IRDataType.LONG, IRDataType.FLOAT, IRDataType.QUAD
         )
         OpcodeSchemas.typesFor(Opcode.NOP) shouldBe setOf(null)
+    }
+
+    test("quad schemas") {
+        fun slotType(opcode: Opcode, type: IRDataType, slot: InstructionSlot): IRDataType? {
+            val schema = OpcodeSchemas.get(opcode, type)
+            return schema.typeFor(checkNotNull(schema.registerSlot(slot)).typeRule)
+        }
+        OpcodeSchemas.typesFor(Opcode.EXTQ) shouldBe setOf(IRDataType.BYTE, IRDataType.WORD, IRDataType.POINTER, IRDataType.LONG)
+        OpcodeSchemas.typesFor(Opcode.EXTQS) shouldBe setOf(IRDataType.BYTE, IRDataType.WORD, IRDataType.POINTER, IRDataType.LONG)
+        OpcodeSchemas.typesFor(Opcode.LSIGL) shouldBe setOf(IRDataType.QUAD)
+        OpcodeSchemas.typesFor(Opcode.LSIGW) shouldBe setOf(IRDataType.LONG, IRDataType.QUAD)
+        slotType(Opcode.EXTQS, IRDataType.LONG, InstructionSlot.DEST) shouldBe IRDataType.QUAD
+        slotType(Opcode.EXTQ, IRDataType.BYTE, InstructionSlot.SRC_A) shouldBe IRDataType.BYTE
+        slotType(Opcode.LSIGL, IRDataType.QUAD, InstructionSlot.DEST) shouldBe IRDataType.LONG
+        slotType(Opcode.LSIGB, IRDataType.QUAD, InstructionSlot.DEST) shouldBe IRDataType.BYTE
+        slotType(Opcode.FFROMUQ, IRDataType.FLOAT, InstructionSlot.SRC_A) shouldBe IRDataType.QUAD
+        slotType(Opcode.FTOSQ, IRDataType.FLOAT, InstructionSlot.DEST) shouldBe IRDataType.QUAD
+        val quadOpcodes = listOf(Opcode.LOAD, Opcode.LOADM, Opcode.LOADX, Opcode.LOADI, Opcode.STOREM, Opcode.STOREI,
+            Opcode.STOREIM, Opcode.ADDR, Opcode.SUB, Opcode.MULSR, Opcode.DIV, Opcode.MODS, Opcode.ADDM, Opcode.AND,
+            Opcode.XORR, Opcode.INV, Opcode.NEG, Opcode.LSLN, Opcode.ASRI, Opcode.LSR, Opcode.CMP, Opcode.CMPI,
+            Opcode.BGTS, Opcode.BGER, Opcode.RETURNI, Opcode.BITTST)
+        quadOpcodes.filter { IRDataType.QUAD !in OpcodeSchemas.typesFor(it) } shouldBe emptyList()
+        val noQuadOpcodes = listOf(Opcode.SQRT, Opcode.SQUARE, Opcode.SGN, Opcode.ROL, Opcode.ROXR, Opcode.CONCAT,
+            Opcode.MSIGW, Opcode.PUSH, Opcode.LOADP_INC, Opcode.DIVMOD)
+        noQuadOpcodes.filter { IRDataType.QUAD in OpcodeSchemas.typesFor(it) } shouldBe emptyList()
     }
 
     test("every schema is internally consistent") {

@@ -868,7 +868,7 @@ jump p8_label_gen_2
                 for((midIdx, midIns) in indexedInstructions) {
                     if(midIdx <= loadmIdx || midIdx >= incIdx) continue
                     if(midIdx in toRemove || midIdx in toReplace) continue
-                    if(midIns.type == IRDataType.FLOAT) continue
+                    if(midIns.type == IRDataType.FLOAT || midIns.type == IRDataType.QUAD) continue
                     val indirect = midIns.memory as? MemoryReference.Indirect ?: continue
                     if(indirect.pointer.register != baseReg) continue
                     if(midIns.opcode == Opcode.LOADI) {
@@ -940,6 +940,7 @@ jump p8_label_gen_2
                     if(sameReg) {
                         val newIns = when(val immediate = prev.immediate) {
                             is ImmediateOperand.Integer -> IRInstructions.storeImmediate(ins.type!!, immediate.value, ins.requireMemory())
+                            is ImmediateOperand.QuadValue -> IRInstructions.storeImmediate(ins.type!!, immediate.value, ins.requireMemory())
                             is ImmediateOperand.FloatValue -> IRInstructions.storeImmediateFloat(immediate.value, ins.requireMemory())
                             else -> null
                         }
@@ -1095,6 +1096,7 @@ jump p8_label_gen_2
                     if(insBefore.opcode == Opcode.LOAD && insBefore.immediate!=null) {
                         val newIns = when(val imm = insBefore.immediate!!) {
                             is ImmediateOperand.Integer -> IRInstructions.returnImmediate(ins.type!!, imm.value)
+                            is ImmediateOperand.QuadValue -> IRInstructions.returnImmediate(ins.type!!, imm.value)
                             is ImmediateOperand.FloatValue -> IRInstructions.returnImmediateFloat(imm.value)
                             is ImmediateOperand.SymbolAddress -> null
                         }

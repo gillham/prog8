@@ -129,6 +129,7 @@ internal fun AsmGen.translateBitwise(insn: IRInstruction) {
 
 private fun AsmGen.andRegisters(dstReg: Int, srcReg: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(dstReg)}")
             emitLine("and  ${regAddrLo(srcReg)}")
@@ -149,6 +150,7 @@ private fun AsmGen.andRegisters(dstReg: Int, srcReg: Int, type: IRDataType) {
 
 private fun AsmGen.andImmediate(dstReg: Int, value: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(dstReg)}")
             emitLine("and  #${value and 0xff}")
@@ -397,6 +399,7 @@ private fun AsmGen.invertMemory(target: String, type: IRDataType) {
 private fun AsmGen.logicalShiftLeft(reg: Int, count: Int, type: IRDataType) {
     repeat(count) {
         when (type) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 emitLine("asl  ${regAddrLo(reg)}")
             }
@@ -437,6 +440,7 @@ private fun AsmGen.logicalShiftLeftMemory(target: String, count: Int, type: IRDa
 private fun AsmGen.logicalShiftRight(reg: Int, count: Int, type: IRDataType) {
     repeat(count) {
         when (type) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> {
                 emitLine("lsr  ${regAddrLo(reg)}")
             }

@@ -278,6 +278,7 @@ internal object PointerArrayAccess {
         IRDataType.WORD -> 2
         IRDataType.LONG -> 4
         IRDataType.POINTER -> 8
+        IRDataType.QUAD -> 8
         IRDataType.FLOAT -> null
     }
 }

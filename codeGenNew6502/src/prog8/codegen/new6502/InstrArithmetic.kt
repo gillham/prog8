@@ -155,6 +155,7 @@ internal fun AsmGen.translateArithmetic(insn: IRInstruction) {
 
 private fun AsmGen.incrementRegister(reg: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("inc  ${regAddrLo(reg)}")
         }
@@ -185,6 +186,7 @@ private fun AsmGen.decrementRegister(reg: Int, type: IRDataType) {
     // `ora` postamble as a defensive measure (it sets Z=1 iff the full value is 0), but
     // it's wasted work. The explicit CMPI that follows is what the branch actually uses.
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("dec  ${regAddrLo(reg)}")
         }
@@ -223,6 +225,7 @@ private fun AsmGen.decrementRegister(reg: Int, type: IRDataType) {
 
 private fun AsmGen.incrementMemory(target: String, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> emitLine("inc  $target")
         IRDataType.WORD, IRDataType.POINTER -> {
             emitLine("inc  $target")
@@ -246,6 +249,7 @@ private fun AsmGen.incrementMemory(target: String, type: IRDataType) {
 
 internal fun AsmGen.decrementMemory(target: String, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> emitLine("dec  $target")
         IRDataType.WORD, IRDataType.POINTER -> {
             emitLine("lda  $target")
@@ -276,6 +280,7 @@ internal fun AsmGen.decrementMemory(target: String, type: IRDataType) {
 
 internal fun AsmGen.negateRegister(reg: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             if (is65C02()) {
                 emitLine("lda  ${regAddrLo(reg)}")
@@ -319,6 +324,7 @@ internal fun AsmGen.negateRegister(reg: Int, type: IRDataType) {
 
 internal fun AsmGen.negateMemory(target: String, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             if (is65C02()) {
                 emitLine("lda  $target")
@@ -364,6 +370,7 @@ internal fun AsmGen.negateMemory(target: String, type: IRDataType) {
 
 internal fun AsmGen.addRegisters(dstReg: Int, srcReg: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("clc")
             emitLine("lda  ${regAddrLo(dstReg)}")
@@ -400,6 +407,7 @@ internal fun AsmGen.addRegisters(dstReg: Int, srcReg: Int, type: IRDataType) {
 
 internal fun AsmGen.addImmediate(dstReg: Int, value: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(dstReg)}")
             if (is65C02() && value == 1) {
@@ -440,6 +448,7 @@ internal fun AsmGen.addImmediate(dstReg: Int, value: Int, type: IRDataType) {
 
 internal fun AsmGen.addMemory(dstReg: Int, sourceAddress: String, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("clc")
             emitLine("lda  $sourceAddress")
@@ -476,6 +485,7 @@ internal fun AsmGen.addMemory(dstReg: Int, sourceAddress: String, type: IRDataTy
 
 internal fun AsmGen.addMemoryImm(immediate: Int, sourceAddress: String, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             require(immediate in 2..255)
             emitLine("clc")
@@ -517,6 +527,7 @@ internal fun AsmGen.addMemoryImm(immediate: Int, sourceAddress: String, type: IR
 
 internal fun AsmGen.subRegisters(dstReg: Int, srcReg: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("sec")
             emitLine("lda  ${regAddrLo(dstReg)}")
@@ -553,6 +564,7 @@ internal fun AsmGen.subRegisters(dstReg: Int, srcReg: Int, type: IRDataType) {
 
 internal fun AsmGen.subImmediate(dstReg: Int, value: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(dstReg)}")
             if (is65C02() && value == 1) {
@@ -593,6 +605,7 @@ internal fun AsmGen.subImmediate(dstReg: Int, value: Int, type: IRDataType) {
 
 internal fun AsmGen.subMemory(dstReg: Int, sourceAddress: String, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("sec")
             emitLine("lda  $sourceAddress")
@@ -629,6 +642,7 @@ internal fun AsmGen.subMemory(dstReg: Int, sourceAddress: String, type: IRDataTy
 
 internal fun AsmGen.subMemoryImm(immediate: Int, sourceAddress: String, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             require(immediate in 2..255)
             emitLine("sec")
@@ -670,6 +684,7 @@ internal fun AsmGen.subMemoryImm(immediate: Int, sourceAddress: String, type: IR
 
 internal fun AsmGen.mulRegisters(dstReg: Int, srcReg: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(dstReg)}")
             emitLine("ldy  ${regAddrLo(srcReg)}")
@@ -1210,6 +1225,7 @@ internal fun AsmGen.sdivModImmediate(dstReg: Int, remainderReg: Int, value: Int,
 
 internal fun AsmGen.compareRegisters(r1: Int, r2: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(r1)}")
             emitLine("cmp  ${regAddrLo(r2)}")

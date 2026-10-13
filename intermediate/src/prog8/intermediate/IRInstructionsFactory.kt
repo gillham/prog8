@@ -93,12 +93,18 @@ object IRInstructions {
     }
 
     /** the immediate operand for the given opcode, with the data type the schema prescribes */
-    fun immediateFor(opcode: Opcode, type: IRDataType?, value: Int): ImmediateOperand {
+    fun immediateFor(opcode: Opcode, type: IRDataType?, value: Int): ImmediateOperand = immediateFor(opcode, type, value.toLong())
+
+    fun immediateFor(opcode: Opcode, type: IRDataType?, value: Long): ImmediateOperand {
         val schema = OpcodeSchemas.get(opcode, type)
         val immSchema = schema.immediateSlot ?: throw IllegalArgumentException("$opcode has no immediate operand")
         val immType = schema.typeFor(immSchema.typeRule) ?: IRDataType.WORD
-        return ImmediateOperand.Integer(value, immType)
+        return integerImmediate(value, immType)
     }
+
+    /** an integer immediate of the given type: a QuadValue for a quad, otherwise an Integer with the low 32 bits */
+    fun integerImmediate(value: Long, type: IRDataType): ImmediateOperand =
+        if (type == IRDataType.QUAD) ImmediateOperand.QuadValue(value) else ImmediateOperand.Integer(value.toInt(), type)
 
     // ---- typed factories ----
 
@@ -108,11 +114,13 @@ object IRInstructions {
     fun load(destination: RegisterOperand, immediate: ImmediateOperand) =
         IRInstruction(Opcode.LOAD, destination.type, dest = destination, immediate = immediate)
 
-    fun load(type: IRDataType, destination: Int, value: Int) =
+    fun load(type: IRDataType, destination: Int, value: Int) = load(type, destination, value.toLong())
+
+    fun load(type: IRDataType, destination: Int, value: Long) =
         IRInstruction(
             Opcode.LOAD, type,
             dest = operandFor(Opcode.LOAD, type, InstructionSlot.DEST, destination),
-            immediate = ImmediateOperand.Integer(value, type)
+            immediate = integerImmediate(value, type)
         )
 
     fun loadFloat(destination: Int, value: Double) =
@@ -167,8 +175,10 @@ object IRInstructions {
         IRInstruction(opcode, type, memory = memory)
 
     /** STOREIM: store an immediate value into memory */
-    fun storeImmediate(type: IRDataType, value: Int, memory: MemoryReference) =
-        IRInstruction(Opcode.STOREIM, type, immediate = ImmediateOperand.Integer(value, type), memory = memory)
+    fun storeImmediate(type: IRDataType, value: Int, memory: MemoryReference) = storeImmediate(type, value.toLong(), memory)
+
+    fun storeImmediate(type: IRDataType, value: Long, memory: MemoryReference) =
+        IRInstruction(Opcode.STOREIM, type, immediate = integerImmediate(value, type), memory = memory)
 
     fun storeImmediateFloat(value: Double, memory: MemoryReference) =
         IRInstruction(Opcode.STOREIM, IRDataType.FLOAT, immediate = ImmediateOperand.FloatValue(value), memory = memory)
@@ -209,7 +219,9 @@ object IRInstructions {
         )
 
     /** an operation with a destination register and an immediate value: ADD, SUB, AND, ASRI, BITSET, ... */
-    fun binaryImmediate(opcode: Opcode, type: IRDataType, destination: Int, value: Int) =
+    fun binaryImmediate(opcode: Opcode, type: IRDataType, destination: Int, value: Int) = binaryImmediate(opcode, type, destination, value.toLong())
+
+    fun binaryImmediate(opcode: Opcode, type: IRDataType, destination: Int, value: Long) =
         IRInstruction(
             opcode, type,
             dest = operandFor(opcode, type, InstructionSlot.DEST, destination),
@@ -234,7 +246,9 @@ object IRInstructions {
             memory = memory
         )
 
-    fun memoryOpImmediate(opcode: Opcode, type: IRDataType, memory: MemoryReference, value: Int) =
+    fun memoryOpImmediate(opcode: Opcode, type: IRDataType, memory: MemoryReference, value: Int) = memoryOpImmediate(opcode, type, memory, value.toLong())
+
+    fun memoryOpImmediate(opcode: Opcode, type: IRDataType, memory: MemoryReference, value: Long) =
         IRInstruction(opcode, type, immediate = immediateFor(opcode, type, value), memory = memory)
 
     fun memoryOpImmediateFloat(opcode: Opcode, memory: MemoryReference, value: Double) =
@@ -249,11 +263,13 @@ object IRInstructions {
         )
 
     /** CMPI: compare a register with an immediate value */
-    fun compareImmediate(type: IRDataType, left: Int, value: Int) =
+    fun compareImmediate(type: IRDataType, left: Int, value: Int) = compareImmediate(type, left, value.toLong())
+
+    fun compareImmediate(type: IRDataType, left: Int, value: Long) =
         IRInstruction(
             Opcode.CMPI, type,
             srcA = operandFor(Opcode.CMPI, type, InstructionSlot.SRC_A, left),
-            immediate = ImmediateOperand.Integer(value, type)
+            immediate = integerImmediate(value, type)
         )
 
     /** DIVMODR / SDIVMODR: division with quotient and remainder in two registers */
@@ -270,7 +286,7 @@ object IRInstructions {
             opcode, type,
             dest = operandFor(opcode, type, InstructionSlot.DEST, quotient),
             destB = operandFor(opcode, type, InstructionSlot.DEST_B, remainder),
-            immediate = ImmediateOperand.Integer(value, type)
+            immediate = integerImmediate(value.toLong(), type)
         )
 
     /** CONCAT: combine two registers into a wider one */
@@ -323,10 +339,13 @@ object IRInstructions {
 
     /** a comparison branch against an immediate value (BGT, BLE, ...) */
     fun branchImmediate(opcode: Opcode, type: IRDataType, left: Int, value: Int, target: CodeReference) =
+        branchImmediate(opcode, type, left, value.toLong(), target)
+
+    fun branchImmediate(opcode: Opcode, type: IRDataType, left: Int, value: Long, target: CodeReference) =
         IRInstruction(
             opcode, type,
             srcA = operandFor(opcode, type, InstructionSlot.SRC_A, left),
-            immediate = ImmediateOperand.Integer(value, type),
+            immediate = integerImmediate(value, type),
             target = target
         )
 
@@ -342,8 +361,10 @@ object IRInstructions {
     fun returnRegister(type: IRDataType, source: Int) =
         IRInstruction(Opcode.RETURNR, type, srcA = operandFor(Opcode.RETURNR, type, InstructionSlot.SRC_A, source))
 
-    fun returnImmediate(type: IRDataType, value: Int) =
-        IRInstruction(Opcode.RETURNI, type, immediate = ImmediateOperand.Integer(value, type))
+    fun returnImmediate(type: IRDataType, value: Int) = returnImmediate(type, value.toLong())
+
+    fun returnImmediate(type: IRDataType, value: Long) =
+        IRInstruction(Opcode.RETURNI, type, immediate = integerImmediate(value, type))
 
     fun returnImmediateFloat(value: Double) =
         IRInstruction(Opcode.RETURNI, IRDataType.FLOAT, immediate = ImmediateOperand.FloatValue(value))
@@ -439,6 +460,10 @@ fun IRInstruction.requireImmediate(): ImmediateOperand =
 fun IRInstruction.requireImmediateInt(): Int =
     (immediate as? ImmediateOperand.Integer)?.value
         ?: throw IllegalArgumentException("$opcode: missing integer immediate operand")
+
+fun IRInstruction.requireImmediateQuad(): Long =
+    (immediate as? ImmediateOperand.QuadValue)?.value
+        ?: throw IllegalArgumentException("$opcode: missing quad immediate operand")
 
 fun IRInstruction.requireImmediateFloat(): Double =
     (immediate as? ImmediateOperand.FloatValue)?.value

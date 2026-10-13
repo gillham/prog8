@@ -28,6 +28,11 @@ internal class AstChecker(private val program: Program,
             errors.err("64-bit integer types (quad/uquad) are not supported on target ${options.compTarget.name}", position)
     }
 
+    private fun checkQuadBuiltin(functionName: String?, position: Position) {
+        if(functionName=="peekq" || functionName=="pokeq")
+            checkQuadSupported(DataType.QUAD, position)
+    }
+
     override fun visit(program: Program) {
         require(program === this.program)
         // there must be a single 'main' block with a 'start' subroutine for the program entry point.
@@ -2080,6 +2085,7 @@ internal class AstChecker(private val program: Program,
             checkFunctionCall(targetStatement, functionCallExpr.args, functionCallExpr.position)
 
         val builtinFunctionName = functionCallExpr.target.nameInSource.singleOrNull()
+        checkQuadBuiltin(builtinFunctionName, functionCallExpr.position)
 
         // warn about sgn(unsigned) this is likely a mistake
         if(builtinFunctionName=="sgn") {
@@ -2127,6 +2133,7 @@ internal class AstChecker(private val program: Program,
     }
 
     override fun visit(functionCallStatement: FunctionCallStatement) {
+        checkQuadBuiltin(functionCallStatement.target.nameInSource.singleOrNull(), functionCallStatement.position)
         if(functionCallStatement.isMemoryCall || functionCallStatement.isMemoryRefCall) {
             errors.err("memory() function call should have been desugared into dedicated AST nodes", functionCallStatement.position)
         }

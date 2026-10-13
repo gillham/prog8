@@ -2012,5 +2012,44 @@ main {
         }
     }
 
+    test("xor-assign to an element of a multi-byte array with a variable index") {
+        val src = """
+main {
+    long[4] @shared values = [100, 200, 300, 400]
+
+    sub start() {
+        ubyte @shared i = 2
+        values[i] ^= 1
+    }
+}"""
+        val result = compileText(VMTarget(), false, src, outputDir, writeAssembly = true)!!
+        val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        val irProgram = IRFileReader().read(virtfile)
+        val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+        VmRunner().runAndTestProgram(virtfile.readText(), false) { vm ->
+            val values = allocations["main.values"]!!
+            (0u..3u).map { vm.memory.getSL(values + it*4u) } shouldBe listOf(100, 200, 301, 400)
+        }
+    }
+
+    test("divide-assign through a pointer to a signed value divides signed") {
+        val src = """
+main {
+    word @shared value = -100
+
+    sub start() {
+        ^^word ptr = &value
+        ptr^^ /= 7
+    }
+}"""
+        val result = compileText(VMTarget(), false, src, outputDir, writeAssembly = true)!!
+        val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        val irProgram = IRFileReader().read(virtfile)
+        val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+        VmRunner().runAndTestProgram(virtfile.readText(), false) { vm ->
+            vm.memory.getSW(allocations["main.value"]!!) shouldBe (-14).toShort()
+        }
+    }
+
 
 })

@@ -442,7 +442,8 @@ class PtConstant(
     type: DataType,
     val value: Double?,                 // either a constant number...
     val memorySlab: StMemorySlab?,     // .. or a memory() allocation
-    position: Position
+    position: Position,
+    val quadBits: Long? = null          // all 64 bits of a quad or uquad value, because its Double is only approximate
 ) : PtExpression(type, position), IPtVariable {
 
     companion object {

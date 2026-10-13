@@ -183,6 +183,26 @@ class TestStructuredOperands: FunSpec({
         (mapped.requireMemory() as MemoryReference.Indexed).scale shouldBe 3
     }
 
+    test("quad immediates hold all 64 bits") {
+        shouldThrow<IllegalArgumentException> { ImmediateOperand.Integer(1, IRDataType.QUAD) }
+        ImmediateOperand.QuadValue(Long.MIN_VALUE).type shouldBe IRDataType.QUAD
+        IRInstructions.load(IRDataType.QUAD, 1, Long.MIN_VALUE).immediate shouldBe ImmediateOperand.QuadValue(Long.MIN_VALUE)
+        IRInstructions.load(IRDataType.QUAD, 1, 7).immediate shouldBe ImmediateOperand.QuadValue(7)
+        IRInstructions.binaryImmediate(Opcode.ADD, IRDataType.QUAD, 1, 5).immediate shouldBe ImmediateOperand.QuadValue(5)
+        IRInstructions.compareImmediate(IRDataType.QUAD, 1, 0x123456789L).immediate shouldBe ImmediateOperand.QuadValue(0x123456789L)
+        IRInstructions.storeImmediate(IRDataType.QUAD, -2L, IRMemory.direct("main.q")).immediate shouldBe ImmediateOperand.QuadValue(-2)
+        IRInstructions.returnImmediate(IRDataType.QUAD, -3L).immediate shouldBe ImmediateOperand.QuadValue(-3)
+        IRInstructions.compareImmediate(IRDataType.LONG, 1, 0xffffffffL).immediate shouldBe ImmediateOperand.Integer(-1, IRDataType.LONG)
+        IRInstructions.load(IRDataType.QUAD, 1, -2L).requireImmediateQuad() shouldBe -2L
+        ImmediateOperand.QuadValue(5).integerValue shouldBe null
+        shouldThrow<IllegalArgumentException> { IRInstructions.load(IRDataType.QUAD, 1, 7).requireImmediateInt() }
+        shouldThrow<IllegalArgumentException> {
+            IRInstruction(Opcode.ADD, IRDataType.LONG,
+                dest = IRInstructions.operandFor(Opcode.ADD, IRDataType.LONG, InstructionSlot.DEST, 1),
+                immediate = ImmediateOperand.QuadValue(1))
+        }
+    }
+
     test("destination register may also be a source register, the IR is not SSA") {
         // registers are freely reused: addr r1,r1 doubles r1 in place
         val add = IRInstructions.binary(Opcode.ADDR, IRDataType.BYTE, destination = 1, source = 1)

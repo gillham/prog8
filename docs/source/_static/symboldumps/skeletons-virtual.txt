@@ -34,6 +34,7 @@ peekbool  (uword|long|pointer address) -> bool
 peekf  (uword|long|pointer address) -> float
 peekl  (uword|long|pointer address) -> long
 peekp  (pointer|uword|long address) -> pointer
+peekq  (uword|long|pointer address) -> quad
 peekw  (uword|long|pointer address) -> uword
 poke  (uword|long|pointer address, ubyte|byte value)
 pokebool  (uword|long|pointer address, bool value)
@@ -42,6 +43,7 @@ pokef  (uword|long|pointer address, float value)
 pokel  (uword|long|pointer address, long value)
 pokemon  (uword|long|pointer address, ubyte value) -> ubyte
 pokep  (pointer|uword|long address, pointer value)
+pokeq  (uword|long|pointer address, quad|uquad value)
 pokew  (uword|long|pointer address, uword|word value)
 pop  () -> ubyte
 popf  () -> float

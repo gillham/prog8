@@ -17,7 +17,7 @@ private const val StMemorySlabBlockName = "prog8_slabs"
 private object IRStSymbolicReferenceXml {
     fun formatForArray(ref: IRStSymbolicReference, floats: Boolean): String = when(ref) {
         is IRStSymbolicReference.BoolValue -> if(ref.value) "1" else "0"
-        is IRStSymbolicReference.Numeric -> if(floats) ref.value.toString() else ref.value.toInt().toHex()
+        is IRStSymbolicReference.Numeric -> if(ref.quadBits!=null) quadValueText(ref.quadBits) else if(floats) ref.value.toString() else ref.value.toInt().toHex()
         is IRStSymbolicReference.Symbol -> "@${ref.name}"
     }
 
@@ -35,7 +35,7 @@ private object IRStSymbolicReferenceXml {
 
     fun formatForStructField(ref: IRStSymbolicReference, dt: DataType): String = when(ref) {
         is IRStSymbolicReference.BoolValue -> if(ref.value) "1" else "0"
-        is IRStSymbolicReference.Numeric -> if(dt.isFloat) ref.value.toString() else ref.value.toInt().toHex()
+        is IRStSymbolicReference.Numeric -> if(ref.quadBits!=null) quadValueText(ref.quadBits) else if(dt.isFloat) ref.value.toString() else ref.value.toInt().toHex()
         is IRStSymbolicReference.Symbol -> "@${ref.name}"
     }
 }
@@ -424,7 +424,9 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
             dt.isInteger || dt.isPointer -> {
                 val num = (initValue as? IRVariableInitializer.Numeric)?.value
                 if (num != null) {
-                    if (dt.base == BaseDataType.LONG)
+                    if (dt.isQuad)
+                        quadValueText(initValue.quadBits ?: quadBitsOf(dt, num))
+                    else if (dt.base == BaseDataType.LONG)
                         num.toLong().toHex()
                     else
                         num.toInt().toHex()
@@ -535,7 +537,9 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
             dt.isFloat -> constant.value?.toString() ?: ""
             dt.isInteger || dt.isPointer -> {
                 if (constant.value != null) {
-                    if (dt.base == BaseDataType.LONG)
+                    if (dt.isQuad)
+                        quadValueText(constant.quadBits ?: quadBitsOf(dt, constant.value))
+                    else if (dt.base == BaseDataType.LONG)
                         constant.value.toLong().toHex()
                     else
                         constant.value.toInt().toHex()
@@ -549,6 +553,8 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
         }
         emitLine("${constant.typeString} ${constant.name}=$value" + if(constant.noPrefix) " noprefix" else "")
     }
+
+    private fun quadBitsOf(dt: DataType, number: Double): Long = if(dt.isUnsignedQuad) number.toULong().toLong() else number.toLong()
 
     private fun writeMemoryMappedVariables() {
         xml.writeStartElement("MEMORYMAPPED")

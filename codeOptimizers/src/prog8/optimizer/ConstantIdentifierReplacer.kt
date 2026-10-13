@@ -455,10 +455,12 @@ internal class ConstantIdentifierReplacer(
             cval.type.isNumericOrBool -> {
                 if(parent is AddressOf)
                     return noModifications      // cannot replace the identifier INSIDE the addr-of here, let's do it later.
+                val literal = if(cval.type.isQuad) NumericLiteral.fromQuadBits(cval.type, cval.integerBits, identifier.position)
+                    else NumericLiteral(cval.type, cval.number, identifier.position)
                 return listOf(
                     AstReplaceNode(
                         identifier,
-                        NumericLiteral(cval.type, cval.number, identifier.position),
+                        literal,
                         identifier.parent
                     )
                 )

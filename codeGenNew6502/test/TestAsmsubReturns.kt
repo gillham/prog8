@@ -55,6 +55,7 @@ class TestAsmsubReturns : FunSpec({
                 IRDataType.POINTER -> DataType.forDt(BaseDataType.POINTER)
                 IRDataType.LONG -> DataType.forDt(BaseDataType.LONG)
                 IRDataType.FLOAT -> DataType.forDt(BaseDataType.FLOAT)
+                IRDataType.QUAD -> DataType.forDt(BaseDataType.QUAD)
                 null -> DataType.forDt(BaseDataType.BOOL)
             }
             IRAsmSubroutine.IRAsmParam(regOrFlag, dt)

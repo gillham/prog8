@@ -17,6 +17,7 @@ internal class LlvmTypeMapper(private val st: IRSymbolTable) {
         IRDataType.LONG -> LlvmType.I32
         IRDataType.FLOAT -> LlvmType.Double
         IRDataType.POINTER -> LlvmType.Ptr
+        IRDataType.QUAD -> LlvmType.I64
     }
 
     fun map(type: BaseDataType): LlvmType = when (type) {

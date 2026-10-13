@@ -149,6 +149,44 @@ class TestIRTextCodec: FunSpec({
         roundtrip("sqrt.l r1.w,r2.l")
     }
 
+    test("quad registers, immediates and conversions") {
+        roundtrip($$"load.q r1.q,#$123456789abcdef0.q")
+        roundtrip($$"load.q r1.q,#$ffffffffffffffff.q")
+        roundtrip("load.q r1.q,#5.q")
+        roundtrip($$"cmpi.q r1.q,#$8000000000000000.q")
+        roundtrip("addr.q r1.q,r2.q")
+        roundtrip("divs.q r1.q,#7.q")
+        roundtrip("storem.q r1.q,[main.big]")
+        roundtrip("loadx.q r1.q,[main.quads+r2.w*8]")
+        roundtrip("extq.b r2.q,r1.b")
+        roundtrip("extqs.l r2.q,r1.l")
+        roundtrip("lsigl.q r3.l,r2.q")
+        roundtrip("lsigw.q r3.w,r2.q")
+        roundtrip("lsigb.q r3.b,r2.q")
+        roundtrip("ffromsq.f fr1.f,r1.q")
+        roundtrip("ffromuq.f fr1.f,r1.q")
+        roundtrip("ftosq.f r1.q,fr1.f")
+        roundtrip("ftouq.f r1.q,fr1.f")
+        IRTextCodec.parse("load.q r1.q,#-1.q").immediate shouldBe ImmediateOperand.QuadValue(-1L)
+        IRTextCodec.parse("load.q r1.q,#18446744073709551615.q").immediate shouldBe ImmediateOperand.QuadValue(-1L)
+        IRTextCodec.parse("load.q r1.q,#-9223372036854775808.q").immediate shouldBe ImmediateOperand.QuadValue(Long.MIN_VALUE)
+        shouldThrow<IRParseException> { IRTextCodec.parse($$"load.q r1.q,#$1ffffffffffffffff.q") }
+        shouldThrow<IRParseException> { IRTextCodec.parse("load.l r1.l,#5.q") }
+    }
+
+    test("exact quad value text") {
+        quadValueText(5) shouldBe "5"
+        quadValueText(-1) shouldBe $$"$ffffffffffffffff"
+        quadValueText(Long.MIN_VALUE) shouldBe $$"$8000000000000000"
+        parseIRQuadValue($$"$ffffffffffffffff") shouldBe -1L
+        parseIRQuadValue($$"-$8000000000000000") shouldBe Long.MIN_VALUE
+        parseIRQuadValue("-9223372036854775808") shouldBe Long.MIN_VALUE
+        parseIRQuadValue("18446744073709551615") shouldBe -1L
+        parseIRQuadValue("%101") shouldBe 5L
+        shouldThrow<IRParseException> { parseIRQuadValue("18446744073709551616") }
+        shouldThrow<IRParseException> { parseIRQuadValue("1.5") }
+    }
+
     test("parse rejects wrong operand kinds") {
         shouldThrow<IRParseException> { IRTextCodec.parse("load.w r1.w") }               // missing immediate
         shouldThrow<IRParseException> { IRTextCodec.parse("load.w r1.w,#1.w,#2.w") }     // too many operands

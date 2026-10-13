@@ -353,9 +353,9 @@ class IRProgram(val name: String,
                     val existingType = regsTypes[reg]
                     if (existingType!=null) {
                         if (existingType != type) {
-                            // POINTER is compatible with WORD or LONG (size depends on target)
-                            val compatible = (existingType==IRDataType.POINTER && type in setOf(IRDataType.WORD, IRDataType.LONG)) ||
-                                    (type==IRDataType.POINTER && existingType in setOf(IRDataType.WORD, IRDataType.LONG))
+                            // POINTER is compatible with WORD, LONG or QUAD (size depends on target)
+                            val compatible = (existingType==IRDataType.POINTER && type in setOf(IRDataType.WORD, IRDataType.LONG, IRDataType.QUAD)) ||
+                                    (type==IRDataType.POINTER && existingType in setOf(IRDataType.WORD, IRDataType.LONG, IRDataType.QUAD))
                             if(!compatible)
                                 throw IllegalArgumentException("register $reg given multiple types! $existingType and $type  ${this.name}<--${child.label ?: child}")
                         }
@@ -833,9 +833,9 @@ class RegistersUsed(
 //            if(allowedType==null)
 //                throw IllegalArgumentException("Reg type mismatch for register $reg type $type: no type known.  CodeChunk=$chunk label ${chunk?.label}")
             if(allowedType!=null && allowedType!=type) {
-                // POINTER is compatible with WORD or LONG (size depends on target)
-                val compatible = (allowedType==IRDataType.POINTER && type in setOf(IRDataType.WORD, IRDataType.LONG)) ||
-                        (type==IRDataType.POINTER && allowedType in setOf(IRDataType.WORD, IRDataType.LONG))
+                // POINTER is compatible with WORD, LONG or QUAD (size depends on target)
+                val compatible = (allowedType==IRDataType.POINTER && type in setOf(IRDataType.WORD, IRDataType.LONG, IRDataType.QUAD)) ||
+                        (type==IRDataType.POINTER && allowedType in setOf(IRDataType.WORD, IRDataType.LONG, IRDataType.QUAD))
                 if(!compatible)
                     throw IllegalArgumentException("Reg type mismatch for register $reg type $type: expected ${allowed[reg]}. CodeChunk=$chunk label ${chunk?.label}")
             }

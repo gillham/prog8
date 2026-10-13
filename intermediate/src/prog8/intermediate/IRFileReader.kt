@@ -261,6 +261,10 @@ class IRFileReader {
         } else {
             null
         }
+        if(memorySlabName == null && dt.isQuad) {
+            val bits = parseIRQuadValue(valueStr)
+            return IRStConstant(name, dt, quadBitsToDouble(bits, dt.isUnsignedQuad), null, noPrefix, bits)
+        }
         val value: Double? = if(memorySlabName != null) null else parseIRValue(valueStr)
         return IRStConstant(name, dt, value, memorySlabName, noPrefix)
     }
@@ -300,6 +304,10 @@ class IRFileReader {
 
     private fun parseInitValue(dt: DataType, value: String, arraysize: UInt?): IRVariableInitializer? {
         return when {
+            dt.isQuad -> {
+                val bits = parseIRQuadValue(value)
+                IRVariableInitializer.Numeric(quadBitsToDouble(bits, dt.isUnsignedQuad), bits)
+            }
             dt.isNumericOrBool || dt.isPointer -> IRVariableInitializer.Numeric(parseIRValue(value))
             dt.isBoolArray -> {
                 val elements = value.split(',').map {
@@ -311,6 +319,10 @@ class IRFileReader {
                 val elements = value.split(',').map {
                     if(it.startsWith('@'))
                         IRStSymbolicReference.Symbol(it.drop(1))
+                    else if(dt.isQuadArray) {
+                        val bits = parseIRQuadValue(it)
+                        IRStSymbolicReference.Numeric(quadBitsToDouble(bits, dt.isUnsignedQuadArray), bits)
+                    }
                     else
                         IRStSymbolicReference.Numeric(parseIRValue(it))
                 }
@@ -403,6 +415,10 @@ class IRFileReader {
                 dt.isBool -> IRStSymbolicReference.BoolValue(parseIRValue(value) != 0.0)
                 value.startsWith('@') -> IRStSymbolicReference.Symbol(value.drop(1))
                 dt.isPointer -> IRStSymbolicReference.Numeric(parseIRValue(value))
+                dt.isQuad -> {
+                    val bits = parseIRQuadValue(value)
+                    IRStSymbolicReference.Numeric(quadBitsToDouble(bits, dt.isUnsignedQuad), bits)
+                }
                 dt.isNumeric -> IRStSymbolicReference.Numeric(parseIRValue(value))
                 else -> throw IRParseException("unexpected field datatype $dt")
             }
@@ -714,6 +730,8 @@ class IRFileReader {
                     "uword" -> DataType.arrayOfPointersTo(BaseDataType.UWORD)
                     "float" -> DataType.arrayOfPointersTo(BaseDataType.FLOAT)
                     "long" -> DataType.arrayOfPointersTo(BaseDataType.LONG)
+                    "quad" -> DataType.arrayOfPointersTo(BaseDataType.QUAD)
+                    "uquad" -> DataType.arrayOfPointersTo(BaseDataType.UQUAD)
                     else -> DataType.arrayOfPointersTo(IRSubtypePlaceholder(pointee))
                 }
             }
@@ -725,6 +743,8 @@ class IRFileReader {
                 "uword" -> DataType.arrayFor(BaseDataType.UWORD, options.compTarget)
                 "float" -> DataType.arrayFor(BaseDataType.FLOAT, options.compTarget)
                 "long" -> DataType.arrayFor(BaseDataType.LONG, options.compTarget)
+                "quad" -> DataType.arrayFor(BaseDataType.QUAD, options.compTarget)
+                "uquad" -> DataType.arrayFor(BaseDataType.UQUAD, options.compTarget)
                 else -> {
                     DataType.arrayOfStructs(IRSubtypePlaceholder(type))
                 }
@@ -740,6 +760,8 @@ class IRFileReader {
                     "uword" -> DataType.pointer(BaseDataType.UWORD)
                     "float" -> DataType.pointer(BaseDataType.FLOAT)
                     "long" -> DataType.pointer(BaseDataType.LONG)
+                    "quad" -> DataType.pointer(BaseDataType.QUAD)
+                    "uquad" -> DataType.pointer(BaseDataType.UQUAD)
                     "str" -> error("'str' should not occur anymore in IR. Should be uword or ulong or ^^ubyte")
                     else -> DataType.pointer(IRSubtypePlaceholder(type.drop(1)))
                 }
@@ -752,6 +774,8 @@ class IRFileReader {
                 "uword" -> DataType.UWORD
                 "float" -> DataType.FLOAT
                 "long" -> DataType.LONG
+                "quad" -> DataType.QUAD
+                "uquad" -> DataType.UQUAD
                 "pointer" -> DataType.pointer(BaseDataType.UBYTE)  // pointer-sized, resolved at runtime
                 "str" -> error("'str' should not occur anymore in IR. Should be uword or ulong or ^^ubyte")
                 else -> {

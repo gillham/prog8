@@ -817,11 +817,11 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
             VarDeclType.CONST -> {
                 val cv = srcVar.value?.constValue(program)
                 if (cv != null) {
-                    return PtConstant(srcVar.name, srcVar.datatype, cv.number, null, srcVar.position)
+                    return PtConstant(srcVar.name, srcVar.datatype, cv.number, null, srcVar.position, if(srcVar.datatype.isQuad) cv.integerBits else null)
                 }
                 when (val constVal = srcVar.value) {
                     is NumericLiteral -> {
-                        return PtConstant(srcVar.name, srcVar.datatype, constVal.number, null, srcVar.position)
+                        return PtConstant(srcVar.name, srcVar.datatype, constVal.number, null, srcVar.position, if(srcVar.datatype.isQuad) constVal.integerBits else null)
                     }
                     is AddressOf -> {
                         val numericValue = constVal.constValue(program)?.number
@@ -1245,6 +1245,8 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
     private fun transform(number: NumericLiteral): PtExpression {
         return if(number.type==BaseDataType.BOOL)
             PtBool(number.asBooleanValue, number.position)
+        else if(number.type.isQuad)
+            PtNumber.fromQuadBits(number.type, number.integerBits, number.position)
         else
             PtNumber(number.type, number.number, number.position)
     }

@@ -42,6 +42,7 @@ internal fun AsmGen.translateLoadStore(insn: IRInstruction) {
         Opcode.LOAD -> {
             val dst = insn.requireIntDest().intNumber
             when (val value = insn.requireImmediate()) {
+                is ImmediateOperand.QuadValue -> quadNotSupported()
                 is ImmediateOperand.Integer -> loadImmediate(dst, value.value, type)
                 is ImmediateOperand.SymbolAddress -> loadSymbolAddress(dst, value.symbol, value.offset.takeIf { it != 0 }, type)
                 is ImmediateOperand.FloatValue -> error("LOAD.$type has a float immediate")
@@ -143,6 +144,7 @@ internal fun AsmGen.translateLoadStore(insn: IRInstruction) {
             emitLine("sta  $$23")
             emitLine("ldy  #0")
             when (type) {
+                IRDataType.QUAD -> quadNotSupported()
                 IRDataType.BYTE -> {
                     emitLine("lda  ($$22),y")
                     emitLine("sta  ${regAddr(dst)}")
@@ -199,6 +201,7 @@ internal fun AsmGen.translateLoadStore(insn: IRInstruction) {
             emitLine("sta  $$23")
             emitLine("ldy  #0")
             when (type) {
+                IRDataType.QUAD -> quadNotSupported()
                 IRDataType.BYTE -> {
                     emitLine("lda  ${regAddr(src)}")
                     emitLine("sta  ($$22),y")
@@ -354,6 +357,7 @@ private fun AsmGen.translateFloatLoadStore(insn: IRInstruction) {
         Opcode.LOAD -> {
             val fpReg = insn.requireFloatDest().floatNumber
             when (val value = insn.requireImmediate()) {
+                is ImmediateOperand.QuadValue -> quadNotSupported()
                 is ImmediateOperand.FloatValue -> {
                     val constLabel = getFloatConstLabel(value.value)
                     emitLine("lda  #<$constLabel")
@@ -738,6 +742,7 @@ internal fun AsmGen.loadSymbolAddress(reg: Int, sym: String, offset: Int?, type:
 
 internal fun AsmGen.loadImmediate(reg: Int, value: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  #${value and 0xff}")
             emitLine("sta  ${regAddrLo(reg)}")
@@ -766,6 +771,7 @@ internal fun AsmGen.loadImmediate(reg: Int, value: Int, type: IRDataType) {
 
 internal fun AsmGen.loadFromMemory(reg: Int, sourceAddress: String, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  $sourceAddress")
             emitLine("sta  ${regAddrLo(reg)}")
@@ -792,6 +798,7 @@ internal fun AsmGen.loadFromMemory(reg: Int, sourceAddress: String, type: IRData
 
 internal fun AsmGen.copyRegister(dstReg: Int, srcReg: Int, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(srcReg)}")
             emitLine("sta  ${regAddrLo(dstReg)}")
@@ -811,6 +818,7 @@ internal fun AsmGen.copyRegister(dstReg: Int, srcReg: Int, type: IRDataType) {
 
 internal fun AsmGen.storeImmediateToMemory(value: Int, target: String, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  #${value and 0xff}")
             emitLine("sta  $target")
@@ -839,6 +847,7 @@ internal fun AsmGen.storeImmediateToMemory(value: Int, target: String, type: IRD
 
 internal fun AsmGen.storeToMemory(reg: Int, target: String, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(reg)}")
             emitLine("sta  $target")
@@ -877,6 +886,7 @@ internal fun AsmGen.indexedLoad(dstReg: Int, idxReg: Int, baseAddress: String, t
     emitLine("adc  ${ptr}+1")
     emitLine("sta  ${ptr}+1")
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("ldy  #0")
             emitLine("lda  ($ptr),y")
@@ -914,6 +924,7 @@ internal fun AsmGen.indirectLoad(dstReg: Int, baseReg: Int, offset: Int, type: I
     emitLine("adc  #>${offset and 0xffff}")
     emitLine("sta  ${ptr}+1")
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("ldy  #0")
             emitLine("lda  ($ptr),y")
@@ -978,6 +989,7 @@ internal fun AsmGen.storeExchange(valueReg: Int, indexReg: Int, target: String, 
 
 internal fun AsmGen.zeroMemory(target: String, type: IRDataType) {
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitStoreZero(target)
         }
@@ -1007,6 +1019,7 @@ internal fun AsmGen.zeroIndexed(baseReg: Int, offset: Int, type: IRDataType) {
     emitLine("adc  #>${offset and 0xffff}")
     emitLine("sta  ${ptr}+1")
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("ldy  #0")
             emitLine("lda  #0")
@@ -1036,6 +1049,7 @@ internal fun AsmGen.zeroIndexed(baseReg: Int, offset: Int, type: IRDataType) {
 internal fun AsmGen.zeroMemoryIndexed(reg: Int, baseAddress: String, type: IRDataType) {
     emitLine("ldx  ${regAddrLo(reg)}")
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitStoreZero("$baseAddress,x")
         }
@@ -1065,6 +1079,7 @@ internal fun AsmGen.indirectStore(reg: Int, baseReg: Int, offset: Int, type: IRD
     emitLine("adc  #>${offset and 0xffff}")
     emitLine("sta  ${ptr}+1")
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(reg)}")
             emitLine("ldy  #0")

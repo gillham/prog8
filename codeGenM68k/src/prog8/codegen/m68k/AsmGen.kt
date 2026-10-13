@@ -321,6 +321,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
     private data class RegFileLayout(val offsets: Map<Int, Int>, val totalSize: Int)
 
     private fun slotSizeForType(type: IRDataType): Int = when(type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> 1
         IRDataType.WORD -> 2
         IRDataType.LONG -> 4
@@ -401,6 +402,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
     fun loadRegOrZeroExtendToD0(reg: Int, requiredType: IRDataType) {
         val regType = regType(reg)
         fun sizeOf(t: IRDataType) = when(t) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> 1
             IRDataType.WORD -> 2
             IRDataType.LONG, IRDataType.POINTER -> 4
@@ -606,6 +608,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
     // === size suffix helpers ===
 
     fun dtSuffix(type: IRDataType): String = when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> ".b"
         IRDataType.WORD -> ".w"
         IRDataType.LONG -> ".l"
@@ -1100,6 +1103,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         if (insn.opcode != Opcode.STOREZM)
             emitRaw("        ; $insn")
         when (insn.opcode) {
+            Opcode.EXTQ, Opcode.EXTQS, Opcode.LSIGL, Opcode.FFROMSQ, Opcode.FFROMUQ, Opcode.FTOSQ, Opcode.FTOUQ -> quadNotSupported()
             Opcode.NOP -> {}
             Opcode.BREAKPOINT -> emitLine("illegal")
 
@@ -1617,3 +1621,5 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         emitRaw("")
     }
 }
+
+internal fun quadNotSupported(): Nothing = error("64-bit quad values are not supported on m68k targets")

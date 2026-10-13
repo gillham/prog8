@@ -497,7 +497,7 @@ internal object ExpressionOptimizers {
      */
     private fun complexity(e: PtExpression): Int {
         return when {
-            e.asConstInteger() != null -> 0
+            e is PtNumber || e.asConstInteger() != null -> 0
             e is PtIdentifier -> 1
             e is PtTypeCast -> complexity(e.value)
             e is PtAddressOf && !e.isFromArrayElement -> 1

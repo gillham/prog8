@@ -170,6 +170,7 @@ object SysCalls {
     private fun getArgValues(argspec: List<CallArgument>, vm: VirtualMachine): List<Comparable<Nothing>> {
         return argspec.map {
             when(it.source.type) {
+                IRDataType.QUAD -> quadNotSupported()
                 IRDataType.BYTE -> vm.registers.getUB(it.source.registerNumber)
                 IRDataType.WORD -> vm.registers.getUW(it.source.registerNumber)
                 IRDataType.POINTER -> vm.registers.getUL(it.source.registerNumber)
@@ -196,6 +197,7 @@ object SysCalls {
         }
         val dest = requireNotNull(returns.destination) { "syscall result needs a destination register" }
         when(dest.type) {
+            IRDataType.QUAD -> quadNotSupported()
             IRDataType.BYTE -> vm.registers.setUB(dest.registerNumber, vv.toInt().toUByte())
             IRDataType.WORD -> vm.registers.setUW(dest.registerNumber, vv.toInt().toUShort())
             IRDataType.POINTER -> vm.registers.setUL(dest.registerNumber, vv.toUInt())

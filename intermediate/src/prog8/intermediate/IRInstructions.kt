@@ -40,7 +40,7 @@ Intermediate Representation instructions for the IR Virtual machine.
 
 Specs of the virtual machine this will run on:
 Program to execute is not stored in the system memory, it's just a separate list of instructions.
-100K virtual registers, can be used as 8, 16 or 32 bits. r0-r99999
+100K virtual registers, can be used as 8, 16, 32 or 64 bits. r0-r99999
     reserved 99000 - 99099 : WORD registers for syscall arguments and response value(s)
     reserved 99100 - 99199 : BYTE registers for syscall arguments and response value(s)
     reseverd 99200 - 99299 : LONG registers for syscall arguments and response value(s)
@@ -92,7 +92,7 @@ See CpuType.statusBitsOnMultiByteOps for the per-CPU configuration.
 
 Instruction set is mostly a load/store architecture, there are few instructions operating on memory directly.
 
-Value types: integers (.b=byte=8 bits, .w=word=16 bits, .l=long=32 bits), float (.f=64 bits), and pointer (.p=target specific pointer width: 2 bytes on 6502, 4 bytes on m68k and virtual). Omitting it defaults to b if the instruction requires a type.
+Value types: integers (.b=byte=8 bits, .w=word=16 bits, .l=long=32 bits, .q=quad=64 bits), float (.f=64 bits), and pointer (.p=target specific pointer width: 2 bytes on 6502, 4 bytes on m68k and virtual). Omitting it defaults to b if the instruction requires a type.
 There is no distinction between signed and unsigned for many instructions. Instead, a different instruction is used if a distinction should be made (for example div and divs).
 Floating point operations are just 'f' typed regular instructions, however there are a few unique fp conversion instructions.
 
@@ -128,7 +128,7 @@ LOAD/STORE
 The following descriptions use historical positional names solely to describe instruction
 semantics. They are not accepted as IRFORMAT=2 text; use the canonical syntax above.
 
-All have type b or w or l or f.
+All have type b or w or l or q or f.
 
 load        reg1,         value       - load immediate value into register. If you supply a symbol, loads the *address* of the symbol! (variable values are loaded from memory via the loadm instruction)
 loadm       reg1,         address     - load reg1 with value at memory address
@@ -183,7 +183,7 @@ returni            number             - like return, but also returns the immedi
 
 BRANCHING and CONDITIONALS
 --------------------------
-All have type b or w or l except the branches that only check status bits.
+All have type b or w or l or q except the branches that only check status bits.
 
 bstcc                         address   - branch to location if Status bit Carry is clear
 bstcs                         address   - branch to location if Status bit Carry is set
@@ -217,12 +217,14 @@ bgesr       reg1, reg2,       address   - jump to location in program given by l
 
 ARITHMETIC
 ----------
-All have type b or w or l or f. Note: result types are the same as operand types! E.g. byte*byte->byte.
+All have type b or w or l or q or f. Note: result types are the same as operand types! E.g. byte*byte->byte.
 
 exts        reg1, reg2                      - reg1 = signed extension of reg2 (byte to word, or word to long)  (note: unlike M68k, exts.b -> word and exts.w -> long.)
 ext         reg1, reg2                      - reg1 = unsigned extension of reg2 (which in practice just means clearing the MSB / MSW) (note: unlike M68k, ext.b -> word and ext.w -> long. )
 extls       reg1, reg2                      - reg1 = signed extension of reg2 from byte directly to long (single step, no intermediate word register)
 extl        reg1, reg2                      - reg1 = unsigned extension of reg2 from byte directly to long (single step, no intermediate word register)
+extqs       reg1, reg2                      - reg1.q = signed extension of reg2 (byte, word or long) directly to quad
+extq        reg1, reg2                      - reg1.q = unsigned extension of reg2 (byte, word, long or pointer) directly to quad
 inc         reg1                            - reg1 = reg1+1
 incm                           address      - memory at address += 1
 dec         reg1                            - reg1 = reg1-1
@@ -263,12 +265,12 @@ sgn         reg1, reg2                      - reg1.b is the sign of reg2 (or fpr
 cmp         reg1, reg2                      - set processor status bits C, N, Z according to comparison of reg1 with reg2. (semantics taken from 6502/68000 CMP instruction)
 cmpi        reg1,              value        - set processor status bits C, N, Z according to comparison of reg1 with immediate value. (semantics taken from 6502/68000 CMP instruction)
 
-NOTE: because mul/div are constrained (truncated) to remain in 8 or 16 or 32 bits, there is NO NEED for separate signed/unsigned mul and div instructions. The result is identical.
+NOTE: because mul/div are constrained (truncated) to remain in 8 or 16 or 32 or 64 bits, there is NO NEED for separate signed/unsigned mul and div instructions. The result is identical.
 
 
 LOGICAL/BITWISE
 ---------------
-All have type b or w or l.
+All have type b or w or l or q.
 
 andr        reg1, reg2                       - reg1 = reg1 bitwise and reg2
 and         reg1,          value             - reg1 = reg1 bitwise and value
@@ -307,7 +309,7 @@ roxlm                    address             - rotate memory left by 1 bits, usi
 
 SINGLE-BIT MANIPULATIONS
 -------------------------
-All have type b or w or l for the register forms, byte only for memory form.
+All have type b or w or l or q for the register forms, byte only for memory form.
 
 bittst      reg1, bitpos            - test bit at position bitpos in register reg1 (Z=1 if bit clear, Z=0 if bit set)
 bitset      reg1, bitpos            - set bit at position bitpos in register reg1 to 1
@@ -322,11 +324,15 @@ ffromsb      fpreg1, reg1               - fpreg1 = reg1 from signed byte
 ffromuw      fpreg1, reg1               - fpreg1 = reg1 from unsigned word
 ffromsw      fpreg1, reg1               - fpreg1 = reg1 from signed word
 ffromsl      fpreg1, reg1               - fpreg1 = reg1 from signed long
+ffromsq      fpreg1, reg1               - fpreg1 = reg1 from signed quad
+ffromuq      fpreg1, reg1               - fpreg1 = reg1 from unsigned quad
 ftoub        reg1, fpreg1               - reg1 = fpreg1 as unsigned byte
 ftosb        reg1, fpreg1               - reg1 = fpreg1 as signed byte
 ftouw        reg1, fpreg1               - reg1 = fpreg1 as unsigned word
 ftosw        reg1, fpreg1               - reg1 = fpreg1 as signed word
 ftosl        reg1, fpreg1               - reg1 = fpreg1 as signed long
+ftosq        reg1, fpreg1               - reg1 = fpreg1 as signed quad
+ftouq        reg1, fpreg1               - reg1 = fpreg1 as unsigned quad
 fpow         fpreg1, fpreg2             - fpreg1 = fpreg1 to the power of fpreg2
 fabs         fpreg1, fpreg2             - fpreg1 = abs(fpreg2)
 fcomp        reg1, fpreg1, fpreg2       - reg1 = result of comparison of fpreg1 and fpreg2: 0.b=equal, 1.b=fpreg1 is greater, -1.b=fpreg1 is smaller
@@ -351,8 +357,9 @@ sei                                       - set interrupt disable flag
 nop                                       - do nothing
 breakpoint                                - trigger a breakpoint
 align        alignmentvalue               - represents a memory alignment directive
-lsigb [w, l]  reg1, reg2                  - reg1 becomes the least significant byte of the word (or long) in reg2
-lsigw [l]     reg1, reg2                  - reg1 becomes the least significant word of the long in reg2
+lsigb [w, l, q] reg1, reg2                - reg1 becomes the least significant byte of the word (or long, or quad) in reg2
+lsigw [l, q]  reg1, reg2                  - reg1 becomes the least significant word of the long (or quad) in reg2
+lsigl [q]     reg1, reg2                  - reg1 becomes the least significant long of the quad in reg2
 msigb [w, l]  reg1, reg2                  - reg1 becomes the most significant byte of the word (or long) in reg2
 msigw [l]     reg1, reg2                  - reg1 becomes the most significant word of the long in reg2
 bsigb [l]     reg1, reg2                  - reg1 becomes the bank byte of the long in reg2 (bits 16-23)
@@ -462,6 +469,8 @@ enum class Opcode {
     EXTS,
     EXTL,
     EXTLS,
+    EXTQ,
+    EXTQS,
 
     ANDR,
     AND,
@@ -507,11 +516,15 @@ enum class Opcode {
     FFROMUW,
     FFROMSW,
     FFROMSL,
+    FFROMSQ,
+    FFROMUQ,
     FTOUB,
     FTOSB,
     FTOUW,
     FTOSW,
     FTOSL,
+    FTOSQ,
+    FTOUQ,
     FPOW,
     FABS,
     FSIN,
@@ -533,18 +546,20 @@ enum class Opcode {
     POP,
     PUSHST,
     POPST,
-    // Byte/word extraction from larger registers.
+    // Byte/word/long extraction from larger registers.
     // IMPORTANT: the destination register (reg1) has a DIFFERENT data type
-    // than the source register (reg2). reg1 is always BYTE or WORD, while
-    // reg2 is WORD or LONG (determined by the instruction's type field).
+    // than the source register (reg2). reg1 is always BYTE, WORD or LONG, while
+    // reg2 is WORD, LONG or QUAD (determined by the instruction's type field).
     //   LSIGB: least significant byte  (reg1=BYTE, reg2=type from insn)
-    //   LSIGW: least significant word  (reg1=WORD, reg2=LONG)
+    //   LSIGW: least significant word  (reg1=WORD, reg2=type from insn)
+    //   LSIGL: least significant long  (reg1=LONG, reg2=QUAD)
     //   MSIGB: most significant byte   (reg1=BYTE, reg2=type from insn)
     //   MSIGW: most significant word   (reg1=WORD, reg2=LONG)
     //   BSIGB: "bits 16-23" byte of long (reg1=BYTE, reg2=LONG)
     //   MIDB:  "bits 8-15" byte of long (reg1=BYTE, reg2=LONG)
     LSIGB,
     LSIGW,
+    LSIGL,
     MSIGB,
     MSIGW,
     BSIGB,
@@ -680,7 +695,8 @@ enum class IRDataType {
     WORD,
     FLOAT,
     LONG,        // 32 bits integer
-    POINTER      // pointer (size depends on target)
+    POINTER,     // pointer (size depends on target)
+    QUAD         // 64 bits integer
 }
 
 /**
@@ -789,9 +805,9 @@ data class IRInstruction(
             if (existingType == null) {
                 regsTypes[register] = type
             } else if (existingType != type) {
-                // POINTER is compatible with WORD or LONG (size depends on target)
-                val compatible = (existingType == IRDataType.POINTER && type in setOf(IRDataType.WORD, IRDataType.LONG)) ||
-                        (type == IRDataType.POINTER && existingType in setOf(IRDataType.WORD, IRDataType.LONG))
+                // POINTER is compatible with WORD, LONG or QUAD (size depends on target)
+                val compatible = (existingType == IRDataType.POINTER && type in setOf(IRDataType.WORD, IRDataType.LONG, IRDataType.QUAD)) ||
+                        (type == IRDataType.POINTER && existingType in setOf(IRDataType.WORD, IRDataType.LONG, IRDataType.QUAD))
                 if (!compatible)
                     throw IllegalArgumentException("register $register given multiple types! $existingType and $type while processing $this in $chunk")
             }

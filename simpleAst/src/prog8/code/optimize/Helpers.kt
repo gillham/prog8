@@ -62,6 +62,7 @@ internal object Helpers {
             BaseDataType.WORD -> num == -1.0
             BaseDataType.UWORD -> num == 65535.0
             BaseDataType.LONG -> num == -1.0
+            BaseDataType.QUAD, BaseDataType.UQUAD -> expr is PtNumber && expr.type.isQuad && expr.integerBits == -1L
             else -> false
         }
     }

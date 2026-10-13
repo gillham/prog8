@@ -429,8 +429,8 @@ object RegisterPacker {
 
     private fun typesCompatible(t1: IRDataType, t2: IRDataType): Boolean {
         if (t1 == t2) return true
-        return (t1 == IRDataType.POINTER && t2 in setOf(IRDataType.WORD, IRDataType.LONG)) ||
-                (t2 == IRDataType.POINTER && t1 in setOf(IRDataType.WORD, IRDataType.LONG))
+        return (t1 == IRDataType.POINTER && t2 in setOf(IRDataType.WORD, IRDataType.LONG, IRDataType.QUAD)) ||
+                (t2 == IRDataType.POINTER && t1 in setOf(IRDataType.WORD, IRDataType.LONG, IRDataType.QUAD))
     }
 
     private fun conflictsWithRegister(

@@ -63,7 +63,7 @@ class SymbolTableMaker(private val program: PtProgram, private val options: Comp
                     "Constant '${node.name}' must have numeric or bool type at ${node.position}"
                 }
                 if(node.value != null)
-                    StConstant(node.name, node.type, node.value, null, node)
+                    StConstant(node.name, node.type, node.value, null, node, node.quadBits)
                 else if(node.memorySlab != null) {
                     // Handle memory() constant - the value will be resolved to the slab's address
                     StConstant(node.name, node.type, null, node.memorySlab, node)
@@ -107,6 +107,7 @@ class SymbolTableMaker(private val program: PtProgram, private val options: Comp
             }
             is PtVariable -> {
                 val initialNumeric: Double?
+                var initialQuadBits: Long? = null
                 val initialString: StString?
                 val initialArray: StArray?
                 val numElements: UInt?
@@ -134,6 +135,7 @@ class SymbolTableMaker(private val program: PtProgram, private val options: Comp
                             initialArray = null
                             val number = value.number
                             initialNumeric = number
+                            initialQuadBits = value.quadBitsOrNull
                             numElements = node.arraySize
                         }
                     }
@@ -148,7 +150,7 @@ class SymbolTableMaker(private val program: PtProgram, private val options: Comp
 //                }
                 val stVar = StStaticVariable(node.name, node.type, initialString, initialArray, numElements, node.zeropage, node.align, node.dirty, node, node.shared)
                 if(initialNumeric!=null)
-                    stVar.setOnetimeInitNumeric(initialNumeric)
+                    stVar.setOnetimeInitNumeric(initialNumeric, initialQuadBits)
                 stVar
             }
             is PtFunctionCall if node.builtin && node.name=="prog8_lib_structalloc" -> {
@@ -182,7 +184,7 @@ class SymbolTableMaker(private val program: PtProgram, private val options: Comp
             when(it) {
                 is PtAddressOf -> StArrayElement.AddressOf(it.identifier!!.name)
                 is PtBool -> StArrayElement.BoolValue(it.value)
-                is PtNumber -> StArrayElement.Number(it.number)
+                is PtNumber -> StArrayElement.Number(it.number, it.quadBitsOrNull)
                 is PtConstant -> {
                     val slab = it.memorySlab
                         ?: throw InternalCompilerException(
@@ -230,7 +232,7 @@ class SymbolTableMaker(private val program: PtProgram, private val options: Comp
                         else -> StArrayElement.AddressOf(it.identifier!!.name)
                     }
                 }
-                is PtNumber -> StArrayElement.Number(it.number)
+                is PtNumber -> StArrayElement.Number(it.number, it.quadBitsOrNull)
                 is PtBool -> StArrayElement.BoolValue(it.value)
                 is PtConstant -> {
                     val slab = it.memorySlab

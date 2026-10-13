@@ -296,7 +296,12 @@ internal class StatementReorderer(
                             else -> throw IllegalStateException("unexpected operator $operator")
                         }
                         val type = assignment.value.inferType(program).getOrUndef()
-                        val totalNumber = NumericLiteral(type.base, total, assignment.position)
+                        val totalNumber = if(type.isQuad) {
+                            // a Double total would lose the low bits of a large quad, so wrap around in 64 bits instead
+                            val constants = allAssignments.mapNotNull { (it.value as BinaryExpression).right.constValue(program)?.integerBits }
+                            val bits = if(operator=="*") constants.fold(1L) { acc, c -> acc * c } else constants.sum()
+                            NumericLiteral.fromQuadBits(type.base, bits, assignment.position)
+                        } else NumericLiteral(type.base, total, assignment.position)
                         (assignment.value as BinaryExpression).right = totalNumber
                         totalNumber.parent = assignment.value
                         return allAssignments.drop(1).map {

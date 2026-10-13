@@ -20,4 +20,5 @@ enum class IMSyscall(val number: Int) {
     MEMCOPY(0x1019),
     SPLIT_WORDARRAY_CONTAINS(0x101a),
     LONGARRAY_CONTAINS(0x101b),
+    QUADARRAY_CONTAINS(0x101c),
 }

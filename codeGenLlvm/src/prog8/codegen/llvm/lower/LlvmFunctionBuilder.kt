@@ -263,6 +263,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     /** The immediate operand of [ins] as a value of [type]. */
     fun immediate(ins: IRInstruction, type: LlvmType): LlvmValue = when (val immediate = ins.requireImmediate()) {
         is ImmediateOperand.Integer -> integerConstant(immediate.value.toLong(), type)
+        is ImmediateOperand.QuadValue -> integerConstant(immediate.value, type)
         is ImmediateOperand.FloatValue -> LlvmValue.FloatConstant(immediate.value)
         is ImmediateOperand.SymbolAddress -> convert(symbolAddress(immediate.symbol, immediate.offset), type)
     }
@@ -441,6 +442,8 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
             Opcode.ROR, Opcode.RORM, Opcode.ROXR, Opcode.ROXRM, Opcode.ROL, Opcode.ROLM, Opcode.ROXL, Opcode.ROXLM,
             Opcode.BITSET, Opcode.BITCLR, Opcode.BITTOG,
             Opcode.LSIGB, Opcode.LSIGW, Opcode.MSIGB, Opcode.MSIGW, Opcode.BSIGB, Opcode.MIDB, Opcode.CONCAT -> lowerBitwise(ins)
+            Opcode.EXTQ, Opcode.EXTQS, Opcode.LSIGL, Opcode.FFROMSQ, Opcode.FFROMUQ, Opcode.FTOSQ, Opcode.FTOUQ ->
+                throw IllegalArgumentException("${ins.opcode} is not supported on the llvm64 target yet")
         }
     }
 

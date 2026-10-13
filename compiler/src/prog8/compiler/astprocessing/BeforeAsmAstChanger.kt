@@ -126,7 +126,7 @@ internal class BeforeAsmAstChanger(val program: Program, private val options: Co
         if(expr.operator==".")
             return noModifications
         val rightNum = expr.right.constValue(program)
-        if(rightNum!=null && rightNum.type.isInteger && rightNum.number!=0.0) {
+        if(rightNum!=null && rightNum.type.isInteger && !rightNum.type.isQuad && rightNum.number!=0.0) {
             // the largest value that is still representable in the literal's own type: N+1 has to fit
             val maximum = when(rightNum.type) {
                 BaseDataType.UBYTE -> 255

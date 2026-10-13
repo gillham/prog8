@@ -230,7 +230,8 @@ internal object BooleanOptimizers {
                             BaseDataType.LONG -> -1.0
                             else -> -1.0
                         }
-                        val allOnes = PtNumber(node.type.base, allOnesValue, node.position)
+                        val allOnes = if(node.type.isQuad) PtNumber.fromQuadBits(node.type.base, -1L, node.position)
+                            else PtNumber(node.type.base, allOnesValue, node.position)
                         val index = node.parent.children.indexOf(node)
                         node.parent.setChild(index, allOnes)
                         allOnes.parent = node.parent

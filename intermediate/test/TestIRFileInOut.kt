@@ -691,4 +691,58 @@ return
             file.deleteExisting()
         }
     }
+
+    test("quad variables, arrays, constants and struct fields round-trip exactly") {
+        val target = VMTarget()
+        val options = CompilationOptions.builder(target)
+            .output(OutputType.RAW)
+            .zeropage(ZeropageType.DONTUSE)
+            .noSysInit(true)
+            .compilerVersion("99.99")
+            .loadAddress(target.PROGRAM_LOAD_ADDRESS)
+            .memtopAddress(0xffffu)
+            .outputDir(Path(""))
+            .build()
+        val program = IRProgram("unittest-quads", IRSymbolTable(), options, target)
+        // neither value survives a trip through a Double
+        val big = 0x7fffffffffffffffL
+        val ubig = -2L
+        fun quad(bits: Long) = IRVariableInitializer.Numeric(bits.toDouble(), bits)
+        fun uquad(bits: Long) = IRVariableInitializer.Numeric(bits.toULong().toDouble(), bits)
+        program.st.add(IRStStaticVariable("main.q", DataType.QUAD, quad(big), null, ZeropageWish.DONTCARE, 0u, false))
+        program.st.add(IRStStaticVariable("main.u", DataType.UQUAD, uquad(ubig), null, ZeropageWish.DONTCARE, 0u, false))
+        program.st.add(IRStStaticVariable("main.qa", DataType.arrayFor(BaseDataType.QUAD, target),
+            IRVariableInitializer.Array(listOf(IRStSymbolicReference.Numeric(-1.0, -1L), IRStSymbolicReference.Numeric(big.toDouble(), big))),
+            2u, ZeropageWish.DONTCARE, 0u, false))
+        program.st.add(IRStConstant("main.CU", DataType.UQUAD, ubig.toULong().toDouble(), quadBits = ubig))
+        program.st.add(IRStStructDef("main.Stamp", listOf(
+            IRStStructField(DataType.QUAD, "seconds"),
+            IRStStructField(DataType.UQUAD, "mask")
+        ), 16u))
+        program.st.add(IRStStructInstance("prog8_struct_instances.stamp", "main.Stamp", listOf(
+            IRStructInitValue(BaseDataType.QUAD, IRStSymbolicReference.Numeric(big.toDouble(), big)),
+            IRStructInitValue(BaseDataType.UQUAD, IRStSymbolicReference.Numeric(ubig.toULong().toDouble(), ubig))
+        ), 16u))
+        val file = IRFileWriter(program, Path("intermediate-quads-test-output.p8ir")).write()
+        try {
+            val lines = file.readLines()
+            lines.any { it == $$"quad main.q=$7fffffffffffffff zp=DONTCARE" } shouldBe true
+            lines.any { it == $$"quad[2] main.qa=$ffffffffffffffff,$7fffffffffffffff zp=DONTCARE" } shouldBe true
+            val readBack = IRFileReader().read(file)
+            val q = readBack.st.lookup("main.q") as IRStStaticVariable
+            q.dt shouldBe DataType.QUAD
+            (q.initializationValue as IRVariableInitializer.Numeric).quadBits shouldBe big
+            val u = readBack.st.lookup("main.u") as IRStStaticVariable
+            u.dt shouldBe DataType.UQUAD
+            (u.initializationValue as IRVariableInitializer.Numeric).quadBits shouldBe ubig
+            val qa = readBack.st.lookup("main.qa") as IRStStaticVariable
+            qa.dt.isQuadArray shouldBe true
+            (qa.initializationValue as IRVariableInitializer.Array).elements.map { (it as IRStSymbolicReference.Numeric).quadBits } shouldBe listOf(-1L, big)
+            (readBack.st.lookup("main.CU") as IRStConstant).quadBits shouldBe ubig
+            val stamp = readBack.st.allStructInstances().single()
+            stamp.values.map { (it.value as IRStSymbolicReference.Numeric).quadBits } shouldBe listOf(big, ubig)
+        } finally {
+            file.deleteExisting()
+        }
+    }
 })

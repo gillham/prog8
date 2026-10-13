@@ -263,6 +263,7 @@ object OpcodeSchemas {
                 if ('W' in typespec) { add(IRDataType.WORD); add(IRDataType.POINTER) }
                 if ('L' in typespec) add(IRDataType.LONG)
                 if ('F' in typespec) add(IRDataType.FLOAT)
+                if ('Q' in typespec) add(IRDataType.QUAD)
             }
 
         fun define(
@@ -307,37 +308,37 @@ object OpcodeSchemas {
 
         define(Opcode.NOP, "N") { emptyList() }
 
-        define(Opcode.LOAD, "BWLF") { t ->
+        define(Opcode.LOAD, "BWLFQ") { t ->
             listOf(
                 reg(fileOf(t), InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF),
                 imm(OperandRole.VALUE, TypeRule.InstructionType, allowSymbol = true)
             )
         }
-        define(Opcode.LOADM, "BWLF", memoryEffect = MemoryEffect.READ) { t ->
+        define(Opcode.LOADM, "BWLFQ", memoryEffect = MemoryEffect.READ) { t ->
             listOf(
                 reg(fileOf(t), InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF),
                 mem(MemoryKind.DIRECT, MemoryEffect.READ)
             )
         }
-        define(Opcode.LOADX, "BWLF", memoryEffect = MemoryEffect.READ) { t ->
+        define(Opcode.LOADX, "BWLFQ", memoryEffect = MemoryEffect.READ) { t ->
             listOf(
                 reg(fileOf(t), InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF),
                 mem(MemoryKind.INDEXED, MemoryEffect.READ)
             )
         }
-        define(Opcode.LOADR, "BWLF") { t ->
+        define(Opcode.LOADR, "BWLFQ") { t ->
             listOf(
                 reg(fileOf(t), InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF),
                 reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE)
             )
         }
-        define(Opcode.LOADHR, "BWLF") { t ->
+        define(Opcode.LOADHR, "BWLFQ") { t ->
             listOf(
                 reg(fileOf(t), InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF),
                 HardwareSlotSchema()
             )
         }
-        define(Opcode.LOADI, "BWLF", memoryEffect = MemoryEffect.READ) { t ->
+        define(Opcode.LOADI, "BWLFQ", memoryEffect = MemoryEffect.READ) { t ->
             listOf(
                 reg(fileOf(t), InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF),
                 mem(MemoryKind.INDIRECT, MemoryEffect.READ)
@@ -346,34 +347,34 @@ object OpcodeSchemas {
         define(Opcode.LOADHFACZERO, "F") { listOf(freg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF)) }
         define(Opcode.LOADHFACONE, "F") { listOf(freg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF)) }
 
-        define(Opcode.STOREM, "BWLF", memoryEffect = MemoryEffect.WRITE) { t ->
+        define(Opcode.STOREM, "BWLFQ", memoryEffect = MemoryEffect.WRITE) { t ->
             listOf(
                 reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE),
                 mem(MemoryKind.DIRECT, MemoryEffect.WRITE)
             )
         }
-        define(Opcode.STOREX, "BWLF", memoryEffect = MemoryEffect.WRITE) { t ->
+        define(Opcode.STOREX, "BWLFQ", memoryEffect = MemoryEffect.WRITE) { t ->
             listOf(
                 reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE),
                 mem(MemoryKind.INDEXED, MemoryEffect.WRITE)
             )
         }
-        define(Opcode.STOREZM, "BWLF", memoryEffect = MemoryEffect.WRITE) { listOf(mem(MemoryKind.DIRECT, MemoryEffect.WRITE)) }
-        define(Opcode.STOREZI, "BWLF", memoryEffect = MemoryEffect.WRITE) { listOf(mem(MemoryKind.INDIRECT, MemoryEffect.WRITE)) }
-        define(Opcode.STOREZX, "BWLF", memoryEffect = MemoryEffect.WRITE) { listOf(mem(MemoryKind.INDEXED, MemoryEffect.WRITE)) }
-        define(Opcode.STOREIM, "BWLF", memoryEffect = MemoryEffect.WRITE) {
+        define(Opcode.STOREZM, "BWLFQ", memoryEffect = MemoryEffect.WRITE) { listOf(mem(MemoryKind.DIRECT, MemoryEffect.WRITE)) }
+        define(Opcode.STOREZI, "BWLFQ", memoryEffect = MemoryEffect.WRITE) { listOf(mem(MemoryKind.INDIRECT, MemoryEffect.WRITE)) }
+        define(Opcode.STOREZX, "BWLFQ", memoryEffect = MemoryEffect.WRITE) { listOf(mem(MemoryKind.INDEXED, MemoryEffect.WRITE)) }
+        define(Opcode.STOREIM, "BWLFQ", memoryEffect = MemoryEffect.WRITE) {
             listOf(
                 imm(OperandRole.VALUE, TypeRule.InstructionType),
                 mem(MemoryKind.DIRECT, MemoryEffect.WRITE)
             )
         }
-        define(Opcode.STOREHR, "BWLF") { t ->
+        define(Opcode.STOREHR, "BWLFQ") { t ->
             listOf(
                 reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE),
                 HardwareSlotSchema()
             )
         }
-        define(Opcode.STOREI, "BWLF", memoryEffect = MemoryEffect.WRITE) { t ->
+        define(Opcode.STOREI, "BWLFQ", memoryEffect = MemoryEffect.WRITE) { t ->
             listOf(
                 reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE),
                 mem(MemoryKind.INDIRECT, MemoryEffect.WRITE)
@@ -415,10 +416,10 @@ object OpcodeSchemas {
             listOf(CallSiteSlotSchema(CallKind.SYSCALL))
         }
         define(Opcode.RETURN, "N", controlFlow = ControlFlowEffect.RETURN) { emptyList() }
-        define(Opcode.RETURNR, "BWLF", controlFlow = ControlFlowEffect.RETURN) { t ->
+        define(Opcode.RETURNR, "BWLFQ", controlFlow = ControlFlowEffect.RETURN) { t ->
             listOf(reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE))
         }
-        define(Opcode.RETURNI, "BWLF", controlFlow = ControlFlowEffect.RETURN) { listOf(imm()) }
+        define(Opcode.RETURNI, "BWLFQ", controlFlow = ControlFlowEffect.RETURN) { listOf(imm()) }
 
         for (branch in listOf(Opcode.BSTCC, Opcode.BSTCS, Opcode.BSTEQ, Opcode.BSTNE, Opcode.BSTNEG, Opcode.BSTPOS, Opcode.BSTVC, Opcode.BSTVS)) {
             define(branch, "N", statusEffect = StatusEffect.READS, controlFlow = ControlFlowEffect.BRANCH) {
@@ -426,7 +427,7 @@ object OpcodeSchemas {
             }
         }
         for (branch in listOf(Opcode.BGTR, Opcode.BGTSR, Opcode.BGER, Opcode.BGESR)) {
-            define(branch, "BWL", controlFlow = ControlFlowEffect.BRANCH) {
+            define(branch, "BWLQ", controlFlow = ControlFlowEffect.BRANCH) {
                 listOf(
                     ireg(InstructionSlot.SRC_A, OperandRole.LEFT, OperandDirection.USE),
                     ireg(InstructionSlot.SRC_B, OperandRole.RIGHT, OperandDirection.USE),
@@ -435,7 +436,7 @@ object OpcodeSchemas {
             }
         }
         for (branch in listOf(Opcode.BGT, Opcode.BLT, Opcode.BGTS, Opcode.BLTS, Opcode.BGE, Opcode.BLE, Opcode.BGES, Opcode.BLES)) {
-            define(branch, "BWL", controlFlow = ControlFlowEffect.BRANCH) {
+            define(branch, "BWLQ", controlFlow = ControlFlowEffect.BRANCH) {
                 listOf(
                     ireg(InstructionSlot.SRC_A, OperandRole.LEFT, OperandDirection.USE),
                     imm(OperandRole.RIGHT),
@@ -447,10 +448,10 @@ object OpcodeSchemas {
         // ---- arithmetic ----
 
         for (opcode in listOf(Opcode.INC, Opcode.DEC, Opcode.NEG)) {
-            define(opcode, "BWLF") { t -> listOf(reg(fileOf(t), InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.USE_DEF)) }
+            define(opcode, "BWLFQ") { t -> listOf(reg(fileOf(t), InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.USE_DEF)) }
         }
         for (opcode in listOf(Opcode.INCM, Opcode.DECM, Opcode.NEGM, Opcode.INVM)) {
-            val types = if (opcode == Opcode.INVM) "BWL" else "BWLF"
+            val types = if (opcode == Opcode.INVM) "BWLQ" else "BWLFQ"
             define(opcode, types, memoryEffect = MemoryEffect.READ_WRITE) { listOf(mem(MemoryKind.DIRECT, MemoryEffect.READ_WRITE)) }
         }
 
@@ -458,7 +459,7 @@ object OpcodeSchemas {
         for (opcode in listOf(Opcode.ADDR, Opcode.SUBR, Opcode.MULR, Opcode.MULSR, Opcode.DIVR, Opcode.DIVSR, Opcode.FPOW)) {
             val types = when (opcode) {
                 Opcode.FPOW -> "F"
-                else -> "BWLF"
+                else -> "BWLFQ"
             }
             define(opcode, types) { t ->
                 listOf(
@@ -468,7 +469,7 @@ object OpcodeSchemas {
             }
         }
         for (opcode in listOf(Opcode.MODR, Opcode.MODSR, Opcode.ANDR, Opcode.ORR, Opcode.XORR)) {
-            define(opcode, "BWL") {
+            define(opcode, "BWLQ") {
                 listOf(
                     ireg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.USE_DEF),
                     ireg(InstructionSlot.SRC_A, OperandRole.RIGHT, OperandDirection.USE)
@@ -477,7 +478,7 @@ object OpcodeSchemas {
         }
         // register-immediate binary operations that modify the destination in place
         for (opcode in listOf(Opcode.ADD, Opcode.SUB, Opcode.MUL, Opcode.MULS, Opcode.DIV, Opcode.DIVS)) {
-            define(opcode, "BWLF") { t ->
+            define(opcode, "BWLFQ") { t ->
                 listOf(
                     reg(fileOf(t), InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.USE_DEF),
                     imm(OperandRole.RIGHT)
@@ -485,7 +486,7 @@ object OpcodeSchemas {
             }
         }
         for (opcode in listOf(Opcode.MOD, Opcode.MODS, Opcode.AND, Opcode.OR, Opcode.XOR)) {
-            define(opcode, "BWL") {
+            define(opcode, "BWLQ") {
                 listOf(
                     ireg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.USE_DEF),
                     imm(OperandRole.RIGHT)
@@ -494,7 +495,7 @@ object OpcodeSchemas {
         }
         // memory operations: register operand + memory destination
         for (opcode in listOf(Opcode.ADDM, Opcode.SUBM, Opcode.MULM, Opcode.MULSM, Opcode.DIVM, Opcode.DIVSM)) {
-            define(opcode, "BWLF", memoryEffect = MemoryEffect.READ_WRITE) { t ->
+            define(opcode, "BWLFQ", memoryEffect = MemoryEffect.READ_WRITE) { t ->
                 listOf(
                     reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.RIGHT, OperandDirection.USE),
                     mem(MemoryKind.DIRECT, MemoryEffect.READ_WRITE)
@@ -502,7 +503,7 @@ object OpcodeSchemas {
             }
         }
         for (opcode in listOf(Opcode.ANDM, Opcode.ORM, Opcode.XORM)) {
-            define(opcode, "BWL", memoryEffect = MemoryEffect.READ_WRITE) {
+            define(opcode, "BWLQ", memoryEffect = MemoryEffect.READ_WRITE) {
                 listOf(
                     ireg(InstructionSlot.SRC_A, OperandRole.RIGHT, OperandDirection.USE),
                     mem(MemoryKind.DIRECT, MemoryEffect.READ_WRITE)
@@ -510,7 +511,7 @@ object OpcodeSchemas {
             }
         }
         for (opcode in listOf(Opcode.ADDIM, Opcode.SUBIM)) {
-            define(opcode, "BWLF", memoryEffect = MemoryEffect.READ_WRITE) {
+            define(opcode, "BWLFQ", memoryEffect = MemoryEffect.READ_WRITE) {
                 listOf(
                     imm(OperandRole.RIGHT),
                     mem(MemoryKind.DIRECT, MemoryEffect.READ_WRITE)
@@ -569,13 +570,13 @@ object OpcodeSchemas {
                 reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE)
             )
         }
-        define(Opcode.CMP, "BWL", statusEffect = StatusEffect.SETS) {
+        define(Opcode.CMP, "BWLQ", statusEffect = StatusEffect.SETS) {
             listOf(
                 ireg(InstructionSlot.SRC_A, OperandRole.LEFT, OperandDirection.USE),
                 ireg(InstructionSlot.SRC_B, OperandRole.RIGHT, OperandDirection.USE)
             )
         }
-        define(Opcode.CMPI, "BWL", statusEffect = StatusEffect.SETS) {
+        define(Opcode.CMPI, "BWLQ", statusEffect = StatusEffect.SETS) {
             listOf(
                 ireg(InstructionSlot.SRC_A, OperandRole.LEFT, OperandDirection.USE),
                 imm(OperandRole.RIGHT)
@@ -597,12 +598,20 @@ object OpcodeSchemas {
                 )
             }
         }
+        for (opcode in listOf(Opcode.EXTQ, Opcode.EXTQS)) {
+            define(opcode, "BWL") {
+                listOf(
+                    ireg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF, TypeRule.Fixed(IRDataType.QUAD)),
+                    ireg(InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE)
+                )
+            }
+        }
 
         // ---- bit operations, shifts and rotates ----
 
-        define(Opcode.INV, "BWL") { listOf(ireg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.USE_DEF)) }
+        define(Opcode.INV, "BWLQ") { listOf(ireg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.USE_DEF)) }
         for (opcode in listOf(Opcode.ASRN, Opcode.LSRN, Opcode.LSLN)) {
-            define(opcode, "BWL", statusEffect = StatusEffect.SETS) {
+            define(opcode, "BWLQ", statusEffect = StatusEffect.SETS) {
                 listOf(
                     ireg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.USE_DEF),
                     ireg(InstructionSlot.SRC_A, OperandRole.RIGHT, OperandDirection.USE, TypeRule.Fixed(IRDataType.BYTE))
@@ -610,7 +619,7 @@ object OpcodeSchemas {
             }
         }
         for (opcode in listOf(Opcode.ASRNM, Opcode.LSRNM, Opcode.LSLNM)) {
-            define(opcode, "BWL", memoryEffect = MemoryEffect.READ_WRITE, statusEffect = StatusEffect.SETS) {
+            define(opcode, "BWLQ", memoryEffect = MemoryEffect.READ_WRITE, statusEffect = StatusEffect.SETS) {
                 listOf(
                     ireg(InstructionSlot.SRC_A, OperandRole.RIGHT, OperandDirection.USE, TypeRule.Fixed(IRDataType.BYTE)),
                     mem(MemoryKind.DIRECT, MemoryEffect.READ_WRITE)
@@ -618,7 +627,7 @@ object OpcodeSchemas {
             }
         }
         for (opcode in listOf(Opcode.ASRI, Opcode.LSRI, Opcode.LSLI)) {
-            define(opcode, "BWL", statusEffect = StatusEffect.SETS) {
+            define(opcode, "BWLQ", statusEffect = StatusEffect.SETS) {
                 listOf(
                     ireg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.USE_DEF),
                     imm(OperandRole.RIGHT)
@@ -626,7 +635,7 @@ object OpcodeSchemas {
             }
         }
         for (opcode in listOf(Opcode.ASR, Opcode.LSR, Opcode.LSL, Opcode.ROR, Opcode.ROL)) {
-            define(opcode, "BWL", statusEffect = StatusEffect.SETS) {
+            define(opcode, if (opcode == Opcode.ROR || opcode == Opcode.ROL) "BWL" else "BWLQ", statusEffect = StatusEffect.SETS) {
                 listOf(ireg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.USE_DEF))
             }
         }
@@ -636,7 +645,7 @@ object OpcodeSchemas {
             }
         }
         for (opcode in listOf(Opcode.ASRM, Opcode.LSRM, Opcode.LSLM, Opcode.RORM, Opcode.ROLM)) {
-            define(opcode, "BWL", memoryEffect = MemoryEffect.READ_WRITE, statusEffect = StatusEffect.SETS) {
+            define(opcode, if (opcode == Opcode.RORM || opcode == Opcode.ROLM) "BWL" else "BWLQ", memoryEffect = MemoryEffect.READ_WRITE, statusEffect = StatusEffect.SETS) {
                 listOf(mem(MemoryKind.DIRECT, MemoryEffect.READ_WRITE))
             }
         }
@@ -645,14 +654,14 @@ object OpcodeSchemas {
                 listOf(mem(MemoryKind.DIRECT, MemoryEffect.READ_WRITE))
             }
         }
-        define(Opcode.BITTST, "BWL", statusEffect = StatusEffect.SETS) {
+        define(Opcode.BITTST, "BWLQ", statusEffect = StatusEffect.SETS) {
             listOf(
                 ireg(InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE),
                 imm(OperandRole.RIGHT, TypeRule.Fixed(IRDataType.BYTE))
             )
         }
         for (opcode in listOf(Opcode.BITSET, Opcode.BITCLR, Opcode.BITTOG)) {
-            define(opcode, "BWL") {
+            define(opcode, "BWLQ") {
                 listOf(
                     ireg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.USE_DEF),
                     imm(OperandRole.RIGHT, TypeRule.Fixed(IRDataType.BYTE))
@@ -667,7 +676,9 @@ object OpcodeSchemas {
             Opcode.FFROMSB to IRDataType.BYTE,
             Opcode.FFROMUW to IRDataType.WORD,
             Opcode.FFROMSW to IRDataType.WORD,
-            Opcode.FFROMSL to IRDataType.LONG
+            Opcode.FFROMSL to IRDataType.LONG,
+            Opcode.FFROMSQ to IRDataType.QUAD,
+            Opcode.FFROMUQ to IRDataType.QUAD
         )
         for ((opcode, intType) in fromIntegerTypes) {
             define(opcode, "F") {
@@ -682,7 +693,9 @@ object OpcodeSchemas {
             Opcode.FTOSB to IRDataType.BYTE,
             Opcode.FTOUW to IRDataType.WORD,
             Opcode.FTOSW to IRDataType.WORD,
-            Opcode.FTOSL to IRDataType.LONG
+            Opcode.FTOSL to IRDataType.LONG,
+            Opcode.FTOSQ to IRDataType.QUAD,
+            Opcode.FTOUQ to IRDataType.QUAD
         )
         for ((opcode, intType) in toIntegerTypes) {
             define(opcode, "F") {
@@ -719,9 +732,10 @@ object OpcodeSchemas {
         define(Opcode.POPST, "N", statusEffect = StatusEffect.SETS) { emptyList() }
 
         val extractions = listOf(
-            Triple(Opcode.LSIGB, "WL", IRDataType.BYTE),
+            Triple(Opcode.LSIGB, "WLQ", IRDataType.BYTE),
             Triple(Opcode.MSIGB, "WL", IRDataType.BYTE),
-            Triple(Opcode.LSIGW, "L", IRDataType.WORD),
+            Triple(Opcode.LSIGW, "LQ", IRDataType.WORD),
+            Triple(Opcode.LSIGL, "Q", IRDataType.LONG),
             Triple(Opcode.MSIGW, "L", IRDataType.WORD),
             Triple(Opcode.BSIGB, "L", IRDataType.BYTE),
             Triple(Opcode.MIDB, "L", IRDataType.BYTE)

@@ -18,7 +18,7 @@ private class StToIrConverter(val romable: Boolean) {
     private fun convertArrayElt(elt: StArrayElement): IRStSymbolicReference {
         return when(elt) {
             is StArrayElement.BoolValue -> IRStSymbolicReference.BoolValue(elt.value)
-            is StArrayElement.Number -> IRStSymbolicReference.Numeric(elt.value)
+            is StArrayElement.Number -> IRStSymbolicReference.Numeric(elt.value, elt.quadBits)
             // Memory slabs and address-of are both stored as symbol references in the IR
             is StArrayElement.MemorySlab -> IRStSymbolicReference.Symbol("$StMemorySlabBlockName.${elt.name}")
             is StArrayElement.AddressOf -> IRStSymbolicReference.Symbol(elt.symbol)
@@ -43,7 +43,7 @@ private class StToIrConverter(val romable: Boolean) {
                 IRVariableInitializer.Str(str.first, str.second)
             }
             variable.initializationNumericValue != null -> {
-                IRVariableInitializer.Numeric(variable.initializationNumericValue!!)
+                IRVariableInitializer.Numeric(variable.initializationNumericValue!!, variable.initializationQuadBits)
             }
             array != null -> {
                 val scopedArray = array.map {
@@ -66,7 +66,7 @@ private class StToIrConverter(val romable: Boolean) {
         val initValue = if('.' in variable.name) {
             when {
                 variable.initializationStringValue != null -> IRVariableInitializer.Str(variable.initializationStringValue!!.first, variable.initializationStringValue!!.second)
-                variable.initializationNumericValue != null -> IRVariableInitializer.Numeric(variable.initializationNumericValue!!)
+                variable.initializationNumericValue != null -> IRVariableInitializer.Numeric(variable.initializationNumericValue!!, variable.initializationQuadBits)
                 variable.initializationArrayValue != null -> IRVariableInitializer.Array(variable.initializationArrayValue!!.map { convertArrayElt(it) })
                 else -> null
             }
@@ -113,7 +113,7 @@ private class StToIrConverter(val romable: Boolean) {
         }
         val noPrefix = constant.astNode?.definingBlock()?.options?.noSymbolPrefixing == true
         if(constant.value != null)
-            return IRStConstant(scopedName, constant.dt, constant.value, noPrefix = noPrefix)
+            return IRStConstant(scopedName, constant.dt, constant.value, noPrefix = noPrefix, quadBits = constant.quadBits)
         else if(constant.memorySlab != null) {
             // For memory() constants, store reference to slab name
             // The actual address will be resolved during code generation

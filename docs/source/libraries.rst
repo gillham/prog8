@@ -238,6 +238,10 @@ Miscellaneous
     reads the signed long value at the given address in memory. Long is read in the target's native byte order:
     little-endian (lsb first) on the 6502 targets, big-endian (msb first) on the m68k targets.
 
+:index:`peekq` (address)
+    reads the signed 64-bit quad value at the given address in memory, in the target's native byte order.
+    Only available on the targets that support the quad types (virtual and llvm64).
+
 :index:`peekf` (address)
     reads the float value at the given address in memory. On CBM machines, this reads 5 bytes.
 
@@ -256,6 +260,10 @@ Miscellaneous
 :index:`pokel` (address, value)
     writes the signed long value at the given address in memory, in the target's native byte order:
     little-endian (lsb first) on the 6502 targets, big-endian (msb first) on the m68k targets.
+
+:index:`pokeq` (address, value)
+    writes the 64-bit quad or uquad value at the given address in memory, in the target's native byte order.
+    Only available on the targets that support the quad types (virtual and llvm64).
 
 :index:`pokef` (address, value)
     writes the float value at the given address in memory. On CBM machines, this writes 5 bytes.

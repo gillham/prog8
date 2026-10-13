@@ -30,6 +30,7 @@ internal fun AsmGen.translateLoadStore(insn: IRInstruction, suppressRegfileStore
         Opcode.LOAD -> {
             val dst = insn.requireIntDest().intNumber
             when (val value = insn.requireImmediate()) {
+                is ImmediateOperand.QuadValue -> quadNotSupported()
                 is ImmediateOperand.Integer -> {
                     if (suppressRegfileStore)
                         return
@@ -166,6 +167,7 @@ private fun AsmGen.translateFloatLoadStore(insn: IRInstruction, suppressRegfileS
         Opcode.LOAD -> {
             val dst = insn.requireFloatDest().floatNumber
             when (val value = insn.requireImmediate()) {
+                is ImmediateOperand.QuadValue -> quadNotSupported()
                 is ImmediateOperand.FloatValue -> {
                     if (suppressRegfileStore)
                         return

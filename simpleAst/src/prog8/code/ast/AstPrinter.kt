@@ -30,7 +30,7 @@ fun printAst(root: PtNode, skipLibraries: Boolean, output: (text: String) -> Uni
                 val valuelist = node.children.joinToString(", ") {
                     when (it) {
                         is PtBool -> it.toString()
-                        is PtNumber -> it.number.toString()
+                        is PtNumber -> it.valueText
                         is PtIdentifier -> it.name
                         is PtAddressOf -> {
                             if(it.identifier!=null)
@@ -65,7 +65,7 @@ fun printAst(root: PtNode, skipLibraries: Boolean, output: (text: String) -> Uni
             is PtIrRegister -> "IRREG#${node.register} ${type(node.type)}"
             is PtMemoryByte -> "@()"
             is PtNumber -> {
-                val numstr = if(node.type.isFloat) node.number.toString() else node.number.toHex()
+                val numstr = if(node.type.isFloat) node.number.toString() else if(node.type.isQuad) node.valueText else node.number.toHex()
                 "$numstr ${type(node.type)}"
             }
             is PtBool -> node.value.toString()

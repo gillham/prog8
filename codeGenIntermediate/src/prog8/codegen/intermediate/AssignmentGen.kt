@@ -294,7 +294,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                         "+=" -> addInstr(inplaceInstrs, IRInstructions.binary(Opcode.ADDR, targetDt, oldvalueReg, operandTr.resultReg), null)
                         "-=" -> addInstr(inplaceInstrs, IRInstructions.binary(Opcode.SUBR, targetDt, oldvalueReg, operandTr.resultReg), null)
                         "*=" -> addInstr(inplaceInstrs, IRInstructions.binary(Opcode.MULR, targetDt, oldvalueReg, operandTr.resultReg), null)
-                        "/=" -> addInstr(inplaceInstrs, IRInstructions.binary(Opcode.DIVR, targetDt, oldvalueReg, operandTr.resultReg), null)
+                        "/=" -> addInstr(inplaceInstrs, IRInstructions.binary(if(signed) Opcode.DIVSR else Opcode.DIVR, targetDt, oldvalueReg, operandTr.resultReg), null)
                         "%=" -> {
                             val opc = if(signed) Opcode.MODSR else Opcode.MODR
                             addInstr(inplaceInstrs, IRInstructions.binary(opc, targetDt, oldvalueReg, operandTr.resultReg), null)
@@ -610,9 +610,10 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
         // for computed memory targets we still need a register to hold the value.
         val canUseStoreIm = assignment.target.identifier != null ||
                 (assignment.target.memory?.address is PtNumber)
-        val constInt = if(canUseStoreIm && targetDt != IRDataType.FLOAT && !zero) assignment.value.asConstInteger() else null
+        val constInt = if(canUseStoreIm && targetDt != IRDataType.FLOAT && targetDt != IRDataType.QUAD && !zero) assignment.value.asConstInteger() else null
         val constFloat = if(canUseStoreIm && targetDt == IRDataType.FLOAT && !zero) assignment.value.asConstValue() else null
-        if(!zero && constInt==null && constFloat==null) {
+        val constQuad = if(canUseStoreIm && targetDt == IRDataType.QUAD && !zero) (assignment.value as? PtNumber)?.integerBits else null
+        if(!zero && constInt==null && constFloat==null && constQuad==null) {
             // calculate the assignment value
             if (valueDt == IRDataType.FLOAT) {
                 val tr = exprGen.translateExpression(assignment.value)
@@ -652,6 +653,9 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                             if(isPointerLong) { extendSourceDt = null; extendDestDt = null; extendSigned = false }
                             else { extendSourceDt = null; extendDestDt = null; extendSigned = false }
                         }
+                        targetDt==IRDataType.QUAD && valueDt in arrayOf(IRDataType.BYTE, IRDataType.WORD, IRDataType.LONG) -> {
+                            extendSourceDt = valueDt; extendDestDt = IRDataType.QUAD; extendSigned = valueIsSigned
+                        }
                         else -> throw AssemblyError("assignment value and target dt mismatch: $valueDt -> $targetDt")
                     }
                 }
@@ -659,6 +663,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                     src==IRDataType.BYTE && dest==IRDataType.WORD -> if(signed) Opcode.EXTS else Opcode.EXT
                     src==IRDataType.WORD && dest==IRDataType.LONG -> if(signed) Opcode.EXTS else Opcode.EXT
                     src==IRDataType.BYTE && dest==IRDataType.LONG -> if(signed) Opcode.EXTLS else Opcode.EXTL
+                    dest==IRDataType.QUAD -> if(signed) Opcode.EXTQS else Opcode.EXTQ
                     else -> throw AssemblyError("unsupported extension $src -> $dest")
                 }
                 if (assignment.value is PtIrRegister) {
@@ -697,6 +702,9 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                         }
                         constFloat != null -> {
                             IRInstructions.storeImmediateFloat(constFloat, IRMemory.direct(identifier!!.name))
+                        }
+                        constQuad != null -> {
+                            IRInstructions.storeImmediate(IRDataType.QUAD, constQuad, IRMemory.direct(identifier!!.name))
                         }
                         targetDt == IRDataType.FLOAT -> {
                             require(valueFpRegister>=0)
@@ -1609,7 +1617,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                 resultVar += IRCodeChunk(null, null).also {
                     it += IRInstructions.loadMemory(Opcode.LOADI, vmDt, loadReg, IRMemory.indirect(addressReg, 0))
                 }
-                val constVal = (operand as? PtNumber)?.number?.toInt()
+                val constVal = (operand as? PtNumber)?.integerBits
                 if(constVal!=null) {
                     val constReg = codeGen.registers.next(vmDt)
                     resultVar += IRCodeChunk(null, null).also {
@@ -1656,7 +1664,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
             }
         } else {
             if(constFactorRight!=null && !constFactorRight.type.isFloat) {
-                val factor = constFactorRight.number.toInt()
+                val factor = constFactorRight.integerBits
                 result += codeGen.divideByConstInplace(vmDt, constAddress, symbol, factor, signed)
             } else {
                 val tr = exprGen.translateExpression(operand)
@@ -1761,7 +1769,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                 resultVar += IRCodeChunk(null, null).also {
                     it += IRInstructions.loadMemory(Opcode.LOADI, vmDt, loadReg, IRMemory.indirect(addressReg, 0))
                 }
-                val constVal = (operand as? PtNumber)?.number?.toInt()
+                val constVal = (operand as? PtNumber)?.integerBits
                 if(constVal!=null) {
                     val constReg = codeGen.registers.next(vmDt)
                     resultVar += IRCodeChunk(null, null).also {
@@ -1800,7 +1808,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
             }
         } else {
             if(constFactorRight!=null && !constFactorRight.type.isFloat) {
-                val factor = constFactorRight.number.toInt()
+                val factor = constFactorRight.integerBits
                 result += codeGen.multiplyByConstInplace(vmDt, signed, constAddress, symbol, factor)
             } else {
                 val tr = exprGen.translateExpression(operand)
@@ -1974,10 +1982,11 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                 else
                     IRInstructions.memoryOp(Opcode.DECM, vmDt, IRMemory.direct(symbol!!)), null)
             } else if(constValue!=null) {
+                val immediate = operand.integerBits
                 addInstr(result, if(constAddress!=null)
-                    IRInstructions.memoryOpImmediate(Opcode.SUBIM, vmDt, IRMemory.direct(constAddress.toAddress()), constValue.toInt())
+                    IRInstructions.memoryOpImmediate(Opcode.SUBIM, vmDt, IRMemory.direct(constAddress.toAddress()), immediate)
                 else
-                    IRInstructions.memoryOpImmediate(Opcode.SUBIM, vmDt, IRMemory.direct(symbol!!), constValue.toInt()), null)
+                    IRInstructions.memoryOpImmediate(Opcode.SUBIM, vmDt, IRMemory.direct(symbol!!), immediate), null)
             } else {
                 val tr = exprGen.translateExpression(operand)
                 addToResult(result, tr, tr.resultReg, -1)
@@ -2310,10 +2319,11 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                     }
                 }
             } else if(constValue!=null) {
+                val immediate = operand.integerBits
                 addInstr(result, if (constAddress != null)
-                    IRInstructions.memoryOpImmediate(Opcode.ADDIM, vmDt, IRMemory.direct(constAddress.toAddress()), constValue.toInt())
+                    IRInstructions.memoryOpImmediate(Opcode.ADDIM, vmDt, IRMemory.direct(constAddress.toAddress()), immediate)
                 else
-                    IRInstructions.memoryOpImmediate(Opcode.ADDIM, vmDt, IRMemory.direct(symbol!!), constValue.toInt()), null)
+                    IRInstructions.memoryOpImmediate(Opcode.ADDIM, vmDt, IRMemory.direct(symbol!!), immediate), null)
             } else {
                 val tr = exprGen.translateExpression(operand)
                 addToResult(result, tr, tr.resultReg, -1)
@@ -2742,8 +2752,11 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
             // Non-constant index - use LOADX/XORR/STOREX
             val indexTr = exprGen.translateExpression(array.index)
             addToResult(result, indexTr, indexTr.resultReg, -1)
-            val (indexReg, _) = normalizeArrayIndex(result, indexTr)
+            val (indexReg, indexDt) = normalizeArrayIndex(result, indexTr)
             val arrayVarName2 = array.variable!!.name
+            if(eltSize > 1) {
+                result += codeGen.multiplyByConst(indexDt, indexReg, eltSize)
+            }
             if(constValue!=null) {
                 val loadReg = codeGen.registers.next(vmDt)
                 val constReg = codeGen.registers.next(vmDt)
@@ -2937,7 +2950,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                 it += IRInstructions.loadMemory(Opcode.LOADI, vmDt, loadReg, IRMemory.indirect(addressReg, 0))
             }
             val modROpcode = if(signed) Opcode.MODSR else Opcode.MODR
-            val constVal = (operand as? PtNumber)?.number?.toInt()
+            val constVal = (operand as? PtNumber)?.integerBits
             if(constVal!=null) {
                 val constReg = codeGen.registers.next(vmDt)
                 resultVar += IRCodeChunk(null, null).also {
@@ -2961,7 +2974,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
         val modOpcode = if(signed) Opcode.MODS else Opcode.MOD
         val modROpcode = if(signed) Opcode.MODSR else Opcode.MODR
         if(operand is PtNumber) {
-            val number = operand.number.toInt()
+            val number = operand.integerBits
             if (constAddress != null) {
                 // @(address) = @(address) %= operand
                 result += IRCodeChunk(null, null).also {

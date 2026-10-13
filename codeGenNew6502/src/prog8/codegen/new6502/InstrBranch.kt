@@ -90,6 +90,7 @@ private fun AsmGen.translateCmpBranchUnsigned(insn: IRInstruction, label: String
     val imm = insn.requireImmediateInt()
 
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(reg)}")
             emitLine("cmp  #${imm and 0xff}")
@@ -231,6 +232,7 @@ private fun AsmGen.translateCmpBranchRegUnsigned(insn: IRInstruction, label: Str
     val reg2 = insn.requireSrcB().intNumber
 
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(reg1)}")
             emitLine("cmp  ${regAddrLo(reg2)}")
@@ -305,6 +307,7 @@ private fun AsmGen.translateCmpBranchSigned(insn: IRInstruction, label: String,
     val imm = insn.requireImmediateInt()
 
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(reg)}")
             emitLine("sec")
@@ -492,6 +495,7 @@ private fun AsmGen.translateCmpBranchRegSigned(insn: IRInstruction, label: Strin
     val reg2 = insn.requireSrcB().intNumber
 
     when (type) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> {
             emitLine("lda  ${regAddrLo(reg1)}")
             emitLine("sec")

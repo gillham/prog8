@@ -153,4 +153,36 @@ class TestPtNumber: FunSpec({
         (PtNumber(BaseDataType.FLOAT, 100.0, Position.DUMMY) <= PtNumber(BaseDataType.FLOAT, 99.9, Position.DUMMY)) shouldBe false
     }
 
+    test("quad numbers compare their exact 64 bits") {
+        // both values have the same nearest Double
+        val max = PtNumber.fromQuadBits(BaseDataType.QUAD, Long.MAX_VALUE, Position.DUMMY)
+        val belowMax = PtNumber.fromQuadBits(BaseDataType.QUAD, Long.MAX_VALUE - 1, Position.DUMMY)
+        max.number shouldBe belowMax.number
+        max shouldNotBe belowMax
+        (belowMax < max) shouldBe true
+        (max isSameAs belowMax) shouldBe false
+        max.integerBits shouldBe Long.MAX_VALUE
+        max.valueText shouldBe "9223372036854775807"
+
+        val allOnes = PtNumber.fromQuadBits(BaseDataType.UQUAD, -1L, Position.DUMMY)
+        allOnes.integerBits shouldBe -1L
+        allOnes.valueText shouldBe "18446744073709551615"
+        (allOnes > max) shouldBe true
+        allOnes shouldNotBe PtNumber.fromQuadBits(BaseDataType.QUAD, -1L, Position.DUMMY)
+        PtNumber.fromQuadBits(BaseDataType.QUAD, 5L, Position.DUMMY) shouldBe PtNumber(BaseDataType.UBYTE, 5.0, Position.DUMMY)
+
+        max.copy().integerBits shouldBe Long.MAX_VALUE
+        (max.clone() as PtNumber).integerBits shouldBe Long.MAX_VALUE
+        max.quadBitsOrNull shouldBe Long.MAX_VALUE
+        PtNumber(BaseDataType.LONG, 5.0, Position.DUMMY).quadBitsOrNull shouldBe null
+        shouldThrow<IllegalArgumentException> { PtNumber(BaseDataType.UQUAD, -1.0, Position.DUMMY) }
+    }
+
+    test("quad numbers are only integer constants when they fit an int") {
+        PtNumber.fromQuadBits(BaseDataType.QUAD, -5L, Position.DUMMY).asConstInteger() shouldBe -5
+        PtNumber.fromQuadBits(BaseDataType.QUAD, Int.MAX_VALUE.toLong(), Position.DUMMY).asConstInteger() shouldBe Int.MAX_VALUE
+        PtNumber.fromQuadBits(BaseDataType.QUAD, 5000000000L, Position.DUMMY).asConstInteger() shouldBe null
+        PtNumber.fromQuadBits(BaseDataType.UQUAD, -1L, Position.DUMMY).asConstInteger() shouldBe null
+    }
+
 })

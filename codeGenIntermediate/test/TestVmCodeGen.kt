@@ -9,10 +9,14 @@ import prog8.code.target.Cx16Target
 import prog8.code.target.VMTarget
 import prog8.codegen.vm.VmAssemblyProgram
 import prog8.codegen.vm.VmCodeGen
+import prog8.intermediate.IRDataType
+import prog8.intermediate.IRStStaticVariable
 import prog8.intermediate.IRSubroutine
+import prog8.intermediate.IRVariableInitializer
 import prog8.intermediate.Opcode
 import prog8.intermediate.codeAddress
 import prog8.intermediate.requireCallSite
+import prog8.intermediate.requireImmediateQuad
 import prog8.intermediate.toAddress
 
 import prog8tests.helpers.ErrorReporterForTests
@@ -712,4 +716,45 @@ class TestVmCodeGen: FunSpec({
         val irVar = irProg.st.allVariables().single()
         irVar.name shouldBe "p8b_main.p8s_start.p8v_x"
     }    
+
+    test("quad values keep all 64 bits through the IR code generator") {
+        val codegen = VmCodeGen(false)
+        val program = PtProgram("test", VMTarget())
+        val block = PtBlock("main", false, SourceCode.Generated("test"), PtBlock.Options(), Position.DUMMY)
+        val sub = PtSub("start", emptyList(), emptyList(), Position.DUMMY)
+        val big = Long.MAX_VALUE - 1
+        fun target(name: String, type: DataType) =
+            PtAssignTarget(false, Position.DUMMY).also { it.add(PtIdentifier(name, type, Position.DUMMY)) }
+        sub.add(PtVariable("q", DataType.QUAD, false, ZeropageWish.DONTCARE, 0u, false, null, null, Position.DUMMY))
+        sub.add(PtVariable("l", DataType.LONG, false, ZeropageWish.DONTCARE, 0u, false, null, null, Position.DUMMY))
+        sub.add(PtAssignment(Position.DUMMY).also {
+            it.add(target("main.start.q", DataType.QUAD))
+            it.add(PtNumber.fromQuadBits(BaseDataType.QUAD, big, Position.DUMMY))
+        })
+        sub.add(PtAugmentedAssign("+=", Position.DUMMY).also {
+            it.add(target("main.start.q", DataType.QUAD))
+            it.add(PtNumber.fromQuadBits(BaseDataType.QUAD, 0x123456789abcdefL, Position.DUMMY))
+        })
+        sub.add(PtAssignment(Position.DUMMY).also {
+            it.add(target("main.start.l", DataType.LONG))
+            it.add(PtTypeCast(DataType.LONG, false, Position.DUMMY).also { cast -> cast.add(PtIdentifier("main.start.q", DataType.QUAD, Position.DUMMY)) })
+        })
+        block.add(PtVariable("u", DataType.UQUAD, false, ZeropageWish.DONTCARE, 0u, false, null, null, Position.DUMMY))
+        block.add(PtAssignment(Position.DUMMY, isVarInitializer = true).also {
+            it.add(target("main.u", DataType.UQUAD))
+            it.add(PtNumber.fromQuadBits(BaseDataType.UQUAD, -3L, Position.DUMMY))
+        })
+        block.add(sub)
+        program.add(block)
+
+        val options = getTestOptions()
+        val st = SymbolTableMaker(program, options).make()
+        val result = codegen.generate(program, st, options, ErrorReporterForTests()) as VmAssemblyProgram
+        val instructions = result.irProgram.blocks.first().children.filterIsInstance<IRSubroutine>().single().chunks.flatMap { it.instructions }
+        instructions.single { it.opcode == Opcode.STOREIM }.requireImmediateQuad() shouldBe big
+        instructions.single { it.opcode == Opcode.ADDIM }.requireImmediateQuad() shouldBe 0x123456789abcdefL
+        instructions.count { it.opcode == Opcode.LSIGL && it.type == IRDataType.QUAD } shouldBe 1
+        val u = result.irProgram.st.lookup("main.u") as IRStStaticVariable
+        (u.initializationValue as IRVariableInitializer.Numeric).quadBits shouldBe -3L
+    }
 })

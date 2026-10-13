@@ -56,10 +56,14 @@ class TestVmOperandSchema: FunSpec({
     fun hardwareSlotFor(type: IRDataType?): CallingConventionSlot = when (type) {
         IRDataType.BYTE -> CallingConventionSlot(0)          // A
         IRDataType.WORD -> CallingConventionSlot(3)          // AX
-        IRDataType.LONG, IRDataType.POINTER -> CallingConventionSlot(10)    // D0
+        IRDataType.LONG, IRDataType.POINTER, IRDataType.QUAD -> CallingConventionSlot(10)    // D0
         IRDataType.FLOAT -> CallingConventionSlot(6)         // FAC0
         null -> CallingConventionSlot(0)
     }
+
+    // the VM can't execute 64-bit quad instructions yet
+    fun involvesQuads(opcode: Opcode, type: IRDataType?) = type == IRDataType.QUAD ||
+            opcode in setOf(Opcode.EXTQ, Opcode.EXTQS, Opcode.LSIGL, Opcode.FFROMSQ, Opcode.FFROMUQ, Opcode.FTOSQ, Opcode.FTOUQ)
 
     fun callSiteFor(kind: CallKind): CallSite = when (kind) {
         CallKind.NORMAL -> CallSite(
@@ -110,7 +114,7 @@ class TestVmOperandSchema: FunSpec({
                 is ImmediateSlotSchema -> {
                     val immType = schema.typeFor(slotSchema.typeRule) ?: IRDataType.WORD
                     immediate = if (immType == IRDataType.FLOAT)
-                        ImmediateOperand.FloatValue(2.0) else ImmediateOperand.Integer(1, immType)
+                        ImmediateOperand.FloatValue(2.0) else IRInstructions.integerImmediate(1, immType)
                 }
                 is MemorySlotSchema -> memory = when (slotSchema.kind) {
                     MemoryKind.DIRECT -> IRMemory.direct(dataAddress)
@@ -164,6 +168,8 @@ class TestVmOperandSchema: FunSpec({
         val operandProblems = mutableListOf<String>()
         for (opcode in Opcode.entries) {
             for (type in OpcodeSchemas.typesFor(opcode)) {
+                if (involvesQuads(opcode, type))
+                    continue
                 val instruction = buildInstruction(opcode, type)
                 try {
                     runSingle(instruction)

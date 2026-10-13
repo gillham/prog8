@@ -271,8 +271,8 @@ class Prog8TextDocumentService: TextDocumentService {
                     // CPU Stack
                     "push", "pushw", "pushl", "pushf", "pushp", "pop", "popw", "popl", "popf", "popp",
                     // Memory access
-                    "peek", "peekw", "peekl", "peekf", "peekbool",
-                    "poke", "pokew", "pokel", "pokef", "pokebool",
+                    "peek", "peekw", "peekl", "peekq", "peekf", "peekbool",
+                    "poke", "pokew", "pokel", "pokeq", "pokef", "pokebool",
                     // Byte manipulation
                     "lsb", "msb", "lsw", "msw", "lmh", "lsl", "lsr",
                     "setlsb", "setmsb", "mkword", "rol", "rol2", "ror", "ror2",

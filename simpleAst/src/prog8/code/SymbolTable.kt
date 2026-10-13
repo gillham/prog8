@@ -212,9 +212,14 @@ class StStaticVariable(name: String,
     var initializationNumericValue: Double? = null
         private set
 
-    fun setOnetimeInitNumeric(number: Double) {
+    /** all 64 bits of a quad or uquad initialization value, because its Double is only approximate */
+    var initializationQuadBits: Long? = null
+        private set
+
+    fun setOnetimeInitNumeric(number: Double, quadBits: Long? = null) {
         require(number!=0.0 || zpwish!=ZeropageWish.NOT_IN_ZEROPAGE) { "non-zp variable should not be initialized with 0, it will already be zeroed as part of BSS clear" }
         initializationNumericValue = number
+        initializationQuadBits = quadBits
     }
 
     val uninitialized: Boolean
@@ -245,7 +250,7 @@ class StStaticVariable(name: String,
 }
 
 
-class StConstant(name: String, val dt: DataType, val value: Double?, val memorySlab: StMemorySlab?, astNode: PtNode?) :
+class StConstant(name: String, val dt: DataType, val value: Double?, val memorySlab: StMemorySlab?, astNode: PtNode?, val quadBits: Long? = null) :
     StNode(name, StNodeType.CONSTANT, astNode)
 
 
@@ -332,7 +337,7 @@ class StSubroutineParameter(val name: String, val type: DataType, val register: 
 class StExtSubParameter(val name: String, val type: DataType, val register: RegisterOrStatusflag)
 
 sealed class StArrayElement {
-    data class Number(val value: Double) : StArrayElement()
+    data class Number(val value: Double, val quadBits: Long? = null) : StArrayElement()
     data class AddressOf(val symbol: String) : StArrayElement()
     data class StructInstance(val name: String, val uninitialized: Boolean = false) : StArrayElement()
     data class BoolValue(val value: Boolean) : StArrayElement()

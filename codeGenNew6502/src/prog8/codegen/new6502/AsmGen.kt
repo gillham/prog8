@@ -261,6 +261,7 @@ internal class AsmGen(val program: IRProgram, private val target: ICompilationTa
     }
 
     fun dataTypeSize(dt: IRDataType): Int = when (dt) {
+        IRDataType.QUAD -> quadNotSupported()
         IRDataType.BYTE -> 1
         IRDataType.WORD -> 2
         IRDataType.POINTER -> target.POINTER_MEM_SIZE.toInt()
@@ -889,6 +890,7 @@ internal class AsmGen(val program: IRProgram, private val target: ICompilationTa
             slotNames[hw.slot.value]?.let { name -> emitRaw("        ; slot ${hw.slot} == $name") }
         }
         when (insn.opcode) {
+            Opcode.EXTQ, Opcode.EXTQS, Opcode.LSIGL, Opcode.FFROMSQ, Opcode.FFROMUQ, Opcode.FTOSQ, Opcode.FTOUQ -> quadNotSupported()
             Opcode.NOP -> {}
             Opcode.BREAKPOINT -> emitLine("brk")
 
@@ -1463,3 +1465,5 @@ internal class AsmGen(val program: IRProgram, private val target: ICompilationTa
         }
     }
 }
+
+internal fun quadNotSupported(): Nothing = error("64-bit quad values are not supported on 6502 targets")

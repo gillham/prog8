@@ -622,7 +622,7 @@ _after:
             }
         }
 
-        if(expr.operator=="*" && expr.inferType(program).isInteger && expr.left isSameAs expr.right) {
+        if(expr.operator=="*" && expr.inferType(program).isInteger && !expr.inferType(program).isQuad && expr.left isSameAs expr.right) {
             // Replace squaring with a call to the builtin function to do this in a more optimized way.
             // The word and long routines are only valid for small inputs, so they do the runtime
             // range check themselves and fall back to the general multiply when needed (see the
@@ -733,6 +733,8 @@ _after:
                             fieldDt.isUnsignedWord -> peekCall("peekw")
                             fieldDt.isSignedWord -> TypecastExpression(peekCall("peekw"), DataType.WORD, true, expr.position)
                             fieldDt.isLong -> peekCall("peekl")
+                            fieldDt.isSignedQuad -> peekCall("peekq")
+                            fieldDt.isUnsignedQuad -> TypecastExpression(peekCall("peekq"), DataType.UQUAD, true, expr.position)
                             fieldDt.isFloat -> peekCall("peekf")
                             fieldDt.isPointer -> {
                                 // pointer fields must be read with the target's pointer size
@@ -1331,6 +1333,7 @@ _after:
                 dt.isUnsignedWord -> "pokew" to null
                 dt.isSignedWord -> "pokew" to DataType.UWORD
                 dt.isLong -> "pokel" to null
+                dt.isQuad -> "pokeq" to null
                 dt.isFloat -> "pokef" to null
                 else -> throw FatalAstException("can only deref a numeric or boolean pointer here")
             }
@@ -1440,6 +1443,8 @@ _after:
                 elemDt.isUnsignedWord -> "peekw" to null
                 elemDt.isSignedWord -> "peekw" to DataType.WORD
                 elemDt.isLong -> "peekl" to null
+                elemDt.isSignedQuad -> "peekq" to null
+                elemDt.isUnsignedQuad -> "peekq" to DataType.UQUAD
                 elemDt.isFloat -> "peekf" to null
                 else -> return noModifications  // guarded in helper; unreachable
             }
@@ -1465,6 +1470,8 @@ _after:
                             else if (dt.isUnsignedWord) "peekw" to null
                             else if (dt.isSignedWord) "peekw" to DataType.WORD
                             else if (dt.isLong) "peekl" to null
+                            else if (dt.isSignedQuad) "peekq" to null
+                            else if (dt.isUnsignedQuad) "peekq" to DataType.UQUAD
                             else if (dt.isFloat) "peekf" to null
                             else throw FatalAstException("can only deref a numeric or boolean pointer here")
                         val indexer = deref.chain.last().second!!
@@ -1662,6 +1669,7 @@ _after:
             dt.isUnsignedWord -> { funcName="pokew"; pokeCast=null; peekFuncName="peekw"; peekCast=null }
             dt.isSignedWord -> { funcName="pokew"; pokeCast=DataType.UWORD; peekFuncName="peekw"; peekCast=DataType.WORD }
             dt.isLong -> { funcName="pokel"; pokeCast=null; peekFuncName="peekl"; peekCast=null }
+            dt.isQuad -> { funcName="pokeq"; pokeCast=null; peekFuncName="peekq"; peekCast=if(dt.isUnsignedQuad) DataType.UQUAD else null }
             dt.isFloat -> { funcName="pokef"; pokeCast=null; peekFuncName="peekf"; peekCast=null }
             dt.isPointer -> {
                 val ptrName = if(program.target.POINTER_MEM_SIZE > 2u) "l" else "w"
