@@ -457,8 +457,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                 val constOffset = (ptrWithOffset.right as? PtNumber)?.number?.toInt()
                 if(constOffset!=null && constOffset in 0..65535) {
                     val ptrIdentifier = ptrWithOffset.left as PtIdentifier
-                    val dt = if(codeGen.options.compTarget.POINTER_MEM_SIZE > 2u && ptrIdentifier.type.isLong)
-                        IRDataType.POINTER else IRDataType.WORD
+                    val dt = codeGen.pointerBaseDt(ptrIdentifier.type)
                     val pointerReg = codeGen.registers.next(dt)
                     result += IRCodeChunk(null, null).also {
                         it += IRInstructions.loadMemory(Opcode.LOADM, dt, pointerReg, IRMemory.direct(ptrIdentifier.name))

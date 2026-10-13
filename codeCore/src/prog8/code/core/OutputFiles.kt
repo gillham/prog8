@@ -1,5 +1,6 @@
 package prog8.code.core
 
+import prog8.code.target.LlvmTarget
 import prog8.code.target.VMTarget
 import java.nio.file.Path
 import kotlin.io.path.extension
@@ -26,6 +27,7 @@ fun outputStemOf(name: Path): String {
  * otherwise [defaultName] plus the extension for [CompilationOptions.output], in [CompilationOptions.outputDir].
  * RAW and LIBRARY both use ".bin"; AMIGAHUNK has no extension.
  * On the virtual target the artifact is the IR file, so ".p8ir" is always enforced on -o.
+ * On the llvm64 target it is the LLVM IR text file, by default with ".ll".
  */
 fun CompilationOptions.programFile(defaultName: String): Path {
     // VMTarget's defaultOutputType = PRG is misleading: its artifact is the .p8ir file, never PRG.
@@ -36,6 +38,9 @@ fun CompilationOptions.programFile(defaultName: String): Path {
         return if (ir.extension=="p8ir") ir else ir.resolveSibling("${ir.name}.p8ir")
     }
     outputFile?.let { return it }
+    // on the llvm64 target the artifact is the LLVM IR text file
+    if(compTarget is LlvmTarget)
+        return outputDir.resolve("$defaultName.ll")
     val filename = when(output) {
         OutputType.PRG -> "$defaultName.prg"
         OutputType.XEX -> "$defaultName.xex"

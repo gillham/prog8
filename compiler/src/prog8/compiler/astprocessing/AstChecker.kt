@@ -1219,7 +1219,7 @@ internal class AstChecker(private val program: Program,
             val iDt = declValue.inferType(program)
             if (!(iDt istype decl.datatype)) {
                 if(decl.datatype.isPointerArray) {
-                    if(!iDt.getOrUndef().isWordArray)
+                    if(!iDt.getOrUndef().isWordArray && !options.compTarget.addressListInitializes(decl.datatype, iDt.getOrUndef()))
                         valueerr("initialization value for pointer array must be a word array")
                 }
                 else if(decl.datatype.isLongArray && decl.datatype.subType!=null) {
@@ -1615,7 +1615,7 @@ internal class AstChecker(private val program: Program,
             val parentDt = (array.parent as VarDecl).datatype
             if(parentDt.isArray) {
                 val elementDt = parentDt.elementType()
-                if(elementDt.isPointer) {
+                if(elementDt.isPointer && !options.compTarget.addressListInitializes(parentDt, array.type.getOrUndef())) {
                     // all elements in the initializer array should be of the same element type
                     array.value.forEach {
                         val valueDt = it.inferType(program).getOrUndef()
@@ -2005,7 +2005,8 @@ internal class AstChecker(private val program: Program,
                 errors.err("cannot use a pointer as a long, a pointer is an unsigned word", typecast.position)
         }
 
-        if(typecast.implicit && typecast.type.isPointer && !typecast.expression.inferType(program).isLong && !typecast.expression.inferType(program).getOrUndef().isPassByRef && options.compTarget.POINTER_MEM_SIZE>2u)
+        if(typecast.implicit && typecast.type.isPointer && !typecast.expression.inferType(program).isLong && !typecast.expression.inferType(program).getOrUndef().isPassByRef && options.compTarget.POINTER_MEM_SIZE>2u
+            && !options.compTarget.pointerConvertsImplicitly(typecast.expression.inferType(program).getOrUndef(), typecast.type))
             errors.err("explicit typecast is needed to convert a non-long value to a pointer", typecast.position)
 
         super.visit(typecast)
@@ -2570,7 +2571,7 @@ internal class AstChecker(private val program: Program,
     }
 
     override fun visit(inlineAssembly: InlineAssembly) {
-        if(inlineAssembly.isIR && options.compTarget.name != VMTarget.NAME)
+        if(inlineAssembly.isIR && options.compTarget.name != VMTarget.NAME && !options.compTarget.cpu.isLlvm)
             errors.err("%asm containing IR code cannot be translated to 6502 assembly", inlineAssembly.position)
     }
 

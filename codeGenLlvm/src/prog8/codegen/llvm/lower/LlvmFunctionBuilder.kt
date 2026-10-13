@@ -1,5 +1,6 @@
 package prog8.codegen.llvm.lower
 
+import prog8.code.core.Position
 import prog8.codegen.llvm.model.BinaryOperator
 import prog8.codegen.llvm.model.CastOperator
 import prog8.codegen.llvm.model.IcmpCondition
@@ -14,6 +15,10 @@ import prog8.codegen.llvm.model.LlvmValue
 import prog8.codegen.llvm.types.LlvmTypeMapper
 import prog8.intermediate.*
 
+private const val PROGRAM_START = "main.start"
+// the leading dot keeps it apart from any Prog8 symbol
+private const val GLOBAL_INITS = ".init.globals"
+
 /**
  * Translates the subroutines of an IR program into LLVM functions, with one LLVM block per IR chunk.
  * IR virtual registers live in entry-block stack slots, which LLVM's mem2reg pass turns into SSA values.
@@ -27,7 +32,10 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     private val hardwareSlots = sortedMapOf<String, LlvmGlobal>()
     private val runtimeGlobals = linkedMapOf<String, LlvmGlobal>()
 
-    /** Adds a function for every subroutine to [module], plus the declarations, helper functions and globals that those need. */
+    /**
+     * Adds a function for every subroutine to [module], and one for the code that initializes global variables,
+     * plus the declarations, helper functions and globals that those need.
+     */
     fun build(module: LlvmModule) {
         for (block in program.blocks) {
             for (child in block.children) {
@@ -38,17 +46,37 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
                 }
             }
         }
+        if (program.globalInits.isNotEmpty())
+            module.functions += function(IRSubroutine(GLOBAL_INITS, emptyList(), emptyList(), Position.DUMMY).also { it += program.globalInits })
         module.functions += helperFunctions.values
         module.functions += externalFunctions.values
         module.globals += hardwareSlots.values
         module.globals += runtimeGlobals.values
     }
 
+    /** The program's C entry point `main`: initializes the global variables that need code for that, runs main.start, and returns 0. */
+    fun entryPoint(): LlvmFunction {
+        val start = requireNotNull(subroutine(PROGRAM_START)) { "the program has no $PROGRAM_START subroutine to begin with" }
+        require(start.parameters.isEmpty()) { "$PROGRAM_START can't have parameters" }
+        val code = mutableListOf<LlvmInstruction>()
+        if (program.globalInits.isNotEmpty())
+            code += LlvmInstruction.Call(null, GLOBAL_INITS, emptyList(), LlvmType.Void)
+        val startType = returnType(start)
+        val ignoredResult = if (startType == LlvmType.Void) null else LlvmValue.Local("ignored", startType)
+        code += LlvmInstruction.Call(ignoredResult, PROGRAM_START, emptyList(), startType)
+        code += LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I32))
+        return LlvmFunction("main", LlvmType.I32, emptyList(), mutableListOf(LlvmBlock("entry", code)))
+    }
+
     fun function(sub: IRSubroutine): LlvmFunction =
         try {
-            FunctionLowering(this, sub, flagSlots = false).lower()
-        } catch (_: FlagsFromOtherBlock) {
-            FunctionLowering(this, sub, flagSlots = true).lower()
+            try {
+                FunctionLowering(this, sub, flagSlots = false).lower()
+            } catch (_: FlagsFromOtherBlock) {
+                FunctionLowering(this, sub, flagSlots = true).lower()
+            }
+        } catch (x: IllegalArgumentException) {
+            throw LlvmLoweringException(x.message ?: "${sub.label} can't be translated to LLVM IR", sub.position, x)
         }
 
     /** asmsubs and extsubs have assembly bodies for another target, so they become declarations that a runtime has to define. */
@@ -436,6 +464,9 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
 
 /** Thrown when a branch reads status flags set in another block; the function is then lowered again, with flag slots. */
 internal class FlagsFromOtherBlock : RuntimeException(null, null, false, false)
+
+/** A subroutine that the llvm64 target has no translation for; [position] is where it is in the source. */
+internal class LlvmLoweringException(message: String, val position: Position, cause: Throwable) : IllegalArgumentException(message, cause)
 
 private sealed interface FlagValue {
     data class Compared(val comparison: Comparison) : FlagValue

@@ -13,6 +13,7 @@ dependencies {
     implementation(project(":codeGenCpu6502"))
     implementation(project(":codeGenNew6502"))
     implementation(project(":codeGenM68k"))
+    implementation(project(":codeGenLlvm"))
     implementation(project(":codeGenIntermediate"))
     implementation(project(":intermediate"))
     implementation(project(":virtualmachine"))
@@ -23,6 +24,7 @@ dependencies {
     testImplementation(project(":codeCore"))
     testImplementation(testFixtures(project(":codeCore")))
     testImplementation(project(":intermediate"))
+    testImplementation(project(":codeGenLlvm"))
     testImplementation("io.kotest:kotest-runner-junit5")
     testImplementation("org.codeberg.irmen:ksim65:v2.2")
 }

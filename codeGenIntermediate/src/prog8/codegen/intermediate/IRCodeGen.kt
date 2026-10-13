@@ -42,12 +42,22 @@ class IRCodeGen(
     internal val addressDt: IRDataType
         get() = addressDtFor(options.compTarget)
 
+    /** The IR type to load a variable with that holds the base address of a memory access; typed pointers load at full size. */
+    internal fun pointerBaseDt(variableType: DataType): IRDataType = when {
+        options.compTarget.POINTER_MEM_SIZE <= 2u -> IRDataType.WORD
+        variableType.isPointer -> IRDataType.POINTER
+        // a long can only hold a whole address where pointers are 4 bytes
+        variableType.isLong -> if (options.compTarget.POINTER_MEM_SIZE == 4u) IRDataType.POINTER else IRDataType.LONG
+        else -> IRDataType.WORD
+    }
+
     fun generate(): IRProgram {
         // The pure "virtual" (VM) target doesn't need symbol prefixing because the VM
-        // doesn't emit assembly and has no risk of symbol clashes.  Any other target
+        // doesn't emit assembly and has no risk of symbol clashes.  Neither does the llvm64
+        // target: LLVM IR can quote any name.  Any other target
         // (that goes through assembly code generation) MUST prefix symbols to avoid
         // clashes with 64tass reserved names, BASIC tokens, and other toolchain symbols.
-        if(options.compTarget.name!=VMTarget.NAME) 
+        if(options.compTarget.name!=VMTarget.NAME && !options.compTarget.cpu.isLlvm)
             symbolTable = prefixSymbols(program, options, symbolTable)
         makeAllNodenamesScoped(program)
         moveAllNestedSubroutinesToBlockScope(program)

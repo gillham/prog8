@@ -101,7 +101,8 @@ val CompilationTargets = listOf(
     Qemu68kTarget.NAME,
     Amiga500Target.NAME,
     Amiga1200Target.NAME,
-    VMTarget.NAME
+    VMTarget.NAME,
+    LlvmTarget.NAME
 )
 
 fun getCompilationTargetByName(name: String) = when(name.lowercase()) {
@@ -113,5 +114,6 @@ fun getCompilationTargetByName(name: String) = when(name.lowercase()) {
     Amiga500Target.NAME -> Amiga500Target()
     Amiga1200Target.NAME -> Amiga1200Target()
     VMTarget.NAME -> VMTarget()
+    LlvmTarget.NAME, LlvmTarget.ALIAS -> LlvmTarget()
     else -> throw IllegalArgumentException("invalid compilation target")
 }

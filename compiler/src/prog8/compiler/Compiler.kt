@@ -921,6 +921,7 @@ private fun createAssemblyAndAssemble(program: PtProgram,
                 prog8.codegen.cpu6502.AsmGen6502(lastGeneratedLabelSequenceNr+1, asm6502CallIds)
         }
         compilerOptions.compTarget.cpu.is68k -> prog8.codegen.m68k.M68kCodeGenerator(retainSSAforIR)
+        compilerOptions.compTarget.cpu.isLlvm -> prog8.codegen.llvm.LlvmCodeGenerator(retainSSAforIR)
         compilerOptions.compTarget.name == VMTarget.NAME -> VmCodeGen(retainSSAforIR, irCallIds)
         else -> throw NotImplementedError("no code generator for cpu ${compilerOptions.compTarget.cpu}")
     }

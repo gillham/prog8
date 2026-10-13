@@ -27,6 +27,7 @@ class LlvmTarget(
 
     companion object {
         const val NAME = "llvm64"
+        const val ALIAS = "llvm"
         const val DEFAULT_TARGET_TRIPLE = "arm64-apple-macosx"
         const val DEFAULT_DATA_LAYOUT = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
     }

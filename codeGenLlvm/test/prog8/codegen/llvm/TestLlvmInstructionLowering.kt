@@ -145,7 +145,7 @@ class TestLlvmInstructionLowering: FunSpec({
         }.message.orEmpty()
         failure("callfar #1,40960()") shouldContain "another memory bank"
         failure("syscall ${IMSyscall.CALLFAR.number}()") shouldContain "another memory bank"
-        failure("syscall 1()") shouldContain "has syscall 1, which the llvm64 target doesn't have"
+        failure("syscall 2()") shouldContain "has syscall 2, which the llvm64 target doesn't have"
         failure("load.l r1.l,#5.l\nsyscall ${IMSyscall.COMPARE_STRINGS.number}(r1.l):r2.b") shouldContain "needs 2 arguments, not 1"
         failure("load.l r1.l,#5.l\next.l r2.l,r1.l") shouldContain "can only extend a byte or a word"
         failure("load.p r1.p,#main.s\nconcat.p r2.l,r1.p,r1.p") shouldContain "can only join bytes or words"

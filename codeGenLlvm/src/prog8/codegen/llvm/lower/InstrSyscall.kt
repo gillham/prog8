@@ -19,18 +19,20 @@ import prog8.intermediate.RegisterOperand
 import prog8.intermediate.requireCallSite
 
 // the virtual target's library calls these syscalls of the VM by number
+private const val VM_EXIT = 1
 private const val VM_MEMCOPY = 36
 private const val VM_MEMSET = 37
 private const val VM_MEMSETW = 38
 
 /**
- * Lowers the syscalls that the compiler emits for builtin functions and operators, and the memory copy and fill
+ * Lowers the syscalls that the compiler emits for builtin functions and operators, and the exit, memory copy and fill
  * syscalls of the virtual target's library. Searches and string comparisons become internal helper functions.
  */
 internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
     val site = ins.requireCallSite()
     val number = requireNotNull(site.target as? CallTarget.SystemCall) { "SYSCALL in ${sub.label} needs a syscall number" }.number
     when (number) {
+        VM_EXIT -> exit(site, number)
         VM_MEMCOPY -> memoryCopy(site, number)
         VM_MEMSET -> memorySet(site, number)
         VM_MEMSETW -> memorySetWords(site, number)
@@ -94,6 +96,13 @@ private fun FunctionLowering.clamp(site: CallSite, number: Int, type: LlvmType, 
     val suffix = LlvmPrinter.format(type)
     val atLeastMinimum = intrinsic(if (signed) "llvm.smax.$suffix" else "llvm.umax.$suffix", type, value, minimum)
     result(site, intrinsic(if (signed) "llvm.smin.$suffix" else "llvm.umin.$suffix", type, atLeastMinimum, maximum))
+}
+
+/** EXIT(status byte) ends the program with C's exit(), which llvm64, a hosted target, can rely on. */
+private fun FunctionLowering.exit(site: CallSite, number: Int) {
+    val (status) = arguments(site, number, 1)
+    val code = convert(read(status), LlvmType.I32)
+    emit(LlvmInstruction.Call(null, external("exit", LlvmType.Void, listOf(LlvmType.I32)), listOf(code), LlvmType.Void))
 }
 
 /** MEMCOPY(source, target, number of bytes) becomes memmove, so that overlapping areas don't give undefined behavior. */

@@ -33,7 +33,8 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
                             // using a array of words as initializer to a pointer array is fine
                             val ok = valueDt.isSplitWordArray(options.compTarget) && decl.datatype.isPointerArray ||
                                     valueDt.isWordArray && decl.datatype.isPointerArray && decl.splitwordarray == SplitWish.DONTCARE ||
-                                    decl.datatype.isLongArray && (valueDt.isPointerArray || valueDt.isWordArray)
+                                    decl.datatype.isLongArray && (valueDt.isPointerArray || valueDt.isWordArray) ||
+                                    options.compTarget.addressListInitializes(decl.datatype, valueDt)
                             if (!ok) {
                                 val splitNote = when {
                                     valueDt.isSplitWordArray(options.compTarget) && decl.datatype.isSplitWordArray(options.compTarget) ->

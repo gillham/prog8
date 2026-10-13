@@ -125,6 +125,9 @@ internal class VerifyFunctionArgTypes(val program: Program, val options: Compila
             if(paramDt.isPointer && argDt.base==BaseDataType.LONG && is32bit)
                 return true
 
+            if(target.pointerConvertsImplicitly(argDt, paramDt))
+                return true
+
             // if expected is LONG and actual is an array, we allow it (address of array is a long on 32-bit targets)
             if(paramDt.isLong && argDt.isArray && is32bit)
                 return true

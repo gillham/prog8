@@ -63,6 +63,9 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                     }
                 }
 
+                if(options.compTarget.pointerConvertsImplicitly(valueDt.getOrUndef(), decl.datatype))
+                    return listOf(pointerConversion(declValue, decl.datatype, decl))
+
                 // don't add a typecast if the initializer value is inherently not assignable
                 if(valueDt isNotAssignableTo decl.datatype)
                     return noModifications
@@ -273,7 +276,9 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
             val targettype = targetItype.getOrUndef()
             val valuetype = valueItype.getOrUndef()
             if (valuetype != targettype) {
-                if (valuetype isAssignableTo targettype) {
+                if (options.compTarget.pointerConvertsImplicitly(valuetype, targettype)) {
+                    return listOf(pointerConversion(assignment.value, targettype, assignment))
+                } else if (valuetype isAssignableTo targettype) {
                     if(valuetype.isIterable && targettype == options.compTarget.pointerType)
                         // special case, don't typecast STR/arrays to pointer type, we support those assignments "directly"
                         return noModifications
@@ -428,6 +433,10 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                     if(returnValue.type == ptrNumericType)
                         continue
                 }
+            }
+            if (options.compTarget.pointerConvertsImplicitly(returnDt.getOrUndef(), subReturnType)) {
+                modifications += pointerConversion(returnValue, subReturnType, returnStmt)
+                continue
             }
             if (returnDt istype subReturnType or returnDt.isNotAssignableTo(subReturnType))
                 continue
@@ -754,7 +763,10 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
             val argIdt = it.second.inferType(program)
             if (argIdt.isKnown && !targetDt.isStructInstance) {
                 val argDt = argIdt.getOrUndef()
-                if (argDt !in it.first) {
+                val convertedPointerDt = it.first.firstOrNull { paramDt -> options.compTarget.pointerConvertsImplicitly(argDt, paramDt) }
+                if (argDt !in it.first && convertedPointerDt != null) {
+                    modifications += pointerConversion(it.second, convertedPointerDt, parent)
+                } else if (argDt !in it.first) {
                     val identifier = it.second as? IdentifierReference
                     val number = it.second as? NumericLiteral
                     val array = it.second as? ArrayLiteral
@@ -810,6 +822,10 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
         }
         return modifications
     }
+
+    /** An implicit conversion between pointer types, see [IMemSizer.pointerConvertsImplicitly]: the same as an explicit `as` cast. */
+    private fun pointerConversion(value: Expression, pointerType: DataType, parent: Node): AstModification =
+        AstReplaceNode(value, TypecastExpression(value, pointerType, true, value.position), parent)
 
     private fun addTypecastOrCastedValueModification(
         modifications: MutableList<AstModification>,

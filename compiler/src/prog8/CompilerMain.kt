@@ -15,6 +15,7 @@ import prog8.code.source.ImportFileSystem
 import prog8.code.source.ImportFileSystem.expandTilde
 import prog8.code.target.CompilationTargets
 import prog8.code.target.Cx16Target
+import prog8.code.target.LlvmTarget
 import prog8.code.target.VMTarget
 import prog8.code.target.getCompilationTargetByName
 import prog8.compiler.*
@@ -182,7 +183,7 @@ private fun compileMain(args: Array<String>): Boolean {
             return false
         }
 
-        if (compilationTarget !in CompilationTargets) {
+        if (compilationTarget !in CompilationTargets && compilationTarget != LlvmTarget.ALIAS) {
             val configfile = expandTilde(Path(compilationTarget!!))
             if(!configfile.isReadable()) {
                 presenter.printErrorLine("Invalid compilation target: $compilationTarget")
