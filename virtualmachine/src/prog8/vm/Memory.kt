@@ -73,6 +73,34 @@ class Memory {
         mem[a+3] = ((v shr 24) and 0xFF).toByte()
     }
 
+    fun getSQ(address: UInt): Long {
+        val a = address.toInt()
+        return (mem[a].toLong() and 0xFF) or
+            ((mem[a+1].toLong() and 0xFF) shl 8) or
+            ((mem[a+2].toLong() and 0xFF) shl 16) or
+            ((mem[a+3].toLong() and 0xFF) shl 24) or
+            ((mem[a+4].toLong() and 0xFF) shl 32) or
+            ((mem[a+5].toLong() and 0xFF) shl 40) or
+            ((mem[a+6].toLong() and 0xFF) shl 48) or
+            ((mem[a+7].toLong() and 0xFF) shl 56)
+    }
+
+    fun getUQ(address: UInt): ULong = getSQ(address).toULong()
+
+    fun setSQ(address: UInt, value: Long) {
+        val a = address.toInt()
+        mem[a] = (value and 0xFF).toByte()
+        mem[a+1] = ((value shr 8) and 0xFF).toByte()
+        mem[a+2] = ((value shr 16) and 0xFF).toByte()
+        mem[a+3] = ((value shr 24) and 0xFF).toByte()
+        mem[a+4] = ((value shr 32) and 0xFF).toByte()
+        mem[a+5] = ((value shr 40) and 0xFF).toByte()
+        mem[a+6] = ((value shr 48) and 0xFF).toByte()
+        mem[a+7] = ((value shr 56) and 0xFF).toByte()
+    }
+
+    fun setUQ(address: UInt, value: ULong) = setSQ(address, value.toLong())
+
     fun setFloat(address: UInt, value: Double) {
         var bits = value.toBits()
         val a = address.toInt()

@@ -61,10 +61,6 @@ class TestVmOperandSchema: FunSpec({
         null -> CallingConventionSlot(0)
     }
 
-    // the VM can't execute 64-bit quad instructions yet
-    fun involvesQuads(opcode: Opcode, type: IRDataType?) = type == IRDataType.QUAD ||
-            opcode in setOf(Opcode.EXTQ, Opcode.EXTQS, Opcode.LSIGL, Opcode.FFROMSQ, Opcode.FFROMUQ, Opcode.FTOSQ, Opcode.FTOUQ)
-
     fun callSiteFor(kind: CallKind): CallSite = when (kind) {
         CallKind.NORMAL -> CallSite(
             CallTarget.Direct(codeLabel(targetLabel)),
@@ -168,8 +164,6 @@ class TestVmOperandSchema: FunSpec({
         val operandProblems = mutableListOf<String>()
         for (opcode in Opcode.entries) {
             for (type in OpcodeSchemas.typesFor(opcode)) {
-                if (involvesQuads(opcode, type))
-                    continue
                 val instruction = buildInstruction(opcode, type)
                 try {
                     runSingle(instruction)

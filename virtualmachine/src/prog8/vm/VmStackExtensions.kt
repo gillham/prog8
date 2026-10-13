@@ -35,6 +35,15 @@ internal fun ArrayDeque<UByte>.pushf(value: Double) {
     add(bits.toUByte())
 }
 
+internal fun ArrayDeque<UByte>.pushq(value: Long) {
+    // push quad; lsb first, msb last
+    var bits = value
+    repeat(8) {
+        add(bits.toUByte())
+        bits = bits ushr 8
+    }
+}
+
 // Pop word (2 bytes). Used for UWORD/SWORD values.
 internal fun ArrayDeque<UByte>.popw(): UShort {
     val msb = removeLast()
@@ -70,4 +79,13 @@ internal fun ArrayDeque<UByte>.popf(): Double {
             (1L shl 48)*b1 +
             (1L shl 56)*b0
     return Double.fromBits(bits)
+}
+
+internal fun ArrayDeque<UByte>.popq(): Long {
+    // pop quad; lsb is on bottom, msb on top
+    var bits = 0L
+    repeat(8) {
+        bits = (bits shl 8) or removeLast().toLong()
+    }
+    return bits
 }

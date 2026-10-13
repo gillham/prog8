@@ -5,7 +5,7 @@ import prog8.code.core.*
 import prog8.intermediate.*
 
 private sealed interface InitializerValue {
-    data class Numeric(val value: Double) : InitializerValue
+    data class Numeric(val value: Double, val quadBits: Long? = null) : InitializerValue
     data class Bool(val value: Boolean) : InitializerValue
 }
 
@@ -269,6 +269,8 @@ class VmProgramLoader {
             // not the (default POINTER) type the unresolved symbol reference happened to carry.
             val immediate = if (instr.type == IRDataType.FLOAT)
                 ImmediateOperand.FloatValue(fullAddress.toDouble())
+            else if (instr.type == IRDataType.QUAD)
+                ImmediateOperand.QuadValue(fullAddress.toLong())
             else
                 ImmediateOperand.Integer(fullAddress.toInt(), instr.type ?: (instr.immediate as ImmediateOperand.SymbolAddress).type)
             instr.copy(immediate = immediate)
@@ -307,6 +309,7 @@ class VmProgramLoader {
                         IMSyscall.WORDARRAY_CONTAINS.number -> Syscall.WORDARRAY_CONTAINS
                         IMSyscall.SPLIT_WORDARRAY_CONTAINS.number -> Syscall.SPLIT_WORDARRAY_CONTAINS
                         IMSyscall.LONGARRAY_CONTAINS.number -> Syscall.LONGARRAY_CONTAINS
+                        IMSyscall.QUADARRAY_CONTAINS.number -> Syscall.QUADARRAY_CONTAINS
                         IMSyscall.FLOATARRAY_CONTAINS.number -> Syscall.FLOATARRAY_CONTAINS
                         IMSyscall.CLAMP_BYTE.number -> Syscall.CLAMP_BYTE
                         IMSyscall.CLAMP_UBYTE.number -> Syscall.CLAMP_UBYTE
@@ -463,6 +466,10 @@ class VmProgramLoader {
                                 memory.setSL(addr, 0)
                                 addr += 4u
                             }
+                            dt.isQuadArray -> {
+                                memory.setSQ(addr, 0L)
+                                addr += 8u
+                            }
                             dt.sub == BaseDataType.STRUCT_INSTANCE -> {
                                 val elemSize = dt.subType?.memsize(program.options.compTarget) ?: 0
                                 repeat(elemSize) {
@@ -481,6 +488,7 @@ class VmProgramLoader {
                         dt.isPointer -> memory.setUL(addr, 0u)
                         dt.isSignedWord -> memory.setSW(addr, 0)
                         dt.isLong -> memory.setSL(addr, 0)
+                        dt.isQuad -> memory.setSQ(addr, 0L)
                         dt.isFloat -> memory.setFloat(addr, 0.0)
                         else -> throw IRParseException("invalid dt")
                     }
@@ -496,7 +504,8 @@ class VmProgramLoader {
                             variable.dt.isUnsignedWord -> memory.setUW(addr, initVal.value.toInt().toUShort())
                             variable.dt.isSignedWord -> memory.setSW(addr, initVal.value.toInt().toShort())
                             variable.dt.isPointer -> memory.setUL(addr, initVal.value.toUInt())
-                            variable.dt.isLong -> memory.setSL(addr, initVal.value.toInt())
+                            variable.dt.isLong -> memory.setSL(addr, initVal.value.toLong().toInt())
+                            variable.dt.isQuad -> memory.setSQ(addr, quadBitsOf(initVal.value, initVal.quadBits, variable.dt.isUnsignedQuad))
                             variable.dt.isFloat -> memory.setFloat(addr, initVal.value)
                             else -> throw IRParseException("invalid dt")
                         }
@@ -548,8 +557,12 @@ class VmProgramLoader {
                             a += 4u
                         }
                         it.dt == BaseDataType.LONG -> {
-                            memory.setSL(a, value.toInt())
+                            memory.setSL(a, value.toLong().toInt())
                             a += 4u
+                        }
+                        it.dt.isQuad -> {
+                            memory.setSQ(a, quadBitsOf(value, (it.value as? IRStSymbolicReference.Numeric)?.quadBits, it.dt.isUnsignedQuad))
+                            a += 8u
                         }
                         it.dt == BaseDataType.FLOAT -> {
                             memory.setFloat(a, value)
@@ -633,10 +646,21 @@ class VmProgramLoader {
                 for (elt in iElts) {
                     val value = getInitializerValue(variable.dt, elt, symbolAddresses)
                     when (value) {
-                        is InitializerValue.Numeric -> memory.setSL(address, value.value.toInt())
+                        is InitializerValue.Numeric -> memory.setSL(address, value.value.toLong().toInt())
                         is InitializerValue.Bool -> throw IRParseException("didn't expect bool")
                     }
                     address += 4u
+                }
+            }
+
+            variable.dt.isQuadArray -> {
+                for (elt in iElts) {
+                    val value = getInitializerValue(variable.dt, elt, symbolAddresses)
+                    when (value) {
+                        is InitializerValue.Numeric -> memory.setSQ(address, quadBitsOf(value.value, value.quadBits, variable.dt.isUnsignedQuadArray))
+                        is InitializerValue.Bool -> throw IRParseException("didn't expect bool")
+                    }
+                    address += 8u
                 }
             }
 
@@ -681,7 +705,8 @@ class VmProgramLoader {
                             fieldVal.dt.isByteOrBool -> { memory.setUB(address, value.toInt().toUByte()); address++ }
                             fieldVal.dt.isWord -> { memory.setUW(address, value.toInt().toUShort()); address += 2u }
                             fieldVal.dt.isPointer -> { memory.setUL(address, value.toUInt()); address += program.options.compTarget.POINTER_MEM_SIZE }
-                            fieldVal.dt==BaseDataType.LONG -> { memory.setSL(address, value.toInt()); address += 4u }
+                            fieldVal.dt==BaseDataType.LONG -> { memory.setSL(address, value.toLong().toInt()); address += 4u }
+                            fieldVal.dt.isQuad -> { memory.setSQ(address, quadBitsOf(value, (fieldVal.value as? IRStSymbolicReference.Numeric)?.quadBits, fieldVal.dt.isUnsignedQuad)); address += 8u }
                             fieldVal.dt==BaseDataType.FLOAT -> { memory.setFloat(address, value); address += program.options.compTarget.FLOAT_MEM_SIZE }
                             else -> throw IRParseException("invalid dt for struct field")
                         }
@@ -720,8 +745,11 @@ class VmProgramLoader {
                     }
                 }
             }
-            is IRStSymbolicReference.Numeric -> InitializerValue.Numeric(elt.value)
+            is IRStSymbolicReference.Numeric -> InitializerValue.Numeric(elt.value, elt.quadBits)
             is IRStSymbolicReference.BoolValue -> InitializerValue.Bool(elt.value)
         }
     }
+
+    private fun quadBitsOf(value: Double, quadBits: Long?, unsigned: Boolean): Long =
+        quadBits ?: if(unsigned) value.toULong().toLong() else value.toLong()
 }

@@ -4,6 +4,7 @@ import prog8.intermediate.IRDataType
 import prog8.intermediate.IRInstruction
 import prog8.intermediate.requireDest
 import prog8.intermediate.requireImmediateInt
+import prog8.intermediate.requireImmediateQuad
 import prog8.intermediate.requireSrcA
 import prog8.intermediate.requireSrcB
 
@@ -19,7 +20,7 @@ internal fun VirtualMachine.statusbitsComparison(left: Int, right: Int, type: IR
     val comparison = left - right
     statusZero = comparison == 0
     when (type) {
-        IRDataType.QUAD -> quadNotSupported()
+        IRDataType.QUAD -> throw IllegalArgumentException("quad comparisons must use statusbitsComparisonQuad")
         IRDataType.BYTE -> {
             statusNegative = (comparison and 0x80) != 0
             statusCarry = (left and 0xff) >= (right and 0xff)
@@ -40,7 +41,7 @@ internal fun VirtualMachine.statusbitsComparisonWithOverflow(left: Int, right: I
     statusbitsComparison(left, right, type)
     val comparison = left - right
     when (type) {
-        IRDataType.QUAD -> quadNotSupported()
+        IRDataType.QUAD -> throw IllegalArgumentException("quad comparisons must use statusbitsComparisonQuad")
         IRDataType.BYTE -> {
             val signBit = 0x80
             val leftSign = left and signBit
@@ -61,6 +62,14 @@ internal fun VirtualMachine.statusbitsComparisonWithOverflow(left: Int, right: I
         }
         IRDataType.FLOAT -> { /* floats don't set overflow */ }
     }
+}
+
+internal fun VirtualMachine.statusbitsComparisonQuad(left: Long, right: Long) {
+    val comparison = left - right
+    statusZero = left == right
+    statusNegative = comparison < 0
+    statusCarry = left.toULong() >= right.toULong()
+    statusOverflow = ((left xor right) and (left xor comparison)) < 0
 }
 
 internal fun VirtualMachine.plusMinusMultAnyByte(operator: String, reg1: Int, reg2: Int) {
@@ -508,14 +517,14 @@ internal fun arithFloat(left: Double, operator: String, right: Double): Double =
     else -> throw IllegalArgumentException("operator word $operator")
 }
 
-internal fun VirtualMachine.getBranchOperands(i: IRInstruction): Pair<Int, Int> {
+internal fun VirtualMachine.getBranchOperands(i: IRInstruction): Pair<Long, Long> {
     val left = i.requireSrcA().registerNumber
     val right = i.requireSrcB().registerNumber
     return when(i.type) {
-        IRDataType.QUAD -> quadNotSupported()
-        IRDataType.BYTE -> Pair(registers.getSB(left).toInt(), registers.getSB(right).toInt())
-        IRDataType.WORD -> Pair(registers.getSW(left).toInt(), registers.getSW(right).toInt())
-        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left), registers.getSL(right))
+        IRDataType.QUAD -> Pair(registers.getSQ(left), registers.getSQ(right))
+        IRDataType.BYTE -> Pair(registers.getSB(left).toLong(), registers.getSB(right).toLong())
+        IRDataType.WORD -> Pair(registers.getSW(left).toLong(), registers.getSW(right).toLong())
+        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left).toLong(), registers.getSL(right).toLong())
         IRDataType.FLOAT -> {
             throw IllegalArgumentException("can't use float here")
         }
@@ -523,14 +532,14 @@ internal fun VirtualMachine.getBranchOperands(i: IRInstruction): Pair<Int, Int> 
     }
 }
 
-internal fun VirtualMachine.getBranchOperandsImm(i: IRInstruction): Pair<Int, Int> {
+internal fun VirtualMachine.getBranchOperandsImm(i: IRInstruction): Pair<Long, Long> {
     val left = i.requireSrcA().registerNumber
-    val right = i.requireImmediateInt()
+    val right = if(i.type==IRDataType.QUAD) i.requireImmediateQuad() else i.requireImmediateInt().toLong()
     return when(i.type) {
-        IRDataType.QUAD -> quadNotSupported()
-        IRDataType.BYTE -> Pair(registers.getSB(left).toInt(), right)
-        IRDataType.WORD -> Pair(registers.getSW(left).toInt(), right)
-        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left), right)
+        IRDataType.QUAD -> Pair(registers.getSQ(left), right)
+        IRDataType.BYTE -> Pair(registers.getSB(left).toLong(), right)
+        IRDataType.WORD -> Pair(registers.getSW(left).toLong(), right)
+        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left).toLong(), right)
         IRDataType.FLOAT -> {
             throw IllegalArgumentException("can't use float here")
         }
@@ -538,14 +547,14 @@ internal fun VirtualMachine.getBranchOperandsImm(i: IRInstruction): Pair<Int, In
     }
 }
 
-internal fun VirtualMachine.getBranchOperandsU(i: IRInstruction): Pair<UInt, UInt> {
+internal fun VirtualMachine.getBranchOperandsU(i: IRInstruction): Pair<ULong, ULong> {
     val left = i.requireSrcA().registerNumber
     val right = i.requireSrcB().registerNumber
     return when(i.type) {
-        IRDataType.QUAD -> quadNotSupported()
-        IRDataType.BYTE -> Pair(registers.getUB(left).toUInt(), registers.getUB(right).toUInt())
-        IRDataType.WORD -> Pair(registers.getUW(left).toUInt(), registers.getUW(right).toUInt())
-        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left).toUInt(), registers.getSL(right).toUInt())
+        IRDataType.QUAD -> Pair(registers.getUQ(left), registers.getUQ(right))
+        IRDataType.BYTE -> Pair(registers.getUB(left).toULong(), registers.getUB(right).toULong())
+        IRDataType.WORD -> Pair(registers.getUW(left).toULong(), registers.getUW(right).toULong())
+        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getUL(left).toULong(), registers.getUL(right).toULong())
         IRDataType.FLOAT -> {
             throw IllegalArgumentException("can't use float here")
         }
@@ -553,14 +562,15 @@ internal fun VirtualMachine.getBranchOperandsU(i: IRInstruction): Pair<UInt, UIn
     }
 }
 
-internal fun VirtualMachine.getBranchOperandsImmU(i: IRInstruction): Pair<UInt, UInt> {
+internal fun VirtualMachine.getBranchOperandsImmU(i: IRInstruction): Pair<ULong, ULong> {
     val left = i.requireSrcA().registerNumber
-    val right = i.requireImmediateInt().toUInt()
+    // a narrow immediate is zero-extended from its 32 bits, so a negative one stays below 2^32
+    val right = if(i.type==IRDataType.QUAD) i.requireImmediateQuad().toULong() else i.requireImmediateInt().toUInt().toULong()
     return when(i.type) {
-        IRDataType.QUAD -> quadNotSupported()
-        IRDataType.BYTE -> Pair(registers.getUB(left).toUInt(), right)
-        IRDataType.WORD -> Pair(registers.getUW(left).toUInt(), right)
-        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left).toUInt(), right)
+        IRDataType.QUAD -> Pair(registers.getUQ(left), right)
+        IRDataType.BYTE -> Pair(registers.getUB(left).toULong(), right)
+        IRDataType.WORD -> Pair(registers.getUW(left).toULong(), right)
+        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getUL(left).toULong(), right)
         IRDataType.FLOAT -> {
             throw IllegalArgumentException("can't use float here")
         }
@@ -568,14 +578,14 @@ internal fun VirtualMachine.getBranchOperandsImmU(i: IRInstruction): Pair<UInt, 
     }
 }
 
-internal fun VirtualMachine.getLogicalOperandsU(i: IRInstruction): Pair<UInt, UInt> {
+internal fun VirtualMachine.getLogicalOperandsU(i: IRInstruction): Pair<ULong, ULong> {
     val left = i.requireDest().registerNumber
     val right = i.requireSrcA().registerNumber
     return when(i.type) {
-        IRDataType.QUAD -> quadNotSupported()
-        IRDataType.BYTE -> Pair(registers.getUB(left).toUInt(), registers.getUB(right).toUInt())
-        IRDataType.WORD -> Pair(registers.getUW(left).toUInt(), registers.getUW(right).toUInt())
-        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left).toUInt(), registers.getSL(right).toUInt())
+        IRDataType.QUAD -> Pair(registers.getUQ(left), registers.getUQ(right))
+        IRDataType.BYTE -> Pair(registers.getUB(left).toULong(), registers.getUB(right).toULong())
+        IRDataType.WORD -> Pair(registers.getUW(left).toULong(), registers.getUW(right).toULong())
+        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getUL(left).toULong(), registers.getUL(right).toULong())
         IRDataType.FLOAT -> {
             throw IllegalArgumentException("can't use float here")
         }
@@ -583,26 +593,26 @@ internal fun VirtualMachine.getLogicalOperandsU(i: IRInstruction): Pair<UInt, UI
     }
 }
 
-internal fun VirtualMachine.getLogicalOperandU(i: IRInstruction): UInt {
+internal fun VirtualMachine.getLogicalOperandU(i: IRInstruction): ULong {
     val reg = i.requireDest().registerNumber
     return when(i.type) {
-        IRDataType.QUAD -> quadNotSupported()
-        IRDataType.BYTE -> registers.getUB(reg).toUInt()
-        IRDataType.WORD -> registers.getUW(reg).toUInt()
-        IRDataType.LONG, IRDataType.POINTER -> registers.getSL(reg).toUInt()
+        IRDataType.QUAD -> registers.getUQ(reg)
+        IRDataType.BYTE -> registers.getUB(reg).toULong()
+        IRDataType.WORD -> registers.getUW(reg).toULong()
+        IRDataType.LONG, IRDataType.POINTER -> registers.getUL(reg).toULong()
         IRDataType.FLOAT -> throw IllegalArgumentException("can't use float here")
         null -> throw IllegalArgumentException("need type for logical instruction")
     }
 }
 
-internal fun VirtualMachine.getLogicalOperandsS(i: IRInstruction): Pair<Int, Int> {
+internal fun VirtualMachine.getLogicalOperandsS(i: IRInstruction): Pair<Long, Long> {
     val left = i.requireDest().registerNumber
     val right = i.requireSrcA().registerNumber
     return when(i.type) {
-        IRDataType.QUAD -> quadNotSupported()
-        IRDataType.BYTE -> Pair(registers.getSB(left).toInt(), registers.getSB(right).toInt())
-        IRDataType.WORD -> Pair(registers.getSW(left).toInt(), registers.getSW(right).toInt())
-        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left), registers.getSL(right))
+        IRDataType.QUAD -> Pair(registers.getSQ(left), registers.getSQ(right))
+        IRDataType.BYTE -> Pair(registers.getSB(left).toLong(), registers.getSB(right).toLong())
+        IRDataType.WORD -> Pair(registers.getSW(left).toLong(), registers.getSW(right).toLong())
+        IRDataType.LONG, IRDataType.POINTER -> Pair(registers.getSL(left).toLong(), registers.getSL(right).toLong())
         IRDataType.FLOAT -> {
             throw IllegalArgumentException("can't use float here")
         }
@@ -610,13 +620,13 @@ internal fun VirtualMachine.getLogicalOperandsS(i: IRInstruction): Pair<Int, Int
     }
 }
 
-internal fun VirtualMachine.getLogicalOperandS(i: IRInstruction): Int {
+internal fun VirtualMachine.getLogicalOperandS(i: IRInstruction): Long {
     val reg = i.requireDest().registerNumber
     return when(i.type) {
-        IRDataType.QUAD -> quadNotSupported()
-        IRDataType.BYTE -> registers.getSB(reg).toInt()
-        IRDataType.WORD -> registers.getSW(reg).toInt()
-        IRDataType.LONG, IRDataType.POINTER -> registers.getSL(reg)
+        IRDataType.QUAD -> registers.getSQ(reg)
+        IRDataType.BYTE -> registers.getSB(reg).toLong()
+        IRDataType.WORD -> registers.getSW(reg).toLong()
+        IRDataType.LONG, IRDataType.POINTER -> registers.getSL(reg).toLong()
         IRDataType.FLOAT -> throw IllegalArgumentException("can't use float here")
         null -> throw IllegalArgumentException("need type for logical instruction")
     }
@@ -720,4 +730,151 @@ internal fun VirtualMachine.divModLongSignedInplace(operator: String, reg1: Int,
         else -> throw IllegalArgumentException("operator long $operator")
     }
     memory.setSL(address, result)
+}
+
+// the low 64 bits of a product are the same for signed and unsigned operands, so these serve both
+internal fun VirtualMachine.plusMinusMultAnyQuad(operator: String, reg1: Int, reg2: Int) {
+    val left = registers.getSQ(reg1)
+    val right = registers.getSQ(reg2)
+    val result: Long = when(operator) {
+        "+" -> left + right
+        "-" -> left - right
+        "*" -> left * right
+        else -> throw IllegalArgumentException("operator quad $operator")
+    }
+    registers.setSQ(reg1, result)
+}
+
+internal fun VirtualMachine.plusMinusMultConstQuad(operator: String, reg1: Int, value: Long) {
+    val left = registers.getSQ(reg1)
+    val result: Long = when(operator) {
+        "+" -> left + value
+        "-" -> left - value
+        "*" -> left * value
+        else -> throw IllegalArgumentException("operator quad $operator")
+    }
+    registers.setSQ(reg1, result)
+}
+
+internal fun VirtualMachine.plusMinusMultAnyQuadInplace(operator: String, reg1: Int, address: UInt) {
+    val memvalue = memory.getSQ(address)
+    val operand = registers.getSQ(reg1)
+    val result: Long = when(operator) {
+        "+" -> memvalue + operand
+        "-" -> memvalue - operand
+        "*" -> memvalue * operand
+        else -> throw IllegalArgumentException("operator quad $operator")
+    }
+    memory.setSQ(address, result)
+}
+
+internal fun VirtualMachine.plusMinusMultConstQuadInplace(operator: String, value: Long, address: UInt) {
+    val memvalue = memory.getSQ(address)
+    val result: Long = when(operator) {
+        "+" -> memvalue + value
+        "-" -> memvalue - value
+        "*" -> memvalue * value
+        else -> throw IllegalArgumentException("operator quad $operator")
+    }
+    memory.setSQ(address, result)
+}
+
+internal fun VirtualMachine.divModQuadSigned(operator: String, reg1: Int, reg2: Int) {
+    val left = registers.getSQ(reg1)
+    val right = registers.getSQ(reg2)
+    val result = when(operator) {
+        "/" -> {
+            if(right==0L) Long.MAX_VALUE
+            else left / right
+        }
+        "%" -> {
+            if(right==0L) 0L
+            else left % right
+        }
+        else -> throw IllegalArgumentException("operator quad $operator")
+    }
+    registers.setSQ(reg1, result)
+}
+
+internal fun VirtualMachine.divModConstQuadSigned(operator: String, reg1: Int, immediate: Long) {
+    val left = registers.getSQ(reg1)
+    val result = when(operator) {
+        "/" -> {
+            if(immediate==0L) Long.MAX_VALUE
+            else left / immediate
+        }
+        "%" -> {
+            if(immediate==0L) 0L
+            else left % immediate
+        }
+        else -> throw IllegalArgumentException("operator quad $operator")
+    }
+    registers.setSQ(reg1, result)
+}
+
+internal fun VirtualMachine.divModQuadSignedInplace(operator: String, reg1: Int, address: UInt) {
+    val left = memory.getSQ(address)
+    val right = registers.getSQ(reg1)
+    val result = when(operator) {
+        "/" -> {
+            if(right==0L) Long.MAX_VALUE
+            else left / right
+        }
+        "%" -> {
+            if(right==0L) 0L
+            else left % right
+        }
+        else -> throw IllegalArgumentException("operator quad $operator")
+    }
+    memory.setSQ(address, result)
+}
+
+internal fun VirtualMachine.divOrModQuadUnsigned(operator: String, reg1: Int, reg2: Int) {
+    val left = registers.getUQ(reg1)
+    val right = registers.getUQ(reg2)
+    val result = when(operator) {
+        "/" -> {
+            if(right==0uL) ULong.MAX_VALUE
+            else left / right
+        }
+        "%" -> {
+            if(right==0uL) 0uL
+            else left % right
+        }
+        else -> throw IllegalArgumentException("operator quad $operator")
+    }
+    registers.setUQ(reg1, result)
+}
+
+internal fun VirtualMachine.divOrModConstQuadUnsigned(operator: String, reg1: Int, value: ULong) {
+    val left = registers.getUQ(reg1)
+    val result = when(operator) {
+        "/" -> {
+            if(value==0uL) ULong.MAX_VALUE
+            else left / value
+        }
+        "%" -> {
+            if(value==0uL) 0uL
+            else left % value
+        }
+        else -> throw IllegalArgumentException("operator quad $operator")
+    }
+    registers.setUQ(reg1, result)
+}
+
+internal fun VirtualMachine.divModQuadUnsignedInplace(operator: String, reg1: Int, address: UInt) {
+    val left = memory.getUQ(address)
+    val right = registers.getUQ(reg1)
+    val result = when(operator) {
+        "/" -> {
+            if(right==0uL) ULong.MAX_VALUE
+            else left / right
+        }
+        "%" -> {
+            if(right==0uL) 0uL
+            else left % right
+        }
+        else -> throw IllegalArgumentException("operator quad $operator")
+    }
+    memory.setUQ(address, result)
 }

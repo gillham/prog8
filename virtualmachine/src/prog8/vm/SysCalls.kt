@@ -81,6 +81,7 @@ SYSCALLS:     DO NOT RENUMBER THESE OR YOU WILL BREAK EXISTING CODE
 67 = SPLIT_WORDARRAY_CONTAINS
 68 = LONGARRAY_CONTAINS
 69 = get_c ; read a single character (byte) from standard input, 0 at the end of the input
+70 = QUADARRAY_CONTAINS
 */
 
 enum class Syscall {
@@ -159,6 +160,7 @@ enum class Syscall {
     SPLIT_WORDARRAY_CONTAINS,
     LONGARRAY_CONTAINS,
     GET_C,
+    QUADARRAY_CONTAINS,
     ;
 
     companion object {
@@ -170,7 +172,7 @@ object SysCalls {
     private fun getArgValues(argspec: List<CallArgument>, vm: VirtualMachine): List<Comparable<Nothing>> {
         return argspec.map {
             when(it.source.type) {
-                IRDataType.QUAD -> quadNotSupported()
+                IRDataType.QUAD -> vm.registers.getSQ(it.source.registerNumber)
                 IRDataType.BYTE -> vm.registers.getUB(it.source.registerNumber)
                 IRDataType.WORD -> vm.registers.getUW(it.source.registerNumber)
                 IRDataType.POINTER -> vm.registers.getUL(it.source.registerNumber)
@@ -183,6 +185,24 @@ object SysCalls {
     private fun returnValue(returns: CallResult, value: Comparable<Nothing>, vm: VirtualMachine) {
         // NOTE: currently syscalls can only return A SINGLE VALUE using this routine!
         // HACKY WORKAROUND: you can use a single UWORD return value to encode two bytes (LSB + MSB), or a single LONG to encode two words (MSW + LSW) and then split those in the calling IR code. It is NOT POSSIBLE to return two longs like this!
+        val dest = requireNotNull(returns.destination) { "syscall result needs a destination register" }
+        if(dest.type == IRDataType.QUAD) {
+            // a Double can't hold every 64-bit value exactly
+            val quad: Long = when(value) {
+                is Long -> value
+                is ULong -> value.toLong()
+                is Int -> value.toLong()
+                is Short -> value.toLong()
+                is Byte -> value.toLong()
+                is UInt -> value.toLong()
+                is UShort -> value.toLong()
+                is UByte -> value.toLong()
+                is Boolean -> if(value) 1L else 0L
+                else -> throw IllegalArgumentException("syscall result $value can't be returned as a quad")
+            }
+            vm.registers.setSQ(dest.registerNumber, quad)
+            return
+        }
         val vv: Double = when(value) {
             is UByte -> value.toDouble()
             is UShort -> value.toDouble()
@@ -195,9 +215,8 @@ object SysCalls {
             is Boolean -> if(value) 1.0 else 0.0
             else -> (value as Number).toDouble()
         }
-        val dest = requireNotNull(returns.destination) { "syscall result needs a destination register" }
         when(dest.type) {
-            IRDataType.QUAD -> quadNotSupported()
+            IRDataType.QUAD -> throw IllegalStateException("quad results are stored above")
             IRDataType.BYTE -> vm.registers.setUB(dest.registerNumber, vv.toInt().toUByte())
             IRDataType.WORD -> vm.registers.setUW(dest.registerNumber, vv.toInt().toUShort())
             IRDataType.POINTER -> vm.registers.setUL(dest.registerNumber, vv.toUInt())
@@ -450,6 +469,18 @@ object SysCalls {
                 while(length > 0u) {
                     length--
                     val el = vm.memory.getSL(array + length.toUInt() * 4u)
+                    if(el == value)
+                        return returnValue(callspec.results.single(), 1u, vm)
+                }
+                returnValue(callspec.results.single(), 0u, vm)
+            }
+            Syscall.QUADARRAY_CONTAINS -> {
+                val (value, arrayV, lengthV) = getArgValues(callspec.arguments, vm)
+                var length = lengthV as UShort
+                val array = (arrayV as Int).toUInt()
+                while(length > 0u) {
+                    length--
+                    val el = vm.memory.getSQ(array + length.toUInt() * 8u)
                     if(el == value)
                         return returnValue(callspec.results.single(), 1u, vm)
                 }
