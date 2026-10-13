@@ -20,19 +20,23 @@ import prog8.intermediate.requireCallSite
 
 // the virtual target's library calls these syscalls of the VM by number
 private const val VM_EXIT = 1
+private const val VM_PRINT_C = 2
+private const val VM_PRINT_S = 3
 private const val VM_MEMCOPY = 36
 private const val VM_MEMSET = 37
 private const val VM_MEMSETW = 38
 
 /**
- * Lowers the syscalls that the compiler emits for builtin functions and operators, and the exit, memory copy and fill
- * syscalls of the virtual target's library. Searches and string comparisons become internal helper functions.
+ * Lowers the syscalls that the compiler emits for builtin functions and operators, and the exit, console output, memory copy
+ * and fill syscalls of the virtual target's library. Searches, string comparisons and string output become internal helper functions.
  */
 internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
     val site = ins.requireCallSite()
     val number = requireNotNull(site.target as? CallTarget.SystemCall) { "SYSCALL in ${sub.label} needs a syscall number" }.number
     when (number) {
         VM_EXIT -> exit(site, number)
+        VM_PRINT_C -> printChar(site, number)
+        VM_PRINT_S -> printString(site, number)
         VM_MEMCOPY -> memoryCopy(site, number)
         VM_MEMSET -> memorySet(site, number)
         VM_MEMSETW -> memorySetWords(site, number)
@@ -104,6 +108,23 @@ private fun FunctionLowering.exit(site: CallSite, number: Int) {
     val code = convert(read(status), LlvmType.I32)
     emit(LlvmInstruction.Call(null, external("exit", LlvmType.Void, listOf(LlvmType.I32)), listOf(code), LlvmType.Void))
 }
+
+/** PRINT_C(character) writes the byte to stdout. */
+private fun FunctionLowering.printChar(site: CallSite, number: Int) {
+    val (character) = arguments(site, number, 1)
+    val code = convert(read(character), LlvmType.I32, "ch")
+    emit(LlvmInstruction.Call(null, putchar(), listOf(code), LlvmType.I32))
+}
+
+/** PRINT_S(string) writes the zero-terminated string to stdout, without its terminating 0. */
+private fun FunctionLowering.printString(site: CallSite, number: Int) {
+    val (string) = arguments(site, number, 1)
+    val helper = builder.helperFunction(".print.string") { printStringHelper(putchar()) }
+    emit(LlvmInstruction.Call(null, helper, listOf(pointerValue(string)), LlvmType.Void))
+}
+
+// putchar() and not printf() or fputs(): those need a format string, or the platform-specific stdout symbol
+private fun FunctionLowering.putchar(): LlvmValue.Global = external("putchar", LlvmType.I32, listOf(LlvmType.I32))
 
 /** MEMCOPY(source, target, number of bytes) becomes memmove, so that overlapping areas don't give undefined behavior. */
 private fun FunctionLowering.memoryCopy(site: CallSite, number: Int) {
@@ -215,6 +236,29 @@ private fun compareStringsHelper(): LlvmFunction {
             LlvmInstruction.Icmp(IcmpCondition.ULT, less, firstChar, secondChar),
             LlvmInstruction.Select(order, less, LlvmValue.IntConstant(-1, LlvmType.I8), LlvmValue.IntConstant(1, LlvmType.I8)),
             LlvmInstruction.Ret(order)))
+}
+
+/** `void (ptr str)`: writes the bytes of the zero-terminated string with [putchar], up to its terminating 0. */
+private fun printStringHelper(putchar: LlvmValue.Global): LlvmFunction {
+    val str = LlvmValue.Local("str", LlvmType.Ptr)
+    val currentPointer = LlvmValue.Local("curr_ptr", LlvmType.Ptr)
+    val ch = LlvmValue.Local("ch", LlvmType.I8)
+    val end = LlvmValue.Local("end", LlvmType.I1)
+    val code = LlvmValue.Local("ch_ext", LlvmType.I32)
+    val next = LlvmValue.Local("next", LlvmType.Ptr)
+    return helper(".print.string", LlvmType.Void, listOf(str),
+        "entry" to listOf(LlvmInstruction.Br("loop")),
+        "loop" to listOf(
+            LlvmInstruction.Phi(currentPointer, listOf(str to "entry", next to "print")),
+            LlvmInstruction.Load(ch, currentPointer),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, end, ch, LlvmValue.IntConstant(0, LlvmType.I8)),
+            LlvmInstruction.CondBr(end, "done", "print")),
+        "print" to listOf(
+            LlvmInstruction.Cast(CastOperator.ZEXT, code, ch, LlvmType.I32),
+            LlvmInstruction.Call(null, putchar, listOf(code), LlvmType.I32),
+            LlvmInstruction.GetElementPtr(next, LlvmType.I8, currentPointer, listOf(i64(1)), inBounds = false),
+            LlvmInstruction.Br("loop")),
+        "done" to listOf(LlvmInstruction.Ret(null)))
 }
 
 /** `void (ptr address, i16 count, i16 value)`: stores count copies of the word value from address on. */

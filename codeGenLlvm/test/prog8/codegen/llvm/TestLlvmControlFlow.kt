@@ -152,7 +152,7 @@ class TestLlvmControlFlow: FunSpec({
         fun failure(code: String) = shouldThrow<IllegalArgumentException> {
             TestProgram().apply { sub("main.f", listOf("a" to DataType.UBYTE), code = code); sub("main.g", code = "_main.g:\n_main.g.there:\nreturn") }.module()
         }.message
-        failure("_main.f:\nloadm.b r1.b,[main.f.a]\nsyscall 2(r1.b)\nreturn")!! shouldContain "syscall 2"
+        failure("_main.f:\nloadm.b r1.b,[main.f.a]\nsyscall 8(r1.b)\nreturn")!! shouldContain "syscall 8"
         failure("_main.f:\njump main.g.there")!! shouldContain "outside of the subroutine"
         val program = TestProgram()
         program.sub("main.f", code = "_main.f:\nreturn")
