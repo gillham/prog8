@@ -6,10 +6,6 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import prog8.code.core.*
-import prog8.code.target.LlvmTarget
-import prog8.codegen.llvm.lower.LlvmFunctionBuilder
-import prog8.codegen.llvm.lower.LlvmGlobalEmitter
-import prog8.codegen.llvm.model.*
 import prog8.intermediate.*
 
 
@@ -156,7 +152,7 @@ class TestLlvmControlFlow: FunSpec({
         fun failure(code: String) = shouldThrow<IllegalArgumentException> {
             TestProgram().apply { sub("main.f", listOf("a" to DataType.UBYTE), code = code); sub("main.g", code = "_main.g:\n_main.g.there:\nreturn") }.module()
         }.message
-        failure("_main.f:\nloadm.b r1.b,[main.f.a]\naddr.b r1.b,r1.b\nreturn")!! shouldContain "ADDR"
+        failure("_main.f:\nloadm.b r1.b,[main.f.a]\nsyscall 1(r1.b)\nreturn")!! shouldContain "syscall 1"
         failure("_main.f:\njump main.g.there")!! shouldContain "outside of the subroutine"
         val program = TestProgram()
         program.sub("main.f", code = "_main.f:\nreturn")
@@ -174,285 +170,205 @@ class TestLlvmControlFlow: FunSpec({
     }
 
     test("the control flow runs correctly as a native arm64 macOS program").config(enabledOrReasonIf = requiresNativeArm64Mac) {
-        val module = TestProgram().apply { allSubs(); checkSub() }.module()
-        val result = LlvmValue.Local("result", LlvmType.I8)
-        val code = LlvmValue.Local("code", LlvmType.I32)
-        module.functions += LlvmFunction("main", LlvmType.I32, emptyList(), mutableListOf(LlvmBlock("entry", mutableListOf(
-            LlvmInstruction.Call(result, "main.check", emptyList(), LlvmType.I8),
-            LlvmInstruction.Cast(CastOperator.ZEXT, code, result, LlvmType.I32),
-            LlvmInstruction.Ret(code)))))
+        val module = TestProgram().apply { allSubs(); checkSub() }.module().withMainCalling("main.check")
         val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
     }
 })
 
 
-/** A test program for the llvm64 target, with subroutines written as IR text. */
-private class TestProgram {
-    val target = LlvmTarget()
-    private val st = IRSymbolTable()
-    private val program = IRProgram("test", st, CompilationOptions.builder(target).floats(true).compilerVersion("99.99").build(), target)
-    private val block = IRBlock("main", false, IRBlock.Options(), Position.DUMMY).also { program.addBlock(it) }
+private fun TestProgram.maxSub() = sub("main.max", listOf("a" to DataType.UBYTE, "b" to DataType.UBYTE), listOf(DataType.UBYTE), """
+    _main.max:
+    loadm.b r1.b,[main.max.a]
+    loadm.b r2.b,[main.max.b]
+    bgtr.b r1.b,r2.b,main.max.first
+    returnr.b r2.b
+    _main.max.first:
+    returnr.b r1.b
+    """)
 
-    fun variable(name: String, dt: DataType) = st.add(IRStStaticVariable(name, dt, null, null, ZeropageWish.DONTCARE, 0u, false))
+private fun TestProgram.isZeroSub() = sub("main.iszero", listOf("v" to DataType.UBYTE), listOf(DataType.UBYTE), """
+    _main.iszero:
+    loadm.b r1.b,[main.iszero.v]
+    cmpi.b r1.b,#0.b
+    bstne main.iszero.no
+    returni.b #1.b
+    _main.iszero.no:
+    returni.b #0.b
+    """)
 
-    fun string(name: String, text: String) =
-        st.add(IRStStaticVariable(name, DataType.STR, IRVariableInitializer.Str(text, Encoding.ISO), (text.length + 1).toUInt(), ZeropageWish.DONTCARE, 0u, false))
+private fun TestProgram.orderSub() = sub("main.order", listOf("a" to DataType.UBYTE, "b" to DataType.UBYTE), listOf(DataType.UBYTE), """
+    _main.order:
+    loadm.b r1.b,[main.order.a]
+    loadm.b r2.b,[main.order.b]
+    cmp.b r1.b,r2.b
+    bsteq main.order.same
+    bstcc main.order.smaller
+    returni.b #2.b
+    _main.order.same:
+    returni.b #1.b
+    _main.order.smaller:
+    returni.b #0.b
+    """)
 
-    /** `_label:` lines start a new chunk; `loop <label> <trip>` and `endloop` put the lines in between into an IR loop chunk. */
-    fun sub(name: String, params: List<Pair<String, DataType>> = emptyList(), returns: List<DataType> = emptyList(), code: String) {
-        val parameters = params.map { (param, dt) -> IRSubroutine.IRParam("$name.$param", dt).also { variable(it.name, dt) } }
-        block += IRSubroutine(name, parameters, returns, Position.DUMMY).apply { parseChunks(code).forEach { this += it } }
-    }
+private fun TestProgram.laterSub() = sub("main.later", listOf("v" to DataType.UBYTE), listOf(DataType.UBYTE), """
+    _main.later:
+    loadm.b r1.b,[main.later.v]
+    cmpi.b r1.b,#100.b
+    jump main.later.check
+    _main.later.check:
+    bstcs main.later.big
+    returni.b #0.b
+    _main.later.big:
+    returni.b #1.b
+    """)
 
-    fun asmsub(asmsub: IRAsmSubroutine) {
-        block += asmsub
-    }
+private fun TestProgram.countSub() = sub("main.count", listOf("n" to DataType.UBYTE), listOf(DataType.UBYTE), """
+    _main.count:
+    load.b r1.b,#0.b
+    loadm.b r2.b,[main.count.n]
+    _main.count.loop:
+    inc.b r1.b
+    dec.b r2.b
+    cmpi.b r2.b,#0.b
+    bstne main.count.loop
+    returnr.b r1.b
+    """)
 
-    fun subroutine(name: String): IRSubroutine = program.allSubs().single { it.label == name }
-
-    fun module(): LlvmModule {
-        val module = LlvmModule("test", target.targetTriple, target.dataLayout)
-        LlvmFunctionBuilder(program, LlvmGlobalEmitter(program).emit(module)).build(module)
-        return module
-    }
-
-    fun maxSub() = sub("main.max", listOf("a" to DataType.UBYTE, "b" to DataType.UBYTE), listOf(DataType.UBYTE), """
-        _main.max:
-        loadm.b r1.b,[main.max.a]
-        loadm.b r2.b,[main.max.b]
-        bgtr.b r1.b,r2.b,main.max.first
-        returnr.b r2.b
-        _main.max.first:
-        returnr.b r1.b
-        """)
-
-    fun isZeroSub() = sub("main.iszero", listOf("v" to DataType.UBYTE), listOf(DataType.UBYTE), """
-        _main.iszero:
-        loadm.b r1.b,[main.iszero.v]
-        cmpi.b r1.b,#0.b
-        bstne main.iszero.no
-        returni.b #1.b
-        _main.iszero.no:
-        returni.b #0.b
-        """)
-
-    fun orderSub() = sub("main.order", listOf("a" to DataType.UBYTE, "b" to DataType.UBYTE), listOf(DataType.UBYTE), """
-        _main.order:
-        loadm.b r1.b,[main.order.a]
-        loadm.b r2.b,[main.order.b]
-        cmp.b r1.b,r2.b
-        bsteq main.order.same
-        bstcc main.order.smaller
-        returni.b #2.b
-        _main.order.same:
-        returni.b #1.b
-        _main.order.smaller:
-        returni.b #0.b
-        """)
-
-    fun laterSub() = sub("main.later", listOf("v" to DataType.UBYTE), listOf(DataType.UBYTE), """
-        _main.later:
-        loadm.b r1.b,[main.later.v]
-        cmpi.b r1.b,#100.b
-        jump main.later.check
-        _main.later.check:
-        bstcs main.later.big
-        returni.b #0.b
-        _main.later.big:
-        returni.b #1.b
-        """)
-
-    fun countSub() = sub("main.count", listOf("n" to DataType.UBYTE), listOf(DataType.UBYTE), """
-        _main.count:
-        load.b r1.b,#0.b
-        loadm.b r2.b,[main.count.n]
-        _main.count.loop:
-        inc.b r1.b
-        dec.b r2.b
-        cmpi.b r2.b,#0.b
-        bstne main.count.loop
-        returnr.b r1.b
-        """)
-
-    fun repeatSub() {
-        variable("main.counter", DataType.UBYTE)
-        sub("main.repeat", code = """
-            _main.repeat:
-            loop main.repeat.loop 5
-            incm.b [main.counter]
-            endloop
-            return
-            """)
-    }
-
-    fun callMaxSub() = sub("main.callmax", returns = listOf(DataType.UBYTE), code = """
-        _main.callmax:
-        load.b r1.b,#5.b
-        load.b r2.b,#9.b
-        call main.max(b=r2.b,a=r1.b):r3.b
-        returnr.b r3.b
-        """)
-
-    fun pairSub() = sub("main.pair", returns = listOf(DataType.UBYTE, DataType.UBYTE), code = """
-        _main.pair:
-        load.b r1.b,#7.b
-        storehr.b r1.b,s10.b
-        load.b r2.b,#9.b
-        storehr.b r2.b,s11.b
+private fun TestProgram.repeatSub() {
+    variable("main.counter", DataType.UBYTE)
+    sub("main.repeat", code = """
+        _main.repeat:
+        loop main.repeat.loop 5
+        incm.b [main.counter]
+        endloop
         return
         """)
-
-    fun usePairSub() = sub("main.usepair", returns = listOf(DataType.UBYTE), code = """
-        _main.usepair:
-        call main.pair()
-        loadhr.b r3.b,s10.b
-        returnr.b r3.b
-        """)
-
-    fun lessSub() = sub("main.less", listOf("x" to DataType.FLOAT, "y" to DataType.FLOAT), listOf(DataType.UBYTE), """
-        _main.less:
-        loadm.f fr1.f,[main.less.x]
-        loadm.f fr2.f,[main.less.y]
-        fcomp.f r6.b,fr1.f,fr2.f
-        blts.b r6.b,#0.b,main.less.yes
-        returni.b #0.b
-        _main.less.yes:
-        returni.b #1.b
-        """)
-
-    fun classifySub() = sub("main.classify", listOf("w" to DataType.WORD), listOf(DataType.UBYTE), """
-        _main.classify:
-        loadm.w r5.w,[main.classify.w]
-        blts.w r5.w,#0.w,main.classify.negative
-        bgts.w r5.w,#0.w,main.classify.positive
-        returni.b #1.b
-        _main.classify.negative:
-        returni.b #0.b
-        _main.classify.positive:
-        returni.b #2.b
-        """)
-
-    fun allSubs() {
-        maxSub(); isZeroSub(); orderSub(); laterSub(); countSub(); repeatSub(); callMaxSub(); pairSub(); usePairSub(); lessSub(); classifySub()
-    }
-
-    /** Returns 0 when all the other subroutines work as expected, otherwise the number of the failing check. */
-    fun checkSub() = sub("main.check", returns = listOf(DataType.UBYTE), code = """
-        _main.check:
-        load.b r10.b,#5.b
-        load.b r11.b,#9.b
-        call main.max(a=r10.b,b=r11.b):r12.b
-        cmpi.b r12.b,#9.b
-        bstne main.check.fail1
-        load.b r13.b,#7.b
-        call main.count(n=r13.b):r14.b
-        cmpi.b r14.b,#7.b
-        bstne main.check.fail2
-        call main.repeat()
-        loadm.b r15.b,[main.counter]
-        cmpi.b r15.b,#5.b
-        bstne main.check.fail3
-        load.w r16.w,#-300.w
-        call main.classify(w=r16.w):r17.b
-        cmpi.b r17.b,#0.b
-        bstne main.check.fail4
-        load.w r18.w,#300.w
-        call main.classify(w=r18.w):r19.b
-        cmpi.b r19.b,#2.b
-        bstne main.check.fail4
-        load.f fr3.f,#1.5.f
-        load.f fr4.f,#2.25.f
-        call main.less(x=fr3.f,y=fr4.f):r20.b
-        cmpi.b r20.b,#1.b
-        bstne main.check.fail5
-        call main.pair()
-        loadhr.b r21.b,s10.b
-        loadhr.b r22.b,s11.b
-        cmpi.b r21.b,#7.b
-        bstne main.check.fail6
-        cmpi.b r22.b,#9.b
-        bstne main.check.fail6
-        load.b r23.b,#200.b
-        call main.later(v=r23.b):r24.b
-        cmpi.b r24.b,#1.b
-        bstne main.check.fail7
-        load.b r25.b,#200.b
-        load.b r26.b,#100.b
-        call main.order(a=r25.b,b=r26.b):r27.b
-        cmpi.b r27.b,#2.b
-        bstne main.check.fail8
-        cmp.b r25.b,r26.b
-        bsteq main.check.fail9
-        bstcc main.check.fail9
-        bstneg main.check.fail9
-        bstvc main.check.fail9
-        call main.callmax():r28.b
-        cmpi.b r28.b,#9.b
-        bstne main.check.fail10
-        returni.b #0.b
-        _main.check.fail1:
-        returni.b #1.b
-        _main.check.fail2:
-        returni.b #2.b
-        _main.check.fail3:
-        returni.b #3.b
-        _main.check.fail4:
-        returni.b #4.b
-        _main.check.fail5:
-        returni.b #5.b
-        _main.check.fail6:
-        returni.b #6.b
-        _main.check.fail7:
-        returni.b #7.b
-        _main.check.fail8:
-        returni.b #8.b
-        _main.check.fail9:
-        returni.b #9.b
-        _main.check.fail10:
-        returni.b #10.b
-        """)
 }
 
-private fun parseChunks(code: String): List<IRCodeChunkBase> {
-    val chunks = mutableListOf<IRCodeChunkBase>()
-    var target = chunks
-    var chunk = IRCodeChunk(null, null)
-    fun flush() {
-        if (chunk.isNotEmpty() || chunk.label != null)
-            target += chunk
-        chunk = IRCodeChunk(null, null)
-    }
-    for (line in code.lines().map { it.trim() }.filter { it.isNotEmpty() }) {
-        when {
-            line.startsWith("loop ") -> {
-                flush()
-                val (label, trip) = line.removePrefix("loop ").split(' ')
-                val loop = IRLoopChunk(label, trip.toInt(), mutableListOf())
-                target += loop
-                target = loop.body
-            }
-            line == "endloop" -> {
-                flush()
-                target = chunks
-            }
-            else -> when (val parsed = parseIRCodeLine(line)) {
-                is ParsedIRLine.Label -> {
-                    flush()
-                    chunk = IRCodeChunk(parsed.name, null)
-                }
-                is ParsedIRLine.Instruction -> chunk += parsed.value
-            }
-        }
-    }
-    flush()
-    return chunks
+private fun TestProgram.callMaxSub() = sub("main.callmax", returns = listOf(DataType.UBYTE), code = """
+    _main.callmax:
+    load.b r1.b,#5.b
+    load.b r2.b,#9.b
+    call main.max(b=r2.b,a=r1.b):r3.b
+    returnr.b r3.b
+    """)
+
+private fun TestProgram.pairSub() = sub("main.pair", returns = listOf(DataType.UBYTE, DataType.UBYTE), code = """
+    _main.pair:
+    load.b r1.b,#7.b
+    storehr.b r1.b,s10.b
+    load.b r2.b,#9.b
+    storehr.b r2.b,s11.b
+    return
+    """)
+
+private fun TestProgram.usePairSub() = sub("main.usepair", returns = listOf(DataType.UBYTE), code = """
+    _main.usepair:
+    call main.pair()
+    loadhr.b r3.b,s10.b
+    returnr.b r3.b
+    """)
+
+private fun TestProgram.lessSub() = sub("main.less", listOf("x" to DataType.FLOAT, "y" to DataType.FLOAT), listOf(DataType.UBYTE), """
+    _main.less:
+    loadm.f fr1.f,[main.less.x]
+    loadm.f fr2.f,[main.less.y]
+    fcomp.f r6.b,fr1.f,fr2.f
+    blts.b r6.b,#0.b,main.less.yes
+    returni.b #0.b
+    _main.less.yes:
+    returni.b #1.b
+    """)
+
+private fun TestProgram.classifySub() = sub("main.classify", listOf("w" to DataType.WORD), listOf(DataType.UBYTE), """
+    _main.classify:
+    loadm.w r5.w,[main.classify.w]
+    blts.w r5.w,#0.w,main.classify.negative
+    bgts.w r5.w,#0.w,main.classify.positive
+    returni.b #1.b
+    _main.classify.negative:
+    returni.b #0.b
+    _main.classify.positive:
+    returni.b #2.b
+    """)
+
+private fun TestProgram.allSubs() {
+    maxSub(); isZeroSub(); orderSub(); laterSub(); countSub(); repeatSub(); callMaxSub(); pairSub(); usePairSub(); lessSub(); classifySub()
 }
 
-private fun LlvmModule.function(name: String): LlvmFunction = functions.single { it.name == name }
-
-private fun LlvmFunction.text(): String = LlvmPrinter.print(LlvmModule("f", functions = mutableListOf(this))).substringAfter("source_filename = \"f\"\n\n")
-
-private fun LlvmFunction.lines(): List<String> = text().lines()
-
-private infix fun List<String>.shouldHave(line: String) = withClue(line) { contains(line) shouldBe true }
+/** Returns 0 when all the other subroutines work as expected, otherwise the number of the failing check. */
+private fun TestProgram.checkSub() = sub("main.check", returns = listOf(DataType.UBYTE), code = """
+    _main.check:
+    load.b r10.b,#5.b
+    load.b r11.b,#9.b
+    call main.max(a=r10.b,b=r11.b):r12.b
+    cmpi.b r12.b,#9.b
+    bstne main.check.fail1
+    load.b r13.b,#7.b
+    call main.count(n=r13.b):r14.b
+    cmpi.b r14.b,#7.b
+    bstne main.check.fail2
+    call main.repeat()
+    loadm.b r15.b,[main.counter]
+    cmpi.b r15.b,#5.b
+    bstne main.check.fail3
+    load.w r16.w,#-300.w
+    call main.classify(w=r16.w):r17.b
+    cmpi.b r17.b,#0.b
+    bstne main.check.fail4
+    load.w r18.w,#300.w
+    call main.classify(w=r18.w):r19.b
+    cmpi.b r19.b,#2.b
+    bstne main.check.fail4
+    load.f fr3.f,#1.5.f
+    load.f fr4.f,#2.25.f
+    call main.less(x=fr3.f,y=fr4.f):r20.b
+    cmpi.b r20.b,#1.b
+    bstne main.check.fail5
+    call main.pair()
+    loadhr.b r21.b,s10.b
+    loadhr.b r22.b,s11.b
+    cmpi.b r21.b,#7.b
+    bstne main.check.fail6
+    cmpi.b r22.b,#9.b
+    bstne main.check.fail6
+    load.b r23.b,#200.b
+    call main.later(v=r23.b):r24.b
+    cmpi.b r24.b,#1.b
+    bstne main.check.fail7
+    load.b r25.b,#200.b
+    load.b r26.b,#100.b
+    call main.order(a=r25.b,b=r26.b):r27.b
+    cmpi.b r27.b,#2.b
+    bstne main.check.fail8
+    cmp.b r25.b,r26.b
+    bsteq main.check.fail9
+    bstcc main.check.fail9
+    bstneg main.check.fail9
+    bstvc main.check.fail9
+    call main.callmax():r28.b
+    cmpi.b r28.b,#9.b
+    bstne main.check.fail10
+    returni.b #0.b
+    _main.check.fail1:
+    returni.b #1.b
+    _main.check.fail2:
+    returni.b #2.b
+    _main.check.fail3:
+    returni.b #3.b
+    _main.check.fail4:
+    returni.b #4.b
+    _main.check.fail5:
+    returni.b #5.b
+    _main.check.fail6:
+    returni.b #6.b
+    _main.check.fail7:
+    returni.b #7.b
+    _main.check.fail8:
+    returni.b #8.b
+    _main.check.fail9:
+    returni.b #9.b
+    _main.check.fail10:
+    returni.b #10.b
+    """)

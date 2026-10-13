@@ -23,9 +23,11 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     private val subroutines = program.allSubs().associateBy { it.label }
     private val asmSubroutines = program.allAsmSubs().associateBy { it.label }
     private val externalFunctions = linkedMapOf<String, LlvmFunction>()
+    private val helperFunctions = linkedMapOf<String, LlvmFunction>()
     private val hardwareSlots = sortedMapOf<String, LlvmGlobal>()
+    private val runtimeGlobals = linkedMapOf<String, LlvmGlobal>()
 
-    /** Adds a function for every subroutine to [module], plus the declarations and slot globals that those need. */
+    /** Adds a function for every subroutine to [module], plus the declarations, helper functions and globals that those need. */
     fun build(module: LlvmModule) {
         for (block in program.blocks) {
             for (child in block.children) {
@@ -36,8 +38,10 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
                 }
             }
         }
+        module.functions += helperFunctions.values
         module.functions += externalFunctions.values
         module.globals += hardwareSlots.values
+        module.globals += runtimeGlobals.values
     }
 
     fun function(sub: IRSubroutine): LlvmFunction =
@@ -82,6 +86,18 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
         }
         return LlvmValue.Global(name)
     }
+
+    /** An internal function of the generated code itself, such as the search loop of a syscall; [define] makes it on first use. */
+    fun helperFunction(name: String, define: () -> LlvmFunction): LlvmValue.Global {
+        helperFunctions.getOrPut(name, define)
+        return LlvmValue.Global(name)
+    }
+
+    /** A zero-initialized internal global of the generated code itself, such as the value stack of PUSH and POP. */
+    fun runtimeGlobal(name: String, type: LlvmType): LlvmValue.Global {
+        runtimeGlobals.getOrPut(name) { LlvmGlobal(name, type, LlvmValue.ZeroInitializer(type), isConstant = false, linkage = LlvmLinkage.INTERNAL) }
+        return LlvmValue.Global(name)
+    }
 }
 
 
@@ -116,6 +132,8 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
         lowerChunks(sub.chunks, after = null)
         val entryCode = buildList {
             addAll(allocas)
+            // PUSHST also reads flags that were never set; cleared slots keep undef out of the status byte
+            savedFlags.values.forEach { add(LlvmInstruction.Store(LlvmValue.IntConstant(0, LlvmType.I1), it)) }
             sub.parameters.zip(params).forEach { (param, value) ->
                 val variable = requireNotNull(builder.symbols.addresses[param.name]) { "parameter ${param.name} of ${sub.label} has no variable" }
                 add(LlvmInstruction.Store(value, variable))
@@ -147,10 +165,27 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
         return convert(derive(base, slotType) { LlvmInstruction.Load(it, slot) }, typeOf(operand.type), base)
     }
 
+    /** Like [read], but a LONG register gives all 64 bits of its slot, as it may hold an address; for address arithmetic and copies. */
+    fun readWide(operand: RegisterOperand): LlvmValue {
+        if (operand.type != IRDataType.LONG)
+            return read(operand)
+        val (slot, slotType) = registerSlot(operand.register)
+        return derive(operand.register.toString(), slotType) { LlvmInstruction.Load(it, slot) }
+    }
+
     fun write(operand: RegisterOperand, value: LlvmValue) {
         val (slot, slotType) = registerSlot(operand.register)
-        emit(LlvmInstruction.Store(convert(value, slotType, operand.register.toString()), slot))
+        val base = operand.register.toString()
+        // sign extended, a 32-bit long still works as an offset in the 64-bit address arithmetic of LONG registers
+        val stored = if (operand.type == IRDataType.LONG && value.type == LlvmType.I32) widen(value, slotType, signed = true, base) else convert(value, slotType, base)
+        emit(LlvmInstruction.Store(stored, slot))
     }
+
+    /** The address in an integer or pointer register, as a ptr. */
+    fun pointerValue(operand: RegisterOperand): LlvmValue = convert(readWide(operand), LlvmType.Ptr, operand.register.toString())
+
+    /** Pointers as 64-bit integers, for the integer instructions that work on them. */
+    fun asInteger(value: LlvmValue): LlvmValue = if (value.type == LlvmType.Ptr) convert(value, LlvmType.I64) else value
 
     /** Integers are truncated or zero extended, and converted to and from pointers; integer constants fold right away. */
     fun convert(value: LlvmValue, to: LlvmType, base: String = "cast"): LlvmValue {
@@ -167,6 +202,27 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
         }
         return derive(base, to) { LlvmInstruction.Cast(operator, it, value, to) }
     }
+
+    /** Extends an integer [value] to the wider type [to], with its sign bit when [signed], else like [convert]. */
+    fun widen(value: LlvmValue, to: LlvmType, signed: Boolean, base: String = "ext"): LlvmValue {
+        if (!signed || value.type == to)
+            return convert(value, to, base)
+        val bits = checkNotNull(value.type.bitWidth) { "${sub.label}: can't sign extend a ${value.type} value" }
+        require(bits < checkNotNull(to.bitWidth) { "$to is no integer type" }) { "${sub.label}: can't sign extend a ${value.type} value to $to" }
+        if (value is LlvmValue.IntConstant)
+            return integerConstant(value.value shl (64 - bits) shr (64 - bits), to)
+        return derive(base, to) { LlvmInstruction.Cast(CastOperator.SEXT, it, value, to) }
+    }
+
+    /** The global of a routine outside the program, such as an LLVM intrinsic, which gets declared on first use. */
+    fun external(name: String, returnType: LlvmType, paramTypes: List<LlvmType>): LlvmValue.Global =
+        LlvmValue.Global(builder.externalFunction(name, returnType, paramTypes).name)
+
+    /** Calls the LLVM intrinsic [name] that returns a [type] value. */
+    fun intrinsic(name: String, type: LlvmType, vararg args: LlvmValue): LlvmValue =
+        derive(name.removePrefix("llvm.").substringBefore('.'), type) {
+            LlvmInstruction.Call(it, external(name, type, args.map { arg -> arg.type }), args.toList(), type)
+        }
 
     fun integerConstant(value: Long, type: LlvmType): LlvmValue = when {
         type != LlvmType.Ptr -> LlvmValue.IntConstant(truncate(value, checkNotNull(type.bitWidth) { "$type is no integer type" }), type)
@@ -222,19 +278,19 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
         }
     }
 
+    /** The state of [flag] as an i1 value: set or clear. */
+    fun flag(flag: Flag): LlvmValue = when (val value = flagValue(flag)) {
+        is FlagValue.Compared -> compare(value.comparison, flag, whenSet = true)
+        is FlagValue.Bit -> value.value
+    }
+
     private fun flagValue(flag: Flag): FlagValue {
         flags[flag]?.let { return it }
         val saved = savedFlags[flag] ?: throw FlagsFromOtherBlock()
         return FlagValue.Bit(derive("flag", LlvmType.I1) { LlvmInstruction.Load(it, saved) }).also { flags[flag] = it }
     }
 
-    private fun saveFlag(flag: Flag) {
-        val value = when (val current = flags.getValue(flag)) {
-            is FlagValue.Compared -> compare(current.comparison, flag, whenSet = true)
-            is FlagValue.Bit -> current.value
-        }
-        emit(LlvmInstruction.Store(value, savedFlags.getValue(flag)))
-    }
+    private fun saveFlag(flag: Flag) = emit(LlvmInstruction.Store(flag(flag), savedFlags.getValue(flag)))
 
     /** The condition that [flag] has the state [whenSet], with the semantics of the VM's CMP: carry means unsigned >=. */
     private fun compare(comparison: Comparison, flag: Flag, whenSet: Boolean): LlvmValue {
@@ -321,15 +377,35 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     private fun lowerInstruction(ins: IRInstruction) {
         when (ins.opcode) {
             Opcode.NOP, Opcode.ALIGN -> {}
-            Opcode.JUMP, Opcode.RETURN, Opcode.RETURNR, Opcode.RETURNI,
+            Opcode.JUMP, Opcode.JUMPI, Opcode.RETURN, Opcode.RETURNR, Opcode.RETURNI,
             Opcode.BSTCC, Opcode.BSTCS, Opcode.BSTEQ, Opcode.BSTNE, Opcode.BSTNEG, Opcode.BSTPOS, Opcode.BSTVC, Opcode.BSTVS,
             Opcode.BGTR, Opcode.BGT, Opcode.BLT, Opcode.BGTSR, Opcode.BGTS, Opcode.BLTS,
             Opcode.BGER, Opcode.BGE, Opcode.BLE, Opcode.BGESR, Opcode.BGES, Opcode.BLES,
-            Opcode.CMP, Opcode.CMPI, Opcode.SGN, Opcode.BITTST, Opcode.SEC, Opcode.CLC, Opcode.FCOMP -> lowerControl(ins)
-            Opcode.CALL -> lowerCall(ins)
-            Opcode.LOAD, Opcode.LOADR, Opcode.LOADM, Opcode.STOREM, Opcode.STOREIM, Opcode.STOREZM, Opcode.LOADHR, Opcode.STOREHR -> lowerMemory(ins)
-            Opcode.INC, Opcode.DEC, Opcode.INCM, Opcode.DECM -> lowerArithmetic(ins)
-            else -> throw IllegalArgumentException("${ins.opcode} in ${sub.label} isn't supported by the LLVM backend yet")
+            Opcode.CMP, Opcode.CMPI, Opcode.SGN, Opcode.BITTST, Opcode.SEC, Opcode.CLC, Opcode.CLI, Opcode.SEI,
+            Opcode.FCOMP, Opcode.BREAKPOINT -> lowerControl(ins)
+            Opcode.CALL, Opcode.CALLI, Opcode.CALLFAR, Opcode.CALLFARVB -> lowerCall(ins)
+            Opcode.SYSCALL -> lowerSyscall(ins)
+            Opcode.LOAD, Opcode.LOADM, Opcode.LOADX, Opcode.LOADR, Opcode.LOADHR, Opcode.LOADI, Opcode.LOADHFACZERO, Opcode.LOADHFACONE,
+            Opcode.STOREM, Opcode.STOREX, Opcode.STOREZM, Opcode.STOREZI, Opcode.STOREIM, Opcode.STOREZX, Opcode.STOREHR, Opcode.STOREI,
+            Opcode.STOREHFACZERO, Opcode.STOREHFACONE, Opcode.LOADP_INC, Opcode.STOREP_INC,
+            Opcode.PUSH, Opcode.POP, Opcode.PUSHST, Opcode.POPST -> lowerMemory(ins)
+            Opcode.INC, Opcode.INCM, Opcode.DEC, Opcode.DECM, Opcode.NEG, Opcode.NEGM,
+            Opcode.ADDR, Opcode.ADD, Opcode.ADDM, Opcode.ADDIM, Opcode.SUBR, Opcode.SUB, Opcode.SUBM, Opcode.SUBIM,
+            Opcode.MULR, Opcode.MUL, Opcode.MULM, Opcode.MULSR, Opcode.MULS, Opcode.MULSM,
+            Opcode.DIVR, Opcode.DIV, Opcode.DIVM, Opcode.DIVSR, Opcode.DIVS, Opcode.DIVSM,
+            Opcode.MODR, Opcode.MOD, Opcode.MODSR, Opcode.MODS, Opcode.DIVMODR, Opcode.DIVMOD, Opcode.SDIVMODR, Opcode.SDIVMOD,
+            Opcode.SQRT, Opcode.SQUARE,
+            Opcode.FFROMUB, Opcode.FFROMSB, Opcode.FFROMUW, Opcode.FFROMSW, Opcode.FFROMSL,
+            Opcode.FTOUB, Opcode.FTOSB, Opcode.FTOUW, Opcode.FTOSW, Opcode.FTOSL,
+            Opcode.FPOW, Opcode.FABS, Opcode.FSIN, Opcode.FCOS, Opcode.FTAN, Opcode.FATAN, Opcode.FLN, Opcode.FLOG,
+            Opcode.FROUND, Opcode.FFLOOR, Opcode.FCEIL -> lowerArithmetic(ins)
+            Opcode.EXT, Opcode.EXTS, Opcode.EXTL, Opcode.EXTLS,
+            Opcode.ANDR, Opcode.AND, Opcode.ANDM, Opcode.ORR, Opcode.OR, Opcode.ORM, Opcode.XORR, Opcode.XOR, Opcode.XORM, Opcode.INV, Opcode.INVM,
+            Opcode.ASRN, Opcode.ASRNM, Opcode.LSRN, Opcode.LSRNM, Opcode.LSLN, Opcode.LSLNM, Opcode.ASRI, Opcode.LSRI, Opcode.LSLI,
+            Opcode.ASR, Opcode.ASRM, Opcode.LSR, Opcode.LSRM, Opcode.LSL, Opcode.LSLM,
+            Opcode.ROR, Opcode.RORM, Opcode.ROXR, Opcode.ROXRM, Opcode.ROL, Opcode.ROLM, Opcode.ROXL, Opcode.ROXLM,
+            Opcode.BITSET, Opcode.BITCLR, Opcode.BITTOG,
+            Opcode.LSIGB, Opcode.LSIGW, Opcode.MSIGB, Opcode.MSIGW, Opcode.BSIGB, Opcode.MIDB, Opcode.CONCAT -> lowerBitwise(ins)
         }
     }
 
@@ -344,11 +420,14 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     private fun stackSlot(base: String, type: LlvmType): LlvmValue.Local =
         LlvmValue.Local(names.exact(base), LlvmType.Ptr).also { allocas += LlvmInstruction.Alloca(it, type) }
 
-    /** A register used with a single IR type gets a slot of that type, otherwise an i64 slot that holds any integer or pointer. */
+    /**
+     * A register used with a single IR type other than LONG gets a slot of that type. LONG registers, which can hold addresses
+     * on llvm64, and registers used with several types get an i64 slot that holds any integer or pointer.
+     */
     private fun registerSlot(register: VirtualRegister): Pair<LlvmValue.Local, LlvmType> {
         val type = when {
             register is VirtualRegister.FloatReg -> LlvmType.Double
-            else -> registerTypes[register]?.singleOrNull()?.let { typeOf(it) } ?: LlvmType.I64
+            else -> registerTypes[register]?.singleOrNull()?.takeIf { it != IRDataType.LONG }?.let { typeOf(it) } ?: LlvmType.I64
         }
         return registerSlots.getOrPut(register) { stackSlot("$register.slot", type) } to type
     }

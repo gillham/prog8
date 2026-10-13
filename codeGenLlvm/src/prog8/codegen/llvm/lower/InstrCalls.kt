@@ -9,16 +9,28 @@ import prog8.intermediate.CallArgument
 import prog8.intermediate.CallLocation
 import prog8.intermediate.CallSite
 import prog8.intermediate.CallTarget
+import prog8.intermediate.CallingConventionSlot
 import prog8.intermediate.CodeReference
 import prog8.intermediate.IRInstruction
 import prog8.intermediate.IRSubroutine
+import prog8.intermediate.Opcode
 import prog8.intermediate.requireCallSite
+
+/** Lowers direct and indirect calls; there are no memory banks to make far calls into. */
+internal fun FunctionLowering.lowerCall(ins: IRInstruction) {
+    when (ins.opcode) {
+        Opcode.CALL -> directCall(ins)
+        Opcode.CALLI -> indirectCall(ins)
+        Opcode.CALLFAR, Opcode.CALLFARVB -> throw IllegalArgumentException("${ins.opcode} in ${sub.label} calls into another memory bank, which the llvm64 target doesn't have")
+        else -> throw IllegalArgumentException("${ins.opcode} is no call instruction")
+    }
+}
 
 /**
  * Lowers a direct call to a subroutine, to an asmsub or extsub (calls to a fixed address use its routine name),
  * or to a routine outside the program, which gets declared with the signature of the call.
  */
-internal fun FunctionLowering.lowerCall(ins: IRInstruction) {
+private fun FunctionLowering.directCall(ins: IRInstruction) {
     val site = ins.requireCallSite()
     val target = site.target
     require(target is CallTarget.Direct) { "${sub.label} has a ${target::class.simpleName} call, which isn't supported yet" }
@@ -29,7 +41,7 @@ internal fun FunctionLowering.lowerCall(ins: IRInstruction) {
     }
     require(site.results.size <= 1) { "${sub.label} calls $name with several results, which isn't supported yet" }
     val callee = builder.subroutine(name)
-    val values = (if (callee != null) argumentsInParameterOrder(callee, site) else site.arguments).map { read(it.source) }
+    val values = (if (callee != null) argumentsInParameterOrder(callee, site) else site.arguments).map { readWide(it.source) }
     val signature = when {
         callee != null -> LlvmType.Function(builder.returnType(callee), builder.parameterTypes(callee))
         else -> builder.asmSubroutine(name)?.let { builder.declaration(it).type }
@@ -49,9 +61,23 @@ internal fun FunctionLowering.lowerCall(ins: IRInstruction) {
     }
     result.destination?.let { write(it, value) }
     (result.location as? CallLocation.StatusFlag)?.let { location ->
-        val number = if (value.type == LlvmType.Ptr) convert(value, LlvmType.I64) else value
+        val number = asInteger(value)
         setFlag(flagOf(location.flag), derive("flag", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.NE, it, number, LlvmValue.IntConstant(0, number.type)) })
     }
+}
+
+/**
+ * CALLI calls the code at an address without arguments. The word it may return goes into calling convention slot 10,
+ * where the IR code of the call() builtin picks up its result.
+ */
+private fun FunctionLowering.indirectCall(ins: IRInstruction) {
+    val site = ins.requireCallSite()
+    val reference = requireNotNull((site.target as? CallTarget.Direct)?.reference as? CodeReference.Indirect) { "CALLI in ${sub.label} needs an indirect target" }
+    require(site.arguments.isEmpty() && site.results.isEmpty()) { "CALLI in ${sub.label} can't pass arguments or results" }
+    val address = pointerValue(reference.pointer)
+    forgetFlags()
+    val result = derive("calli", LlvmType.I16) { LlvmInstruction.Call(it, address, emptyList(), LlvmType.I16) }
+    emit(LlvmInstruction.Store(convert(result, LlvmType.I64), builder.hardwareSlot(CallingConventionSlot(10), float = false)))
 }
 
 /** Arguments name the parameter variable they are passed in; the LLVM function takes them in the subroutine's parameter order. */

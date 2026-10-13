@@ -7,6 +7,7 @@ import prog8.codegen.llvm.model.IcmpCondition
 import prog8.codegen.llvm.model.LlvmInstruction
 import prog8.codegen.llvm.model.LlvmType
 import prog8.codegen.llvm.model.LlvmValue
+import prog8.intermediate.CodeReference
 import prog8.intermediate.IRInstruction
 import prog8.intermediate.Opcode
 import prog8.intermediate.requireImmediateInt
@@ -19,8 +20,9 @@ import prog8.intermediate.requireTarget
 internal fun FunctionLowering.lowerControl(ins: IRInstruction) {
     when (ins.opcode) {
         Opcode.JUMP -> emit(LlvmInstruction.Br(blockOf(ins.requireTarget())))
+        Opcode.JUMPI -> jumpIndirect(ins)
         Opcode.RETURN -> emit(LlvmInstruction.Ret(if (returnType == LlvmType.Void) null else LlvmValue.ZeroInitializer(returnType)))
-        Opcode.RETURNR -> emit(LlvmInstruction.Ret(convert(read(ins.requireSrcA()), returnType)))
+        Opcode.RETURNR -> emit(LlvmInstruction.Ret(convert(readWide(ins.requireSrcA()), returnType)))
         Opcode.RETURNI -> emit(LlvmInstruction.Ret(immediate(ins, returnType)))
         Opcode.BSTCC -> branchOnFlag(Flag.CARRY, whenSet = false, blockOf(ins.requireTarget()))
         Opcode.BSTCS -> branchOnFlag(Flag.CARRY, whenSet = true, blockOf(ins.requireTarget()))
@@ -38,26 +40,44 @@ internal fun FunctionLowering.lowerControl(ins: IRInstruction) {
         Opcode.BLTS -> compareAndBranch(ins, IcmpCondition.SLT)
         Opcode.BGESR, Opcode.BGES -> compareAndBranch(ins, IcmpCondition.SGE)
         Opcode.BLES -> compareAndBranch(ins, IcmpCondition.SLE)
-        Opcode.CMP -> setComparison(comparable(read(ins.requireSrcA())), comparable(read(ins.requireSrcB())))
+        Opcode.CMP -> setComparison(asInteger(read(ins.requireSrcA())), asInteger(read(ins.requireSrcB())))
         Opcode.CMPI -> {
-            val left = comparable(read(ins.requireSrcA()))
+            val left = asInteger(read(ins.requireSrcA()))
             setComparison(left, immediate(ins, left.type))
         }
         Opcode.SGN -> sign(ins)
         Opcode.BITTST -> bitTest(ins)
         Opcode.SEC -> setFlag(Flag.CARRY, LlvmValue.IntConstant(1, LlvmType.I1))
         Opcode.CLC -> setFlag(Flag.CARRY, LlvmValue.IntConstant(0, LlvmType.I1))
+        // a hosted program has no interrupt disable flag
+        Opcode.CLI, Opcode.SEI -> {}
         Opcode.FCOMP -> floatCompare(ins)
+        Opcode.BREAKPOINT -> emit(LlvmInstruction.Call(null, external("llvm.debugtrap", LlvmType.Void, emptyList()), emptyList(), LlvmType.Void))
         else -> throw IllegalArgumentException("${ins.opcode} is no control flow instruction")
     }
 }
 
 /** The branches that compare a register with a register or an immediate themselves, without status flags. */
 private fun FunctionLowering.compareAndBranch(ins: IRInstruction, condition: IcmpCondition) {
-    val left = comparable(read(ins.requireSrcA()))
-    val right = ins.srcB?.let { comparable(read(it)) } ?: immediate(ins, left.type)
+    val left = asInteger(read(ins.requireSrcA()))
+    val right = ins.srcB?.let { asInteger(read(it)) } ?: immediate(ins, left.type)
     val taken = derive("cond", LlvmType.I1) { LlvmInstruction.Icmp(condition, it, left, right) }
     emit(LlvmInstruction.CondBr(taken, blockOf(ins.requireTarget()), notTakenTarget()))
+}
+
+/**
+ * LLVM IR can't jump to an address, so JUMPI calls the routine there and returns what that returns.
+ * This matches a jump to a subroutine without parameters; llvm64 can't take the address of a label.
+ */
+private fun FunctionLowering.jumpIndirect(ins: IRInstruction) {
+    val reference = requireNotNull(ins.requireTarget() as? CodeReference.Indirect) { "JUMPI in ${sub.label} needs an indirect target" }
+    val address = pointerValue(reference.pointer)
+    forgetFlags()
+    if (returnType == LlvmType.Void) {
+        emit(LlvmInstruction.Call(null, address, emptyList(), LlvmType.Void))
+        emit(LlvmInstruction.Ret(null))
+    } else
+        emit(LlvmInstruction.Ret(derive("jumpi", returnType) { LlvmInstruction.Call(it, address, emptyList(), returnType) }))
 }
 
 /** SGN: the byte -1, 0 or 1 for the sign of the (signed) operand, and the flags of comparing that with 0. */
@@ -68,7 +88,7 @@ private fun FunctionLowering.sign(ins: IRInstruction) {
         minusZeroPlus(derive("neg", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OLT, it, value, zero) },
             derive("pos", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OGT, it, value, zero) })
     } else {
-        val number = comparable(value)
+        val number = asInteger(value)
         val zero = LlvmValue.IntConstant(0, number.type)
         minusZeroPlus(derive("neg", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.SLT, it, number, zero) },
             derive("pos", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.SGT, it, number, zero) })
@@ -79,7 +99,7 @@ private fun FunctionLowering.sign(ins: IRInstruction) {
 
 /** BITTST only sets the zero flag: set when the tested bit is 0. */
 private fun FunctionLowering.bitTest(ins: IRInstruction) {
-    val value = comparable(read(ins.requireSrcA()))
+    val value = asInteger(read(ins.requireSrcA()))
     val bit = derive("bit", value.type) { LlvmInstruction.BinaryOp(BinaryOperator.AND, it, value, integerConstant(1L shl ins.requireImmediateInt(), value.type)) }
     setFlag(Flag.ZERO, derive("cond", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, bit, LlvmValue.IntConstant(0, value.type)) })
 }
@@ -98,7 +118,3 @@ private fun FunctionLowering.minusZeroPlus(negative: LlvmValue, positive: LlvmVa
     val plus = derive("sign", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, positive, LlvmType.I8) }
     return derive("sign", LlvmType.I8) { LlvmInstruction.BinaryOp(BinaryOperator.SUB, it, plus, minus) }
 }
-
-/** Pointers are compared as 64-bit integers, so they can also be subtracted for the negative and overflow flags. */
-private fun FunctionLowering.comparable(value: LlvmValue): LlvmValue =
-    if (value.type == LlvmType.Ptr) convert(value, LlvmType.I64) else value
