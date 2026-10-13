@@ -62,6 +62,26 @@ class TestLlvmCompiler: FunSpec({
         }
     }
 
+    for ((name, program) in outputPrograms) {
+        test("$name: compiles with the llvm64 library, whose console output goes through putchar") {
+            for (optimize in listOf(false, true)) {
+                withClue("optimize=$optimize") {
+                    compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir)).readLines() shouldContain "declare i32 @putchar(i32)"
+                }
+            }
+        }
+
+        test("$name: gives the expected exit code and console output as a native arm64 macOS executable").config(enabledOrReasonIf = requiresNativeLlvm) {
+            for (optimize in listOf(false, true)) {
+                withClue("optimize=$optimize") {
+                    val (exitCode, output) = buildAndRun(compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir)))
+                    withClue(output) { exitCode shouldBe program.exitCode }
+                    output shouldBe program.output
+                }
+            }
+        }
+    }
+
     test("llvm is another name for the llvm64 target, whose program file is the LLVM IR text") {
         getCompilationTargetByName("llvm").name shouldBe LlvmTarget.NAME
         getCompilationTargetByName("LLVM64").name shouldBe LlvmTarget.NAME
@@ -735,4 +755,134 @@ main {
         return 4242
     }
 }"""
+)
+
+
+/** A complete program that uses the llvm64 library, with the exit code and the console output that it should give. */
+private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0)
+
+private val outputPrograms = mapOf(
+    "text output" to OutputProgram("""
+%import textio
+%import syslib
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.print("Hello from Prog8 LLVM!\n")
+        txt.chrout('X')
+        txt.spc()
+        txt.chrout('Y')
+        txt.nl()
+        txt.print("")
+        txt.print("multi")
+        txt.print("ple\n")
+        txt.rvs_on()
+        txt.print("reverse")
+        txt.rvs_off()
+        txt.color(2)
+        txt.home()
+        txt.plot(4, 2)
+        txt.bell()
+        txt.nl()
+    }
+}""", "Hello from Prog8 LLVM!\nX Y\nmultiple\n\u001b[7mreverse\u001b[0m\u001b[32m\u001b[H\u001b[2;4H\u0007\n"),
+
+    "number formatting" to OutputProgram($$"""
+%import textio
+%zeropage basicsafe
+
+main {
+    long @shared minimum = -2147483648
+
+    sub start() {
+        txt.print_ub(255)
+        txt.spc()
+        txt.print_uw(65535)
+        txt.spc()
+        txt.print_i32(-123456)
+        txt.spc()
+        txt.print_ubhex($fa, true)
+        txt.spc()
+        txt.print_ubbin(%10101010, true)
+        txt.nl()
+        txt.print_ub0(7)
+        txt.spc()
+        txt.print_uw0(42)
+        txt.spc()
+        txt.print_b(-128)
+        txt.spc()
+        txt.print_w(-32768)
+        txt.spc()
+        txt.print_l(minimum)
+        txt.spc()
+        txt.print_u32(-1)
+        txt.nl()
+        txt.print_uwhex($beef, false)
+        txt.spc()
+        txt.print_uwbin($8001, false)
+        txt.spc()
+        txt.print_ulhex($12345678, true)
+        txt.spc()
+        txt.print_bool(true)
+        txt.spc()
+        txt.print_bool(false)
+        txt.spc()
+        txt.print(conv.str_uw(1000))
+        txt.nl()
+    }
+}""", $$"255 65535 -123456 $fa %10101010\n007 00042 -128 -32768 -2147483648 4294967295\nbeef 1000000000000001 $12345678 true false 1000\n"),
+
+    "memory routines and sys.exit" to OutputProgram($$"""
+%import textio
+%import syslib
+%zeropage basicsafe
+
+main {
+    ubyte[8] source = [1, 2, 3, 4, 5, 6, 7, 8]
+    ubyte[8] target
+    uword[3] words
+
+    sub start() {
+        sys.memset(&target, len(target), $ee)
+        print_target()
+        sys.memcopy(&source, &target, 5)
+        print_target()
+        txt.print_b(sys.memcmp(&source, &target, 5))
+        txt.spc()
+        txt.print_b(sys.memcmp(&source, &target, 6))
+        txt.spc()
+        txt.print_b(sys.memcmp(&target, &source, 6))
+        txt.nl()
+        sys.memsetw(&words, len(words), $1234)
+        txt.print_uwhex(words[0], false)
+        txt.spc()
+        txt.print_uwhex(words[2], false)
+        txt.nl()
+        sys.exit(0)
+        txt.print("not reached\n")
+    }
+
+    sub print_target() {
+        ubyte value
+        for value in target {
+            txt.print_ubhex(value, false)
+            txt.spc()
+        }
+        txt.nl()
+    }
+}""", "ee ee ee ee ee ee ee ee \n01 02 03 04 05 ee ee ee \n0 -1 1\n1234 1234\n"),
+
+    "sys.die" to OutputProgram("""
+%import textio
+%import syslib
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.print("about to fail")
+        sys.die(1, "error message")
+        txt.print("not reached\n")
+    }
+}""", "about to fail\n\nPROGRAM DIED: error message\n", exitCode = 1)
 )
