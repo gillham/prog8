@@ -1,5 +1,5 @@
-; Prog8 definitions for the llvm64 target: a hosted 64-bit program, compiled to LLVM IR.
-; There is no runtime library for this target yet; this only has the definitions that the compiler and programs rely on.
+; Prog8 definitions for the llvm64 target: a hosted 64-bit program, compiled to LLVM IR and linked with the C runtime.
+; Note: pointer and str variables hold 8-byte addresses here, so %ir code loads them as .p and never as .l
 
 %option ignore_unused
 
@@ -29,12 +29,80 @@ sys {
     ; MIN_FLOAT and MAX_FLOAT are defined in the floats module if imported
 
 
+    sub reset_system() {
+        ; -- a hosted program can't reset the machine, so this ends the program
+        exit(0)
+    }
+
+    sub poweroff_system() {
+        ; -- a hosted program can't power off the machine, so this ends the program
+        exit(0)
+    }
+
+    sub die(ubyte code, str message) {
+        ; -- print the message and end the program with the status code
+        str @shared warning = "\n\nPROGRAM DIED: "
+        %ir {{
+            load.p r99200.p,#sys.die.warning
+            syscall 3 (r99200.p)
+            loadm.p r99200.p,[sys.die.message]
+            syscall 3 (r99200.p)
+            load.b r99100.b,#10.b
+            syscall 2 (r99100.b)
+        }}
+        exit(code)
+    }
+
     sub exit(ubyte returnvalue) {
         ; -- exit the program with a return code. All active defers in the call chain are unwound program-wide (LIFO) before the program ends.
         %ir {{
             loadm.b r99100.b,[sys.exit.returnvalue]
             syscall 1 (r99100.b)
         }}
+    }
+
+    sub memcopy(pointer source, pointer tgt, uword count)  {
+        ; -- copy count bytes; overlapping areas are copied correctly
+        %ir {{
+            loadm.p r99200.p,[sys.memcopy.source]
+            loadm.p r99201.p,[sys.memcopy.tgt]
+            loadm.w r99002.w,[sys.memcopy.count]
+            syscall 36 (r99200.p, r99201.p, r99002.w)
+        }}
+    }
+
+    sub memset(pointer mem, uword numbytes, ubyte value)  {
+        %ir {{
+            loadm.p r99200.p,[sys.memset.mem]
+            loadm.w r99001.w,[sys.memset.numbytes]
+            loadm.b r99100.b,[sys.memset.value]
+            syscall 37 (r99200.p, r99001.w, r99100.b)
+        }}
+    }
+
+    sub memsetw(pointer mem, uword numwords, uword value)  {
+        %ir {{
+            loadm.p r99200.p,[sys.memsetw.mem]
+            loadm.w r99001.w,[sys.memsetw.numwords]
+            loadm.w r99002.w,[sys.memsetw.value]
+            syscall 38 (r99200.p, r99001.w, r99002.w)
+        }}
+    }
+
+    sub memcmp(pointer address1, pointer address2, uword size) -> byte {
+        ; Compares two blocks of memory of up to 65535 bytes in size, as unsigned bytes.
+        ; Returns -1 (255), 0 or 1, meaning: block 1 sorts before, equal or after block 2.
+        while size!=0 {
+            if @(address1) != @(address2) {
+                if @(address1) < @(address2)
+                    return -1
+                return 1
+            }
+            address1++
+            address2++
+            size--
+        }
+        return 0
     }
 
     sub set_carry() {
