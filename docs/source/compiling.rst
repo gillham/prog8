@@ -224,6 +224,9 @@ One or more .p8 module files
     The compiled program and the symbol and breakpoint lists
     (for the machine code monitor) are immediately loaded into the emulator (if it supports them)
 
+    The ``llvm64`` target has no emulator: there ``-emu`` builds the LLVM IR into an executable for the host
+    with clang, and runs it. The program's exit status is printed afterwards.
+
 ``-newcodegen``
     Use new 6502 code generation backend (*incomplete/experimental*). This generates 6502 assembly code based on IR instead of the AST.
     **Do not use for production code yet.**
@@ -265,6 +268,9 @@ One or more .p8 module files
     A file name without an extension is allowed as well.
     On the ``virtual`` target the program artifact is the IR file, so ``.p8ir`` is always enforced there:
     ``-o build/game`` writes ``build/game.p8ir``.
+    On the ``llvm64`` target a name ending in ``.ll`` gets the LLVM IR, and any other name is the native executable
+    that clang builds from the LLVM IR in ``<stem>.ll`` next to it (this needs clang to be installed):
+    ``-o build/game`` writes ``build/game.ll`` and ``build/game``.
     This option cannot be combined with ``-out``, and it only works when a single source file is compiled.
     It is silently ignored when no program artifact is produced anyway: with ``-noasm``, ``-check``,
     ``-dumpsymbols`` or ``-gendoc``.

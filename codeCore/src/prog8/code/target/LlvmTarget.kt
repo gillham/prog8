@@ -64,7 +64,15 @@ class LlvmTarget(
     }
 
     override fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean) {
-        System.err.println("The $NAME target has no emulator; compile the generated LLVM IR with clang instead.")
+        if (selectedEmulator != 1) {
+            System.err.println("The $NAME target has no alternative emulator; -emu builds the program into an executable for this host and runs it.")
+            return
+        }
+        // the LLVM code generator module depends on this one, so its runner can only be loaded via reflection
+        val runner = Class.forName("prog8.codegen.llvm.LlvmProgramRunner").getDeclaredConstructor().newInstance() as ILlvmProgramRunner
+        val status = runner.buildAndRun(programFile, quiet) ?: return
+        if (!quiet)
+            println("\nProgram exited with status $status")
     }
 
     override fun isIOAddress(address: UInt): Boolean = false
@@ -74,6 +82,14 @@ class LlvmTarget(
     }
 }
 
+
+/**
+ * Builds the native executable of an llvm64 program file when needed, and runs it on this host.
+ * Returns its exit status, or null when it didn't run; the reason has been printed then.
+ */
+interface ILlvmProgramRunner {
+    fun buildAndRun(programFile: Path, quiet: Boolean): Int?
+}
 
 private class LlvmZeropage(options: CompilationOptions): Zeropage(options) {
     override val SCRATCH_B1: UInt get() = noZeropage()

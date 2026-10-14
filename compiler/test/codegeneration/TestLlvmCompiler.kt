@@ -34,12 +34,15 @@ import prog8.vm.ProgramExitException
 import prog8.vm.VirtualMachine
 import prog8tests.helpers.ErrorReporterForTests
 import prog8tests.helpers.compileText
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.Path
+import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readLines
 import kotlin.io.path.writeText
@@ -96,6 +99,40 @@ class TestLlvmCompiler: FunSpec({
         getCompilationTargetByName("llvm").name shouldBe LlvmTarget.NAME
         getCompilationTargetByName("LLVM64").name shouldBe LlvmTarget.NAME
         compiledLlFile(compileText(LlvmTarget(), false, programs.getValue("arithmetic expressions"), outputDir)).toString() shouldEndWith ".ll"
+    }
+
+    test("launchEmulator builds a native executable next to the .ll file and runs it").config(enabledOrReasonIf = requiresNativeLlvm) {
+        val dir = outputDir.resolve("launched").createDirectories()
+        val llFile = compiledLlFile(compileText(LlvmTarget(), false, nativeHello.source, dir))
+        val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll"))
+        withClue("a compile without -o only writes the LLVM IR") { executable.exists() shouldBe false }
+        val printed = printedOnStdout { LlvmTarget().launchEmulator(1, llFile, quiet = false) }
+        printed shouldContain "Building $executable from $llFile with clang..."
+        printed shouldContain "Running $executable..."
+        printed shouldContain "Program exited with status 42"
+        withClue("$executable should be executable") { Files.isExecutable(executable) shouldBe true }
+        execute(executable.toString()) shouldBe (nativeHello.exitCode to nativeHello.output)
+
+        val selfChecking = compiledLlFile(compileText(LlvmTarget(), true, programs.getValue("64-bit quad and uquad integers"), dir))
+        printedOnStdout { LlvmTarget().launchEmulator(1, selfChecking, quiet = false) } shouldContain "Program exited with status 0"
+    }
+
+    test("-o without .ll builds a native executable with the LLVM IR next to it").config(enabledOrReasonIf = requiresNativeLlvm) {
+        val dir = outputDir.resolve("named").createDirectories()
+        val executable = dir.resolve("hello-native")
+        compileText(LlvmTarget(), false, nativeHello.source, dir, outputFile = executable).shouldNotBeNull()
+        withClue("the LLVM IR next to the executable") { dir.resolve("hello-native.ll").exists() shouldBe true }
+        withClue("$executable should be executable") { Files.isExecutable(executable) shouldBe true }
+        execute(executable.toString()) shouldBe (nativeHello.exitCode to nativeHello.output)
+
+        val irFile = dir.resolve("hello-ir.ll")
+        compileText(LlvmTarget(), false, nativeHello.source, dir, outputFile = irFile).shouldNotBeNull()
+        irFile.exists() shouldBe true
+        withClue("an -o name ending in .ll only gets the LLVM IR") { dir.resolve("hello-ir").exists() shouldBe false }
+
+        val built = Files.getLastModifiedTime(executable)
+        printedOnStdout { LlvmTarget().launchEmulator(1, executable, quiet = false) } shouldContain "Program exited with status 42"
+        withClue("an existing -o executable runs as it is") { Files.getLastModifiedTime(executable) shouldBe built }
     }
 
     test("code that has no LLVM translation is a compilation error") {
@@ -311,6 +348,19 @@ private fun execute(vararg command: String, stdin: Path? = null): Pair<Int, Stri
     val output = process.inputStream.bufferedReader().use { it.readText() }
     check(process.waitFor(60, TimeUnit.SECONDS)) { "${command.first()} did not finish" }
     return process.exitValue() to output
+}
+
+/** Other specs may print on System.out at the same time, so only check that the captured text contains something. */
+private fun printedOnStdout(action: () -> Unit): String {
+    val original = System.out
+    val captured = ByteArrayOutputStream()
+    System.setOut(PrintStream(captured, true, Charsets.UTF_8))
+    try {
+        action()
+    } finally {
+        System.setOut(original)
+    }
+    return captured.toString(Charsets.UTF_8)
 }
 
 private fun exitStatusOnVirtualMachine(irFile: Path): Int {
@@ -1851,6 +1901,17 @@ main {
 
 /** A complete program that uses the llvm64 library, with the exit code and the console output that it should give for the [input]. */
 private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0, val input: String = "")
+
+private val nativeHello = OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.print("Hello from a native executable\n")
+        sys.exit(42)
+    }
+}""", "Hello from a native executable\n", exitCode = 42)
 
 private val outputPrograms = mapOf(
     "text output" to OutputProgram("""

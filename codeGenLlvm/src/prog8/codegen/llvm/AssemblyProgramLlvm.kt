@@ -9,8 +9,8 @@ import java.util.concurrent.TimeUnit
 import kotlin.io.path.writeText
 
 /**
- * The LLVM IR of a compiled program, saved as the program's output file (a .ll file unless -o names another).
- * Assembling checks that file with llvm-as, or else with clang, when one of those is installed.
+ * The LLVM IR of a compiled program, saved as a .ll file; assembling checks it with llvm-as, or else with clang, when one is installed.
+ * When -o names a program file without .ll, that is a native executable, which assembling then builds from the IR with clang.
  */
 internal class AssemblyProgramLlvm(
     override val name: String,
@@ -20,10 +20,23 @@ internal class AssemblyProgramLlvm(
     override val irRegisterCount: Int
 ) : IAssemblyProgram {
 
-    fun save(options: CompilationOptions): Path = outputFile(options).also { it.writeText(llvmIr) }
+    fun save(options: CompilationOptions): Path = LlvmToolchain.irFileFor(outputFile(options)).also { it.writeText(llvmIr) }
 
     override fun assemble(options: CompilationOptions, errors: IErrorReporter): Boolean {
-        val file = outputFile(options)
+        val programFile = outputFile(options)
+        val file = LlvmToolchain.irFileFor(programFile)
+        if (!validate(file, options))
+            return false
+        if (programFile == file)
+            return true
+        if (!LlvmToolchain.compileToExecutable(file, programFile))
+            return false
+        if (!options.quiet)
+            println("Native executable written to '$programFile'")
+        return true
+    }
+
+    private fun validate(file: Path, options: CompilationOptions): Boolean {
         val command = validation(file)
         if (command == null) {
             if (!options.quiet)
