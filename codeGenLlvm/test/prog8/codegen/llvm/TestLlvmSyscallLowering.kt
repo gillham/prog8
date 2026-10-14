@@ -273,8 +273,58 @@ class TestLlvmSyscallLowering: FunSpec({
     }
 
     test("llvm-as accepts the file syscalls").config(enabledOrReasonIf = requiresLlvmAs) {
-        val (exitCode, output) = runLlvmAs(LlvmPrinter.print(TestProgram().apply { allFileSyscallsSub(); statusSub() }.module()))
+        val (exitCode, output) = runLlvmAs(LlvmPrinter.print(TestProgram().apply { allFileSyscallsSub(); statusSub(); allHandleSyscallsSub() }.module()))
         withClue(output) { exitCode shouldBe 0 }
+    }
+
+    test("the file handle syscalls call the C library directly, with the handle as the FILE pointer") {
+        val lines = TestProgram().apply { allHandleSyscallsSub() }.module().function("main.handles").lines()
+        lines shouldHave "  %file.1 = call ptr @fopen(ptr %r1.1, ptr %r2.1)"
+        lines shouldHave "  store ptr %file.1, ptr %r3.slot"
+        lines shouldHave "  %count.1 = zext i16 %r4.1 to i64"
+        lines shouldHave "  %transferred.1 = call i64 @fread(ptr %r1.2, i64 1, i64 %count.1, ptr %r3.1)"
+        lines shouldHave "  %transferred.2 = trunc i64 %transferred.1 to i16"
+        lines shouldHave "  store i16 %transferred.2, ptr %r5.slot"
+        lines shouldHave "  %transferred.3 = call i64 @fwrite(ptr %r1.3, i64 1, i64 %count.2, ptr %r3.2)"
+        lines shouldHave "  %origin.1 = zext i8 %r8.1 to i32"
+        lines shouldHave "  %status.1 = call i32 @fseek(ptr %r3.3, i64 %r7.1, i32 %origin.1)"
+        lines shouldHave "  %ok.1 = icmp eq i32 %status.1, 0"
+        lines shouldHave "  %position.1 = call i64 @ftell(ptr %r3.4)"
+        lines shouldHave "  store i64 %position.1, ptr %r10.slot"
+        lines shouldHave "  %status.2 = call i32 @fflush(ptr %r3.5)"
+        lines shouldHave "  %eof.1 = call i32 @feof(ptr %r3.6)"
+        lines shouldHave "  %eof.2 = icmp ne i32 %eof.1, 0"
+        lines shouldHave "  %eof.3 = zext i1 %eof.2 to i8"
+        lines shouldHave "  %status.3 = call i32 @fclose(ptr %r3.7)"
+        lines shouldHave "  %ok.6 = zext i1 %ok.5 to i8"
+        lines shouldHave "  store i8 %ok.6, ptr %r13.slot"
+    }
+
+    test("a long offset to seek to is sign extended") {
+        val lines = TestProgram().apply { longSeekSub() }.module().function("main.seek").lines()
+        lines shouldHave "  %offset.1 = sext i32 %r2.2 to i64"
+        lines shouldHave "  %status.1 = call i32 @fseek(ptr %r1.1, i64 %offset.1, i32 %origin.1)"
+    }
+
+    test("the file handle and file syscalls share their C library declarations, which add fflush() and feof()") {
+        val text = LlvmPrinter.print(TestProgram().apply { allFileSyscallsSub(); allHandleSyscallsSub() }.module()).lines()
+        for (declaration in listOf("ptr @fopen(ptr, ptr)", "i32 @fclose(ptr)", "i64 @fread(ptr, i64, i64, ptr)", "i64 @fwrite(ptr, i64, i64, ptr)",
+                "i32 @fseek(ptr, i64, i32)", "i64 @ftell(ptr)", "i32 @fflush(ptr)", "i32 @feof(ptr)"))
+            withClue(declaration) { text.count { it == "declare $declaration" } shouldBe 1 }
+    }
+
+    test("the file handle syscalls keep two files open, and seek and tell with 64-bit positions, in a native arm64 macOS program").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+        val directory = createTempDirectory("prog8-file-handles").toRealPath()
+        try {
+            val module = TestProgram().apply { handleSyscallChecks(directory) }.module().withMainCalling("main.check")
+            val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
+            withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            directory.resolve("out.bin").readBytes().toList() shouldBe (1..8).map { it.toByte() }
+            directory.resolve("copy.bin").readBytes().toList() shouldBe (1..5).map { it.toByte() }
+            directory.listDirectoryEntries().map { it.name }.sorted() shouldBe listOf("copy.bin", "out.bin")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
     }
 
     test("the file syscalls read, write and manage files like in the VM, in a native arm64 macOS program").config(enabledOrReasonIf = requiresNativeArm64Mac) {
@@ -437,6 +487,38 @@ private fun TestProgram.allFileSyscallsSub() {
         """)
 }
 
+/** Every file handle syscall once, with the quad offset and the byte origin that fileio passes to FSEEK. */
+private fun TestProgram.allHandleSyscallsSub() {
+    string("main.path", "x.bin")
+    string("main.mode", "rb")
+    sub("main.handles", code = """
+        _main.handles:
+        load.p r1.p,#main.path
+        load.p r2.p,#main.mode
+        syscall 73 (r1.p, r2.p): r3.p
+        load.w r4.w,#8.w
+        syscall 75 (r3.p, r1.p, r4.w): r5.w
+        syscall 76 (r3.p, r1.p, r4.w): r6.w
+        load.q r7.q,#-2.q
+        load.b r8.b,#2.b
+        syscall 77 (r3.p, r7.q, r8.b): r9.b
+        syscall 78 (r3.p): r10.q
+        syscall 79 (r3.p): r11.b
+        syscall 80 (r3.p): r12.b
+        syscall 74 (r3.p): r13.b
+        return
+        """)
+}
+
+private fun TestProgram.longSeekSub() = sub("main.seek", code = """
+    _main.seek:
+    load.p r1.p,#0.p
+    load.l r2.l,#-2.l
+    load.b r3.b,#0.b
+    syscall 77 (r1.p, r2.l, r3.b): r4.b
+    return
+    """)
+
 private fun TestProgram.statusSub() {
     string("main.gone", "gone.bin")
     sub("main.status", code = """
@@ -515,5 +597,51 @@ private fun TestProgram.fileSyscallChecks(directory: Path) {
         check("load.p ra.p,#main.sub; syscall 49 (ra.p): rb.b; syscall 49 (ra.p): rc.b", Is("rb.b", 1), Is("rc.b", 0))
         check("load.p ra.p,#main.sub; load.p rb.p,#main.dst; syscall 41 (ra.p, rb.p): rc.p", Is("rc.p", 0))
         check("load.p ra.p,#main.sub; syscall 51 (ra.p): rb.b; syscall 51 (ra.p): rc.b", Is("rb.b", 1), Is("rc.b", 0))
+    }.subroutine())
+}
+
+/** main.check for the file handle syscalls on files in the [directory]; main.files keeps the handles of two open files. */
+private fun TestProgram.handleSyscallChecks(directory: Path) {
+    string("main.missing", directory.resolve("missing.bin").toString())
+    string("main.out", directory.resolve("out.bin").toString())
+    string("main.copy", directory.resolve("copy.bin").toString())
+    string("main.rb", "rb")
+    string("main.wb", "wb")
+    variable("main.bytes", DataType.arrayFor(BaseDataType.UBYTE, target),
+        IRVariableInitializer.Array((1..8).map { IRStSymbolicReference.Numeric(it.toDouble()) }), 8u)
+    variable("main.dst", DataType.arrayFor(BaseDataType.UBYTE, target), length = 8u)
+    variable("main.files", DataType.arrayFor(BaseDataType.UBYTE, target), length = 16u)
+    sub("main.check", returns = listOf(DataType.UBYTE), code = Checks().apply {
+        check("load.p ra.p,#main.missing; load.p rb.p,#main.rb; syscall 73 (ra.p, rb.p): rc.p", Is("rc.p", 0))
+        check("load.p ra.p,#main.out; load.p rb.p,#main.wb; syscall 73 (ra.p, rb.p): rc.p; storem.p rc.p,[main.files]; cmpi.p rc.p,#0.p", ZeroIs(false))
+        check("loadm.p ra.p,[main.files]; load.p rb.p,#main.bytes; load.w rc.w,#8.w; syscall 76 (ra.p, rb.p, rc.w): rd.w; syscall 78 (ra.p): re.q; " +
+            "syscall 79 (ra.p): rf.b; syscall 74 (ra.p): rg.b",
+            Is("rd.w", 8), Is("re.q", 8), Is("rf.b", 1), Is("rg.b", 1))
+        // a null handle flushes every stream
+        check("load.p ra.p,#0.p; syscall 79 (ra.p): rb.b", Is("rb.b", 1))
+        // two files open at once, to copy the first 5 bytes of one to the other
+        check("load.p ra.p,#main.out; load.p rb.p,#main.rb; syscall 73 (ra.p, rb.p): rc.p; storem.p rc.p,[main.files]; cmpi.p rc.p,#0.p", ZeroIs(false))
+        check("load.p ra.p,#main.copy; load.p rb.p,#main.wb; syscall 73 (ra.p, rb.p): rc.p; storem.p rc.p,[main.files+8]; cmpi.p rc.p,#0.p", ZeroIs(false))
+        check("loadm.p ra.p,[main.files]; loadm.p rb.p,[main.files+8]; load.p rc.p,#main.dst; load.w rd.w,#5.w; syscall 75 (ra.p, rc.p, rd.w): re.w; " +
+            "syscall 80 (ra.p): rf.b; syscall 76 (rb.p, rc.p, re.w): rg.w",
+            Is("re.w", 5), Is("rf.b", 0), Is("rg.w", 5))
+        // only 3 of the next 5 bytes are there, and reading past them sets the end of the file
+        check("loadm.p ra.p,[main.files]; load.p rb.p,#main.dst; load.w rc.w,#5.w; syscall 75 (ra.p, rb.p, rc.w): rd.w; syscall 80 (ra.p): re.b; " +
+            "syscall 78 (ra.p): rf.q; loadm.b rg.b,[main.dst]; loadm.b rh.b,[main.dst+2]",
+            Is("rd.w", 3), Is("re.b", 1), Is("rf.q", 8), Is("rg.b", 6), Is("rh.b", 8))
+        // negative offsets from the end and from the position; seeking clears the end of the file
+        check("loadm.p ra.p,[main.files]; load.q rb.q,#-2.q; load.b rc.b,#2.b; syscall 77 (ra.p, rb.q, rc.b): rd.b; syscall 78 (ra.p): re.q; " +
+            "load.q rf.q,#-3.q; load.b rg.b,#1.b; syscall 77 (ra.p, rf.q, rg.b): rh.b",
+            Is("rd.b", 1), Is("re.q", 6), Is("rh.b", 1))
+        check("loadm.p ra.p,[main.files]; syscall 78 (ra.p): rb.q; syscall 80 (ra.p): rc.b; load.p rd.p,#main.dst; load.w re.w,#1.w; " +
+            "syscall 75 (ra.p, rd.p, re.w): rf.w; loadm.b rg.b,[main.dst]",
+            Is("rb.q", 3), Is("rc.b", 0), Is("rf.w", 1), Is("rg.b", 4))
+        // seeking before the start fails and keeps the position; past 4 GB works, with nothing to read there
+        check("loadm.p ra.p,[main.files]; load.q rb.q,#-1.q; load.b rc.b,#0.b; syscall 77 (ra.p, rb.q, rc.b): rd.b; syscall 78 (ra.p): re.q",
+            Is("rd.b", 0), Is("re.q", 4))
+        check("loadm.p ra.p,[main.files]; load.q rb.q,#4294967297.q; load.b rc.b,#0.b; syscall 77 (ra.p, rb.q, rc.b): rd.b; syscall 78 (ra.p): re.q; " +
+            "load.p rf.p,#main.dst; load.w rg.w,#1.w; syscall 75 (ra.p, rf.p, rg.w): rh.w",
+            Is("rd.b", 1), Is("re.q", 4294967297), Is("rh.w", 0))
+        check("loadm.p ra.p,[main.files]; loadm.p rb.p,[main.files+8]; syscall 74 (ra.p): rc.b; syscall 74 (rb.p): rd.b", Is("rc.b", 1), Is("rd.b", 1))
     }.subroutine())
 }

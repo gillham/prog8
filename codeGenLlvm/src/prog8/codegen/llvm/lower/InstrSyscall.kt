@@ -47,10 +47,18 @@ private const val VM_GET_C = 69
 // the llvm64 library's own syscalls, numbered after the last one of the VM
 private const val VM_GET_ARGC = 71
 private const val VM_GET_ARGV = 72
+private const val VM_FOPEN = 73
+private const val VM_FCLOSE = 74
+private const val VM_FREAD = 75
+private const val VM_FWRITE = 76
+private const val VM_FSEEK = 77
+private const val VM_FTELL = 78
+private const val VM_FFLUSH = 79
+private const val VM_FEOF = 80
 
 /**
  * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory, file and filesystem
- * syscalls of the virtual target's library, and the command line argument syscalls of the llvm64 library.
+ * syscalls of the virtual target's library, and the command line argument and file handle syscalls of the llvm64 library.
  * Searches, string comparisons, string output, argument lookups and the file stream routines become internal helper functions.
  */
 internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
@@ -84,6 +92,14 @@ internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
         VM_GET_C -> getChar(site, number)
         VM_GET_ARGC -> argumentCount(site, number)
         VM_GET_ARGV -> argument(site, number)
+        VM_FOPEN -> openHandle(site, number)
+        VM_FCLOSE -> handleStatus(site, number, Libc.FCLOSE)
+        VM_FREAD -> transfer(site, number, Libc.FREAD)
+        VM_FWRITE -> transfer(site, number, Libc.FWRITE)
+        VM_FSEEK -> seekHandle(site, number)
+        VM_FTELL -> tellHandle(site, number)
+        VM_FFLUSH -> handleStatus(site, number, Libc.FFLUSH)
+        VM_FEOF -> endOfFile(site, number)
         else -> when (IMSyscall.entries.firstOrNull { it.number == number }) {
             IMSyscall.COMPARE_STRINGS -> compareStrings(site, number)
             IMSyscall.STRING_CONTAINS -> stringContains(site, number)
@@ -242,10 +258,14 @@ private fun FunctionLowering.fileSystem(site: CallSite, number: Int, routine: Li
     // rwxr-xr-x, before the umask
     val args = if (routine == Libc.MKDIR) paths + LlvmValue.IntConstant(0b111_101_101, LlvmType.I32) else paths
     val status = derive("status", LlvmType.I32) { LlvmInstruction.Call(it, builder.libc(routine), args, LlvmType.I32) }
-    if (site.results.isNotEmpty()) {
-        val succeeded = derive("ok", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, status, LlvmValue.IntConstant(0, LlvmType.I32)) }
-        result(site, derive("ok", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, succeeded, LlvmType.I8) })
-    }
+    if (site.results.isNotEmpty())
+        result(site, succeeded(status))
+}
+
+/** The byte 1 when the int [status] of a C routine is 0, its value for success, else 0. */
+private fun FunctionLowering.succeeded(status: LlvmValue): LlvmValue {
+    val ok = derive("ok", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, status, i32(0)) }
+    return derive("ok", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, ok, LlvmType.I8) }
 }
 
 /** CURDIR(): the current directory in a static buffer, or null when it doesn't fit or getcwd() fails otherwise. */
@@ -300,6 +320,54 @@ private fun FunctionLowering.tellFile(site: CallSite, number: Int, size: Boolean
     arguments(site, number, 0)
     val helper = if (size) builder.helperFunction(".file.size") { builder.sizeHelper() } else builder.helperFunction(".file.tell") { builder.tellHelper() }
     result(site, derive(if (size) "size" else "position", LlvmType.I32) { LlvmInstruction.Call(it, helper, emptyList(), LlvmType.I32) })
+}
+
+// The file handle syscalls of the llvm64 fileio module, whose handle is the FILE pointer from FOPEN. As in C, only FFLUSH
+// accepts a null one, which flushes every output stream; fileio checks the handle for the others.
+
+/** FOPEN(name, mode): the FILE pointer of the file that fopen() opens with the C mode string, or null when it can't. */
+private fun FunctionLowering.openHandle(site: CallSite, number: Int) {
+    val (name, mode) = arguments(site, number, 2)
+    val args = listOf(pointerValue(name), pointerValue(mode))
+    result(site, derive("file", LlvmType.Ptr) { LlvmInstruction.Call(it, builder.libc(Libc.FOPEN), args, LlvmType.Ptr) })
+}
+
+/** FCLOSE(file) and FFLUSH(file): 1 when fclose() or fflush() succeeds, else 0. */
+private fun FunctionLowering.handleStatus(site: CallSite, number: Int, routine: Libc) {
+    val (file) = arguments(site, number, 1)
+    val status = derive("status", LlvmType.I32) { LlvmInstruction.Call(it, builder.libc(routine), listOf(pointerValue(file)), LlvmType.I32) }
+    result(site, succeeded(status))
+}
+
+/** FREAD(file, buffer, count word) and FWRITE(file, buffer, count word): the number of bytes that fread() or fwrite() transfers. */
+private fun FunctionLowering.transfer(site: CallSite, number: Int, routine: Libc) {
+    val (file, buffer, count) = arguments(site, number, 3)
+    val args = listOf(pointerValue(buffer), i64(1), convert(read(count), LlvmType.I64, "count"), pointerValue(file))
+    val transferred = derive("transferred", LlvmType.I64) { LlvmInstruction.Call(it, builder.libc(routine), args, LlvmType.I64) }
+    // never more than the count, so it fits in a word
+    result(site, convert(transferred, LlvmType.I16, "transferred"))
+}
+
+/** FSEEK(file, offset quad, origin byte): 1 when fseek() moves to the offset from the origin, SEEK_SET 0, SEEK_CUR 1 or SEEK_END 2, else 0. */
+private fun FunctionLowering.seekHandle(site: CallSite, number: Int) {
+    val (file, offset, origin) = arguments(site, number, 3)
+    val args = listOf(pointerValue(file), widen(read(offset), LlvmType.I64, signed = true, "offset"), convert(read(origin), LlvmType.I32, "origin"))
+    val status = derive("status", LlvmType.I32) { LlvmInstruction.Call(it, builder.libc(Libc.FSEEK), args, LlvmType.I32) }
+    result(site, succeeded(status))
+}
+
+/** FTELL(file): the position in the file as a quad, which is -1 for an error. */
+private fun FunctionLowering.tellHandle(site: CallSite, number: Int) {
+    val (file) = arguments(site, number, 1)
+    result(site, derive("position", LlvmType.I64) { LlvmInstruction.Call(it, builder.libc(Libc.FTELL), listOf(pointerValue(file)), LlvmType.I64) })
+}
+
+/** FEOF(file): 1 when a read went past the end of the file, else 0. */
+private fun FunctionLowering.endOfFile(site: CallSite, number: Int) {
+    val (file) = arguments(site, number, 1)
+    val flag = derive("eof", LlvmType.I32) { LlvmInstruction.Call(it, builder.libc(Libc.FEOF), listOf(pointerValue(file)), LlvmType.I32) }
+    val set = derive("eof", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.NE, it, flag, i32(0)) }
+    result(site, derive("eof", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, set, LlvmType.I8) })
 }
 
 /** `i8 (needle, ptr array, i16 count)`: 1 when one of the count elements equals the needle, else 0. */
@@ -482,6 +550,8 @@ private enum class Libc(val returnType: LlvmType, vararg parameters: LlvmType) {
     FSEEK(LlvmType.I32, LlvmType.Ptr, LlvmType.I64, LlvmType.I32),
     FTELL(LlvmType.I64, LlvmType.Ptr),
     FERROR(LlvmType.I32, LlvmType.Ptr),
+    FEOF(LlvmType.I32, LlvmType.Ptr),
+    FFLUSH(LlvmType.I32, LlvmType.Ptr),
     REMOVE(LlvmType.I32, LlvmType.Ptr),
     RENAME(LlvmType.I32, LlvmType.Ptr, LlvmType.Ptr),
     GETCWD(LlvmType.Ptr, LlvmType.Ptr, LlvmType.I64),
