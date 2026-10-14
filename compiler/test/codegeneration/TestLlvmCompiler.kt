@@ -44,6 +44,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.io.path.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readLines
 import kotlin.io.path.writeText
 
@@ -84,12 +85,17 @@ class TestLlvmCompiler: FunSpec({
             }
         }
 
-        test("$name: gives the expected exit code and console output as a native arm64 macOS executable").config(enabledOrReasonIf = requiresNativeLlvm) {
+        test("$name: gives the expected exit code and console output as a native arm64 macOS executable, which leaves no files behind").config(enabledOrReasonIf = requiresNativeLlvm) {
             for (optimize in listOf(false, true)) {
                 withClue("optimize=$optimize") {
-                    val (exitCode, output) = buildAndRun(compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir)), program.input, program.args)
+                    val workingDirectory = outputDir.resolve("run")
+                    workingDirectory.toFile().deleteRecursively()
+                    workingDirectory.createDirectories()
+                    val llFile = compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir))
+                    val (exitCode, output) = buildAndRun(llFile, program.input, program.args, workingDirectory)
                     withClue(output) { exitCode shouldBe program.exitCode }
                     output shouldBe program.output
+                    withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
                 }
             }
         }
@@ -329,21 +335,22 @@ private val requiresNativeLlvm: (TestCase) -> Enabled = {
 }
 
 /**
- * Builds the .ll file into an executable with clang -O2 and runs it with [input] on stdin and the command line [args];
- * returns its exit code and output, or clang's if that failed.
+ * Builds the .ll file into an executable with clang -O2 and runs it with [input] on stdin and the command line [args],
+ * in the working [directory] if there is one; returns its exit code and output, or clang's if that failed.
  */
-private fun buildAndRun(llFile: Path, input: String = "", args: List<String> = emptyList()): Pair<Int, String> {
+private fun buildAndRun(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll"))
     val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), "-O2", "-Wno-override-module", llFile.toString(), "-o", executable.toString())
     if (compiled.first != 0)
         return compiled
     val stdin = executable.resolveSibling("${executable.fileName}.stdin").also { it.writeText(input) }
-    return execute(executable.toString(), *args.toTypedArray(), stdin = stdin)
+    return execute(executable.toString(), *args.toTypedArray(), stdin = stdin, directory = directory)
 }
 
-private fun execute(vararg command: String, stdin: Path? = null): Pair<Int, String> {
+private fun execute(vararg command: String, stdin: Path? = null, directory: Path? = null): Pair<Int, String> {
     val builder = ProcessBuilder(*command).redirectErrorStream(true)
     stdin?.let { builder.redirectInput(it.toFile()) }
+    directory?.let { builder.directory(it.toFile()) }
     val process = builder.start()
     val output = process.inputStream.bufferedReader().use { it.readText() }
     check(process.waitFor(60, TimeUnit.SECONDS)) { "${command.first()} did not finish" }
@@ -1917,7 +1924,7 @@ main {
 
 /**
  * A complete program that uses the llvm64 library, with the exit code and the console output that it should give
- * for the [input] and the command line [args].
+ * for the [input] and the command line [args]. It runs in an empty directory named run, which it has to leave empty.
  */
 private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0, val input: String = "", val args: List<String> = emptyList())
 
@@ -2463,6 +2470,371 @@ main {
     }
 }""", "4 arguments\n1: [--level=3]\n2: [two words]\n3: []\n0: the program\npast the last one: []\n", exitCode = 4,
         args = listOf("--level=3", "two words", "")),
+
+    "sys.argc and sys.argv with a single argument" to OutputProgram("""
+%import textio
+%import syslib
+%zeropage basicsafe
+
+main {
+    sub start() {
+        uword count = sys.argc()
+        if count < 1 {
+            txt.print("no program name\n")
+            sys.exit(1)
+        }
+        if sys.argv(0) == "" {
+            txt.print("empty program name\n")
+            sys.exit(2)
+        }
+        txt.print("argc=")
+        txt.print_uw(count)
+        ; the last two indices are past the arguments
+        uword index
+        for index in 1 to count + 1 {
+            txt.print(" [")
+            txt.print(sys.argv(index))
+            txt.chrout(']')
+        }
+        txt.nl()
+        if sys.argv(65535) != "" {
+            txt.print("an argument past the end\n")
+            sys.exit(3)
+        }
+    }
+}""", "argc=2 [single] [] []\n", args = listOf("single")),
+
+    "diskio writing, reading lines, seeking in and deleting a text file" to OutputProgram("""
+%import textio
+%import diskio
+%import strings
+%zeropage basicsafe
+
+main {
+    str filename = "lines.txt"
+    ubyte[256] line
+    ubyte[301] long_line
+
+    sub start() {
+        if not diskio.f_open_w(filename)
+            sys.exit(1)
+        write_line("first line")
+        write_line("")
+        write_line("third, after an empty one")
+        if not diskio.f_write("no line end", 11)
+            sys.exit(2)
+        diskio.f_close_w()
+
+        if not diskio.f_open(filename)
+            sys.exit(3)
+        ubyte length, status
+        repeat {
+            length, status = diskio.f_readline(&line)
+            txt.print_ub(length)
+            txt.spc()
+            txt.print_ubhex(status, true)
+            txt.print(" [")
+            txt.print(&line)
+            txt.print("]\n")
+            if status != 0
+                break
+        }
+        show_position()
+
+        txt.print_bool(diskio.f_seek(12))
+        txt.spc()
+        length, status = diskio.f_readline(&line)
+        txt.print(&line)
+        txt.nl()
+        show_position()
+        txt.print_bool(diskio.f_seek(-1))
+        txt.spc()
+        show_position()
+        txt.print_bool(diskio.f_seek(38))
+        read_part(5)
+        read_part(100)
+        read_part(100)
+        txt.spc()
+        void diskio.f_seek(0)
+        txt.print_uw(diskio.f_read_all(&line))
+        txt.nl()
+        diskio.f_close()
+
+        ; a line of more than 255 characters continues in the next call
+        sys.memset(&long_line, 300, 'x')
+        long_line[300] = '\n'
+        if not diskio.f_open_w("long.txt") or not diskio.f_write(&long_line, len(long_line))
+            sys.exit(5)
+        diskio.f_close_w()
+        if not diskio.f_open("long.txt")
+            sys.exit(6)
+        txt.print("long line:")
+        repeat 3 {
+            length, status = diskio.f_readline(&line)
+            txt.spc()
+            txt.print_ub(length)
+            txt.spc()
+            txt.print_ubhex(status, true)
+        }
+        txt.nl()
+        diskio.f_close()
+
+        diskio.delete("long.txt")
+        diskio.delete(filename)
+        txt.print_bool(diskio.exists(filename))
+        txt.spc()
+        txt.print_bool(diskio.f_open(filename))
+        txt.nl()
+    }
+
+    sub write_line(str text) {
+        if not diskio.f_write(text, strings.length(text)) or not diskio.f_write("\n", 1)
+            sys.exit(4)
+    }
+
+    sub read_part(uword size) {
+        uword count = diskio.f_read(&line, size)
+        line[lsb(count)] = 0
+        txt.spc()
+        txt.print_uw(count)
+        txt.print(" [")
+        txt.print(&line)
+        txt.chrout(']')
+    }
+
+    sub show_position() {
+        long position, size
+        position, size = diskio.f_tell()
+        txt.print_l(position)
+        txt.chrout('/')
+        txt.print_l(size)
+        txt.nl()
+    }
+}""", $$"""10 $00 [first line]
+0 $00 []
+25 $00 [third, after an empty one]
+11 $40 [no line end]
+49/49
+true third, after an empty one
+38/49
+false 38/49
+true 5 [no li] 6 [ne end] 0 [] 49
+long line: 255 $00 45 $00 0 $40
+false false
+"""),
+
+    "diskio directories, renaming and deleting" to OutputProgram("""
+%import textio
+%import diskio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.print(last_name(diskio.curdir()))
+        txt.spc()
+        diskio.mkdir("subdir")
+        diskio.chdir("subdir")
+        txt.print(last_name(diskio.curdir()))
+        txt.nl()
+        void diskio.save_raw("first.txt", "data", 4)
+        diskio.rename("first.txt", "second.txt")
+        txt.print_bool(diskio.exists("first.txt"))
+        txt.spc()
+        txt.print_bool(diskio.exists("second.txt"))
+        txt.nl()
+        diskio.chdir("..")
+        txt.print(last_name(diskio.curdir()))
+        txt.spc()
+        txt.print_bool(diskio.exists("subdir/second.txt"))
+        txt.spc()
+        ; a directory that isn't empty stays
+        diskio.rmdir("subdir")
+        txt.print_bool(diskio.exists("subdir/second.txt"))
+        txt.spc()
+        diskio.delete("subdir/second.txt")
+        diskio.rmdir("subdir")
+        txt.print_bool(diskio.exists("subdir/second.txt"))
+        txt.spc()
+        txt.print_bool(diskio.exists("subdir"))
+        txt.nl()
+    }
+
+    sub last_name(pointer path) -> pointer {
+        ; the part of the path after its last '/'
+        pointer name = path
+        while @(path) != 0 {
+            if @(path) == '/'
+                name = path + 1
+            path++
+        }
+        return name
+    }
+}""", "run subdir\nfalse true\nrun true true false false\n"),
+
+    "fileio copying between two open files, seeking and the end of the file" to OutputProgram("""
+%import textio
+%import fileio
+%import diskio
+%zeropage basicsafe
+
+main {
+    ubyte[50] data
+    ubyte[16] chunk
+    ubyte[60] copied
+
+    sub start() {
+        ubyte i
+        for i in 0 to len(data)-1
+            data[i] = i * 3
+        pointer output = fileio.open("input.bin", "wb")
+        txt.print_uw(fileio.write(output, &data, len(data)))
+        txt.spc()
+        txt.print_bool(fileio.close(output))
+        txt.nl()
+
+        pointer input = fileio.open("input.bin", "rb")
+        output = fileio.open("copy.bin", "wb")
+        if input == 0 or output == 0
+            sys.exit(1)
+        uword count
+        repeat {
+            count = fileio.read(input, &chunk, len(chunk))
+            txt.print_uw(count)
+            txt.spc()
+            if fileio.write(output, &chunk, count) != count
+                sys.exit(2)
+            if fileio.eof(input)
+                break
+        }
+        txt.print_i64(fileio.tell(input))
+        txt.spc()
+        txt.print_i64(fileio.tell(output))
+        txt.spc()
+        txt.print_bool(fileio.flush(output))
+        txt.spc()
+        txt.print_bool(fileio.close(input))
+        txt.spc()
+        txt.print_bool(fileio.close(output))
+        txt.nl()
+
+        input = fileio.open("copy.bin", "rb")
+        txt.print_uw(fileio.read(input, &copied, len(copied)))
+        txt.spc()
+        txt.print_bool(fileio.eof(input))
+        txt.spc()
+        txt.print_b(sys.memcmp(&data, &copied, len(data)))
+        txt.nl()
+        txt.print_bool(fileio.seek(input, -10, fileio.SEEK_END))
+        show(input)
+        txt.print_bool(fileio.seek(input, 5, fileio.SEEK_CUR))
+        show(input)
+        txt.print_bool(fileio.seek(input, 3, fileio.SEEK_SET))
+        show(input)
+        txt.print_bool(fileio.seek(input, -1, fileio.SEEK_SET))
+        show(input)
+        txt.print_bool(fileio.close(input))
+        txt.nl()
+
+        ; a file that can't be opened gives handle 0, which the routines accept
+        pointer missing = fileio.open("missing.bin", "rb")
+        txt.print_bool(missing == 0)
+        txt.spc()
+        txt.print_uw(fileio.read(missing, &chunk, 1))
+        txt.spc()
+        txt.print_uw(fileio.write(missing, &chunk, 1))
+        txt.spc()
+        txt.print_bool(fileio.seek(missing, 0, fileio.SEEK_SET))
+        txt.spc()
+        txt.print_i64(fileio.tell(missing))
+        txt.spc()
+        txt.print_bool(fileio.eof(missing))
+        txt.spc()
+        txt.print_bool(fileio.close(missing))
+        txt.nl()
+        diskio.delete("input.bin")
+        diskio.delete("copy.bin")
+    }
+
+    sub show(pointer file) {
+        ; prints the position, whether a read went past the end, and the byte that is read there
+        txt.spc()
+        txt.print_i64(fileio.tell(file))
+        txt.spc()
+        txt.print_bool(fileio.eof(file))
+        txt.spc()
+        ubyte value
+        txt.print_uw(fileio.read(file, &value, 1))
+        txt.chrout(':')
+        txt.print_ub(value)
+        txt.nl()
+    }
+}""", """50 true
+16 16 16 2 50 50 true true true
+50 true 0
+true 40 false 1:120
+true 46 false 1:138
+true 3 false 1:9
+false 4 false 1:12
+true
+true 0 0 false -1 true false
+"""),
+
+    "diskio saving and loading memory" to OutputProgram("""
+%import textio
+%import diskio
+%zeropage basicsafe
+
+main {
+    ubyte[1000] original
+    ubyte[1000] loaded
+    ubyte[1002] withheader
+
+    sub start() {
+        uword i
+        for i in 0 to len(original)-1
+            original[i] = lsb(i * 7 + msb(i))
+        txt.print_bool(diskio.save("memory.prg", &original, len(original)))
+        txt.spc()
+        txt.print_bool(diskio.save_raw("memory.bin", &original, len(original)))
+        txt.nl()
+
+        pointer end = diskio.load("memory.prg", &loaded)
+        txt.print_bool(end == &loaded + len(loaded))
+        txt.spc()
+        txt.print_b(sys.memcmp(&original, &loaded, len(loaded)))
+        txt.nl()
+        sys.memset(&loaded, len(loaded), 0)
+        end = diskio.load_raw("memory.bin", &loaded)
+        txt.print_bool(end == &loaded + len(loaded))
+        txt.spc()
+        txt.print_b(sys.memcmp(&original, &loaded, len(loaded)))
+        txt.nl()
+
+        ; the header that save() writes holds the lower 16 bits of the address
+        end = diskio.load_raw("memory.prg", &withheader)
+        txt.print_bool(end == &withheader + len(withheader))
+        txt.spc()
+        uword address = &original as uword
+        txt.print_bool(withheader[0] == lsb(address) and withheader[1] == msb(address))
+        txt.spc()
+        txt.print_bool(diskio.get_loadaddress("memory.prg") == address)
+        txt.spc()
+        txt.print_b(sys.memcmp(&original, &withheader + 2, len(original)))
+        txt.nl()
+        ; the first two bytes of any file, here 0 and 7
+        txt.print_uw(diskio.get_loadaddress("memory.bin"))
+        txt.spc()
+        txt.print_uw(diskio.get_loadaddress("missing.prg"))
+        txt.nl()
+
+        txt.print_bool(diskio.load("missing.prg", &loaded) == 0)
+        txt.spc()
+        txt.print_bool(diskio.load("memory.prg", 0) == 0)
+        txt.nl()
+        diskio.delete("memory.prg")
+        diskio.delete("memory.bin")
+    }
+}""", "true true\ntrue 0\ntrue 0\ntrue true true 0\n1792 0\ntrue true\n"),
 
     "strings library" to OutputProgram("""
 %import textio
