@@ -58,7 +58,7 @@ class TestLlvmCompiler: FunSpec({
                 withClue("optimize=$optimize") {
                     val llFile = compiledLlFile(compileText(LlvmTarget(), optimize, source, outputDir))
                     val lines = llFile.readLines()
-                    lines shouldContain "define i32 @main() {"
+                    lines shouldContain "define i32 @main(i32 %argc, ptr %argv) {"
                     lines shouldContain "define internal void @main.start() {"
                 }
             }
@@ -87,7 +87,7 @@ class TestLlvmCompiler: FunSpec({
         test("$name: gives the expected exit code and console output as a native arm64 macOS executable").config(enabledOrReasonIf = requiresNativeLlvm) {
             for (optimize in listOf(false, true)) {
                 withClue("optimize=$optimize") {
-                    val (exitCode, output) = buildAndRun(compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir)), program.input)
+                    val (exitCode, output) = buildAndRun(compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir)), program.input, program.args)
                     withClue(output) { exitCode shouldBe program.exitCode }
                     output shouldBe program.output
                 }
@@ -329,16 +329,16 @@ private val requiresNativeLlvm: (TestCase) -> Enabled = {
 }
 
 /**
- * Builds the .ll file into an executable with clang -O2 and runs it with [input] on stdin;
+ * Builds the .ll file into an executable with clang -O2 and runs it with [input] on stdin and the command line [args];
  * returns its exit code and output, or clang's if that failed.
  */
-private fun buildAndRun(llFile: Path, input: String = ""): Pair<Int, String> {
+private fun buildAndRun(llFile: Path, input: String = "", args: List<String> = emptyList()): Pair<Int, String> {
     val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll"))
     val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), "-O2", "-Wno-override-module", llFile.toString(), "-o", executable.toString())
     if (compiled.first != 0)
         return compiled
     val stdin = executable.resolveSibling("${executable.fileName}.stdin").also { it.writeText(input) }
-    return execute(executable.toString(), stdin = stdin)
+    return execute(executable.toString(), *args.toTypedArray(), stdin = stdin)
 }
 
 private fun execute(vararg command: String, stdin: Path? = null): Pair<Int, String> {
@@ -1895,12 +1895,31 @@ main {
             value *= -2
         }
     }
+}""",
+    "command line arguments when there are none" to """
+main {
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        if sys.argc() != 1
+            return 1
+        if sys.argv(0) == ""
+            return 2
+        if sys.argv(1) != "" or sys.argv(65535) != ""
+            return 3
+        return 0
+    }
 }"""
 )
 
 
-/** A complete program that uses the llvm64 library, with the exit code and the console output that it should give for the [input]. */
-private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0, val input: String = "")
+/**
+ * A complete program that uses the llvm64 library, with the exit code and the console output that it should give
+ * for the [input] and the command line [args].
+ */
+private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0, val input: String = "", val args: List<String> = emptyList())
 
 private val nativeHello = OutputProgram("""
 %import textio
@@ -2417,6 +2436,33 @@ main {
         txt.nl()
     }
 }""", "65\nname? hello bc!\n5:World\nline two\n80\n0\n", input = "Abc\nWorld\r\nline two\n" + "x".repeat(90) + "\n"),
+
+    "command line arguments" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        uword count = sys.argc()
+        txt.print_uw(count)
+        txt.print(" arguments\n")
+        uword index
+        for index in 1 to count-1 {
+            txt.print_uw(index)
+            txt.print(": [")
+            txt.print(sys.argv(index))
+            txt.print("]\n")
+        }
+        if sys.argv(0) != ""
+            txt.print("0: the program\n")
+        txt.print("past the last one: [")
+        txt.print(sys.argv(count))
+        txt.print(sys.argv(65535))
+        txt.print("]\n")
+        sys.exit(lsb(count))
+    }
+}""", "4 arguments\n1: [--level=3]\n2: [two words]\n3: []\n0: the program\npast the last one: []\n", exitCode = 4,
+        args = listOf("--level=3", "two words", "")),
 
     "strings library" to OutputProgram("""
 %import textio

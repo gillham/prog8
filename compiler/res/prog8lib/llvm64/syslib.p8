@@ -67,6 +67,23 @@ sys {
         }}
     }
 
+    sub argc() -> uword {
+        ; -- returns the number of command line arguments, including the program name (so normally at least 1)
+        %ir {{
+            syscall 71 (): r99000.w
+            returnr.w r99000.w
+        }}
+    }
+
+    sub argv(uword index) -> str {
+        ; -- returns the command line argument at the 0-based index (0 is the program name), or an empty string when there is none
+        %ir {{
+            loadm.w r99001.w,[sys.argv.index]
+            syscall 72 (r99001.w): r99200.p
+            returnr.p r99200.p
+        }}
+    }
+
     sub memcopy(pointer source, pointer tgt, uword count)  {
         ; -- copy count bytes; overlapping areas are copied correctly
         %ir {{

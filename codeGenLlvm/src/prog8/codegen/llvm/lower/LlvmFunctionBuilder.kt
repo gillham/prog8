@@ -54,19 +54,38 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
         module.globals += runtimeGlobals.values
     }
 
-    /** The program's C entry point `main`: initializes the global variables that need code for that, runs main.start, and returns 0. */
-    fun entryPoint(): LlvmFunction {
+    /** Like [build], and adds the program's C entry point `main` as the last function. */
+    fun buildProgram(module: LlvmModule) {
+        // first, as build() emits the runtime globals that main stores the command line arguments in
+        val main = entryPoint()
+        build(module)
+        module.functions += main
+    }
+
+    /**
+     * The program's C entry point `main`: stores the command line arguments, initializes the global variables that need code
+     * for that, runs main.start, and returns 0.
+     */
+    private fun entryPoint(): LlvmFunction {
         val start = requireNotNull(subroutine(PROGRAM_START)) { "the program has no $PROGRAM_START subroutine to begin with" }
         require(start.parameters.isEmpty()) { "$PROGRAM_START can't have parameters" }
-        val code = mutableListOf<LlvmInstruction>()
+        val argc = LlvmValue.Local("argc", LlvmType.I32)
+        val argv = LlvmValue.Local("argv", LlvmType.Ptr)
+        val code = mutableListOf<LlvmInstruction>(LlvmInstruction.Store(argc, argumentCount()), LlvmInstruction.Store(argv, argumentArray()))
         if (program.globalInits.isNotEmpty())
             code += LlvmInstruction.Call(null, GLOBAL_INITS, emptyList(), LlvmType.Void)
         val startType = returnType(start)
         val ignoredResult = if (startType == LlvmType.Void) null else LlvmValue.Local("ignored", startType)
         code += LlvmInstruction.Call(ignoredResult, PROGRAM_START, emptyList(), startType)
         code += LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I32))
-        return LlvmFunction("main", LlvmType.I32, emptyList(), mutableListOf(LlvmBlock("entry", code)))
+        return LlvmFunction("main", LlvmType.I32, listOf(argc, argv), mutableListOf(LlvmBlock("entry", code)))
     }
+
+    /** The argc of the C main, which stays 0 in a module without that entry point. */
+    fun argumentCount(): LlvmValue.Global = runtimeGlobal(".sys.argc", LlvmType.I32)
+
+    /** The argv of the C main: the addresses of the command line argument strings. */
+    fun argumentArray(): LlvmValue.Global = runtimeGlobal(".sys.argv", LlvmType.Ptr)
 
     fun function(sub: IRSubroutine): LlvmFunction =
         try {
@@ -122,8 +141,8 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     }
 
     /** A zero-initialized internal global of the generated code itself, such as the value stack of PUSH and POP. */
-    fun runtimeGlobal(name: String, type: LlvmType): LlvmValue.Global {
-        runtimeGlobals.getOrPut(name) { LlvmGlobal(name, type, LlvmValue.ZeroInitializer(type), isConstant = false, linkage = LlvmLinkage.INTERNAL) }
+    fun runtimeGlobal(name: String, type: LlvmType, constant: Boolean = false): LlvmValue.Global {
+        runtimeGlobals.getOrPut(name) { LlvmGlobal(name, type, LlvmValue.ZeroInitializer(type), isConstant = constant, linkage = LlvmLinkage.INTERNAL) }
         return LlvmValue.Global(name)
     }
 }

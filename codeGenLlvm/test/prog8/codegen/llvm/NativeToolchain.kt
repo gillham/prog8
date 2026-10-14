@@ -22,17 +22,17 @@ internal val requiresNativeArm64Mac: (TestCase) -> Enabled = {
 }
 
 /**
- * Builds [ir] into a native executable with clang and runs it with [input] on stdin; returns the exit code and output of the run, or of clang if that failed.
- * Optimizes, because that is when LLVM could fold startup stores back into static data that can't be linked.
+ * Builds [ir] into a native executable with clang and runs it with [input] on stdin and the command line [args]; returns the exit code
+ * and output of the run, or of clang if that failed. Optimizes, because that is when LLVM could fold startup stores back into static data.
  */
-internal fun compileAndRun(ir: String, input: String = ""): Pair<Int, String> {
+internal fun compileAndRun(ir: String, input: String = "", args: List<String> = emptyList()): Pair<Int, String> {
     val dir = createTempDirectory("prog8-llvm-native")
     try {
         val source = dir.resolve("program.ll").also { it.writeText(ir) }
         val executable = dir.resolve("program")
         val stdin = dir.resolve("stdin.txt").also { it.writeText(input) }
         val compiled = execute(checkNotNull(clang).toString(), "-O2", "-Wno-override-module", source.toString(), "-o", executable.toString())
-        return if (compiled.first != 0) compiled else execute(executable.toString(), stdin = stdin)
+        return if (compiled.first != 0) compiled else execute(executable.toString(), *args.toTypedArray(), stdin = stdin)
     } finally {
         dir.toFile().deleteRecursively()
     }

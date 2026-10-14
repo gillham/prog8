@@ -26,10 +26,14 @@ private const val VM_MEMCOPY = 36
 private const val VM_MEMSET = 37
 private const val VM_MEMSETW = 38
 private const val VM_GET_C = 69
+// the llvm64 library's own syscalls, numbered after the last one of the VM
+private const val VM_GET_ARGC = 71
+private const val VM_GET_ARGV = 72
 
 /**
- * Lowers the syscalls that the compiler emits for builtin functions and operators, and the exit, console input and output, memory copy
- * and fill syscalls of the virtual target's library. Searches, string comparisons and string output become internal helper functions.
+ * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory copy and fill syscalls
+ * of the virtual target's library, and the command line argument syscalls of the llvm64 library.
+ * Searches, string comparisons, string output and argument lookups become internal helper functions.
  */
 internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
     val site = ins.requireCallSite()
@@ -42,6 +46,8 @@ internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
         VM_MEMSET -> memorySet(site, number)
         VM_MEMSETW -> memorySetWords(site, number)
         VM_GET_C -> getChar(site, number)
+        VM_GET_ARGC -> argumentCount(site, number)
+        VM_GET_ARGV -> argument(site, number)
         else -> when (IMSyscall.entries.firstOrNull { it.number == number }) {
             IMSyscall.COMPARE_STRINGS -> compareStrings(site, number)
             IMSyscall.STRING_CONTAINS -> stringContains(site, number)
@@ -134,6 +140,23 @@ private fun FunctionLowering.getChar(site: CallSite, number: Int) {
     arguments(site, number, 0)
     val code = derive("ch", LlvmType.I32) { LlvmInstruction.Call(it, external("getchar", LlvmType.I32, emptyList()), emptyList(), LlvmType.I32) }
     result(site, convert(intrinsic("llvm.smax.i32", LlvmType.I32, code, LlvmValue.IntConstant(0, LlvmType.I32)), LlvmType.I8, "ch"))
+}
+
+/** GET_ARGC(): the number of command line arguments as a word, including the program name; it can't count past 65535. */
+private fun FunctionLowering.argumentCount(site: CallSite, number: Int) {
+    arguments(site, number, 0)
+    val count = derive("argc", LlvmType.I32) { LlvmInstruction.Load(it, builder.argumentCount()) }
+    // saturated rather than truncated, so that every index below the count still gives an argument
+    result(site, convert(intrinsic("llvm.umin.i32", LlvmType.I32, count, LlvmValue.IntConstant(0xffff, LlvmType.I32)), LlvmType.I16, "argc"))
+}
+
+/** GET_ARGV(index word): the command line argument at the index, 0 being the program name, or an empty string when there is none. */
+private fun FunctionLowering.argument(site: CallSite, number: Int) {
+    val (index) = arguments(site, number, 1)
+    val helper = builder.helperFunction(".sys.argv.at") {
+        argumentHelper(builder.argumentCount(), builder.argumentArray(), builder.runtimeGlobal(".sys.argv.none", LlvmType.Array(1, LlvmType.I8), constant = true))
+    }
+    result(site, derive("argv", LlvmType.Ptr) { LlvmInstruction.Call(it, helper, listOf(convert(read(index), LlvmType.I16)), LlvmType.Ptr) })
 }
 
 /** MEMCOPY(source, target, number of bytes) becomes memmove, so that overlapping areas don't give undefined behavior. */
@@ -293,6 +316,31 @@ private fun setWordsHelper(): LlvmFunction {
             LlvmInstruction.BinaryOp(BinaryOperator.ADD, next, i, i64(1)),
             LlvmInstruction.Br("loop")),
         "done" to listOf(LlvmInstruction.Ret(null)))
+}
+
+/** `ptr (i16 index)`: the [arguments] entry at the index when that is below the [count], else the [empty] string. */
+private fun argumentHelper(count: LlvmValue.Global, arguments: LlvmValue.Global, empty: LlvmValue.Global): LlvmFunction {
+    val index = LlvmValue.Local("index", LlvmType.I16)
+    val i = LlvmValue.Local("i", LlvmType.I64)
+    val argc = LlvmValue.Local("argc", LlvmType.I32)
+    val n = LlvmValue.Local("n", LlvmType.I64)
+    val inRange = LlvmValue.Local("inrange", LlvmType.I1)
+    val argv = LlvmValue.Local("argv", LlvmType.Ptr)
+    val slot = LlvmValue.Local("slot", LlvmType.Ptr)
+    val argument = LlvmValue.Local("argument", LlvmType.Ptr)
+    return helper(".sys.argv.at", LlvmType.Ptr, listOf(index),
+        "entry" to listOf(
+            LlvmInstruction.Cast(CastOperator.ZEXT, i, index, LlvmType.I64),
+            LlvmInstruction.Load(argc, count),
+            LlvmInstruction.Cast(CastOperator.ZEXT, n, argc, LlvmType.I64),
+            LlvmInstruction.Icmp(IcmpCondition.ULT, inRange, i, n),
+            LlvmInstruction.CondBr(inRange, "present", "absent")),
+        "present" to listOf(
+            LlvmInstruction.Load(argv, arguments),
+            LlvmInstruction.GetElementPtr(slot, LlvmType.Ptr, argv, listOf(i), inBounds = false),
+            LlvmInstruction.Load(argument, slot),
+            LlvmInstruction.Ret(argument)),
+        "absent" to listOf(LlvmInstruction.Ret(empty)))
 }
 
 private fun helper(name: String, returnType: LlvmType, parameters: List<LlvmValue.Local>, vararg blocks: Pair<String, List<LlvmInstruction>>) =

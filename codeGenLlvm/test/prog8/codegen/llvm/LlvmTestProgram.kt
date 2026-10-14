@@ -41,6 +41,13 @@ internal class TestProgram {
         LlvmFunctionBuilder(program, LlvmGlobalEmitter(program).emit(module)).build(module)
         return module
     }
+
+    /** Like [module], with the program's own C entry point, which runs main.start. */
+    fun programModule(): LlvmModule {
+        val module = LlvmModule("test", target.targetTriple, target.dataLayout)
+        LlvmFunctionBuilder(program, LlvmGlobalEmitter(program).emit(module)).buildProgram(module)
+        return module
+    }
 }
 
 /** Adds a C `main` to the module that returns what the subroutine [check] returns: 0, or the number of the check that failed. */

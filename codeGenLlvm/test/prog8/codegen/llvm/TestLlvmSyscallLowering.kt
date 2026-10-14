@@ -86,6 +86,72 @@ class TestLlvmSyscallLowering: FunSpec({
         withClue(output) { exitCode shouldBe 0 }
         output shouldBe "A\nhi\nhello, world!\nhi\n"
     }
+
+    test("the C entry point stores argc and argv in their globals, also when the program doesn't ask for the command line arguments") {
+        val module = TestProgram().apply { emptyStartSub() }.programModule()
+        module.functions.last().name shouldBe "main"
+        module.function("main").text() shouldBe """
+            define i32 @main(i32 %argc, ptr %argv) {
+            entry:
+              store i32 %argc, ptr @.sys.argc
+              store ptr %argv, ptr @.sys.argv
+              call void @main.start()
+              ret i32 0
+            }
+            """.trimIndent() + "\n"
+        val text = LlvmPrinter.print(module).lines()
+        text shouldHave "@.sys.argc = internal global i32 0"
+        text shouldHave "@.sys.argv = internal global ptr null"
+    }
+
+    test("syscall 71 gives argc saturated to a word, syscall 72 the argument at an index through the .sys.argv.at helper") {
+        val module = TestProgram().apply { argumentLookupSub() }.programModule()
+        val lines = module.function("main.start").lines()
+        lines shouldHave "  %argc.1 = load i32, ptr @.sys.argc"
+        lines shouldHave "  %umin.1 = call i32 @llvm.umin.i32(i32 %argc.1, i32 65535)"
+        lines shouldHave "  %argc.2 = trunc i32 %umin.1 to i16"
+        lines shouldHave "  store i16 %argc.2, ptr %r1.slot"
+        lines shouldHave "  %r1.1 = load i16, ptr %r1.slot"
+        lines shouldHave "  %argv.1 = call ptr @.sys.argv.at(i16 %r1.1)"
+        lines shouldHave "  store ptr %argv.1, ptr %r2.slot"
+        module.function(".sys.argv.at").text() shouldBe """
+            define internal ptr @.sys.argv.at(i16 %index) {
+            entry:
+              %i = zext i16 %index to i64
+              %argc = load i32, ptr @.sys.argc
+              %n = zext i32 %argc to i64
+              %inrange = icmp ult i64 %i, %n
+              br i1 %inrange, label %present, label %absent
+
+            present:
+              %argv = load ptr, ptr @.sys.argv
+              %slot = getelementptr ptr, ptr %argv, i64 %i
+              %argument = load ptr, ptr %slot
+              ret ptr %argument
+
+            absent:
+              ret ptr @.sys.argv.none
+            }
+            """.trimIndent() + "\n"
+        LlvmPrinter.print(module).lines() shouldHave "@.sys.argv.none = internal constant [1 x i8] zeroinitializer"
+    }
+
+    test("llvm-as accepts the C entry point and the command line argument syscalls").config(enabledOrReasonIf = requiresLlvmAs) {
+        for (module in listOf(TestProgram().apply { emptyStartSub() }.programModule(), TestProgram().apply { argumentsOutputSub() }.programModule())) {
+            val (exitCode, output) = runLlvmAs(LlvmPrinter.print(module))
+            withClue(output) { exitCode shouldBe 0 }
+        }
+    }
+
+    test("a native arm64 macOS program gets its command line arguments, and an empty string for an index past them").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+        val module = TestProgram().apply { argumentsOutputSub() }.programModule()
+        val (exitCode, output) = compileAndRun(LlvmPrinter.print(module), args = listOf("first", "second arg"))
+        withClue(output) { exitCode shouldBe 3 }
+        val lines = output.lines()
+        lines.take(4) shouldBe listOf("first", "second arg", "", "")
+        withClue("argument 0 is the program: ${lines[4]}") { lines[4].endsWith("/program") shouldBe true }
+        lines.drop(5) shouldBe listOf("")
+    }
 })
 
 
@@ -152,3 +218,45 @@ private fun TestProgram.greetingSub() {
         returni.b #0.b
         """)
 }
+
+private fun TestProgram.emptyStartSub() = sub("main.start", code = """
+    _main.start:
+    return
+    """)
+
+private fun TestProgram.argumentLookupSub() = sub("main.start", code = """
+    _main.start:
+    syscall 71 (): r1.w
+    syscall 72 (r1.w): r2.p
+    syscall 3 (r2.p)
+    return
+    """)
+
+/** Prints arguments 1 and 2, those at index argc and 65535, and argument 0, each on a line; exits with argc as the status. */
+private fun TestProgram.argumentsOutputSub() = sub("main.start", code = """
+    _main.start:
+    syscall 71 (): r1.w
+    load.b r9.b,#10.b
+    load.w r2.w,#1.w
+    syscall 72 (r2.w): r3.p
+    syscall 3 (r3.p)
+    syscall 2 (r9.b)
+    load.w r4.w,#2.w
+    syscall 72 (r4.w): r5.p
+    syscall 3 (r5.p)
+    syscall 2 (r9.b)
+    syscall 72 (r1.w): r6.p
+    syscall 3 (r6.p)
+    syscall 2 (r9.b)
+    load.w r7.w,#65535.w
+    syscall 72 (r7.w): r8.p
+    syscall 3 (r8.p)
+    syscall 2 (r9.b)
+    load.w r10.w,#0.w
+    syscall 72 (r10.w): r11.p
+    syscall 3 (r11.p)
+    syscall 2 (r9.b)
+    lsigb.w r12.b,r1.w
+    syscall 1 (r12.b)
+    return
+    """)
