@@ -7,6 +7,7 @@ import io.kotest.core.test.Enabled
 import io.kotest.core.test.TestCase
 import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.collections.shouldNotBeEmpty
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.string.shouldContain
@@ -17,12 +18,20 @@ import prog8.ast.statements.VarDecl
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
 import prog8.code.core.OutputFiles
+import prog8.code.target.Amiga1200Target
+import prog8.code.target.Amiga500Target
+import prog8.code.target.C128Target
+import prog8.code.target.C64Target
 import prog8.code.target.Cx16Target
 import prog8.code.target.LlvmTarget
+import prog8.code.target.PETTarget
 import prog8.code.target.Qemu68kTarget
 import prog8.code.target.VMTarget
 import prog8.code.target.getCompilationTargetByName
 import prog8.compiler.CompilationResult
+import prog8.intermediate.IRFileReader
+import prog8.vm.ProgramExitException
+import prog8.vm.VirtualMachine
 import prog8tests.helpers.ErrorReporterForTests
 import prog8tests.helpers.compileText
 import java.io.File
@@ -101,6 +110,52 @@ main {
         val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
         compileText(LlvmTarget(), false, src, outputDir, errors = errors) shouldBe null
         errors.errors.single() shouldContain "main.start has inline assembly, which can't be translated to LLVM IR"
+    }
+
+    test("quad and uquad are rejected on every retro target, and go through code generation on llvm64 and virtual") {
+        val src = $$"""
+main {
+    quad @shared big = 5000000000
+    uquad[2] @shared masks = [$ffff_ffff_0000_0000, 1]
+
+    struct Stamp {
+        uquad seconds
+    }
+
+    sub start() {
+        ^^Stamp @shared stamp = ^^Stamp : [$1_0000_0000]
+        big = scaled(big, masks[0]) + (stamp.seconds as quad)
+    }
+
+    sub scaled(quad value, uquad mask) -> quad {
+        return value * 3 + (mask as quad)
+    }
+}"""
+        for (target in listOf(C64Target(), C128Target(), Cx16Target(), PETTarget(), Qemu68kTarget(), Amiga500Target(), Amiga1200Target())) {
+            withClue(target.name) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(target, false, src, outputDir, errors = errors, writeAssembly = false) shouldBe null
+                errors.errors.shouldNotBeEmpty()
+                errors.errors.forEach { it shouldContain "64-bit integer types (quad/uquad) are not supported on target ${target.name}" }
+            }
+        }
+        for (target in listOf(LlvmTarget(), VMTarget())) {
+            for (optimize in listOf(false, true)) {
+                withClue("${target.name} optimize=$optimize") {
+                    compileText(target, optimize, src, outputDir).shouldNotBeNull()
+                }
+            }
+        }
+    }
+
+    test("the quad programs give the same results on the virtual machine") {
+        for (name in quadProgramsForTheVm) {
+            for (optimize in listOf(false, true)) {
+                val result = compileText(VMTarget(), optimize, programs.getValue(name), outputDir).shouldNotBeNull()
+                val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+                withClue("$name optimize=$optimize: exit status = the number of the failed check") { exitStatusOnVirtualMachine(irFile) shouldBe 0 }
+            }
+        }
     }
 
     test("an unknown target name is rejected") {
@@ -257,6 +312,24 @@ private fun execute(vararg command: String, stdin: Path? = null): Pair<Int, Stri
     check(process.waitFor(60, TimeUnit.SECONDS)) { "${command.first()} did not finish" }
     return process.exitValue() to output
 }
+
+private fun exitStatusOnVirtualMachine(irFile: Path): Int {
+    val vm = VirtualMachine(IRFileReader().read(irFile))
+    try {
+        while (true)
+            vm.step(1000)
+    } catch (exit: ProgramExitException) {
+        return exit.status
+    }
+}
+
+// the 64-bit programs that don't use the constants of the llvm64 library, so they also run on the virtual machine
+private val quadProgramsForTheVm = listOf(
+    "quad and uquad arithmetic, bitwise logic and shifts",
+    "64-bit literals and constant folding",
+    "quad and uquad conversions",
+    "quad and uquad arrays, structs and memory"
+)
 
 /** Complete programs that exit with 0, or with the number of the first check that fails. @shared inputs can't be constant folded. */
 private val programs = mapOf(
@@ -946,6 +1019,832 @@ main {
     sub two() -> quad, uquad {
         return qneg * 2, umax - 1
     }
+}""",
+    "quad and uquad arithmetic, bitwise logic and shifts" to $$"""
+main {
+    quad @shared qmax = 9223372036854775807
+    quad @shared qmin = -9223372036854775808
+    uquad @shared umax = $ffff_ffff_ffff_ffff
+    uquad @shared utop = $8000_0000_0000_0000
+    quad @shared qzero = 0
+    uquad @shared uzero = 0
+    quad @shared qone = 1
+    uquad @shared uone = 1
+    quad @shared qminus1 = -1
+    quad @shared q31 = $7fff_ffff
+    quad @shared q32 = $0_ffff_ffff
+    uquad @shared u32 = $0_ffff_ffff
+    quad @shared big = 123456789012345
+    quad @shared nbig = -98765432109876
+    quad @shared q7e9 = 7000000001
+    quad @shared qn7e9 = -7000000001
+    quad @shared q1e9 = 1000000000
+    quad @shared qn1e9 = -1000000000
+    uquad @shared upat = $9234_5678_9abc_def1
+    uquad @shared hi = $ffff_ffff_0000_0000
+    uquad @shared magic = $1234_5678_9abc_def0
+    uquad @shared nibbles = $0f0f_0f0f_0f0f_0f0f
+    ; the same low 32 bits $8000_0001
+    quad @shared qa = $1_8000_0001
+    quad @shared qb = -6442450943
+    quad @shared qc = $2_8000_0001
+    ubyte @shared n33 = 33
+    ubyte @shared n36 = 36
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        quad qpat = (upat as quad)
+        if big + nbig != 24691356902469 or nbig - big != -222222221122221 or qzero - big != -123456789012345 or nbig + nbig != -197530864219752
+            return 1
+        if u32 + u32 != ($1_ffff_fffe as uquad) or hi + u32 != umax or hi - u32 != $ffff_fffe_0000_0001
+            return 2
+        if upat - magic != $8000_0000_0000_0001 or magic - upat != ($7fff_ffff_ffff_ffff as uquad)
+            return 3
+        if q1e9 * qn7e9 != -7000000001000000000 or qn1e9 * qn1e9 != 1000000000000000000 or nbig * -3 != 296296296329628
+            return 4
+        ; wraparound
+        if qmax + qmax != -2 or qmin + qmin != 0 or qmin + qminus1 != qmax or qmax - qminus1 != qmin
+            return 5
+        if uzero - uone != umax or umax + umax != $ffff_ffff_ffff_fffe or umax * umax != 1 or hi * hi != 0
+            return 6
+        if qmax * qmax != 1 or qmin * qmin != 0 or qmin * qminus1 != qmin or q7e9 * q7e9 != -6340232207128654847
+            return 7
+        if u32 * u32 != $ffff_fffe_0000_0001 or upat * 3 != $b69d_0369_d036_9cd3 or magic * 16 != ($2345_6789_abcd_ef00 as uquad)
+            return 8
+        ; signed division truncates toward zero, the remainder has the sign of the dividend
+        if qn7e9 / q1e9 != -7 or qn7e9 % q1e9 != -1 or q7e9 / qn1e9 != -7 or q7e9 % qn1e9 != 1 or qn7e9 / qn1e9 != 7 or qn7e9 % qn1e9 != -1
+            return 9
+        if nbig / 10000000000 != -9876 or nbig % 10000000000 != -5432109876 or big / -10000000000 != -12345 or big % -10000000000 != 6789012345
+            return 10
+        if umax / u32 != ($1_0000_0001 as uquad) or umax % u32 != 0
+            return 11
+        if upat / (u32 + uone) != ($0_9234_5678 as uquad) or upat % (u32 + uone) != ($0_9abc_def1 as uquad)
+            return 12
+        ; hi is -2^32 as a quad
+        if hi / u32 != ($1_0000_0000 as uquad) or hi % u32 != 0 or (hi as quad) / q32 != -1 or (hi as quad) % q32 != -1
+            return 13
+        if hi / ($1_0000 as uquad) != ($ffff_ffff_0000 as uquad) or (hi as quad) / $1_0000 != -65536 or hi % 7 != 5 or (hi as quad) % 7 != -4
+            return 14
+        ; like the VM: dividing by 0 gives the largest value, and a remainder of 0
+        if qmin / qzero != qmax or qzero / qzero != qmax or qmin % qzero != 0 or uone / uzero != umax or uzero / uzero != umax or utop % uzero != 0
+            return 15
+        if qmax / qminus1 != qmin + 1 or (qmin + 1) / qminus1 != qmax or qmin / -1 != qmin or qmin % -1 != 0 or qmin / qmax != -1 or qmin % qmax != -1
+            return 16
+        quad q = qmin
+        q = -q
+        if q != qmin or -nbig != 98765432109876 or -qmax != qmin + 1 or (-(q32 + qone) as uquad) != hi
+            return 17
+        if ~qzero != umax or ~uzero != umax or ~hi != u32 or ~big != -123456789012346 or ~qmin != qmax or ~magic != $edcb_a987_6543_210f
+            return 18
+        if magic & nibbles != ($0204_0608_0a0c_0e00 as uquad) or magic | nibbles != ($1f3f_5f7f_9fbf_dfff as uquad)
+            return 19
+        if magic ^ nibbles != ($1d3b_5977_95b3_d1ff as uquad) or magic ^ $ffff_ffff_0000_0000 != $edcb_a987_9abc_def0
+            return 20
+        if magic & $ffff_ffff_0000_0000 != ($1234_5678_0000_0000 as uquad) or magic | $ffff_ffff_0000_0000 != $ffff_ffff_9abc_def0
+            return 21
+        if qmin | qmax != umax or qmin & qmax != 0 or qpat ^ (magic as quad) != qmin + 1
+            return 22
+        if qpat & $0f0f_0f0f_0f0f_0f0f != $0204_0608_0a0c_0e01 or ((qpat | $0f0f_0f0f_0f0f_0f0f) as uquad) != $9f3f_5f7f_9fbf_dfff
+            return 23
+
+        ; compound assignments on a quad
+        q = q32
+        q += qone
+        if q != $1_0000_0000
+            return 24
+        q -= 4294967297
+        q *= nbig
+        if q != 98765432109876
+            return 25
+        q /= -1000
+        q %= 1000000
+        if q != -432109
+            return 26
+        q = qpat
+        q &= -4294967296
+        q |= $0f0f_0f0f
+        q ^= qminus1
+        if q != $6dcb_a987_f0f0_f0f0
+            return 27
+        q = qpat
+        q >>= n33
+        q <<= 4
+        if (q as uquad) != $ffff_fffc_91a2_b3c0
+            return 28
+        q >>= 2
+        if (q as uquad) != $ffff_ffff_2468_acf0
+            return 29
+
+        ; compound assignments on a uquad
+        uquad u = u32
+        u += uone
+        u -= ($1_0000_0001 as uquad)
+        if u != umax
+            return 30
+        u *= u32
+        if u != $ffff_ffff_0000_0001
+            return 31
+        u /= ($1_0000 as uquad)
+        u %= 1000
+        if u != 120
+            return 32
+        u = magic
+        u &= hi
+        u |= nibbles
+        u ^= $ffff_ffff_ffff_ffff
+        if u != $e0c0_a080_f0f0_f0f0
+            return 33
+        u = upat
+        u <<= 4
+        u >>= n33
+        if u != ($11a2_b3c4 as uquad)
+            return 34
+        q = nbig
+        q /= qzero
+        u = upat
+        u /= uzero
+        if q != qmax or u != umax
+            return 35
+        q = qmin
+        q %= qzero
+        u = upat
+        u %= uzero
+        if q != 0 or u != 0
+            return 36
+        q = qmin
+        q /= qminus1
+        if q != qmin
+            return 37
+
+        ; ++ and -- carry across bit 31 of a quad and bit 32 of a uquad
+        q = q31
+        q++
+        u = u32
+        u++
+        if q != $0_8000_0000 or u != ($1_0000_0000 as uquad)
+            return 38
+        q--
+        u--
+        u--
+        if q != $7fff_ffff or u != ($0_ffff_fffe as uquad)
+            return 39
+        q = qmax
+        q++
+        u = uzero
+        u--
+        if q != qmin or u != umax
+            return 40
+        q--
+        u++
+        if q != qmax or u != 0
+            return 41
+
+        ; shifts by every count in a variable
+        uquad up = 1
+        uquad down
+        ubyte n
+        for n in 1 to 63 {
+            up += up
+            down = utop / up
+            if uone << n != up or qminus1 << n != -(up as quad) or utop >> n != down or qmin >> n != -(down as quad)
+                return 42
+        }
+        if up != utop
+            return 43
+
+        ; shifts by constant counts
+        if upat << 1 != ($2468_acf1_3579_bde2 as uquad) or upat << 31 != ($4d5e_6f78_8000_0000 as uquad) or upat << 32 != $9abc_def1_0000_0000
+            return 44
+        if upat << 33 != ($3579_bde2_0000_0000 as uquad) or upat << 63 != utop
+            return 45
+        if upat >> 1 != ($491a_2b3c_4d5e_6f78 as uquad) or upat >> 31 != ($1_2468_acf1 as uquad) or upat >> 32 != ($0_9234_5678 as uquad)
+            return 46
+        if upat >> 33 != ($491a_2b3c as uquad) or upat >> 63 != 1
+            return 47
+        if ((qpat >> 1) as uquad) != $c91a_2b3c_4d5e_6f78 or ((qpat >> 31) as uquad) != $ffff_ffff_2468_acf1
+            return 48
+        if ((qpat >> 32) as uquad) != $ffff_ffff_9234_5678 or ((qpat >> 33) as uquad) != $ffff_ffff_c91a_2b3c or qpat >> 63 != -1
+            return 49
+        if q32 << 1 != 8589934590 or q32 << 31 != 9223372034707292160 or q32 << 32 != -4294967296 or q32 << 33 != -8589934592 or q32 << 63 != qmin
+            return 50
+        ; shifted left and back right: logical clears, arithmetic sign extends the upper bits
+        if (upat << 32) >> 32 != ($0_9abc_def1 as uquad) or (((qpat << 32) >> 32) as uquad) != $ffff_ffff_9abc_def1 or (upat >> 32) << 32 != upat & hi
+            return 51
+        if (upat << n36) >> n36 != ($0abc_def1 as uquad) or (((qpat << n36) >> n36) as uquad) != $ffff_ffff_fabc_def1
+            return 52
+
+        ; comparisons of values that differ only above bit 31
+        if qa == qc or qa >= qc or qc <= qa or qb >= qa or qa <= qb or qb == qa
+            return 53
+        if not (qa != qc and qa < qc and qc > qa and qb < qa and qa > qb and qb <= qa)
+            return 54
+        if (qb as uquad) <= (qa as uquad) or (qa as uquad) >= (qc as uquad) or (qc as uquad) > (qb as uquad)
+            return 55
+        if qa >= $2_8000_0001 or qb >= $0_8000_0001 or qc <= $1_8000_0001 or (qb as uquad) <= ($2_8000_0001 as uquad)
+            return 56
+        if umax <= u32 or u32 >= ($1_ffff_ffff as uquad) or umax == u32
+            return 57
+        return 0
+    }
+}""",
+    "64-bit literals and constant folding" to $$"""
+main {
+    quad @shared q1 = 1
+    uquad @shared u1 = 1
+    uquad @shared uzero = 0
+    quad @shared q1e6 = 1_000_000
+    quad @shared q1e7 = 10_000_000
+    quad @shared q1e10 = 10_000_000_000
+    quad @shared q922337 = 922_337
+    quad @shared q7 = 7
+    quad @shared qmax = 9223372036854775807
+    quad @shared qmin = -9223372036854775808
+    quad @shared qabove = 9007199254740993
+    quad @shared qbig = 100_000_000_000_003
+    quad @shared qodd = -1_000_000_000_000_000_001
+    uquad @shared uall = $ffff_ffff_ffff_ffff
+    uquad @shared utop = $8000_0000_0000_0000
+    uquad @shared ubase = 1234567890123456789
+    uquad @shared ufff6 = $ffff_ffff_ffff_fff6
+    uquad @shared u3 = 3
+    uquad @shared u7 = 7
+    uquad @shared ulow32 = $0000_0000_ffff_ffff
+    uquad @shared upattern = $1234_5678_9abc_def0
+    uquad @shared uhigh = $1234_5678_0000_0000
+    ubyte @shared n8 = 8
+    ubyte @shared n32 = 32
+    ubyte @shared n40 = 40
+    ubyte @shared n53 = 53
+    ubyte @shared n62 = 62
+    ubyte @shared n63 = 63
+    ubyte @shared idx = 2
+
+    const quad TEN_T = 10_000_000_000_000
+    const quad PRODUCT = TEN_T * 922_337
+    const quad ABOVE53 = 9007199254740993 + 2
+    const quad BIT62 = (1 as quad) << 62
+    const uquad TOPBIT = $8000_0000_0000_0000 >> 63
+    const quad SIGNBITS = -9223372036854775808 >> 63
+    const uquad HIGH32 = ~$0000_0000_ffff_ffff
+    const quad MINQ = -(9223372036854775807) - 1
+    const quad QDIV = -100_000_000_000_003 / 7
+    const quad QREM = -100_000_000_000_003 % 7
+    const quad QDIVN = 100_000_000_000_003 / -7
+    const quad QREMN = 100_000_000_000_003 % -7
+    const uquad UDIV = $ffff_ffff_ffff_fff6 / 3
+    const uquad UREM = $ffff_ffff_ffff_fff6 % 7
+    const quad WRAP = 9223372036854775807 + 1
+    const uquad UWRAP = $ffff_ffff_ffff_ffff + 1
+    const quad MULWRAP = 10_000_000_000 * 10_000_000_000
+    const uquad ANDED = $1234_5678_9abc_def0 & $ffff_0000_ffff_0000
+    const uquad ORED = $1234_5678_0000_0000 | $0_9abc_def0
+    const uquad XORED = $ffff_ffff_ffff_ffff ^ $0123_4567_89ab_cdef
+    const quad SAR8 = -1_000_000_000_000_000_001 >> 8
+
+    quad[] @shared qtab = [PRODUCT, -TEN_T * 3, WRAP, (1 as quad) << 40, QDIV]
+    uquad[] @shared utab = [$ffff_ffff_ffff_ffff / 3, HIGH32, TOPBIT, 12345678901234567891 % 1000]
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ; literals beyond 32 bits become quads, or uquads above the signed range, keeping all 64 bits
+        quad q = 10_000_000_000_000
+        if q != q1e6 * q1e7 or q >> n32 != 2328 or (q as long) != 1316134912
+            return 1
+        if q != $918_4e72_a000 or qmax != $7fff_ffff_ffff_ffff or 18446744073709551615 != $ffff_ffff_ffff_ffff
+            return 2
+        q = 9223372036854775807
+        if q != ((q1 << n62) - 1) * 2 + 1 or q >> n32 != $7fff_ffff
+            return 3
+        uquad u = $8000_0000_0000_0000
+        if u != u1 << n63 or u / 2 != ($4000_0000_0000_0000 as uquad) or u <= u1
+            return 4
+        u = $ffff_ffff_ffff_ffff
+        if u != uzero - u1 or u != 18446744073709551615 or u % 10 != 5
+            return 5
+        q = -9223372036854775808
+        if q != q1 << n63 or q >= q1 or -9223372036854775808 != -$8000_0000_0000_0000
+            return 6
+        q = $1_0000_0000
+        if q != q1 << n32 or q != 4294967296 or $1_0000_0000 - 1 != $0_ffff_ffff
+            return 7
+        q = %1_0000000000_0000000000_0000000000_0000000000
+        if q != q1 << n40 or q != $100_0000_0000 or q != 1099511627776
+            return 8
+        ; above 2^53 a Double can't hold every value anymore
+        q = 9007199254740993
+        if q != (q1 << n53) + 1 or q % 10 != 3 or 9007199254740993 == 9007199254740992
+            return 9
+        u = 12345678901234567891
+        if u != ubase * 10 + 1 or u % 1000 != 891 or u != $ab54_a98c_eb1f_0ad3 or 18446744073709551615 % 10 != 5
+            return 10
+
+        ; each folded constant equals its hand-derived value and the same expression computed at runtime
+        if PRODUCT != 9223370000000000000 or 10_000_000_000_000 * 922_337 != PRODUCT or q1e6 * q1e7 * q922337 != PRODUCT
+            return 11
+        if ABOVE53 != 9007199254740995 or qabove + 2 != ABOVE53
+            return 12
+        if BIT62 != 4611686018427387904 or q1 << n62 != BIT62
+            return 13
+        if TOPBIT != 1 or utop >> n63 != TOPBIT or SIGNBITS != -1 or qmin >> n63 != SIGNBITS
+            return 14
+        if HIGH32 != $ffff_ffff_0000_0000 or ~ulow32 != HIGH32
+            return 15
+        if MINQ != -9223372036854775808 or -qmax - 1 != MINQ
+            return 16
+        if QDIV != -14285714285714 or QREM != -5 or -qbig / q7 != QDIV or -qbig % q7 != QREM
+            return 17
+        if QDIVN != -14285714285714 or QREMN != 5 or qbig / -q7 != QDIVN or qbig % -q7 != QREMN
+            return 18
+        if UDIV != $5555_5555_5555_5552 or UREM != 6 or ufff6 / u3 != UDIV or ufff6 % u7 != UREM
+            return 19
+        if WRAP != -9223372036854775808 or UWRAP != 0 or qmax + 1 != WRAP or uall + 1 != UWRAP
+            return 20
+        if MULWRAP != 7766279631452241920 or q1e10 * q1e10 != MULWRAP
+            return 21
+        if ANDED != $1234_0000_9abc_0000 or upattern & $ffff_0000_ffff_0000 != ANDED
+            return 22
+        if ORED != $1234_5678_9abc_def0 or uhigh | ($0_9abc_def0 as uquad) != ORED
+            return 23
+        if XORED != $fedc_ba98_7654_3210 or uall ^ ($0123_4567_89ab_cdef as uquad) != XORED
+            return 24
+        if SAR8 != -3_906_250_000_000_001 or qodd >> n8 != SAR8
+            return 25
+
+        ; constants in array initializers, and constants compared with variables
+        if qtab[0] != 9223370000000000000 or qtab[idx - 1] != -30_000_000_000_000 or qtab[idx] != WRAP
+            return 26
+        if qtab[idx + 1] != 1099511627776 or qtab[idx + 2] != -14285714285714
+            return 27
+        if utab[0] != ($5555_5555_5555_5555 as uquad) or utab[idx - 1] != HIGH32 or utab[idx] != 1 or utab[idx + 1] != 891
+            return 28
+        if PRODUCT <= qabove or not (qmin < SIGNBITS) or MINQ != qmin or HIGH32 >= uall or not (TOPBIT < utop)
+            return 29
+        return 0
+    }
+}""",
+    "quad and uquad conversions" to $$"""
+%option enable_floats
+
+main {
+    ubyte @shared ubmin = 0
+    ubyte @shared ubmid = 128
+    ubyte @shared ubmax = 255
+    byte @shared bmin = -128
+    byte @shared bmid = -1
+    byte @shared bmax = 127
+    uword @shared uwmin = 0
+    uword @shared uwmid = 32768
+    uword @shared uwmax = 65535
+    word @shared wmin = -32768
+    word @shared wmid = -2
+    word @shared wmax = 32767
+    long @shared lmin = -2147483648
+    long @shared lmid = -1
+    long @shared lmax = 2147483647
+    quad @shared qzero = 0
+    quad @shared qone = 1
+    quad @shared qminus1 = -1
+    quad @shared qminus2 = -2
+    quad @shared qmin = -9223372036854775808
+    quad @shared qmax = 9223372036854775807
+    quad @shared mixed = $1234_5678_9abc_def0
+    quad @shared qneg = -4886718345
+    quad @shared two31 = $0_8000_0000
+    quad @shared two32 = $1_0000_0000
+    quad @shared two53 = 9007199254740992
+    quad @shared two53plus1 = 9007199254740993
+    quad @shared two53plus3 = 9007199254740995
+    quad @shared negtwo53plus3 = -9007199254740995
+    uquad @shared uzero = 0
+    uquad @shared umax = $ffff_ffff_ffff_ffff
+    uquad @shared utop = $8000_0000_0000_0000
+    uquad @shared uhigh = $ffff_ffff_0000_0000
+    uquad @shared upattern = $fedc_ba98_7654_3210
+    uquad @shared two63plus1024 = $8000_0000_0000_0400
+    uquad @shared two63plus1025 = $8000_0000_0000_0401
+    uquad @shared two63plus2048 = $8000_0000_0000_0800
+    float @shared fnegfrac = -123456789012.75
+    float @shared fposfrac = 98765.99
+    float @shared fminus1 = -1.0
+    float @shared f1e18 = 1.0e18
+    float @shared ftwo63 = 9223372036854775808.0
+    float @shared f1e19 = 1.0e19
+    float @shared fbelow2pow64 = 18446744073709549568.0
+    float @shared f1e20 = 1.0e20
+    bool @shared btrue = true
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ; implicit widening by assignment: unsigned sources zero extend, signed sources sign extend
+        quad qa = ubmin
+        quad qb = ubmid
+        quad qc = ubmax
+        quad qd = uwmin
+        quad qe = uwmid
+        quad qf = uwmax
+        if qa != 0 or qb != 128 or qc != 255 or qd != 0 or qe != 32768 or qf != 65535
+            return 1
+        qa = bmin
+        qb = bmid
+        qc = bmax
+        qd = wmin
+        qe = wmid
+        qf = wmax
+        if qa != -128 or qb != -1 or qc != 127 or qd != -32768 or qe != -2 or qf != 32767
+            return 2
+        qa = lmin
+        qb = lmid
+        qc = lmax
+        if qa != -2147483648 or qb != -1 or qc != 2147483647
+            return 3
+        uquad ua = ubmid
+        uquad ub = ubmax
+        uquad uc = uwmid
+        uquad ud = uwmax
+        if ua != 128 or ub != 255 or uc != 32768 or ud != 65535
+            return 4
+
+        ; implicit widening of the other operand of a binary operation
+        if qzero + ubmax != 255 or ubmid - qone != 127 or qminus1 * uwmax != -65535 or uwmid + qzero != 32768
+            return 5
+        if qzero + bmin != -128 or bmid * qone != -1 or qzero - bmax != -127 or wmin + qzero != -32768 or qone + wmid != -1 or wmax - qone != 32766
+            return 6
+        if lmin + qzero != -2147483648 or qminus1 * lmid != 1 or lmax + qone != $0_8000_0000
+            return 7
+        if (utop | ubmax) != $8000_0000_0000_00ff or (utop | uwmid) != $8000_0000_0000_8000 or (umax & uwmax) != 65535 or uzero + ubmid != 128
+            return 8
+        if qminus1 != bmid or qminus1 != lmid or qminus1 == ubmax or qminus1 == uwmax or umax == uwmax or bmin >= qzero or wmin > qminus1
+            return 9
+        quad acc = qzero
+        acc += bmin
+        acc -= ubmax
+        acc += wmin
+        acc -= uwmax
+        acc += lmax
+        uquad uacc = uzero
+        uacc += ubmax
+        uacc -= uwmax
+        if acc != 2147384961 or uacc != $ffff_ffff_ffff_0100
+            return 10
+
+        ; implicit widening of arguments and return values
+        if not argq(ubmax, 255) or not argq(bmin, -128) or not argq(uwmid, 32768) or not argq(wmid, -2) or not argq(lmin, -2147483648) or not argq(lmax, 2147483647)
+            return 11
+        if not argu(ubmid, 128) or not argu(uwmax, 65535) or not argu(ubmin, 0)
+            return 12
+        if retq(1) != 255 or retq(2) != -1 or retq(3) != 65535 or retq(4) != -32768 or retq(5) != -1 or retq(6) != 2147483647
+            return 13
+        if retu(true) != 128 or retu(false) != 32768
+            return 14
+
+        ; explicit widening casts: signed sources sign extend, also to uquad
+        if (bmin as uquad) != $ffff_ffff_ffff_ff80 or (bmid as uquad) != $ffff_ffff_ffff_ffff or (bmax as uquad) != 127
+            return 15
+        if (wmin as uquad) != $ffff_ffff_ffff_8000 or (wmid as uquad) != $ffff_ffff_ffff_fffe or (wmax as uquad) != 32767
+            return 16
+        if (lmin as uquad) != $ffff_ffff_8000_0000 or (lmid as uquad) != $ffff_ffff_ffff_ffff or (lmax as uquad) != ($7fff_ffff as uquad)
+            return 17
+        if (ubmax as quad) != 255 or (uwmax as quad) != 65535 or (ubmid as uquad) != 128 or (uwmid as uquad) != 32768
+            return 18
+        if (bmin as quad) != -128 or (wmid as quad) != -2 or (lmin as quad) != -2147483648
+            return 19
+
+        ; truncation keeps the low bits: $9abc_def0, $def0 and $f0 as signed numbers
+        if (mixed as long) != -1698898192 or (mixed as word) != -8464 or (mixed as uword) != $def0 or (mixed as byte) != -16 or (mixed as ubyte) != $f0
+            return 20
+        ; qneg is $ffff_fffe_dcba_9877
+        if (qneg as long) != -591751049 or (qneg as word) != -26505 or (qneg as uword) != $9877 or (qneg as byte) != $77 or (qneg as ubyte) != $77
+            return 21
+        if (qminus2 as long) != -2 or (qminus2 as word) != -2 or (qminus2 as uword) != 65534 or (qminus2 as byte) != -2 or (qminus2 as ubyte) != 254
+            return 22
+        if (upattern as long) != $7654_3210 or (upattern as word) != $3210 or (upattern as uword) != $3210 or (upattern as byte) != $10 or (upattern as ubyte) != $10
+            return 23
+        if (umax as long) != -1 or (umax as word) != -1 or (umax as uword) != 65535 or (umax as byte) != -1 or (umax as ubyte) != 255
+            return 24
+        if (two31 as long) != -2147483648 or (two31 as word) != 0 or (two32 as long) != 0 or (two32 as ubyte) != 0
+            return 25
+        if ((mixed as word) as uquad) != $ffff_ffff_ffff_def0 or ((mixed as uword) as quad) != $def0 or ((qneg as long) as uquad) != $ffff_ffff_dcba_9877
+            return 26
+
+        ; quad <-> uquad keeps all 64 bits
+        if (qminus1 as uquad) != $ffff_ffff_ffff_ffff or (utop as quad) != -9223372036854775808 or (qmin as uquad) != utop or (umax as quad) != -1
+            return 27
+        if (umax as quad) >= qzero or (utop as quad) >= qzero or (qminus1 as uquad) < (qmax as uquad) or ((mixed as uquad) as quad) != mixed
+            return 28
+
+        ; integer to float rounds to nearest, ties to even, beyond 2^53
+        if (two53 as float) != 9007199254740992.0 or (two53plus1 as float) != 9007199254740992.0 or (two53plus3 as float) != 9007199254740996.0 or (negtwo53plus3 as float) != -9007199254740996.0
+            return 29
+        if (qmin as float) != -9223372036854775808.0 or (qmax as float) != 9223372036854775808.0 or (qneg as float) != -4886718345.0
+            return 30
+        if (two63plus2048 as float) != 9223372036854777856.0 or (two63plus1024 as float) != 9223372036854775808.0 or (two63plus1025 as float) != 9223372036854777856.0 or (umax as float) != 18446744073709551616.0
+            return 31
+        float f = two53plus3
+        if f != 9007199254740996.0 or fminus1 * umax != -18446744073709551616.0 or fminus1 + two53plus1 != 9007199254740991.0
+            return 32
+
+        ; float to integer truncates toward zero
+        if (fnegfrac as quad) != -123456789012 or (fposfrac as quad) != 98765 or (fposfrac as uquad) != (98765 as uquad)
+            return 33
+        if (f1e18 as quad) != 1000000000000000000 or ((-f1e18) as quad) != -1000000000000000000
+            return 34
+        if (ftwo63 as uquad) != utop or (f1e19 as uquad) != 10000000000000000000 or (fbelow2pow64 as uquad) != $ffff_ffff_ffff_f800
+            return 35
+        ; out of range: quad saturates, a negative float wraps to uquad like a signed conversion, NaN gives 0
+        float fnan = sqrt(fminus1)
+        if (f1e19 as quad) != 9223372036854775807 or ((-f1e19) as quad) != -9223372036854775808 or (fnan as quad) != 0
+            return 36
+        if (fminus1 as uquad) != umax or (f1e20 as uquad) != umax or (fnan as uquad) != 0
+            return 37
+
+        ; bool conversions test all 64 bits
+        if (qzero as bool) or not (qone as bool) or not (two32 as bool) or not (qmin as bool) or not (utop as bool) or not (uhigh as bool) or (uzero as bool)
+            return 38
+        if (btrue as quad) != 1 or (btrue as uquad) != 1 or ((not btrue) as quad) != 0
+            return 39
+        return 0
+    }
+
+    sub argq(quad value, quad expected) -> bool {
+        return value == expected
+    }
+
+    sub argu(uquad value, uquad expected) -> bool {
+        return value == expected
+    }
+
+    sub retq(ubyte which) -> quad {
+        when which {
+            1 -> return ubmax
+            2 -> return bmid
+            3 -> return uwmax
+            4 -> return wmin
+            5 -> return lmid
+            else -> return lmax
+        }
+    }
+
+    sub retu(bool small) -> uquad {
+        if small
+            return ubmid
+        return uwmid
+    }
+}""",
+    "quad and uquad arrays, structs and memory" to $$"""
+main {
+    struct Item {
+        ubyte tag
+        quad q
+        uquad u
+        quad[2] hist
+    }
+
+    quad[] @shared qvals = [-9223372036854775808, -1, 9007199254740993, 5000000000, -9007199254740995, 9223372036854775807]
+    uquad[] @shared uvals = [$ffff_ffff_ffff_ffff, $1_0000_0005, $8000_0000_0000_0001, 7]
+    quad[5] @shared qzero
+    uquad[3] @shared uzero
+    quad[10] @shared qops = [$0_ffff_ffff, -5000000000, 5000000000, -9000000000000000001, -10000000007,
+                             $1234_5678_9abc_def0, 1, -1, 3, -9223372036854775808]
+    uquad[10] @shared uops = [$1_0000_0000, $ffff_ffff_ffff_ffff, $ffff_ffff_ffff_fffe, $0_ffff_ffff, $0123_4567_89ab_cdef,
+                              $ffff_ffff_ffff_ffff, $0123_4567_89ab_cdef, $8000_0000_0000_0000, $8000_0000_0000_0000, $0_ffff_ffff]
+    ubyte @shared i0 = 0
+    ubyte @shared i1 = 1
+    ubyte @shared i3 = 3
+    ubyte @shared i5 = 5
+    ubyte @shared i7 = 7
+    ubyte @shared i9 = 9
+    quad @shared q5e9 = 5000000000
+    quad @shared low32 = $2a05_f200
+    quad @shared qnull = 0
+    uquad @shared ulow = 5
+    ubyte[24] @shared membuf
+    ubyte[40] @shared itembuf
+    ^^Item @shared stat = ^^Item : [7, -5000000000, $fedc_ba98_7654_3210, [-1, 9007199254740993]]
+    ^^Item @shared blank = ^^Item : []
+    Item[2] @shared items = [[1, -5000000000, $ffff_ffff_ffff_ffff, [-1, 1]],
+                             [2, 9223372036854775807, 3, [-3, 9007199254740993]]]
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ; the subtractions would expose values above 2^53 that went through a double
+        if qvals[0] != -9223372036854775808 or qvals[5] != 9223372036854775807 or qvals[2] - 9007199254740000 != 993 or qvals[4] + 9007199254740000 != -995
+            return 1
+        if uvals[0] != $ffff_ffff_ffff_ffff or uvals[2] - $8000_0000_0000_0000 != 1 or uvals[3] != 7
+            return 2
+        if qvals[i0] != -9223372036854775808 or qvals[i5] != 9223372036854775807 or qvals[i1] != -1 or qvals[i3] != 5000000000
+            return 3
+        if uvals[i0] != $ffff_ffff_ffff_ffff or uvals[i1] != ($1_0000_0005 as uquad) or uvals[i3] != 7
+            return 4
+        if qzero[0] != 0 or qzero[4] != 0 or qzero[i3] != 0 or len(qzero) != 5 or sizeof(qzero) != 40
+            return 5
+        if uzero[0] != 0 or uzero[i1] != 0 or uzero[2] != 0 or len(uvals) != 4 or sizeof(qvals) != 48
+            return 6
+
+        qzero[0] = -9223372036854775808
+        qzero[i3] = q5e9
+        uzero[2] = $ffff_ffff_ffff_fffe
+        uzero[i0] = ulow
+        if qzero[0] != -9223372036854775808 or qzero[3] != 5000000000 or qzero[1] != 0 or qzero[2] != 0 or qzero[4] != 0
+            return 7
+        if uzero[2] != $ffff_ffff_ffff_fffe or uzero[0] != 5 or uzero[1] != 0
+            return 8
+        qzero[1] = qvals[2]
+        qzero[i3+1] = qvals[i5]
+        qzero[2] = qzero[i3]
+        uzero[i1] = uvals[2]
+        if qzero[1] != 9007199254740993 or qzero[4] != 9223372036854775807 or qzero[2] != 5000000000 or uzero[1] != $8000_0000_0000_0001
+            return 9
+        swap(qzero[0], qzero[i3])
+        swap(uzero[i0], uzero[2])
+        if qzero[0] != 5000000000 or qzero[3] != -9223372036854775808 or uzero[0] != $ffff_ffff_ffff_fffe or uzero[2] != 5
+            return 10
+
+        qops[0] += 1
+        qops[i1] -= q5e9
+        qops[2] *= q5e9
+        if qops[0] != $1_0000_0000 or qops[1] != -10000000000 or qops[2] != 6553255926290448384
+            return 11
+        qops[i3] /= 1000
+        qops[4] %= 10
+        qops[i5] &= $00ff_00ff_00ff_00ff
+        if qops[3] != -9000000000000000 or qops[4] != -7 or qops[5] != $0034_0078_00bc_00f0
+            return 12
+        qops[6] |= -9223372036854775808
+        qops[i7] ^= $0_ffff_ffff
+        qops[8] <<= 62
+        qops[i9] >>= 60
+        if qops[6] != -9223372036854775807 or qops[7] != -4294967296 or qops[8] != -4611686018427387904 or qops[9] != -8
+            return 13
+        uops[0] -= 1
+        uops[i1] += 1
+        uops[2] /= 2
+        uops[i3] *= ($0_ffff_ffff as uquad)
+        if uops[0] != ($0_ffff_ffff as uquad) or uops[1] != 0 or uops[2] != ($7fff_ffff_ffff_ffff as uquad) or uops[3] != $ffff_fffe_0000_0001
+            return 14
+        uops[4] &= $ff00_0000_0000_00ff
+        uops[i5] %= 10
+        uops[6] ^= $ffff_ffff_ffff_ffff
+        if uops[4] != ($0100_0000_0000_00ef as uquad) or uops[5] != 5 or uops[6] != $fedc_ba98_7654_3210
+            return 15
+        uops[i7] |= 1
+        uops[8] >>= 63
+        uops[i9] <<= 32
+        if uops[7] != $8000_0000_0000_0001 or uops[8] != 1 or uops[9] != $ffff_ffff_0000_0000
+            return 16
+
+        ubyte i
+        uquad usum = 0
+        ubyte ubest = 0
+        for i in 0 to len(uvals)-1 {
+            usum += uvals[i]
+            if uvals[i] > uvals[ubest]
+                ubest = i
+        }
+        if usum != $8000_0001_0000_000c or ubest != 0
+            return 17
+        ubyte qbest = 0
+        ubyte found = 255
+        for i in 0 to len(qvals)-1 {
+            if qvals[i] > qvals[qbest]
+                qbest = i
+            if qvals[i] == q5e9
+                found = i
+        }
+        if qbest != 5 or found != 3
+            return 18
+        if q5e9 not in qvals or uvals[i1] not in uvals or (q5e9 + 1) in qvals or (uvals[i3] + 1) in uvals
+            return 19
+        ; each of these equals an element in its low 32 bits only
+        if low32 in qvals or qnull in qvals or ulow in uvals
+            return 20
+        if q5e9 not in [-1, 5000000000, 9223372036854775807] or low32 in [5000000000, -9223372036854775808]
+            return 21
+        if uvals[2] not in [7, $8000_0000_0000_0001] or ulow in [($1_0000_0005 as uquad), 7]
+            return 22
+
+        if sumq(qvals, len(qvals)) != 4999999996 or sumq(&&qvals[1], 3) != 9007204254740992
+            return 23
+        reverseu(uvals, len(uvals))
+        if uvals[0] != 7 or uvals[i1] != $8000_0000_0000_0001 or uvals[2] != ($1_0000_0005 as uquad) or uvals[i3] != $ffff_ffff_ffff_ffff
+            return 24
+        fillq(qzero, len(qzero), -5000000000)
+        if qzero[0] != -5000000000 or qzero[i3] != 40000000000 or qzero[4] != -80000000000 or sumq(qzero, 5) != -55000000000
+            return 25
+
+        quad[3] lq = [-9007199254740993, $7fff_ffff_0000_0000, -2]
+        uquad[4] lu
+        if lu[0] != 0 or lu[i3] != 0 or lq[0] + 9007199254740000 != -993 or lq[i1] != $7fff_ffff_0000_0000 or lq[2] != -2
+            return 26
+        for i in 0 to 2 {
+            lu[i] = (lq[i] as uquad)
+        }
+        lu[i3] = lu[0] + lu[2]
+        if lu[0] != $ffdf_ffff_ffff_ffff or lu[1] != ($7fff_ffff_0000_0000 as uquad) or lu[3] != $ffdf_ffff_ffff_fffd
+            return 27
+
+        if sizeof(Item) != 33 or offsetof(Item.u) != 9 or offsetof(Item.hist) != 17 or stat.tag != 7 or stat.q != -5000000000
+            return 28
+        if stat.u != $fedc_ba98_7654_3210 or stat.hist[0] != -1 or stat.hist[i1] - 9007199254740000 != 993
+            return 29
+        if blank.tag != 0 or blank.q != 0 or blank.u != 0 or blank.hist[i1] != 0
+            return 30
+        stat.q -= q5e9
+        stat.u >>= 4
+        stat.hist[i1] = stat.q
+        stat.hist[0] *= q5e9
+        if stat.q != -10000000000 or stat.u != ($0fed_cba9_8765_4321 as uquad) or stat.hist[1] != -10000000000 or stat.hist[0] != -5000000000
+            return 31
+        ^^Item owned = &itembuf
+        owned.tag = $a5
+        owned.q = -2
+        owned.u = $0123_4567_89ab_cdef
+        owned.hist[i1] = -9223372036854775808
+        if itembuf[0] != $a5 or itembuf[1] != $fe or itembuf[8] != $ff or itembuf[9] != $ef or itembuf[16] != $01 or itembuf[25] != 0
+            return 32
+        if itembuf[32] != $80 or itembuf[33] != 0 or peekq(&itembuf + 25) != -9223372036854775808 or peekq(&itembuf + 1) != -2
+            return 33
+        owned.q *= -3
+        owned.q <<= 40
+        owned.u ^= $ffff_ffff_ffff_ffff
+        owned.u >>= 8
+        if owned.q != 6597069766656 or owned.u != ($00fe_dcba_9876_5432 as uquad) or itembuf[15] != $fe or itembuf[16] != 0
+            return 34
+        owned^^ = stat^^
+        if owned.q != -10000000000 or owned.hist[i1] != -10000000000 or itembuf[0] != 7 or itembuf[16] != $0f
+            return 35
+
+        items[i1].q += 1
+        items[0].u >>= 4
+        items[i1].u = (items[0].q as uquad)
+        if items[1].q != -9223372036854775808 or items[0].u != ($0fff_ffff_ffff_ffff as uquad) or items[i1].u != $ffff_fffe_d5fa_0e00
+            return 36
+        if peek(&items + 33) != 2 or peekq(&items + 34) != -9223372036854775808 or peekq(&items + 58) - 9007199254740000 != 993
+            return 37
+
+        ; little-endian, like the arm64 host
+        pokeq(&membuf + 3, $0123_4567_89ab_cdef)
+        if membuf[2] != 0 or membuf[3] != $ef or membuf[4] != $cd or membuf[10] != $01 or membuf[11] != 0
+            return 38
+        for i in 0 to 7 {
+            membuf[16 + i] = i * $11
+        }
+        if peekq(&membuf + 16) != $7766_5544_3322_1100
+            return 39
+        membuf[23] = $f7
+        if (peekq(&membuf + 16) as uquad) != $f766_5544_3322_1100 or peekq(&membuf + 16) != -619714147312856832
+            return 40
+        if peekq(&qvals + 16) != 9007199254740993 or peek(&uvals + 15) != $80 or peek(&uvals + 16) != 5 or peek(&uvals + 20) != 1
+            return 41
+        ^^uquad up = &&uvals[1]
+        up++
+        if up^^ != ($1_0000_0005 as uquad) or up[1] != $ffff_ffff_ffff_ffff or up - &&uvals[0] != 2 or peek(up as pointer) != 5
+            return 42
+        pokeq(&uzero + 8, -2)
+        if uzero[1] != $ffff_ffff_ffff_fffe or uzero[0] != $ffff_ffff_ffff_fffe or uzero[2] != 5
+            return 43
+        return 0
+    }
+
+    sub sumq(^^quad p, ubyte n) -> quad {
+        quad total = 0
+        ubyte i
+        for i in 0 to n-1 {
+            total += p[i]
+        }
+        return total
+    }
+
+    sub reverseu(^^uquad p, ubyte n) {
+        ubyte i = 0
+        ubyte j = n - 1
+        while i < j {
+            uquad tmp = p[i]
+            p[i] = p[j]
+            p[j] = tmp
+            i++
+            j--
+        }
+    }
+
+    sub fillq(^^quad p, ubyte n, quad value) {
+        ubyte i
+        for i in 0 to n-1 {
+            p[i] = value
+            value *= -2
+        }
+    }
 }"""
 )
 
@@ -1102,6 +2001,281 @@ main {
         "18446744073709551615 10000000000000000000 -9223372036854775808 -5000000000 8000000000000001 " +
         "1111111011011100101110101001100001110110010101000011001000010000\n" +
         "8 8 0\n"),
+
+    "quad values computed and printed with textio, syslib and conv" to OutputProgram($$"""
+%import textio
+%import syslib
+%import conv
+%zeropage basicsafe
+
+main {
+    ubyte @shared firstfib = 90
+    uquad @shared one = 1
+    uquad @shared umax = sys.MAX_UQUAD
+    uquad @shared pattern = $1234_5678_9abc_def0
+    quad @shared seven = 7
+    quad @shared factor = -1000
+    quad @shared small = 1234567
+    quad @shared big = 5001234567
+    quad @shared step = 2000000000
+    quad @shared qmin = sys.MIN_QUAD
+    quad @shared qmax = sys.MAX_QUAD
+    ubyte @shared ubig = 200
+    uword @shared wbig = 65000
+    byte @shared bneg = -56
+    long @shared lmin = -2147483648
+    ubyte @shared halfbits = 32
+    ubyte[7] @shared exponents = [0, 1, 31, 32, 33, 62, 63]
+
+    sub start() {
+        factorials()
+        fibonacci()
+        signed_values()
+        mixed_types()
+        powers_of_two()
+        bit_patterns()
+        conversions()
+    }
+
+    sub factorials() {
+        uquad product = one
+        ubyte n = 0
+        repeat {
+            txt.print_ub(n)
+            txt.print("! = ")
+            txt.print_u64(product)
+            txt.nl()
+            n++
+            if product > umax / n
+                break
+            product *= n
+        }
+    }
+
+    sub fibonacci() {
+        uquad previous = 0
+        uquad current = one
+        uquad following
+        ubyte n = 1
+        while previous <= umax - current {
+            following = previous + current
+            previous = current
+            current = following
+            n++
+            if n >= firstfib {
+                txt.print("F(")
+                txt.print_ub(n)
+                txt.print(") = ")
+                txt.print_uq(current)
+                txt.nl()
+            }
+        }
+        txt.print_q((current as quad))
+        txt.spc()
+        txt.print_u64(previous + current)
+        txt.nl()
+    }
+
+    sub signed_values() {
+        quad value = seven
+        txt.print_q(value)
+        repeat 6 {
+            value *= factor
+            txt.spc()
+            txt.print_q(value)
+        }
+        txt.nl()
+
+        value = big
+        repeat {
+            txt.print_i64(value)
+            if value < -step
+                break
+            txt.spc()
+            value -= step
+        }
+        txt.nl()
+
+        value = small - big
+        txt.print_i64(value)
+        txt.spc()
+        txt.print_i64(value / seven)
+        txt.spc()
+        txt.print_i64(value % seven)
+        txt.spc()
+        txt.print_i64(-value)
+        txt.nl()
+
+        txt.print_q(qmin)
+        txt.spc()
+        txt.print_q(qmax)
+        txt.spc()
+        txt.print_q(qmin + 1)
+        txt.spc()
+        txt.print_q(qmin + qmax)
+        txt.spc()
+        txt.print_q(qmin + qmax + 1)
+        txt.nl()
+
+        txt.print_i64(qmax + 1)
+        txt.spc()
+        txt.print_i64(qmin - 1)
+        txt.spc()
+        txt.print_i64(-qmin)
+        txt.spc()
+        txt.print_i64(qmin >> 1)
+        txt.spc()
+        txt.print_i64(qmin >> 63)
+        txt.nl()
+    }
+
+    sub mixed_types() {
+        uquad unsignedwide = ubig
+        quad signedwide = bneg
+        txt.print_u64(unsignedwide)
+        txt.spc()
+        txt.print_u64(wbig)
+        txt.spc()
+        txt.print_q(signedwide)
+        txt.spc()
+        txt.print_q(lmin)
+        txt.spc()
+        txt.print_l((big as long))
+        txt.spc()
+        txt.print_q(big + lmin)
+        txt.spc()
+        txt.print_q(big * bneg)
+        txt.nl()
+    }
+
+    sub powers_of_two() {
+        ubyte exponent
+        uquad power
+        for exponent in exponents {
+            power = one << exponent
+            txt.print("2^")
+            txt.print_ub(exponent)
+            txt.print(" = ")
+            txt.print_u64(power)
+            txt.spc()
+            txt.print_uqhex(power)
+            txt.spc()
+            txt.print_uqhex(power - 1)
+            txt.nl()
+        }
+    }
+
+    sub bit_patterns() {
+        uquad highmask = umax << halfbits
+        show(highmask)
+        show(pattern)
+        show(~pattern)
+        show(one << (sys.SIZEOF_UQUAD * 8 - 1))
+        show(umax + 1)
+        show(umax)
+        txt.print_uqhex(pattern & highmask)
+        txt.spc()
+        txt.print_uqhex(pattern | ~highmask)
+        txt.spc()
+        txt.print_uqhex(pattern ^ highmask)
+        txt.spc()
+        txt.print_uqhex(pattern >> 4)
+        txt.spc()
+        txt.print_uqhex((pattern << halfbits) | (pattern >> halfbits))
+        txt.nl()
+    }
+
+    sub show(uquad value) {
+        txt.print_uqhex(value)
+        txt.spc()
+        txt.print_uqbin(value)
+        txt.nl()
+    }
+
+    sub conversions() {
+        uquad lowhalf = pattern & (umax >> halfbits)
+        uquad highhalf = pattern >> halfbits
+        txt.print(conv.str_u64(umax / 10))
+        txt.spc()
+        txt.print(conv.str_uq(umax % 10))
+        txt.spc()
+        txt.print(conv.str_i64(qmin / 10))
+        txt.spc()
+        txt.print(conv.str_q(qmin % 10))
+        txt.nl()
+        txt.print(conv.str_uqhex(highhalf * lowhalf))
+        txt.spc()
+        txt.print(conv.str_u64(highhalf * lowhalf))
+        txt.nl()
+        txt.print(conv.str_uqbin(pattern + pattern))
+        txt.nl()
+        txt.print_ub(length(conv.str_u64(umax)))
+        txt.spc()
+        txt.print_ub(length(conv.str_i64(qmin)))
+        txt.spc()
+        txt.print_ub(length(conv.str_uqhex(one)))
+        txt.spc()
+        txt.print_ub(length(conv.str_uqbin(one)))
+        txt.nl()
+    }
+
+    sub length(str text) -> ubyte {
+        ubyte count = 0
+        while text[count] != 0
+            count++
+        return count
+    }
+}""", """0! = 1
+1! = 1
+2! = 2
+3! = 6
+4! = 24
+5! = 120
+6! = 720
+7! = 5040
+8! = 40320
+9! = 362880
+10! = 3628800
+11! = 39916800
+12! = 479001600
+13! = 6227020800
+14! = 87178291200
+15! = 1307674368000
+16! = 20922789888000
+17! = 355687428096000
+18! = 6402373705728000
+19! = 121645100408832000
+20! = 2432902008176640000
+F(90) = 2880067194370816120
+F(91) = 4660046610375530309
+F(92) = 7540113804746346429
+F(93) = 12200160415121876738
+-6246583658587674878 1293530146158671551
+7 -7000 7000000 -7000000000 7000000000000 -7000000000000000 7000000000000000000
+5001234567 3001234567 1001234567 -998765433 -2998765433
+-5000000000 -714285714 -2 5000000000
+-9223372036854775808 9223372036854775807 -9223372036854775807 -1 0
+-9223372036854775808 9223372036854775807 -9223372036854775808 -4611686018427387904 -1
+200 65000 -56 -2147483648 706267271 2853750919 -280069135752
+2^0 = 1 0000000000000001 0000000000000000
+2^1 = 2 0000000000000002 0000000000000001
+2^31 = 2147483648 0000000080000000 000000007fffffff
+2^32 = 4294967296 0000000100000000 00000000ffffffff
+2^33 = 8589934592 0000000200000000 00000001ffffffff
+2^62 = 4611686018427387904 4000000000000000 3fffffffffffffff
+2^63 = 9223372036854775808 8000000000000000 7fffffffffffffff
+ffffffff00000000 1111111111111111111111111111111100000000000000000000000000000000
+123456789abcdef0 0001001000110100010101100111100010011010101111001101111011110000
+edcba9876543210f 1110110111001011101010011000011101100101010000110010000100001111
+8000000000000000 1000000000000000000000000000000000000000000000000000000000000000
+0000000000000000 0000000000000000000000000000000000000000000000000000000000000000
+ffffffffffffffff 1111111111111111111111111111111111111111111111111111111111111111
+1234567800000000 12345678ffffffff edcba9879abcdef0 0123456789abcdef 9abcdef012345678
+1844674407370955161 5 -922337203685477580 -8
+0b00ea4e242d2080 792891155752493184
+0010010001101000101011001111000100110101011110011011110111100000
+20 20 16 64
+"""),
 
     "memory routines and sys.exit" to OutputProgram($$"""
 %import textio
