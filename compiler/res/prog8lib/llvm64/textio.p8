@@ -10,6 +10,8 @@ txt {
     alias print_u16 = print_uw
     alias print_i16 = print_w
     alias print_i32 = print_l
+    alias print_uq = print_u64
+    alias print_q = print_i64
 
 sub  clear_screen() {
     print("\x1b[2J\x1b[H")
@@ -134,6 +136,16 @@ sub  print_ulhex  (long value, bool prefix) {
     print(conv.str_ulhex(value))
 }
 
+sub  print_uqhex  (uquad value) {
+    ; ---- print the uquad in hexadecimal form (16 digits)
+    print(conv.str_uqhex(value))
+}
+
+sub  print_uqbin  (uquad value) {
+    ; ---- print the uquad in binary form (64 digits)
+    print(conv.str_uqbin(value))
+}
+
 sub  print_uw0  (uword value)  {
     ; ---- print the uword value in decimal form, with left padding 0s (5 positions total)
     print(conv.str_uw0(value))
@@ -157,6 +169,16 @@ sub  print_l  (long value) {
 sub  print_u32  (long value) {
     ; ---- print the 32 bits of the long, read as an unsigned number, in decimal form, without left padding 0's
     print(conv.str_u32(value))
+}
+
+sub  print_i64  (quad value) {
+    ; ---- print the (signed) quad in decimal form, without left padding 0's
+    print(conv.str_i64(value))
+}
+
+sub  print_u64  (uquad value) {
+    ; ---- print the uquad in decimal form, without left padding 0's
+    print(conv.str_u64(value))
 }
 
 sub chrin() -> ubyte {

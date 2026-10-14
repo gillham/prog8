@@ -6,12 +6,14 @@ conv {
 
     %option ignore_unused
 
-    str  string_out = "????????????????????????????????"       ; result buffer for the string conversion routines
+    str  string_out = "????????????????????????????????????????????????????????????????"       ; result buffer for the string conversion routines
     str  hex_digits = "0123456789abcdef"
 
     alias str_u16 = str_uw
     alias str_i16 = str_w
     alias str_i32 = str_l
+    alias str_uq = str_u64
+    alias str_q = str_i64
 
 sub  str_ub0(ubyte value) -> str {
     ; ---- convert the ubyte in decimal string form, with left padding 0s (3 positions total)
@@ -136,6 +138,30 @@ sub  str_ulhex  (long value) -> str {
     return string_out
 }
 
+sub  str_uqhex  (uquad value) -> str {
+    ; ---- convert the uquad in hexadecimal string form (16 digits)
+    ^^ubyte out_ptr = &string_out
+    repeat 16 {
+        @(out_ptr) = hex_digits[(value >> 60) as ubyte]
+        out_ptr++
+        value <<= 4
+    }
+    @(out_ptr) = 0
+    return string_out
+}
+
+sub  str_uqbin  (uquad value) -> str {
+    ; ---- convert the uquad in binary string form (64 digits)
+    ^^ubyte out_ptr = &string_out
+    repeat 64 {
+        @(out_ptr) = '0' + ((value >> 63) as ubyte)
+        out_ptr++
+        value <<= 1
+    }
+    @(out_ptr) = 0
+    return string_out
+}
+
 sub  str_uw0  (uword value) -> str {
     ; ---- convert the uword in decimal string form, with left padding 0s (5 positions total)
     uword value2 = value/10
@@ -244,6 +270,41 @@ private sub internal_str_u32(long value, str out_ptr) {
     do {
         long quotient = value / 10
         digits[count] = value - quotient*10 as ubyte
+        count++
+        value = quotient
+    } until value==0
+    while count!=0 {
+        count--
+        @(out_ptr) = digits[count]+'0'
+        out_ptr++
+    }
+    @(out_ptr) = 0
+}
+
+sub  str_i64  (quad value) -> str {
+    ; ---- convert the (signed) quad into decimal string form, without left padding 0's
+    ^^ubyte out_ptr = &string_out
+    if value<0 {
+        @(out_ptr) = '-'
+        out_ptr++
+        value = -value      ; -9223372036854775808 stays the same, but as an unsigned number that is 9223372036854775808
+    }
+    internal_str_u64(value as uquad, out_ptr)
+    return string_out
+}
+
+sub  str_u64  (uquad value) -> str {
+    ; ---- convert the uquad into decimal string form, without left padding 0's
+    internal_str_u64(value, string_out)
+    return string_out
+}
+
+private sub internal_str_u64(uquad value, str out_ptr) {
+    ubyte[20] digits
+    ubyte count = 0
+    do {
+        uquad quotient = value / 10
+        digits[count] = (value - quotient*10) as ubyte
         count++
         value = quotient
     } until value==0

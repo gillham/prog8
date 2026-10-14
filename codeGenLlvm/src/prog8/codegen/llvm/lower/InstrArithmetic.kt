@@ -35,10 +35,11 @@ internal fun FunctionLowering.lowerArithmetic(ins: IRInstruction) {
             write(dest, operation(BinaryOperator.MUL, value, value, dest.register.toString()))
         }
         Opcode.SQRT -> squareRoot(ins)
-        Opcode.FFROMUB, Opcode.FFROMUW -> toFloat(ins, CastOperator.UITOFP)
-        Opcode.FFROMSB, Opcode.FFROMSW, Opcode.FFROMSL -> toFloat(ins, CastOperator.SITOFP)
-        Opcode.FTOUB, Opcode.FTOSB, Opcode.FTOUW, Opcode.FTOSW, Opcode.FTOSL ->
+        Opcode.FFROMUB, Opcode.FFROMUW, Opcode.FFROMUQ -> toFloat(ins, CastOperator.UITOFP)
+        Opcode.FFROMSB, Opcode.FFROMSW, Opcode.FFROMSL, Opcode.FFROMSQ -> toFloat(ins, CastOperator.SITOFP)
+        Opcode.FTOUB, Opcode.FTOSB, Opcode.FTOUW, Opcode.FTOSW, Opcode.FTOSL, Opcode.FTOSQ ->
             ins.requireDest().let { write(it, floatToInteger(read(ins.requireSrcA()), typeOf(it.type))) }
+        Opcode.FTOUQ -> ins.requireDest().let { write(it, floatToUnsignedQuad(read(ins.requireSrcA()), it.register.toString())) }
         Opcode.FPOW -> ins.requireDest().let { write(it, intrinsic("llvm.pow.f64", LlvmType.Double, read(it), read(ins.requireSrcA()))) }
         Opcode.FABS -> floatFunction(ins, "llvm.fabs.f64")
         Opcode.FSIN -> floatFunction(ins, "llvm.sin.f64")
@@ -148,7 +149,7 @@ private fun FunctionLowering.divisible(value: LlvmValue): LlvmValue = if (value.
 
 /**
  * Division by zero gives the results of the VM instead of undefined behavior: the largest (signed) value, or a remainder of 0.
- * Signed operations work one size wider, where MIN / -1 doesn't overflow.
+ * Signed operations work one size wider, where MIN / -1 doesn't overflow; quads have no wider type, see [signedQuadQuotient].
  */
 private fun FunctionLowering.integerQuotient(dividend: LlvmValue, divisor: LlvmValue, signed: Boolean, remainder: Boolean, base: String): LlvmValue {
     val type = dividend.type
@@ -160,6 +161,8 @@ private fun FunctionLowering.integerQuotient(dividend: LlvmValue, divisor: LlvmV
     }
     if (divisor is LlvmValue.IntConstant && divisor.value == 0L)
         return integerConstant(byZero, type)
+    if (signed && type == LlvmType.I64)
+        return signedQuadQuotient(dividend, divisor, remainder, byZero, base)
     val computeType = if (signed) widerThan(type) else type
     val isZero = if (divisor is LlvmValue.IntConstant) null
         else derive("zero", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, divisor, LlvmValue.IntConstant(0, type)) }
@@ -176,6 +179,31 @@ private fun FunctionLowering.integerQuotient(dividend: LlvmValue, divisor: LlvmV
     }
     val result = convert(derive(base, computeType) { LlvmInstruction.BinaryOp(operator, it, widenedDividend, safeDivisor) }, type, base)
     return isZero?.let { zero -> derive(base, type) { LlvmInstruction.Select(it, zero, integerConstant(byZero, type), result) } } ?: result
+}
+
+/**
+ * Signed 64-bit division by a [divisor] other than the constant 0. Where LLVM's sdiv and srem are undefined, it gives the VM's results:
+ * [byZero] for a divisor of 0, and for -1 the wrapped negation (MIN / -1 is MIN) and a remainder of 0.
+ */
+private fun FunctionLowering.signedQuadQuotient(dividend: LlvmValue, divisor: LlvmValue, remainder: Boolean, byZero: Long, base: String): LlvmValue {
+    val type = LlvmType.I64
+    val operator = if (remainder) BinaryOperator.SREM else BinaryOperator.SDIV
+    if (divisor is LlvmValue.IntConstant) {
+        if (divisor.value == -1L)
+            return if (remainder) LlvmValue.IntConstant(0, type) else negate(dividend, base)
+        return derive(base, type) { LlvmInstruction.BinaryOp(operator, it, dividend, divisor) }
+    }
+    val isZero = derive("zero", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, divisor, LlvmValue.IntConstant(0, type)) }
+    val isMinusOne = derive("minusone", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, divisor, LlvmValue.IntConstant(-1, type)) }
+    val unsafe = derive("unsafe", LlvmType.I1) { LlvmInstruction.BinaryOp(BinaryOperator.OR, it, isZero, isMinusOne) }
+    val safeDivisor = derive("divisor", type) { LlvmInstruction.Select(it, unsafe, LlvmValue.IntConstant(1, type), divisor) }
+    val result = derive(base, type) { LlvmInstruction.BinaryOp(operator, it, dividend, safeDivisor) }
+    // the remainder of dividing by 1 is already the 0 that both cases need
+    if (remainder)
+        return result
+    val negated = negate(dividend, base)
+    val quotient = derive(base, type) { LlvmInstruction.Select(it, isMinusOne, negated, result) }
+    return derive(base, type) { LlvmInstruction.Select(it, isZero, LlvmValue.IntConstant(byZero, type), quotient) }
 }
 
 private fun widerThan(type: LlvmType): LlvmType = when (type) {
@@ -210,9 +238,18 @@ private fun FunctionLowering.squareRoot(ins: IRInstruction) {
     }
 }
 
-/** Like the VM's Kotlin toInt(), which saturates and turns NaN into 0, followed by truncation to [type]. */
+/** Like the VM's Kotlin toInt() (toLong() for a quad), which saturates and turns NaN into 0, followed by truncation to [type]. */
 private fun FunctionLowering.floatToInteger(value: LlvmValue, type: LlvmType): LlvmValue =
-    convert(intrinsic("llvm.fptosi.sat.i32.f64", LlvmType.I32, value), type)
+    if (type == LlvmType.I64) intrinsic("llvm.fptosi.sat.i64.f64", LlvmType.I64, value)
+    else convert(intrinsic("llvm.fptosi.sat.i32.f64", LlvmType.I32, value), type)
+
+/** Like the VM, a negative float wraps around as with a signed conversion, others saturate to the uquad range; NaN gives 0. */
+private fun FunctionLowering.floatToUnsignedQuad(value: LlvmValue, base: String): LlvmValue {
+    val negative = derive("negative", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OLT, it, value, LlvmValue.FloatConstant(0.0)) }
+    val signed = intrinsic("llvm.fptosi.sat.i64.f64", LlvmType.I64, value)
+    val unsigned = intrinsic("llvm.fptoui.sat.i64.f64", LlvmType.I64, value)
+    return derive(base, LlvmType.I64) { LlvmInstruction.Select(it, negative, signed, unsigned) }
+}
 
 private fun FunctionLowering.toFloat(ins: IRInstruction, operator: CastOperator) {
     val value = read(ins.requireSrcA())

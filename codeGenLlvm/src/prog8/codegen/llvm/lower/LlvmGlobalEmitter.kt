@@ -211,7 +211,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         val init = variable.initializationValue
         return when {
             init == null -> LlvmValue.ZeroInitializer(type)
-            init is IRVariableInitializer.Numeric && type !is LlvmType.Array -> scalarConstant(variable.dt.base, init.value)
+            init is IRVariableInitializer.Numeric && type !is LlvmType.Array -> scalarConstant(variable.dt.base, init.value, init.quadBits)
             init is IRVariableInitializer.Str && variable.dt.isString -> stringConstant(variable, init)
             init is IRVariableInitializer.Array && variable.dt.isArray && type is LlvmType.Array -> arrayConstant(variable, type, init)
             else -> throw IllegalArgumentException("${variable.name} of type ${variable.dt} can't have a ${init::class.simpleName} initial value")
@@ -286,7 +286,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         val number = constant.value
         val slab = constant.memorySlabName
         val value = when {
-            number != null -> scalarConstant(constant.dt.base, number)
+            number != null -> scalarConstant(constant.dt.base, number, constant.quadBits)
             // an address, so a ptr whatever its Prog8 type; the IR code uses the slab symbol itself, never this global
             slab != null -> memorySlabAddress(slab, constant.name)
             else -> throw IllegalArgumentException("constant ${constant.name} has neither a value nor a memory slab")
@@ -300,17 +300,20 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
     }
 
     private fun slotValue(base: BaseDataType, ref: IRStSymbolicReference, user: String): LlvmValue = when (ref) {
-        is IRStSymbolicReference.Numeric -> scalarConstant(base, ref.value)
+        is IRStSymbolicReference.Numeric -> scalarConstant(base, ref.value, ref.quadBits)
         is IRStSymbolicReference.BoolValue -> LlvmValue.IntConstant(if (ref.value) 1L else 0L, mapper.map(base))
         // names missing from the symbol table are subroutines and labels, whose functions are emitted by a later step
         is IRStSymbolicReference.Symbol -> addressAs(mapper.map(base), addresses[ref.name] ?: LlvmValue.Global(ref.name), user)
     }
 
-    private fun scalarConstant(base: BaseDataType, value: Double): LlvmValue = when (base) {
+    /** The Double [value] of a quad is only approximate, so its exact [quadBits] are used when it has those. */
+    private fun scalarConstant(base: BaseDataType, value: Double, quadBits: Long?): LlvmValue = when (base) {
         BaseDataType.FLOAT -> LlvmValue.FloatConstant(value)
         BaseDataType.POINTER ->
             if (value == 0.0) LlvmValue.NullPtr()
             else LlvmValue.ConstantCast(CastOperator.INTTOPTR, LlvmValue.IntConstant(value.toLong(), LlvmType.I64), LlvmType.Ptr)
+        BaseDataType.QUAD -> LlvmValue.IntConstant(quadBits ?: value.toLong(), LlvmType.I64)
+        BaseDataType.UQUAD -> LlvmValue.IntConstant(quadBits ?: value.toULong().toLong(), LlvmType.I64)
         else -> LlvmValue.IntConstant(value.toLong(), mapper.map(base))
     }
 

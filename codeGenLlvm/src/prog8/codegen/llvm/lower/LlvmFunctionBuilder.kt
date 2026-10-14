@@ -431,19 +431,17 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
             Opcode.DIVR, Opcode.DIV, Opcode.DIVM, Opcode.DIVSR, Opcode.DIVS, Opcode.DIVSM,
             Opcode.MODR, Opcode.MOD, Opcode.MODSR, Opcode.MODS, Opcode.DIVMODR, Opcode.DIVMOD, Opcode.SDIVMODR, Opcode.SDIVMOD,
             Opcode.SQRT, Opcode.SQUARE,
-            Opcode.FFROMUB, Opcode.FFROMSB, Opcode.FFROMUW, Opcode.FFROMSW, Opcode.FFROMSL,
-            Opcode.FTOUB, Opcode.FTOSB, Opcode.FTOUW, Opcode.FTOSW, Opcode.FTOSL,
+            Opcode.FFROMUB, Opcode.FFROMSB, Opcode.FFROMUW, Opcode.FFROMSW, Opcode.FFROMSL, Opcode.FFROMSQ, Opcode.FFROMUQ,
+            Opcode.FTOUB, Opcode.FTOSB, Opcode.FTOUW, Opcode.FTOSW, Opcode.FTOSL, Opcode.FTOSQ, Opcode.FTOUQ,
             Opcode.FPOW, Opcode.FABS, Opcode.FSIN, Opcode.FCOS, Opcode.FTAN, Opcode.FATAN, Opcode.FLN, Opcode.FLOG,
             Opcode.FROUND, Opcode.FFLOOR, Opcode.FCEIL -> lowerArithmetic(ins)
-            Opcode.EXT, Opcode.EXTS, Opcode.EXTL, Opcode.EXTLS,
+            Opcode.EXT, Opcode.EXTS, Opcode.EXTL, Opcode.EXTLS, Opcode.EXTQ, Opcode.EXTQS,
             Opcode.ANDR, Opcode.AND, Opcode.ANDM, Opcode.ORR, Opcode.OR, Opcode.ORM, Opcode.XORR, Opcode.XOR, Opcode.XORM, Opcode.INV, Opcode.INVM,
             Opcode.ASRN, Opcode.ASRNM, Opcode.LSRN, Opcode.LSRNM, Opcode.LSLN, Opcode.LSLNM, Opcode.ASRI, Opcode.LSRI, Opcode.LSLI,
             Opcode.ASR, Opcode.ASRM, Opcode.LSR, Opcode.LSRM, Opcode.LSL, Opcode.LSLM,
             Opcode.ROR, Opcode.RORM, Opcode.ROXR, Opcode.ROXRM, Opcode.ROL, Opcode.ROLM, Opcode.ROXL, Opcode.ROXLM,
             Opcode.BITSET, Opcode.BITCLR, Opcode.BITTOG,
-            Opcode.LSIGB, Opcode.LSIGW, Opcode.MSIGB, Opcode.MSIGW, Opcode.BSIGB, Opcode.MIDB, Opcode.CONCAT -> lowerBitwise(ins)
-            Opcode.EXTQ, Opcode.EXTQS, Opcode.LSIGL, Opcode.FFROMSQ, Opcode.FFROMUQ, Opcode.FTOSQ, Opcode.FTOUQ ->
-                throw IllegalArgumentException("${ins.opcode} is not supported on the llvm64 target yet")
+            Opcode.LSIGB, Opcode.LSIGW, Opcode.LSIGL, Opcode.MSIGB, Opcode.MSIGW, Opcode.BSIGB, Opcode.MIDB, Opcode.CONCAT -> lowerBitwise(ins)
         }
     }
 

@@ -11,6 +11,7 @@ import prog8.intermediate.IRInstruction
 import prog8.intermediate.Opcode
 import prog8.intermediate.requireDest
 import prog8.intermediate.requireImmediateInt
+import prog8.intermediate.requireImmediateQuad
 import prog8.intermediate.requireSrcA
 import prog8.intermediate.requireSrcB
 
@@ -43,7 +44,8 @@ internal fun FunctionLowering.lowerBitwise(ins: IRInstruction) {
             }
         }
         Opcode.EXT, Opcode.EXTS, Opcode.EXTL, Opcode.EXTLS -> extend(ins)
-        Opcode.LSIGB, Opcode.LSIGW -> extract(ins, shift = 0)
+        Opcode.EXTQ, Opcode.EXTQS -> extendToQuad(ins)
+        Opcode.LSIGB, Opcode.LSIGW, Opcode.LSIGL -> extract(ins, shift = 0)
         Opcode.MSIGB -> extract(ins, shift = if (ins.type == IRDataType.WORD) 8 else 24)
         Opcode.MSIGW, Opcode.BSIGB -> extract(ins, shift = 16)
         Opcode.MIDB -> extract(ins, shift = 8)
@@ -59,8 +61,9 @@ private fun FunctionLowering.shiftOnce(value: LlvmValue, operator: BinaryOperato
     return derive(base, number.type) { LlvmInstruction.BinaryOp(operator, it, number, LlvmValue.IntConstant(1, number.type)) }
 }
 
-private fun FunctionLowering.shiftCount(ins: IRInstruction): LlvmValue =
-    ins.srcA?.let { read(it) } ?: LlvmValue.IntConstant(ins.requireImmediateInt().toLong(), LlvmType.I64)
+// all 64 bits of a quad count, as the VM shifts out all bits for any count outside 0..63, such as 2^32
+private fun FunctionLowering.shiftCount(ins: IRInstruction): LlvmValue = ins.srcA?.let { read(it) }
+    ?: LlvmValue.IntConstant(if (ins.type == IRDataType.QUAD) ins.requireImmediateQuad() else ins.requireImmediateInt().toLong(), LlvmType.I64)
 
 /**
  * Shifts by a count, without changing the carry flag. Like in the VM, a count of the bit width or more
@@ -122,7 +125,15 @@ private fun FunctionLowering.extend(ins: IRInstruction) {
     write(dest, widen(read(ins.requireSrcA()), typeOf(dest.type), signed = ins.opcode == Opcode.EXTS || ins.opcode == Opcode.EXTLS, dest.register.toString()))
 }
 
-/** The byte or word at bit [shift] of a word or long; the destination register has the type of the part. */
+/** EXTQ and EXTQS widen a byte, word or long to a quad; EXTQ.p gives all 64 bits of the address in a pointer. */
+private fun FunctionLowering.extendToQuad(ins: IRInstruction) {
+    val signed = ins.opcode == Opcode.EXTQS
+    require(!signed || ins.type != IRDataType.POINTER) { "extqs.p in ${sub.label} makes no sense: a pointer is unsigned, use extq.p" }
+    val dest = ins.requireDest()
+    write(dest, widen(read(ins.requireSrcA()), typeOf(dest.type), signed, dest.register.toString()))
+}
+
+/** The byte, word or long at bit [shift] of a word, long or quad; the destination register has the type of the part. */
 private fun FunctionLowering.extract(ins: IRInstruction, shift: Int) {
     val dest = ins.requireDest()
     val number = asInteger(read(ins.requireSrcA()))

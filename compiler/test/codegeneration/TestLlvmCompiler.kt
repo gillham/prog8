@@ -841,6 +841,111 @@ main {
     sub isedge(ubyte char) -> bool {
         return char == 0 or char >= 250
     }
+}""",
+    "64-bit quad and uquad integers" to $$"""
+%option enable_floats
+
+main {
+    quad @shared qmax = sys.MAX_QUAD
+    quad @shared qmin = sys.MIN_QUAD
+    uquad @shared umax = sys.MAX_UQUAD
+    quad @shared qzero = 0
+    uquad @shared uzero = 0
+    quad @shared qminus1 = -1
+    quad @shared q5e9 = 5000000000
+    quad @shared qneg = -7000000000
+    uquad @shared ucross = $1_0000_0001
+    uquad @shared pattern = $ffff_ffff_ffff_fff6
+    quad @shared qseven = 7
+    uquad @shared useven = 7
+    ubyte @shared n40 = 40
+    uquad @shared ubelow = $7fff_ffff_0000_0005
+    uquad @shared uabove = $8000_0000_0000_0005
+    byte @shared bm5 = -5
+    ubyte @shared ub200 = 200
+    word @shared wm300 = -300
+    uword @shared uw65535 = 65535
+    long @shared lmin = -2147483648
+    uquad @shared mixed = $1234_5678_8765_4321
+    uquad @shared ubig = $8000_0000_0000_0800
+    float @shared fneg = -123456789012.75
+    float @shared fbig = 1.0e19
+    quad[] @shared qarr = [-1, 5000000000, -9223372036854775808, 1234567890123456789]
+    ubyte @shared idx = 2
+    quad @shared needle = $2_2a05_f200
+    ubyte[16] buffer
+    quad @shared beyond53 = 9007199254740993
+    uquad @shared highlow = $ffff_ffff_0000_0001
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        quad q = qmax + 1
+        uquad u = umax + 1
+        if q != sys.MIN_QUAD or qmin - 1 != sys.MAX_QUAD or -qmin != sys.MIN_QUAD or u != 0 or uzero - 1 != sys.MAX_UQUAD
+            return 1
+        if ucross * ucross != ($2_0000_0001 as uquad) or q5e9 * qneg != 1893488147419103232
+            return 2
+        if (pattern as quad) / qseven != -1 or (pattern as quad) % qseven != -3
+            return 3
+        if pattern / useven != ($2492_4924_9249_2490 as uquad) or pattern % useven != 6
+            return 4
+        if q5e9 / qzero != sys.MAX_QUAD or qneg / qzero != sys.MAX_QUAD or qneg % qzero != 0
+            return 5
+        if umax / uzero != sys.MAX_UQUAD or umax % uzero != 0 or qmin / qminus1 != sys.MIN_QUAD or qmin % qminus1 != 0
+            return 6
+        if qminus1 << n40 != -1099511627776 or umax << n40 != ($ffff_ff00_0000_0000 as uquad)
+            return 7
+        if qmin >> n40 != -8388608 or (qmin as uquad) >> n40 != ($80_0000 as uquad) or umax >> n40 != ($ff_ffff as uquad)
+            return 8
+        if uabove <= ubelow or (uabove as quad) >= (ubelow as quad) or uabove == ubelow or (uabove as long) != (ubelow as long)
+            return 9
+        q = bm5
+        u = ub200
+        if q != -5 or q + wm300 != -305 or (bm5 as uquad) != $ffff_ffff_ffff_fffb or u + uw65535 != (65735 as uquad) or (uw65535 as quad) != 65535
+            return 10
+        q = lmin
+        if q != -2147483648 or (lmin as uquad) != $ffff_ffff_8000_0000
+            return 11
+        if (mixed as long) != -2023406815 or (mixed as word) != $4321 or (mixed as ubyte) != $21
+            return 12
+        float f = ubig as float
+        if f != 9223372036854777856.0 or (f as uquad) != ubig
+            return 13
+        if (qneg as float) != -7000000000.0 or (fneg as quad) != -123456789012 or (fbig as uquad) != 10000000000000000000
+            return 14
+        if qarr[idx] != sys.MIN_QUAD or qarr[idx+1] != 1234567890123456789 or q5e9 not in qarr or needle in qarr
+            return 15
+        qarr[idx] = qneg
+        if qarr[2] != -7000000000 or qneg not in qarr
+            return 16
+        if addq(q5e9, qneg) != -2000000000 or addq(qmax, 1) != sys.MIN_QUAD
+            return 17
+        q, u = two()
+        if q != -14000000000 or u != $ffff_ffff_ffff_fffe
+            return 18
+        ; little-endian, like the arm64 host
+        pokeq(&buffer, qneg)
+        pokeq(&buffer + 8, umax - 1)
+        if peekq(&buffer) != qneg or buffer[8] != $fe or buffer[15] != $ff
+            return 19
+        buffer[15] = $7f
+        if peekq(&buffer + 8) != sys.MAX_QUAD - 1
+            return 20
+        if beyond53 % 10 != 3 or beyond53 - 9007199254740000 != 993 or (highlow as long) != 1 or highlow >> 32 != ($0_ffff_ffff as uquad)
+            return 21
+        return 0
+    }
+
+    sub addq(quad x, quad y) -> quad {
+        return x + y
+    }
+
+    sub two() -> quad, uquad {
+        return qneg * 2, umax - 1
+    }
 }"""
 )
 
@@ -919,6 +1024,84 @@ main {
         txt.nl()
     }
 }""", $$"255 65535 -123456 $fa %10101010\n007 00042 -128 -32768 -2147483648 4294967295\nbeef 1000000000000001 $12345678 true false 1000\n"),
+
+    "quad number formatting" to OutputProgram($$"""
+%import textio
+%zeropage basicsafe
+
+main {
+    uquad @shared uzero = 0
+    uquad @shared uone = 1
+    uquad @shared unines = 9999999999999999999 as uquad
+    uquad @shared uten19 = 10000000000000000000
+    uquad @shared umax = sys.MAX_UQUAD
+    quad @shared qzero = 0
+    quad @shared qminus1 = -1
+    quad @shared qbig = -5000000000
+    quad @shared qmin = sys.MIN_QUAD
+    quad @shared qmax = sys.MAX_QUAD
+    uquad @shared pattern = $fedc_ba98_7654_3210
+    uquad @shared topbit = $8000_0000_0000_0001
+
+    sub start() {
+        txt.print_u64(uzero)
+        txt.spc()
+        txt.print_u64(uone)
+        txt.spc()
+        txt.print_uq(unines)
+        txt.spc()
+        txt.print_uq(uten19)
+        txt.spc()
+        txt.print_u64(umax)
+        txt.nl()
+        txt.print_i64(qzero)
+        txt.spc()
+        txt.print_i64(qminus1)
+        txt.spc()
+        txt.print_q(qbig)
+        txt.spc()
+        txt.print_q(qmin)
+        txt.spc()
+        txt.print_i64(qmax)
+        txt.nl()
+        txt.print_uqhex(uone)
+        txt.spc()
+        txt.print_uqhex(pattern)
+        txt.spc()
+        txt.print_uqhex(umax)
+        txt.nl()
+        txt.print_uqbin(uone)
+        txt.nl()
+        txt.print_uqbin(topbit)
+        txt.nl()
+        txt.print_uqbin(umax)
+        txt.nl()
+        txt.print(conv.str_u64(umax))
+        txt.spc()
+        txt.print(conv.str_uq(uten19))
+        txt.spc()
+        txt.print(conv.str_i64(qmin))
+        txt.spc()
+        txt.print(conv.str_q(qbig))
+        txt.spc()
+        txt.print(conv.str_uqhex(topbit))
+        txt.spc()
+        txt.print(conv.str_uqbin(pattern))
+        txt.nl()
+        txt.print_ub(sys.SIZEOF_QUAD)
+        txt.spc()
+        txt.print_ub(sys.SIZEOF_UQUAD)
+        txt.spc()
+        txt.print_u64(sys.MIN_UQUAD)
+        txt.nl()
+    }
+}""", "0 1 9999999999999999999 10000000000000000000 18446744073709551615\n" +
+        "0 -1 -5000000000 -9223372036854775808 9223372036854775807\n" +
+        "0000000000000001 fedcba9876543210 ffffffffffffffff\n" +
+        "0".repeat(63) + "1\n" + "1" + "0".repeat(62) + "1\n" + "1".repeat(64) + "\n" +
+        "18446744073709551615 10000000000000000000 -9223372036854775808 -5000000000 8000000000000001 " +
+        "1111111011011100101110101001100001110110010101000011001000010000\n" +
+        "8 8 0\n"),
 
     "memory routines and sys.exit" to OutputProgram($$"""
 %import textio

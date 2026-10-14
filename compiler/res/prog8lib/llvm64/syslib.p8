@@ -14,6 +14,8 @@ sys {
     const ubyte SIZEOF_WORD  = sizeof(word)
     const ubyte SIZEOF_UWORD = sizeof(uword)
     const ubyte SIZEOF_LONG  = sizeof(long)
+    const ubyte SIZEOF_QUAD  = sizeof(quad)
+    const ubyte SIZEOF_UQUAD = sizeof(uquad)
     const ubyte SIZEOF_POINTER = sizeof(pointer)
     const ubyte SIZEOF_FLOAT = sizeof(float)
     const byte  MIN_BYTE     = -128
@@ -26,6 +28,10 @@ sys {
     const uword MAX_UWORD    = 65535
     const long  MIN_LONG     = -2147483648
     const long  MAX_LONG     = 2147483647
+    const quad  MIN_QUAD     = -9223372036854775808
+    const quad  MAX_QUAD     = 9223372036854775807
+    const uquad MIN_UQUAD    = 0
+    const uquad MAX_UQUAD    = $ffff_ffff_ffff_ffff
     ; MIN_FLOAT and MAX_FLOAT are defined in the floats module if imported
 
 

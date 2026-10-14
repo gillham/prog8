@@ -48,7 +48,7 @@ internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
             IMSyscall.BYTEARRAY_CONTAINS -> arrayContains(site, number, LlvmType.I8)
             IMSyscall.WORDARRAY_CONTAINS -> arrayContains(site, number, LlvmType.I16)
             IMSyscall.LONGARRAY_CONTAINS -> arrayContains(site, number, LlvmType.I32)
-            IMSyscall.QUADARRAY_CONTAINS -> throw IllegalArgumentException("${sub.label} searches a quad array, which the llvm64 target doesn't support yet")
+            IMSyscall.QUADARRAY_CONTAINS -> arrayContains(site, number, LlvmType.I64)
             IMSyscall.FLOATARRAY_CONTAINS -> arrayContains(site, number, LlvmType.Double)
             IMSyscall.CLAMP_UBYTE -> clamp(site, number, LlvmType.I8, signed = false)
             IMSyscall.CLAMP_BYTE -> clamp(site, number, LlvmType.I8, signed = true)
