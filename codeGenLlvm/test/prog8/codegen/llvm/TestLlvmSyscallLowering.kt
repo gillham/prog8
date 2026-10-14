@@ -3,7 +3,16 @@ package prog8.codegen.llvm
 import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
+import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
+import prog8.intermediate.IMSyscall
+import prog8.intermediate.IRStSymbolicReference
+import prog8.intermediate.IRVariableInitializer
+import java.nio.file.Path
+import kotlin.io.path.createTempDirectory
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
 
 
 class TestLlvmSyscallLowering: FunSpec({
@@ -152,6 +161,140 @@ class TestLlvmSyscallLowering: FunSpec({
         withClue("argument 0 is the program: ${lines[4]}") { lines[4].endsWith("/program") shouldBe true }
         lines.drop(5) shouldBe listOf("")
     }
+
+    test("the file syscalls call internal helpers with a stream and an fopen() mode, the filesystem syscalls call the C library directly") {
+        val module = TestProgram().apply { allFileSyscallsSub() }.module()
+        val lines = module.function("main.files").lines()
+        lines shouldHave "  %end.1 = call ptr @.file.load(ptr %r1.1, ptr %r2.1, i1 false)"
+        lines shouldHave "  %end.2 = call ptr @.file.load(ptr %r1.2, ptr %r2.2, i1 true)"
+        lines shouldHave "  %raw.1 = icmp ne i8 %r5.1, 0"
+        lines shouldHave "  %saved.1 = call i8 @.file.save(i1 %raw.1, ptr %r1.3, ptr %r2.3, i16 %r6.1)"
+        lines shouldHave "  %status.1 = call i32 @remove(ptr %r1.4)"
+        lines shouldHave "  %status.2 = call i32 @rename(ptr %r1.5, ptr %r1.6)"
+        lines shouldHave "  %cwd.1 = call ptr @getcwd(ptr @.sys.curdir.buf, i64 4096)"
+        lines shouldHave "  %status.3 = call i32 @mkdir(ptr %r1.7, i32 493)"
+        lines shouldHave "  %status.4 = call i32 @chdir(ptr %r1.8)"
+        lines shouldHave "  %status.5 = call i32 @rmdir(ptr %r1.9)"
+        lines shouldHave "  %opened.1 = call i8 @.file.open(ptr %r1.10, ptr @.file.mode.rb, ptr @.file.read_stream)"
+        lines shouldHave "  %opened.2 = call i8 @.file.open(ptr %r1.11, ptr @.file.mode.wb, ptr @.file.write_stream)"
+        lines shouldHave "  %byte.1 = call i16 @.file.read.byte()"
+        lines shouldHave "  %written.1 = call i8 @.file.write.byte(i8 %r5.2)"
+        lines shouldHave "  call void @.file.close(ptr @.file.read_stream)"
+        lines shouldHave "  call void @.file.close(ptr @.file.write_stream)"
+        lines shouldHave "  %r13.2 = trunc i64 %r13.1 to i32"
+        lines shouldHave "  %sought.1 = call i8 @.file.seek(i32 %r13.2)"
+        lines shouldHave "  %position.1 = call i32 @.file.tell()"
+        lines shouldHave "  %size.1 = call i32 @.file.size()"
+    }
+
+    test("the C library routines are declared with their 64-bit host signatures, and the streams start out as null pointers") {
+        val text = LlvmPrinter.print(TestProgram().apply { allFileSyscallsSub() }.module()).lines()
+        for (declaration in listOf("ptr @fopen(ptr, ptr)", "i32 @fclose(ptr)", "i32 @fgetc(ptr)", "i32 @fputc(i32, ptr)",
+                "i64 @fread(ptr, i64, i64, ptr)", "i64 @fwrite(ptr, i64, i64, ptr)", "i32 @fseek(ptr, i64, i32)", "i64 @ftell(ptr)",
+                "i32 @ferror(ptr)", "i32 @remove(ptr)", "i32 @rename(ptr, ptr)", "ptr @getcwd(ptr, i64)", "i32 @mkdir(ptr, i32)",
+                "i32 @chdir(ptr)", "i32 @rmdir(ptr)"))
+            text shouldHave "declare $declaration"
+        text shouldHave "@.file.read_stream = internal global ptr null"
+        text shouldHave "@.file.write_stream = internal global ptr null"
+        text shouldHave """@.file.mode.rb = private unnamed_addr constant [3 x i8] c"rb\00""""
+        text shouldHave """@.file.mode.wb = private unnamed_addr constant [3 x i8] c"wb\00""""
+        text shouldHave "@.sys.curdir.buf = internal global [4096 x i8] zeroinitializer"
+        for (helper in listOf("ptr @.file.load(ptr %name, ptr %address, i1 %raw)", "i8 @.file.save(i1 %raw, ptr %name, ptr %start, i16 %size)",
+                "i8 @.file.open(ptr %name, ptr %mode, ptr %stream)", "void @.file.close(ptr %stream)", "i16 @.file.read.byte()",
+                "i8 @.file.write.byte(i8 %byte)", "i8 @.file.seek(i32 %position)", "i32 @.file.tell()", "i32 @.file.size()"))
+            text shouldHave "define internal $helper {"
+    }
+
+    test("a program without file syscalls declares none of their C library routines") {
+        val text = LlvmPrinter.print(TestProgram().apply { silentSub() }.module())
+        for (name in listOf("fopen", "fclose", "remove", "getcwd", ".file."))
+            withClue(name) { (name in text) shouldBe false }
+    }
+
+    test("opening a file keeps the stream there was when fopen() fails, and closes it when the new one opens") {
+        TestProgram().apply { allFileSyscallsSub() }.module().function(".file.open").text() shouldBe """
+            define internal i8 @.file.open(ptr %name, ptr %mode, ptr %stream) {
+            entry:
+              %file = call ptr @fopen(ptr %name, ptr %mode)
+              %failed = icmp eq ptr %file, null
+              br i1 %failed, label %fail, label %opened
+
+            opened:
+              %previous = load ptr, ptr %stream
+              %open = icmp ne ptr %previous, null
+              br i1 %open, label %close, label %keep
+
+            close:
+              call i32 @fclose(ptr %previous)
+              br label %keep
+
+            keep:
+              store ptr %file, ptr %stream
+              ret i8 1
+
+            fail:
+              ret i8 0
+            }
+            """.trimIndent() + "\n"
+    }
+
+    test("reading a byte gives ${'$'}0100 plus the byte, like in the VM, or 0 at the end of the file and without a read stream") {
+        TestProgram().apply { allFileSyscallsSub() }.module().function(".file.read.byte").text() shouldBe """
+            define internal i16 @.file.read.byte() {
+            entry:
+              %file = load ptr, ptr @.file.read_stream
+              %open = icmp ne ptr %file, null
+              br i1 %open, label %read, label %none
+
+            read:
+              %char = call i32 @fgetc(ptr %file)
+              %end = icmp slt i32 %char, 0
+              br i1 %end, label %none, label %got
+
+            got:
+              %byte = trunc i32 %char to i16
+              %value = or i16 %byte, 256
+              ret i16 %value
+
+            none:
+              ret i16 0
+            }
+            """.trimIndent() + "\n"
+    }
+
+    test("a filesystem syscall gives a status byte only when the call site asks for one") {
+        val lines = TestProgram().apply { statusSub() }.module().function("main.status").lines()
+        lines shouldHave "  %status.1 = call i32 @remove(ptr %r1.1)"
+        lines shouldHave "  %status.2 = call i32 @remove(ptr %r1.2)"
+        lines shouldHave "  %ok.1 = icmp eq i32 %status.2, 0"
+        lines shouldHave "  %ok.2 = zext i1 %ok.1 to i8"
+        lines shouldHave "  store i8 %ok.2, ptr %r2.slot"
+        lines.count { "icmp eq i32 %status" in it } shouldBe 1
+    }
+
+    test("llvm-as accepts the file syscalls").config(enabledOrReasonIf = requiresLlvmAs) {
+        val (exitCode, output) = runLlvmAs(LlvmPrinter.print(TestProgram().apply { allFileSyscallsSub(); statusSub() }.module()))
+        withClue(output) { exitCode shouldBe 0 }
+    }
+
+    test("the file syscalls read, write and manage files like in the VM, in a native arm64 macOS program").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+        val directory = createTempDirectory("prog8-file-syscalls").toRealPath()
+        try {
+            val module = TestProgram().apply { fileSyscallChecks(directory) }.module().withMainCalling("main.check")
+            val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
+            withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            val data = (1..8).map { it.toByte() }
+            directory.resolve("data.prg").readBytes().toList().let {
+                it.size shouldBe 10
+                it.drop(2) shouldBe data
+            }
+            directory.resolve("data.bin").readBytes().toList() shouldBe data
+            directory.resolve("one.bin").readBytes().toList() shouldBe data.take(1)
+            directory.listDirectoryEntries().map { it.name }.sorted() shouldBe listOf("data.bin", "data.prg", "one.bin")
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
 })
 
 
@@ -260,3 +403,117 @@ private fun TestProgram.argumentsOutputSub() = sub("main.start", code = """
     syscall 1 (r12.b)
     return
     """)
+
+/** Every file and filesystem syscall once, with addresses in POINTER registers as the llvm64 library passes them. */
+private fun TestProgram.allFileSyscallsSub() {
+    string("main.name", "x.bin")
+    variable("main.buffer", DataType.arrayFor(BaseDataType.UBYTE, target), length = 8u)
+    sub("main.files", code = """
+        _main.files:
+        load.p r1.p,#main.name
+        load.p r2.p,#main.buffer
+        syscall 40 (r1.p, r2.p): r3.p
+        syscall 41 (r1.p, r2.p): r4.p
+        load.b r5.b,#0.b
+        load.w r6.w,#8.w
+        syscall 42 (r5.b, r1.p, r2.p, r6.w): r7.b
+        syscall 43 (r1.p)
+        syscall 44 (r1.p, r1.p)
+        syscall 48 (): r8.p
+        syscall 49 (r1.p)
+        syscall 50 (r1.p)
+        syscall 51 (r1.p)
+        syscall 52 (r1.p): r9.b
+        syscall 53 (r1.p): r10.b
+        syscall 54 (): r11.w
+        syscall 55 (r5.b): r12.b
+        syscall 56 ()
+        syscall 57 ()
+        load.l r13.l,#5.l
+        syscall 63 (r13.l): r14.b
+        syscall 64 (): r15.l
+        syscall 65 (): r16.l
+        return
+        """)
+}
+
+private fun TestProgram.statusSub() {
+    string("main.gone", "gone.bin")
+    sub("main.status", code = """
+        _main.status:
+        load.p r1.p,#main.gone
+        syscall 43 (r1.p)
+        syscall 43 (r1.p): r2.b
+        return
+        """)
+}
+
+/**
+ * main.check, which returns the number of the first check that fails, or 0. Its results are those of the VM (SysCalls.kt and
+ * VmSystemHandler.kt); it changes to the [directory] first, and works on files in there.
+ */
+private fun TestProgram.fileSyscallChecks(directory: Path) {
+    string("main.dir", directory.toString())
+    string("main.nodir", "no such directory")
+    string("main.unwritable", "no such directory/x.bin")
+    string("main.missing", "missing.bin")
+    string("main.prg", "data.prg")
+    string("main.bin", "data.bin")
+    string("main.one", "one.bin")
+    string("main.out", "out.txt")
+    string("main.renamed", "renamed.txt")
+    string("main.sub", "sub")
+    variable("main.bytes", DataType.arrayFor(BaseDataType.UBYTE, target),
+        IRVariableInitializer.Array((1..8).map { IRStSymbolicReference.Numeric(it.toDouble()) }), 8u)
+    variable("main.dst", DataType.arrayFor(BaseDataType.UBYTE, target), length = 12u)
+    variable("main.dst2", DataType.arrayFor(BaseDataType.UBYTE, target), length = 12u)
+    val compareStrings = IMSyscall.COMPARE_STRINGS.number
+    sub("main.check", returns = listOf(DataType.UBYTE), code = Checks().apply {
+        check("load.p ra.p,#main.nodir; syscall 50 (ra.p): rb.b", Is("rb.b", 0))
+        check("load.p ra.p,#main.dir; syscall 50 (ra.p): rb.b", Is("rb.b", 1))
+        check("syscall 48 (): ra.p; load.p rb.p,#main.dir; syscall $compareStrings (ra.p, rb.p): rc.b", Is("rc.b", 0))
+        // without streams, the stream syscalls give 0
+        check("syscall 54 (): ra.w; syscall 64 (): rb.l; syscall 65 (): rc.l; load.l rd.l,#0.l; syscall 63 (rd.l): re.b; " +
+            "load.b rf.b,#65.b; syscall 55 (rf.b): rg.b; syscall 56 (); syscall 57 ()",
+            Is("ra.w", 0), Is("rb.l", 0), Is("rc.l", 0), Is("re.b", 0), Is("rg.b", 0))
+        check("load.b ra.b,#0.b; load.p rb.p,#main.prg; load.p rc.p,#main.bytes; load.w rd.w,#8.w; syscall 42 (ra.b, rb.p, rc.p, rd.w): re.b", Is("re.b", 1))
+        check("load.b ra.b,#1.b; load.p rb.p,#main.bin; load.p rc.p,#main.bytes; load.w rd.w,#8.w; syscall 42 (ra.b, rb.p, rc.p, rd.w): re.b", Is("re.b", 1))
+        check("load.b ra.b,#1.b; load.p rb.p,#main.one; load.p rc.p,#main.bytes; load.w rd.w,#1.w; syscall 42 (ra.b, rb.p, rc.p, rd.w): re.b", Is("re.b", 1))
+        check("load.b ra.b,#1.b; load.p rb.p,#main.unwritable; load.p rc.p,#main.bytes; load.w rd.w,#1.w; syscall 42 (ra.b, rb.p, rc.p, rd.w): re.b", Is("re.b", 0))
+        // load skips the 2-byte header, load_raw doesn't; both give the end address
+        check("load.p ra.p,#main.prg; load.p rb.p,#main.dst; syscall 40 (ra.p, rb.p): rc.p; load.p rd.p,#main.dst+8; cmp.p rc.p,rd.p", ZeroIs(true))
+        check("loadm.b ra.b,[main.dst]; loadm.b rb.b,[main.dst+7]; loadm.b rc.b,[main.dst+8]", Is("ra.b", 1), Is("rb.b", 8), Is("rc.b", 0))
+        check("load.p ra.p,#main.bin; load.p rb.p,#main.dst2; syscall 41 (ra.p, rb.p): rc.p; load.p rd.p,#main.dst2+8; cmp.p rc.p,rd.p", ZeroIs(true))
+        check("loadm.b ra.b,[main.dst2]; loadm.b rb.b,[main.dst2+7]; loadm.b rc.b,[main.dst2+8]", Is("ra.b", 1), Is("rb.b", 8), Is("rc.b", 0))
+        // a null pointer for an error: no address to load to, a missing file, or not even a complete header
+        check("load.p ra.p,#main.prg; load.p rb.p,#0.p; syscall 40 (ra.p, rb.p): rc.p", Is("rc.p", 0))
+        check("load.p ra.p,#main.missing; load.p rb.p,#main.dst; syscall 40 (ra.p, rb.p): rc.p", Is("rc.p", 0))
+        check("load.p ra.p,#main.one; load.p rb.p,#main.dst; syscall 40 (ra.p, rb.p): rc.p", Is("rc.p", 0))
+        check("load.p ra.p,#main.one; load.p rb.p,#main.dst2; syscall 41 (ra.p, rb.p): rc.p; load.p rd.p,#main.dst2+1; cmp.p rc.p,rd.p", ZeroIs(true))
+        // reading, seeking and telling; a failed seek leaves the position as it was
+        check("load.p ra.p,#main.bin; syscall 52 (ra.p): rb.b; syscall 65 (): rc.l; syscall 64 (): rd.l; syscall 54 (): re.w; syscall 64 (): rf.l",
+            Is("rb.b", 1), Is("rc.l", 8), Is("rd.l", 0), Is("re.w", 0x101), Is("rf.l", 1))
+        check("load.l ra.l,#5.l; syscall 63 (ra.l): rb.b; syscall 54 (): rc.w; load.l rd.l,#-1.l; syscall 63 (rd.l): re.b; syscall 54 (): rf.w",
+            Is("rb.b", 1), Is("rc.w", 0x106), Is("re.b", 0), Is("rf.w", 0x107))
+        check("syscall 54 (): ra.w; syscall 54 (): rb.w; syscall 64 (): rc.l; syscall 65 (): rd.l; syscall 64 (): re.l",
+            Is("ra.w", 0x108), Is("rb.w", 0), Is("rc.l", 8), Is("rd.l", 8), Is("re.l", 8))
+        check("load.l ra.l,#0.l; syscall 63 (ra.l): rb.b; syscall 54 (): rc.w", Is("rb.b", 1), Is("rc.w", 0x101))
+        // a failed open keeps the stream there was, a successful one replaces it
+        check("load.p ra.p,#main.missing; syscall 52 (ra.p): rb.b; syscall 54 (): rc.w", Is("rb.b", 0), Is("rc.w", 0x102))
+        check("load.p ra.p,#main.prg; syscall 52 (ra.p): rb.b; syscall 65 (): rc.l", Is("rb.b", 1), Is("rc.l", 10))
+        check("syscall 56 (); syscall 54 (): ra.w; syscall 65 (): rb.l", Is("ra.w", 0), Is("rb.l", 0))
+        // writing, also to a file that exists, which gets truncated
+        check("load.p ra.p,#main.out; syscall 53 (ra.p): rb.b; load.b rc.b,#104.b; syscall 55 (rc.b): rd.b; load.b re.b,#105.b; " +
+            "syscall 55 (re.b): rf.b; syscall 57 (); syscall 55 (rc.b): rg.b",
+            Is("rb.b", 1), Is("rd.b", 1), Is("rf.b", 1), Is("rg.b", 0))
+        check("load.p ra.p,#main.out; syscall 53 (ra.p): rb.b; load.b rc.b,#88.b; syscall 55 (rc.b): rd.b; syscall 57 (); " +
+            "syscall 52 (ra.p): re.b; syscall 54 (): rf.w; syscall 54 (): rg.w; syscall 56 ()",
+            Is("rb.b", 1), Is("rd.b", 1), Is("re.b", 1), Is("rf.w", 0x158), Is("rg.w", 0))
+        // the filesystem syscalls with a status
+        check("load.p ra.p,#main.out; load.p rb.p,#main.renamed; syscall 44 (ra.p, rb.p): rc.b; syscall 52 (ra.p): rd.b", Is("rc.b", 1), Is("rd.b", 0))
+        check("load.p ra.p,#main.renamed; syscall 43 (ra.p): rb.b; syscall 43 (ra.p): rc.b", Is("rb.b", 1), Is("rc.b", 0))
+        check("load.p ra.p,#main.sub; syscall 49 (ra.p): rb.b; syscall 49 (ra.p): rc.b", Is("rb.b", 1), Is("rc.b", 0))
+        check("load.p ra.p,#main.sub; load.p rb.p,#main.dst; syscall 41 (ra.p, rb.p): rc.p", Is("rc.p", 0))
+        check("load.p ra.p,#main.sub; syscall 51 (ra.p): rb.b; syscall 51 (ra.p): rc.b", Is("rb.b", 1), Is("rc.b", 0))
+    }.subroutine())
+}

@@ -145,6 +145,15 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
         runtimeGlobals.getOrPut(name) { LlvmGlobal(name, type, LlvmValue.ZeroInitializer(type), isConstant = constant, linkage = LlvmLinkage.INTERNAL) }
         return LlvmValue.Global(name)
     }
+
+    /** A constant zero-terminated string of the generated code itself, such as an fopen() mode. */
+    fun runtimeString(name: String, text: String): LlvmValue.Global {
+        runtimeGlobals.getOrPut(name) {
+            val bytes = LlvmValue.StringConstant(text + "\u0000")
+            LlvmGlobal(name, bytes.type, bytes, isConstant = true, linkage = LlvmLinkage.PRIVATE, unnamedAddr = true)
+        }
+        return LlvmValue.Global(name)
+    }
 }
 
 

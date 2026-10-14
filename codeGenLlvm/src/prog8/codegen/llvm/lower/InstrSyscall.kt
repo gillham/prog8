@@ -25,15 +25,33 @@ private const val VM_PRINT_S = 3
 private const val VM_MEMCOPY = 36
 private const val VM_MEMSET = 37
 private const val VM_MEMSETW = 38
+private const val VM_LOAD = 40
+private const val VM_LOAD_RAW = 41
+private const val VM_SAVE = 42
+private const val VM_DELETE = 43
+private const val VM_RENAME = 44
+private const val VM_CURDIR = 48
+private const val VM_MKDIR = 49
+private const val VM_CHDIR = 50
+private const val VM_RMDIR = 51
+private const val VM_OPEN_FILE = 52
+private const val VM_OPEN_FILE_WRITE = 53
+private const val VM_READ_FILE_BYTE = 54
+private const val VM_WRITE_FILE_BYTE = 55
+private const val VM_CLOSE_FILE = 56
+private const val VM_CLOSE_FILE_WRITE = 57
+private const val VM_SEEK_FILE = 63
+private const val VM_TELL_FILE_POS = 64
+private const val VM_TELL_FILE_SIZE = 65
 private const val VM_GET_C = 69
 // the llvm64 library's own syscalls, numbered after the last one of the VM
 private const val VM_GET_ARGC = 71
 private const val VM_GET_ARGV = 72
 
 /**
- * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory copy and fill syscalls
- * of the virtual target's library, and the command line argument syscalls of the llvm64 library.
- * Searches, string comparisons, string output and argument lookups become internal helper functions.
+ * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory, file and filesystem
+ * syscalls of the virtual target's library, and the command line argument syscalls of the llvm64 library.
+ * Searches, string comparisons, string output, argument lookups and the file stream routines become internal helper functions.
  */
 internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
     val site = ins.requireCallSite()
@@ -45,6 +63,24 @@ internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
         VM_MEMCOPY -> memoryCopy(site, number)
         VM_MEMSET -> memorySet(site, number)
         VM_MEMSETW -> memorySetWords(site, number)
+        VM_LOAD -> load(site, number, raw = false)
+        VM_LOAD_RAW -> load(site, number, raw = true)
+        VM_SAVE -> save(site, number)
+        VM_DELETE -> fileSystem(site, number, Libc.REMOVE)
+        VM_RENAME -> fileSystem(site, number, Libc.RENAME)
+        VM_CURDIR -> currentDirectory(site, number)
+        VM_MKDIR -> fileSystem(site, number, Libc.MKDIR)
+        VM_CHDIR -> fileSystem(site, number, Libc.CHDIR)
+        VM_RMDIR -> fileSystem(site, number, Libc.RMDIR)
+        VM_OPEN_FILE -> openFile(site, number, write = false)
+        VM_OPEN_FILE_WRITE -> openFile(site, number, write = true)
+        VM_READ_FILE_BYTE -> readFileByte(site, number)
+        VM_WRITE_FILE_BYTE -> writeFileByte(site, number)
+        VM_CLOSE_FILE -> closeFile(site, number, write = false)
+        VM_CLOSE_FILE_WRITE -> closeFile(site, number, write = true)
+        VM_SEEK_FILE -> seekFile(site, number)
+        VM_TELL_FILE_POS -> tellFile(site, number, size = false)
+        VM_TELL_FILE_SIZE -> tellFile(site, number, size = true)
         VM_GET_C -> getChar(site, number)
         VM_GET_ARGC -> argumentCount(site, number)
         VM_GET_ARGV -> argument(site, number)
@@ -178,6 +214,92 @@ private fun FunctionLowering.memorySetWords(site: CallSite, number: Int) {
     val (address, count, value) = arguments(site, number, 3)
     val args = listOf(pointerValue(address), convert(read(count), LlvmType.I16), convert(read(value), LlvmType.I16))
     emit(LlvmInstruction.Call(null, builder.helperFunction(".memsetw") { setWordsHelper() }, args, LlvmType.Void))
+}
+
+/** LOAD(name, address) and LOAD_RAW(name, address): the end address of the file's data at the address, or null for an error. */
+private fun FunctionLowering.load(site: CallSite, number: Int, raw: Boolean) {
+    val (name, address) = arguments(site, number, 2)
+    val helper = builder.helperFunction(".file.load") { builder.loadHelper() }
+    val args = listOf(pointerValue(name), pointerValue(address), LlvmValue.IntConstant(if (raw) 1L else 0L, LlvmType.I1))
+    result(site, derive("end", LlvmType.Ptr) { LlvmInstruction.Call(it, helper, args, LlvmType.Ptr) })
+}
+
+/** SAVE(raw byte, name, start, size word): 1 when the file is written, which gets a 2-byte header first unless raw, else 0. */
+private fun FunctionLowering.save(site: CallSite, number: Int) {
+    val (raw, name, start, size) = arguments(site, number, 4)
+    val helper = builder.helperFunction(".file.save") { builder.saveHelper() }
+    val headerless = derive("raw", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.NE, it, convert(read(raw), LlvmType.I8), LlvmValue.IntConstant(0, LlvmType.I8)) }
+    val args = listOf(headerless, pointerValue(name), pointerValue(start), convert(read(size), LlvmType.I16))
+    result(site, derive("saved", LlvmType.I8) { LlvmInstruction.Call(it, helper, args, LlvmType.I8) })
+}
+
+/**
+ * DELETE(name), RENAME(name, new name), MKDIR(path), CHDIR(path) and RMDIR(path). The VM's give no result,
+ * but here a call site that asks for one gets 1 when the C routine succeeded, else 0.
+ */
+private fun FunctionLowering.fileSystem(site: CallSite, number: Int, routine: Libc) {
+    val paths = arguments(site, number, if (routine == Libc.RENAME) 2 else 1).map { pointerValue(it) }
+    // rwxr-xr-x, before the umask
+    val args = if (routine == Libc.MKDIR) paths + LlvmValue.IntConstant(0b111_101_101, LlvmType.I32) else paths
+    val status = derive("status", LlvmType.I32) { LlvmInstruction.Call(it, builder.libc(routine), args, LlvmType.I32) }
+    if (site.results.isNotEmpty()) {
+        val succeeded = derive("ok", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, status, LlvmValue.IntConstant(0, LlvmType.I32)) }
+        result(site, derive("ok", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, succeeded, LlvmType.I8) })
+    }
+}
+
+/** CURDIR(): the current directory in a static buffer, or null when it doesn't fit or getcwd() fails otherwise. */
+private fun FunctionLowering.currentDirectory(site: CallSite, number: Int) {
+    arguments(site, number, 0)
+    val buffer = builder.runtimeGlobal(".sys.curdir.buf", LlvmType.Array(CURDIR_BUFFER_SIZE, LlvmType.I8))
+    val args = listOf(buffer, LlvmValue.IntConstant(CURDIR_BUFFER_SIZE.toLong(), LlvmType.I64))
+    result(site, derive("cwd", LlvmType.Ptr) { LlvmInstruction.Call(it, builder.libc(Libc.GETCWD), args, LlvmType.Ptr) })
+}
+
+/** OPEN_FILE(name) and OPEN_FILE_WRITE(name): 1 when the file becomes the read or write stream, else 0, keeping the stream there was. */
+private fun FunctionLowering.openFile(site: CallSite, number: Int, write: Boolean) {
+    val (name) = arguments(site, number, 1)
+    val helper = builder.helperFunction(".file.open") { builder.openHelper() }
+    val mode = if (write) builder.runtimeString(".file.mode.wb", "wb") else builder.runtimeString(".file.mode.rb", "rb")
+    val args = listOf(pointerValue(name), mode, if (write) builder.writeStream() else builder.readStream())
+    result(site, derive("opened", LlvmType.I8) { LlvmInstruction.Call(it, helper, args, LlvmType.I8) })
+}
+
+/** CLOSE_FILE() and CLOSE_FILE_WRITE() close the read or write stream, if there is one. */
+private fun FunctionLowering.closeFile(site: CallSite, number: Int, write: Boolean) {
+    arguments(site, number, 0)
+    val helper = builder.helperFunction(".file.close") { builder.closeHelper() }
+    emit(LlvmInstruction.Call(null, helper, listOf(if (write) builder.writeStream() else builder.readStream()), LlvmType.Void))
+}
+
+/** READ_FILE_BYTE(): $0100 plus the next byte of the read stream, as in the VM, or 0 at its end, for an error or without a stream. */
+private fun FunctionLowering.readFileByte(site: CallSite, number: Int) {
+    arguments(site, number, 0)
+    val helper = builder.helperFunction(".file.read.byte") { builder.readByteHelper() }
+    result(site, derive("byte", LlvmType.I16) { LlvmInstruction.Call(it, helper, emptyList(), LlvmType.I16) })
+}
+
+/** WRITE_FILE_BYTE(byte): 1 when the byte is written to the write stream, else 0. */
+private fun FunctionLowering.writeFileByte(site: CallSite, number: Int) {
+    val (byte) = arguments(site, number, 1)
+    val helper = builder.helperFunction(".file.write.byte") { builder.writeByteHelper() }
+    val args = listOf(convert(read(byte), LlvmType.I8))
+    result(site, derive("written", LlvmType.I8) { LlvmInstruction.Call(it, helper, args, LlvmType.I8) })
+}
+
+/** SEEK_FILE(position long): 1 when the read stream moved to the position, else 0. */
+private fun FunctionLowering.seekFile(site: CallSite, number: Int) {
+    val (position) = arguments(site, number, 1)
+    val helper = builder.helperFunction(".file.seek") { builder.seekHelper() }
+    val args = listOf(convert(read(position), LlvmType.I32))
+    result(site, derive("sought", LlvmType.I8) { LlvmInstruction.Call(it, helper, args, LlvmType.I8) })
+}
+
+/** TELL_FILE_POS() and TELL_FILE_SIZE(): the position in the read stream, or the size of its file, as a long; 0 without a stream. */
+private fun FunctionLowering.tellFile(site: CallSite, number: Int, size: Boolean) {
+    arguments(site, number, 0)
+    val helper = if (size) builder.helperFunction(".file.size") { builder.sizeHelper() } else builder.helperFunction(".file.tell") { builder.tellHelper() }
+    result(site, derive(if (size) "size" else "position", LlvmType.I32) { LlvmInstruction.Call(it, helper, emptyList(), LlvmType.I32) })
 }
 
 /** `i8 (needle, ptr array, i16 count)`: 1 when one of the count elements equals the needle, else 0. */
@@ -341,6 +463,314 @@ private fun argumentHelper(count: LlvmValue.Global, arguments: LlvmValue.Global,
             LlvmInstruction.Load(argument, slot),
             LlvmInstruction.Ret(argument)),
         "absent" to listOf(LlvmInstruction.Ret(empty)))
+}
+
+// PATH_MAX of Linux; that of macOS is 1024
+private const val CURDIR_BUFFER_SIZE = 4096
+private const val LOAD_CHUNK_SIZE = 4096L
+private const val SEEK_SET = 0L
+private const val SEEK_END = 2L
+
+/** The C library routines of the file syscalls, with their signatures on 64-bit hosts, where long and size_t have 64 bits. */
+private enum class Libc(val returnType: LlvmType, vararg parameters: LlvmType) {
+    FOPEN(LlvmType.Ptr, LlvmType.Ptr, LlvmType.Ptr),
+    FCLOSE(LlvmType.I32, LlvmType.Ptr),
+    FGETC(LlvmType.I32, LlvmType.Ptr),
+    FPUTC(LlvmType.I32, LlvmType.I32, LlvmType.Ptr),
+    FREAD(LlvmType.I64, LlvmType.Ptr, LlvmType.I64, LlvmType.I64, LlvmType.Ptr),
+    FWRITE(LlvmType.I64, LlvmType.Ptr, LlvmType.I64, LlvmType.I64, LlvmType.Ptr),
+    FSEEK(LlvmType.I32, LlvmType.Ptr, LlvmType.I64, LlvmType.I32),
+    FTELL(LlvmType.I64, LlvmType.Ptr),
+    FERROR(LlvmType.I32, LlvmType.Ptr),
+    REMOVE(LlvmType.I32, LlvmType.Ptr),
+    RENAME(LlvmType.I32, LlvmType.Ptr, LlvmType.Ptr),
+    GETCWD(LlvmType.Ptr, LlvmType.Ptr, LlvmType.I64),
+    // mode_t has 16 bits on macOS, 32 on Linux; both take it extended to 32 bits
+    MKDIR(LlvmType.I32, LlvmType.Ptr, LlvmType.I32),
+    CHDIR(LlvmType.I32, LlvmType.Ptr),
+    RMDIR(LlvmType.I32, LlvmType.Ptr);
+
+    val parameterTypes = parameters.toList()
+}
+
+private fun LlvmFunctionBuilder.libc(routine: Libc): LlvmValue.Global =
+    LlvmValue.Global(externalFunction(routine.name.lowercase(), routine.returnType, routine.parameterTypes).name)
+
+/** The FILE pointer of the stream that the file syscalls read from, which is null when there is none. */
+private fun LlvmFunctionBuilder.readStream(): LlvmValue.Global = runtimeGlobal(".file.read_stream", LlvmType.Ptr)
+
+/** The FILE pointer of the stream that the file syscalls write to, which is null when there is none. */
+private fun LlvmFunctionBuilder.writeStream(): LlvmValue.Global = runtimeGlobal(".file.write_stream", LlvmType.Ptr)
+
+private fun i32(value: Long) = LlvmValue.IntConstant(value, LlvmType.I32)
+
+/** `i8 (ptr name, ptr mode, ptr stream)`: 1 when fopen() opens the file into the stream variable, closing the one it held, else 0. */
+private fun LlvmFunctionBuilder.openHelper(): LlvmFunction {
+    val name = LlvmValue.Local("name", LlvmType.Ptr)
+    val mode = LlvmValue.Local("mode", LlvmType.Ptr)
+    val stream = LlvmValue.Local("stream", LlvmType.Ptr)
+    val file = LlvmValue.Local("file", LlvmType.Ptr)
+    val failed = LlvmValue.Local("failed", LlvmType.I1)
+    val previous = LlvmValue.Local("previous", LlvmType.Ptr)
+    val open = LlvmValue.Local("open", LlvmType.I1)
+    return helper(".file.open", LlvmType.I8, listOf(name, mode, stream),
+        "entry" to listOf(
+            LlvmInstruction.Call(file, libc(Libc.FOPEN), listOf(name, mode), LlvmType.Ptr),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, failed, file, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(failed, "fail", "opened")),
+        "opened" to listOf(
+            LlvmInstruction.Load(previous, stream),
+            LlvmInstruction.Icmp(IcmpCondition.NE, open, previous, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(open, "close", "keep")),
+        "close" to listOf(
+            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(previous), LlvmType.I32),
+            LlvmInstruction.Br("keep")),
+        "keep" to listOf(
+            LlvmInstruction.Store(file, stream),
+            LlvmInstruction.Ret(LlvmValue.IntConstant(1, LlvmType.I8))),
+        "fail" to listOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I8))))
+}
+
+/** `void (ptr stream)`: fclose()s the file of the stream variable, if it holds one, and clears it. */
+private fun LlvmFunctionBuilder.closeHelper(): LlvmFunction {
+    val stream = LlvmValue.Local("stream", LlvmType.Ptr)
+    val file = LlvmValue.Local("file", LlvmType.Ptr)
+    val open = LlvmValue.Local("open", LlvmType.I1)
+    return helper(".file.close", LlvmType.Void, listOf(stream),
+        "entry" to listOf(
+            LlvmInstruction.Load(file, stream),
+            LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(open, "close", "done")),
+        "close" to listOf(
+            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(file), LlvmType.I32),
+            LlvmInstruction.Store(LlvmValue.NullPtr(), stream),
+            LlvmInstruction.Br("done")),
+        "done" to listOf(LlvmInstruction.Ret(null)))
+}
+
+/** `i16 ()`: $0100 plus the next byte of the read stream, or 0 at its end, for an error, or without a read stream. */
+private fun LlvmFunctionBuilder.readByteHelper(): LlvmFunction {
+    val file = LlvmValue.Local("file", LlvmType.Ptr)
+    val open = LlvmValue.Local("open", LlvmType.I1)
+    val char = LlvmValue.Local("char", LlvmType.I32)
+    val end = LlvmValue.Local("end", LlvmType.I1)
+    val byte = LlvmValue.Local("byte", LlvmType.I16)
+    val value = LlvmValue.Local("value", LlvmType.I16)
+    return helper(".file.read.byte", LlvmType.I16, emptyList(),
+        "entry" to listOf(
+            LlvmInstruction.Load(file, readStream()),
+            LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(open, "read", "none")),
+        "read" to listOf(
+            LlvmInstruction.Call(char, libc(Libc.FGETC), listOf(file), LlvmType.I32),
+            LlvmInstruction.Icmp(IcmpCondition.SLT, end, char, i32(0)),
+            LlvmInstruction.CondBr(end, "none", "got")),
+        "got" to listOf(
+            LlvmInstruction.Cast(CastOperator.TRUNC, byte, char, LlvmType.I16),
+            LlvmInstruction.BinaryOp(BinaryOperator.OR, value, byte, LlvmValue.IntConstant(0x100, LlvmType.I16)),
+            LlvmInstruction.Ret(value)),
+        "none" to listOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I16))))
+}
+
+/** `i8 (i8 byte)`: 1 when fputc() writes the byte to the write stream, else 0. */
+private fun LlvmFunctionBuilder.writeByteHelper(): LlvmFunction {
+    val byte = LlvmValue.Local("byte", LlvmType.I8)
+    val file = LlvmValue.Local("file", LlvmType.Ptr)
+    val open = LlvmValue.Local("open", LlvmType.I1)
+    val char = LlvmValue.Local("char", LlvmType.I32)
+    val written = LlvmValue.Local("written", LlvmType.I32)
+    val ok = LlvmValue.Local("ok", LlvmType.I1)
+    val result = LlvmValue.Local("result", LlvmType.I8)
+    return helper(".file.write.byte", LlvmType.I8, listOf(byte),
+        "entry" to listOf(
+            LlvmInstruction.Load(file, writeStream()),
+            LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(open, "write", "fail")),
+        "write" to listOf(
+            LlvmInstruction.Cast(CastOperator.ZEXT, char, byte, LlvmType.I32),
+            LlvmInstruction.Call(written, libc(Libc.FPUTC), listOf(char, file), LlvmType.I32),
+            LlvmInstruction.Icmp(IcmpCondition.SGE, ok, written, i32(0)),
+            LlvmInstruction.Cast(CastOperator.ZEXT, result, ok, LlvmType.I8),
+            LlvmInstruction.Ret(result)),
+        "fail" to listOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I8))))
+}
+
+/** `i8 (i32 position)`: 1 when fseek() moves the read stream to the position, else 0; as in the VM, a negative one fails. */
+private fun LlvmFunctionBuilder.seekHelper(): LlvmFunction {
+    val position = LlvmValue.Local("position", LlvmType.I32)
+    val file = LlvmValue.Local("file", LlvmType.Ptr)
+    val open = LlvmValue.Local("open", LlvmType.I1)
+    val offset = LlvmValue.Local("offset", LlvmType.I64)
+    val status = LlvmValue.Local("status", LlvmType.I32)
+    val ok = LlvmValue.Local("ok", LlvmType.I1)
+    val result = LlvmValue.Local("result", LlvmType.I8)
+    return helper(".file.seek", LlvmType.I8, listOf(position),
+        "entry" to listOf(
+            LlvmInstruction.Load(file, readStream()),
+            LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(open, "seek", "fail")),
+        "seek" to listOf(
+            LlvmInstruction.Cast(CastOperator.SEXT, offset, position, LlvmType.I64),
+            LlvmInstruction.Call(status, libc(Libc.FSEEK), listOf(file, offset, i32(SEEK_SET)), LlvmType.I32),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, ok, status, i32(0)),
+            LlvmInstruction.Cast(CastOperator.ZEXT, result, ok, LlvmType.I8),
+            LlvmInstruction.Ret(result)),
+        "fail" to listOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I8))))
+}
+
+/** `i32 ()`: the position in the read stream, truncated like the VM's, or 0 for an error or without a read stream. */
+private fun LlvmFunctionBuilder.tellHelper(): LlvmFunction {
+    val file = LlvmValue.Local("file", LlvmType.Ptr)
+    val open = LlvmValue.Local("open", LlvmType.I1)
+    val position = LlvmValue.Local("position", LlvmType.I64)
+    val valid = LlvmValue.Local("valid", LlvmType.I1)
+    val known = LlvmValue.Local("known", LlvmType.I64)
+    val result = LlvmValue.Local("result", LlvmType.I32)
+    return helper(".file.tell", LlvmType.I32, emptyList(),
+        "entry" to listOf(
+            LlvmInstruction.Load(file, readStream()),
+            LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(open, "tell", "none")),
+        "tell" to listOf(
+            LlvmInstruction.Call(position, libc(Libc.FTELL), listOf(file), LlvmType.I64),
+            LlvmInstruction.Icmp(IcmpCondition.SGE, valid, position, i64(0)),
+            LlvmInstruction.Select(known, valid, position, i64(0)),
+            LlvmInstruction.Cast(CastOperator.TRUNC, result, known, LlvmType.I32),
+            LlvmInstruction.Ret(result)),
+        "none" to listOf(LlvmInstruction.Ret(i32(0))))
+}
+
+/** `i32 ()`: the size of the read stream's file, from seeking to its end and back, or 0 for an error or without a read stream. */
+private fun LlvmFunctionBuilder.sizeHelper(): LlvmFunction {
+    val file = LlvmValue.Local("file", LlvmType.Ptr)
+    val open = LlvmValue.Local("open", LlvmType.I1)
+    val position = LlvmValue.Local("position", LlvmType.I64)
+    val seekable = LlvmValue.Local("seekable", LlvmType.I1)
+    val size = LlvmValue.Local("size", LlvmType.I64)
+    val valid = LlvmValue.Local("valid", LlvmType.I1)
+    val known = LlvmValue.Local("known", LlvmType.I64)
+    val result = LlvmValue.Local("result", LlvmType.I32)
+    return helper(".file.size", LlvmType.I32, emptyList(),
+        "entry" to listOf(
+            LlvmInstruction.Load(file, readStream()),
+            LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(open, "measure", "none")),
+        "measure" to listOf(
+            LlvmInstruction.Call(position, libc(Libc.FTELL), listOf(file), LlvmType.I64),
+            LlvmInstruction.Icmp(IcmpCondition.SGE, seekable, position, i64(0)),
+            LlvmInstruction.CondBr(seekable, "end", "none")),
+        "end" to listOf(
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, i64(0), i32(SEEK_END)), LlvmType.I32),
+            LlvmInstruction.Call(size, libc(Libc.FTELL), listOf(file), LlvmType.I64),
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, position, i32(SEEK_SET)), LlvmType.I32),
+            LlvmInstruction.Icmp(IcmpCondition.SGE, valid, size, i64(0)),
+            LlvmInstruction.Select(known, valid, size, i64(0)),
+            LlvmInstruction.Cast(CastOperator.TRUNC, result, known, LlvmType.I32),
+            LlvmInstruction.Ret(result)),
+        "none" to listOf(LlvmInstruction.Ret(i32(0))))
+}
+
+/**
+ * `ptr (ptr name, ptr address, i1 raw)`: the end address of the file's data, read to the address after skipping a 2-byte header
+ * unless raw, or null for an error. A hosted program can't use the address in a header, so a null address is an error too.
+ */
+private fun LlvmFunctionBuilder.loadHelper(): LlvmFunction {
+    val name = LlvmValue.Local("name", LlvmType.Ptr)
+    val address = LlvmValue.Local("address", LlvmType.Ptr)
+    val raw = LlvmValue.Local("raw", LlvmType.I1)
+    val nowhere = LlvmValue.Local("nowhere", LlvmType.I1)
+    val file = LlvmValue.Local("file", LlvmType.Ptr)
+    val failed = LlvmValue.Local("failed", LlvmType.I1)
+    val second = LlvmValue.Local("second", LlvmType.I32)
+    val truncated = LlvmValue.Local("truncated", LlvmType.I1)
+    val at = LlvmValue.Local("at", LlvmType.Ptr)
+    val count = LlvmValue.Local("count", LlvmType.I64)
+    val next = LlvmValue.Local("next", LlvmType.Ptr)
+    val more = LlvmValue.Local("more", LlvmType.I1)
+    val error = LlvmValue.Local("error", LlvmType.I32)
+    val broken = LlvmValue.Local("broken", LlvmType.I1)
+    return helper(".file.load", LlvmType.Ptr, listOf(name, address, raw),
+        "entry" to listOf(
+            LlvmInstruction.Icmp(IcmpCondition.EQ, nowhere, address, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(nowhere, "fail", "open")),
+        "open" to listOf(
+            LlvmInstruction.Call(file, libc(Libc.FOPEN), listOf(name, runtimeString(".file.mode.rb", "rb")), LlvmType.Ptr),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, failed, file, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(failed, "fail", "header")),
+        "header" to listOf(LlvmInstruction.CondBr(raw, "read", "skip")),
+        // the end of the file stays the end, so the second byte tells whether there were two
+        "skip" to listOf(
+            LlvmInstruction.Call(null, libc(Libc.FGETC), listOf(file), LlvmType.I32),
+            LlvmInstruction.Call(second, libc(Libc.FGETC), listOf(file), LlvmType.I32),
+            LlvmInstruction.Icmp(IcmpCondition.SLT, truncated, second, i32(0)),
+            LlvmInstruction.CondBr(truncated, "unloaded", "read")),
+        "read" to listOf(
+            LlvmInstruction.Phi(at, listOf(address to "header", address to "skip", next to "read")),
+            LlvmInstruction.Call(count, libc(Libc.FREAD), listOf(at, i64(1), i64(LOAD_CHUNK_SIZE), file), LlvmType.I64),
+            LlvmInstruction.GetElementPtr(next, LlvmType.I8, at, listOf(count), inBounds = false),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, more, count, i64(LOAD_CHUNK_SIZE)),
+            LlvmInstruction.CondBr(more, "read", "done")),
+        "done" to listOf(
+            LlvmInstruction.Call(error, libc(Libc.FERROR), listOf(file), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(file), LlvmType.I32),
+            LlvmInstruction.Icmp(IcmpCondition.NE, broken, error, i32(0)),
+            LlvmInstruction.CondBr(broken, "fail", "loaded")),
+        "loaded" to listOf(LlvmInstruction.Ret(next)),
+        "unloaded" to listOf(
+            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(file), LlvmType.I32),
+            LlvmInstruction.Br("fail")),
+        "fail" to listOf(LlvmInstruction.Ret(LlvmValue.NullPtr())))
+}
+
+/**
+ * `i8 (i1 raw, ptr name, ptr start, i16 size)`: 1 when the size bytes from the start address are written to the file, else 0.
+ * Unless raw, they come after a 2-byte header with the low 16 bits of the start address, as in the VM.
+ */
+private fun LlvmFunctionBuilder.saveHelper(): LlvmFunction {
+    val raw = LlvmValue.Local("raw", LlvmType.I1)
+    val name = LlvmValue.Local("name", LlvmType.Ptr)
+    val start = LlvmValue.Local("start", LlvmType.Ptr)
+    val size = LlvmValue.Local("size", LlvmType.I16)
+    val file = LlvmValue.Local("file", LlvmType.Ptr)
+    val failed = LlvmValue.Local("failed", LlvmType.I1)
+    val address = LlvmValue.Local("address", LlvmType.I64)
+    val low = LlvmValue.Local("low", LlvmType.I32)
+    val lsb = LlvmValue.Local("lsb", LlvmType.I32)
+    val shifted = LlvmValue.Local("shifted", LlvmType.I32)
+    val msb = LlvmValue.Local("msb", LlvmType.I32)
+    val count = LlvmValue.Local("count", LlvmType.I64)
+    val written = LlvmValue.Local("written", LlvmType.I64)
+    val complete = LlvmValue.Local("complete", LlvmType.I1)
+    val closed = LlvmValue.Local("closed", LlvmType.I32)
+    val flushed = LlvmValue.Local("flushed", LlvmType.I1)
+    val ok = LlvmValue.Local("ok", LlvmType.I1)
+    val result = LlvmValue.Local("result", LlvmType.I8)
+    return helper(".file.save", LlvmType.I8, listOf(raw, name, start, size),
+        "entry" to listOf(
+            LlvmInstruction.Call(file, libc(Libc.FOPEN), listOf(name, runtimeString(".file.mode.wb", "wb")), LlvmType.Ptr),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, failed, file, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(failed, "fail", "opened")),
+        "opened" to listOf(LlvmInstruction.CondBr(raw, "write", "header")),
+        "header" to listOf(
+            LlvmInstruction.Cast(CastOperator.PTRTOINT, address, start, LlvmType.I64),
+            LlvmInstruction.Cast(CastOperator.TRUNC, low, address, LlvmType.I32),
+            LlvmInstruction.BinaryOp(BinaryOperator.AND, lsb, low, i32(0xff)),
+            LlvmInstruction.Call(null, libc(Libc.FPUTC), listOf(lsb, file), LlvmType.I32),
+            LlvmInstruction.BinaryOp(BinaryOperator.LSHR, shifted, low, i32(8)),
+            LlvmInstruction.BinaryOp(BinaryOperator.AND, msb, shifted, i32(0xff)),
+            LlvmInstruction.Call(null, libc(Libc.FPUTC), listOf(msb, file), LlvmType.I32),
+            LlvmInstruction.Br("write")),
+        // fclose() reports the errors of writing what was still buffered
+        "write" to listOf(
+            LlvmInstruction.Cast(CastOperator.ZEXT, count, size, LlvmType.I64),
+            LlvmInstruction.Call(written, libc(Libc.FWRITE), listOf(start, i64(1), count, file), LlvmType.I64),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, complete, written, count),
+            LlvmInstruction.Call(closed, libc(Libc.FCLOSE), listOf(file), LlvmType.I32),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, flushed, closed, i32(0)),
+            LlvmInstruction.BinaryOp(BinaryOperator.AND, ok, complete, flushed),
+            LlvmInstruction.Cast(CastOperator.ZEXT, result, ok, LlvmType.I8),
+            LlvmInstruction.Ret(result)),
+        "fail" to listOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I8))))
 }
 
 private fun helper(name: String, returnType: LlvmType, parameters: List<LlvmValue.Local>, vararg blocks: Pair<String, List<LlvmInstruction>>) =

@@ -10,7 +10,6 @@ import prog8.code.core.DataType
 import prog8.intermediate.IMSyscall
 import prog8.intermediate.IRStSymbolicReference
 import prog8.intermediate.IRVariableInitializer
-import kotlin.math.abs
 
 
 class TestLlvmInstructionLowering: FunSpec({
@@ -167,66 +166,6 @@ class TestLlvmInstructionLowering: FunSpec({
     }
 })
 
-
-private sealed interface Expect
-private data class Is(val register: String, val value: Long) : Expect
-/** Exactly [value] when [tolerance] is 0, and never NaN. */
-private data class IsFloat(val register: String, val value: Double, val tolerance: Double = 0.0) : Expect
-private data class CarryIs(val set: Boolean) : Expect
-private data class ZeroIs(val set: Boolean) : Expect
-
-/**
- * Builds main.check, which returns 0, or the number of the first check whose results differ from the VM's.
- * A check is IR lines separated by "; ", using the registers ra..rh and fra..frh, which get their own numbers in every check.
- */
-private class Checks {
-    private val code = mutableListOf<String>()
-    private var count = 0
-
-    fun check(ir: String, vararg expected: Expect) {
-        val number = ++count
-        val fail = "main.check.fail$number"
-        fun numbered(text: String) = registerLetters.replace(text) { "${it.groupValues[1]}r${number * 10 + (it.groupValues[2][0] - 'a')}" }
-        code += ir.split("; ").map { numbered(it.trim()) }
-        for (expect in expected) {
-            when (expect) {
-                is Is -> {
-                    val type = expect.register.substringAfterLast('.')
-                    code += "cmpi.$type ${numbered(expect.register)},#${expect.value}.$type"
-                    code += "bstne $fail"
-                }
-                is IsFloat -> {
-                    val register = numbered(expect.register)
-                    if (expect.tolerance == 0.0) {
-                        code += compareFloat(register, expect.value, 0, fail)
-                        code += compareFloat(register, expect.value - maxOf(1.0, abs(expect.value)), 1, fail)
-                    } else {
-                        code += compareFloat(register, expect.value - expect.tolerance, 1, fail)
-                        code += compareFloat(register, expect.value + expect.tolerance, -1, fail)
-                    }
-                }
-                is CarryIs -> code += if (expect.set) "bstcc $fail" else "bstcs $fail"
-                is ZeroIs -> code += if (expect.set) "bstne $fail" else "bsteq $fail"
-            }
-        }
-    }
-
-    // FCOMP gives 0 for NaN as well, which a comparison with a lower bound catches
-    private fun compareFloat(register: String, bound: Double, order: Int, fail: String) =
-        listOf("load.f fr9000.f,#$bound.f", "fcomp.f r9000.b,$register,fr9000.f", "cmpi.b r9000.b,#$order.b", "bstne $fail")
-
-    fun subroutine(): String = buildString {
-        appendLine("_main.check:")
-        code.forEach { appendLine(it) }
-        appendLine("returni.b #0.b")
-        for (number in 1..count) {
-            appendLine("_main.check.fail$number:")
-            appendLine("returni.b #$number.b")
-        }
-    }
-}
-
-private val registerLetters = Regex("""\b(f?)r([a-h])(?=\.)""")
 
 private fun numbers(vararg values: Number) = IRVariableInitializer.Array(values.map { IRStSymbolicReference.Numeric(it.toDouble()) })
 
