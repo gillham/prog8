@@ -1240,4 +1240,209 @@ main {
             "constant address $it doesn't fit in 32 bits, which is the limit for constant addresses for now"
         }
     }
+
+    test("on llvm64 a uquad address takes signed operands, long values, strings and typed addresses") {
+        val src = $$"""
+            main {
+                ubyte @shared a = 7
+                ubyte[4] @shared buffer
+                long @shared longvar = -2
+                word @shared wordvar = -300
+                byte @shared bytevar = -5
+                quad @shared quadvar = -7
+                str text = "abc"
+                uquad[3] @shared typed = [&&a, &&buffer, 0]
+                uquad[3] @shared mixed = [&a, &&buffer, 0]
+
+                struct Holder {
+                    ubyte tag
+                    uquad addr
+                }
+
+                sub start() {
+                    uquad @shared u = &a
+                    bool @shared b = u == longvar or wordvar < u or u != bytevar or u >= quadvar
+                    b = u < 70000 or 100000 <= u or u == $ff0000 or u == -1 or -5000000000 > u
+                    u = u + $1_0000_0000 - quadvar
+                    u = quadvar + u
+                    u += $1_0000_0000
+                    u -= quadvar
+                    uquad @shared fromlong = longvar
+                    fromlong = longvar
+                    u = widened(longvar) + identity(longvar) + identity(buffer) + identity(text)
+                    b = u == "abc" or text != u or u < text
+                    ^^Holder holder = ^^Holder : [1, &&a]
+                }
+
+                sub identity(uquad value) -> uquad {
+                    return value
+                }
+
+                sub widened(long value) -> uquad {
+                    return value
+                }
+            }
+        """
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(LlvmTarget(), optimize, src, outputDir, errors, false).shouldNotBeNull()
+                errors.errors shouldBe emptyList()
+            }
+        }
+    }
+
+    test("a long goes with a uquad on llvm64, but not on the virtual target where pointers have 4 bytes") {
+        val src = """
+            main {
+                long @shared longvar = 5
+                sub start() {
+                    uquad @shared u = 7
+                    u = u + longvar
+                    bool @shared same = u == longvar
+                    uquad @shared v = longvar
+                }
+            }
+        """
+        compileText(LlvmTarget(), false, src, outputDir, writeAssembly = false).shouldNotBeNull()
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(VMTarget(), false, src, outputDir, errors, false) shouldBe null
+        errors.errors.map { it.substringAfter(": ") } shouldBe listOf(
+            "value type quad doesn't match target type uquad",
+            "left and right operands aren't the same type: uquad vs quad",
+            "left and right operands aren't the same type: uquad vs quad",
+            "value type long doesn't match target type uquad")
+    }
+
+    test("on llvm64 words, bytes and negative literals still don't convert to a uquad") {
+        val src = """
+            main {
+                word @shared wordvar = 5
+                byte @shared bytevar = 5
+                sub start() {
+                    uquad @shared u = wordvar
+                    uquad @shared v = bytevar
+                    uquad @shared w = -1
+                    u = wordvar
+                    w = -100000
+                }
+            }
+        """
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(LlvmTarget(), false, src, outputDir, errors, false) shouldBe null
+        errors.errors.map { it.substringAfter(": ") } shouldBe listOf(
+            "value type word doesn't match target type uquad",
+            "value type byte doesn't match target type uquad",
+            "value '-1.0' out of range for uquad",
+            "value type byte doesn't match target type uquad",
+            "value type word doesn't match target type uquad",
+            "value '-100000.0' out of range for uquad",
+            "value type long doesn't match target type uquad")
+    }
+
+    test("a quad loop variable only loops over an array of its own type, never over a range") {
+        val src = """
+            main {
+                uquad[3] @shared uarr = [1, 2, 3]
+                quad[3] @shared qarr = [1, 2, 3]
+                ubyte[3] @shared barr = [1, 2, 3]
+                sub start() {
+                    uquad u
+                    quad q
+                    for u in uarr { }
+                    for q in qarr { }
+                    for u in 0 to 10 { }
+                    for q in 1 to 5 step 2 { }
+                    for q in barr { }
+                    for u in "abc" { }
+                }
+            }
+        """
+        for (target in listOf(LlvmTarget(), VMTarget())) {
+            withClue(target.name) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(target, false, src, outputDir, errors, false) shouldBe null
+                errors.errors.map { it.substringAfter(": ") } shouldBe listOf(
+                    "uquad loop variable can't loop over a range, only over a uquad array",
+                    "quad loop variable can't loop over a range, only over a quad array",
+                    "quad loop variable can only loop over a quad array",
+                    "uquad loop variable can only loop over a uquad array")
+            }
+        }
+    }
+
+    test("quad loop variables are rejected on the targets without quads, like every quad variable") {
+        val src = """
+            main {
+                uquad[3] @shared uarr = [1, 2, 3]
+                quad[3] @shared qarr = [1, 2, 3]
+                sub start() {
+                    uquad u
+                    for u in uarr { }
+                    for q in qarr { }
+                }
+            }
+        """
+        for (target in listOf(LlvmTarget(), VMTarget()))
+            withClue(target.name) { compileText(target, false, src, outputDir, writeAssembly = false).shouldNotBeNull() }
+        for (target in listOf(Cx16Target(), C64Target(), Qemu68kTarget())) {
+            withClue(target.name) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(target, false, src, outputDir, errors, false) shouldBe null
+                // the two arrays, u, and the implicitly declared q
+                errors.errors.size shouldBe 4
+                errors.errors.forEach { it shouldContain "64-bit integer types (quad/uquad) are not supported on target ${target.name}" }
+            }
+        }
+    }
+
+    test("a typed pointer loop variable takes the addresses in a uquad array only on llvm64, where those are uquads") {
+        val src = """
+            main {
+                uquad[2] @shared addrs
+
+                struct Node {
+                    ubyte kind
+                }
+
+                sub start() {
+                    ^^ubyte p
+                    ^^Node n
+                    for p in addrs { }
+                    for n in addrs { }
+                }
+            }
+        """
+        compileText(LlvmTarget(), false, src, outputDir, writeAssembly = false).shouldNotBeNull()
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(VMTarget(), false, src, outputDir, errors, false) shouldBe null
+        errors.errors.map { it.substringAfter(": ") } shouldBe List(2) { "pointer loop variable can only loop over pointers or unsigned words" }
+    }
+
+    test("a struct field indexes the bytes at its address when it has the address integer type of the target") {
+        fun src(fieldType: String) = """
+            main {
+                struct Node {
+                    ubyte kind
+                    $fieldType data
+                }
+
+                sub start() {
+                    ^^Node node = ^^Node : [1, 0]
+                    ubyte @shared v = node.data[1]
+                    node.data[2] = 9
+                    node.data[v] += 1
+                }
+            }
+        """
+        for ((target, addressType) in listOf(Cx16Target() to "uword", VMTarget() to "long", LlvmTarget() to "uquad"))
+            withClue(target.name) { compileText(target, false, src(addressType), outputDir, writeAssembly = false).shouldNotBeNull() }
+        for ((target, otherType) in listOf(Cx16Target() to "long", VMTarget() to "uquad", LlvmTarget() to "long")) {
+            withClue("${target.name} $otherType") {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(target, false, src(otherType), outputDir, errors, false) shouldBe null
+                errors.errors.count { it.endsWith("cannot array index on this field type") } shouldBe 3
+            }
+        }
+    }
 })

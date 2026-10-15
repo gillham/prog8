@@ -1,6 +1,7 @@
 package prog8tests.codegeneration
 
 import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldNotBeEmpty
 import io.kotest.matchers.longs.shouldBeLessThan
@@ -356,6 +357,45 @@ class TestExecution6502 : FunSpec({
         machine.assertMemory(0x030B, 0)
         machine.assertMemory(5010, 101)
         machine.assertMemory(5011, 0)
+    }
+
+    test("arithmetic on the elements of a pointer to untyped pointers changes the addresses by the given amount") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+            %zeropage basicsafe
+
+            main {
+                ^^pointer @shared pp = 4000
+                &ubyte poweroff = $f203
+                &uword moved = $0300
+                ubyte @shared i = 1
+                ubyte @shared k = 3
+
+                sub start() {
+                    pp[0] = 5000
+                    pp[i] = 6000
+                    pp[0] += 2
+                    pp[i] += k
+                    pp[i]++
+                    pp^^ += 1
+                    pp++
+                    moved = pp
+                    pp^^ -= 5
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        val compileResult = compileText(Cx16Target(), false, src, outputDir)
+        val machine = compileResult!!.simulate()
+        machine.assertMemory(4000, 5003 and 0xff)
+        machine.assertMemory(4001, 5003 shr 8)
+        machine.assertMemory(4002, 5999 and 0xff)
+        machine.assertMemory(4003, 5999 shr 8)
+        machine.assertMemory(0x0300, 4002 and 0xff)
+        machine.assertMemory(0x0301, 4002 shr 8)
     }
 
     test("serial output") {
@@ -1054,5 +1094,99 @@ class TestExecution6502 : FunSpec({
         machine.assertMemory(0x3003, 0x12)      // lsw($1234) high
         machine.assertMemory(0x3004, 0x00)      // msw($1234) low
         machine.assertMemory(0x3005, 0x00)      // msw($1234) high
+    }
+
+    test("a uword address dereferenced with ^^ reads and writes the byte at that address") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+            %zeropage basicsafe
+
+            main {
+                &ubyte poweroff = $f203
+                &ubyte result = $02
+
+                sub start() {
+                    uword @shared p = $0300
+                    ubyte @shared i = 1
+                    @($0300) = 2
+                    result = p^^
+                    p++
+                    p^^ = 20
+                    p^^ += 5
+                    p^^++
+                    p^^ -= i
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+                machine.assertMemory(0x02, 2)
+                machine.assertMemory(0x0301, 25)
+            }
+        }
+    }
+
+    test("an inlined subroutine computes with a pointer argument as its integer parameter, and with an integer argument as its pointer parameter") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+            %zeropage basicsafe
+
+            main {
+                &ubyte poweroff = $f203
+                &ubyte failures = $02
+                uword[4] @shared @nosplit wordarray = [1, 2, 3, 4]
+
+                struct Node {
+                    ubyte a
+                    uword b
+                    ^^Node next
+                }
+
+                sub start() {
+                    ^^Node @shared np = $2000
+                    uword @shared address = $2000
+                    failures = 0
+                    if ident(np) + 1 - (np as uword) != 1
+                        failures |= 1
+                    if plus1(np) - (np as uword) != 1
+                        failures |= 2
+                    if ident(wordarray) + 1 - &wordarray != 1
+                        failures |= 4
+                    if plus1(wordarray) - &wordarray != 1
+                        failures |= 8
+                    if ident(&&wordarray) + 1 - &wordarray != 1
+                        failures |= 16
+                    if (nextnode(address) as uword) - address != sizeof(Node)
+                        failures |= 32
+                    poweroff = 1
+                }
+
+                sub ident(uword a) -> uword {
+                    return a
+                }
+
+                sub plus1(uword a) -> uword {
+                    return a + 1
+                }
+
+                sub nextnode(^^Node n) -> ^^Node {
+                    return n + 1
+                }
+            }
+        """.trimIndent()
+
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+                machine.assertMemory(0x02, 0)
+            }
+        }
     }
 })

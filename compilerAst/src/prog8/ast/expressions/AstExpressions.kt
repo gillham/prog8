@@ -230,7 +230,7 @@ class BinaryExpression(
                     // ptrA - ptrB : the number of elements of the pointed-to type between the two pointers (C-style), as a target-sized address/count type
                     InferredTypes.knownFor(program.target.pointerType.base)
                 }
-                else if(isSignedAddressOffset(operator, leftDt, rightDt, program.target)) {
+                else if(isSignedAddressOperand(operator, leftDt, rightDt, program.target)) {
                     InferredTypes.knownFor(program.target.pointerType.base)
                 }
                 else {
@@ -322,13 +322,16 @@ class BinaryExpression(
         (operator in CommutativeOperators) && (right.isSimple || left.isSimple)
 
     companion object {
-        /** With 8-byte pointers an address is a uquad: a signed integer added to or subtracted from it is an offset, sign extended as in pointer arithmetic. */
-        fun isSignedAddressOffset(operator: String, leftDt: InferredTypes.InferredType, rightDt: InferredTypes.InferredType, target: ICompilationTarget): Boolean {
+        /**
+         * With 8-byte pointers an address is a uquad: a signed integer added to, subtracted from or compared with it
+         * is sign extended to a uquad, as in pointer arithmetic and pointer comparisons.
+         */
+        fun isSignedAddressOperand(operator: String, leftDt: InferredTypes.InferredType, rightDt: InferredTypes.InferredType, target: ICompilationTarget): Boolean {
             if(target.POINTER_MEM_SIZE<=4u)
                 return false
-            fun isSignedOffset(dt: InferredTypes.InferredType) = dt.isInteger && !dt.isQuad && dt.getOrUndef().isSigned
-            return (operator=="+" || operator=="-") && leftDt istype target.pointerType && isSignedOffset(rightDt)
-                    || operator=="+" && rightDt istype target.pointerType && isSignedOffset(leftDt)
+            fun isSigned(dt: InferredTypes.InferredType) = dt.isInteger && dt.getOrUndef().isSigned
+            return (operator=="+" || operator=="-" || operator in ComparisonOperators) && leftDt istype target.pointerType && isSigned(rightDt)
+                    || (operator=="+" || operator in ComparisonOperators) && rightDt istype target.pointerType && isSigned(leftDt)
         }
 
         fun commonDatatype(leftDt: DataType, rightDt: DataType,
@@ -574,7 +577,7 @@ class ArrayIndexedExpression(var plainarrayvar: IdentifierReference?,
         } else if(pointerderef!=null) {
             val dt= pointerderef!!.inferType(program).getOrUndef()
             return when {
-                dt.isString || dt.isUnsignedWord -> InferredTypes.knownFor(BaseDataType.UBYTE)
+                dt.isString || dt.isUnsignedWord || dt == program.target.pointerType -> InferredTypes.knownFor(BaseDataType.UBYTE)
                 dt.isArray -> InferredTypes.knownFor(dt.elementType())
                 dt.isPointer -> InferredTypes.knownFor(dt.dereference())
                 else -> InferredTypes.unknown()
@@ -1509,7 +1512,7 @@ class ArrayLiteral(val type: InferredTypes.InferredType,     // inferred because
 
             // if all values are numeric literals, just do the cast.
             // if not:
-            // if all values are numeric literals OR addressof OR identifiers, and the target type is WORD or UWORD,
+            // if all values are numeric literals OR addressof OR identifiers, and the target type is WORD or UWORD or the address integer type,
             //    do the cast for the numeric literals and leave the rest.
             // otherwise: return null (cast cannot be done)
 
@@ -1534,7 +1537,7 @@ class ArrayLiteral(val type: InferredTypes.InferredType,     // inferred because
                 }
                 return ArrayLiteral(InferredTypes.InferredType.known(targettype), castArray.toTypedArray(), position = position)
             }
-            else if(elementType.isWord && value.all { it is NumericLiteral || it is AddressOf || it is IdentifierReference}) {
+            else if((elementType.isWord || elementType == target.pointerType) && value.all { it is NumericLiteral || it is AddressOf || it is IdentifierReference}) {
                 val castArray = value.map {
                     when(it) {
                         is AddressOf -> it
@@ -2227,6 +2230,8 @@ class PtrDereference(
 
         val target = definingScope.lookup(chain) ?: return InferredTypes.unknown()
         return when (target) {
+            // a variable holding an untyped address dereferences to a byte, as a uword does (not yet a struct field)
+            is VarDecl if derefLast && target.datatype == program.target.pointerType -> InferredTypes.knownFor(BaseDataType.UBYTE)
             is VarDecl -> resultType(target.datatype)
             is StructFieldRef -> resultType(target.type)
             is Alias -> target.target.inferType(program)

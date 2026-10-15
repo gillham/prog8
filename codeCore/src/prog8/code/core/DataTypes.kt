@@ -494,6 +494,7 @@ class DataType private constructor(
         base == BaseDataType.ARRAY && sub == BaseDataType.POINTER -> memsizer.memorySize(BaseDataType.POINTER)
         sub!=null -> memsizer.memorySize(sub)
         subType!=null -> subType!!.memsize(memsizer)
+        base == BaseDataType.POINTER && subTypeFromAntlr == null -> throw IllegalArgumentException("a pointer without an element type has no element size")
         else -> memsizer.memorySize(base)
     }
 

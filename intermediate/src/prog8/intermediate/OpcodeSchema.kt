@@ -726,8 +726,8 @@ object OpcodeSchemas {
 
         for (opcode in listOf(Opcode.CLC, Opcode.SEC, Opcode.CLI, Opcode.SEI))
             define(opcode, "N", statusEffect = StatusEffect.SETS) { emptyList() }
-        define(Opcode.PUSH, "BWLF") { t -> listOf(reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE)) }
-        define(Opcode.POP, "BWLF") { t -> listOf(reg(fileOf(t), InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF)) }
+        define(Opcode.PUSH, "BWLFQ") { t -> listOf(reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE)) }
+        define(Opcode.POP, "BWLFQ") { t -> listOf(reg(fileOf(t), InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF)) }
         define(Opcode.PUSHST, "N", statusEffect = StatusEffect.READS) { emptyList() }
         define(Opcode.POPST, "N", statusEffect = StatusEffect.SETS) { emptyList() }
 

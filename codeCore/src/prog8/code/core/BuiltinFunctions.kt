@@ -184,11 +184,13 @@ val BuiltinFunctions: Map<String, FSignature> = mapOf(
     "push"          to FSignature(false, emptyArray(), FParam("value", BaseDataType.UBYTE, BaseDataType.BYTE, BaseDataType.BOOL)),
     "pushw"         to FSignature(false, emptyArray(), FParam("value", BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.POINTER)),
     "pushl"         to FSignature(false, emptyArray(), FParam("value", BaseDataType.LONG)),
+    "pushq"         to FSignature(false, emptyArray(), FParam("value", BaseDataType.QUAD, BaseDataType.UQUAD)),
     "pushf"         to FSignature(false, emptyArray(), FParam("value", BaseDataType.FLOAT)),
     "pushp"         to FSignature(false, emptyArray(), FParam("value", BaseDataType.POINTER)),
     "pop"           to FSignature(false, arrayOf(BaseDataType.UBYTE)),
     "popw"          to FSignature(false, arrayOf(BaseDataType.UWORD)),
     "popl"          to FSignature(false, arrayOf(BaseDataType.LONG)),
+    "popq"          to FSignature(false, arrayOf(BaseDataType.QUAD)),
     "popf"          to FSignature(false, arrayOf(BaseDataType.FLOAT)),
     "popp"          to FSignature(false, arrayOf(BaseDataType.POINTER)),
 )

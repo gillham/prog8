@@ -15,6 +15,18 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
 
     private val evaluator = ConstExprEvaluator()
 
+    /** As at runtime, a signed operand of a uquad address is first sign extended to 64 bits, see [BinaryExpression.isSignedAddressOperand]. */
+    private fun evaluate(left: NumericLiteral, operator: String, right: NumericLiteral): NumericLiteral {
+        if(BinaryExpression.isSignedAddressOperand(operator, InferredTypes.knownFor(left.type), InferredTypes.knownFor(right.type), program.target)) {
+            val addressType = program.target.pointerBaseType
+            return if(left.type==addressType)
+                evaluator.evaluate(left, operator, NumericLiteral.fromQuadBits(addressType, right.integerBits, right.position))
+            else
+                evaluator.evaluate(NumericLiteral.fromQuadBits(addressType, left.integerBits, left.position), operator, right)
+        }
+        return evaluator.evaluate(left, operator, right)
+    }
+
     override fun after(addressOf: AddressOf, parent: Node): Iterable<AstModification> {
         val constAddr = addressOf.constValue(program) ?: return noModifications
         return listOf(AstReplaceNode(addressOf, constAddr, parent))
@@ -277,7 +289,7 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
         // const fold when both operands are a const.
         // if in a chained comparison, that one has to be desugared first though.
         if(leftconst != null && rightconst != null) {
-            val result = evaluator.evaluate(leftconst, expr.operator, rightconst)
+            val result = evaluate(leftconst, expr.operator, rightconst)
             modifications += AstReplaceNode(expr, result, parent)
         }
 
@@ -563,7 +575,8 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
         val numval = decl.value as? NumericLiteral
         if(decl.type== VarDeclType.CONST && numval!=null) {
             val valueDt = numval.inferType(program)
-            if(valueDt issimpletype BaseDataType.LONG || decl.datatype.isLong) {
+            // the numericalvalue case leaves the long value of a quad constant a long
+            if((valueDt issimpletype BaseDataType.LONG && !decl.datatype.isQuad) || decl.datatype.isLong) {
                 return noModifications  // this is handled in the numericalvalue case
             }
             if(!(valueDt istype decl.datatype)) {

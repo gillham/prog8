@@ -167,6 +167,8 @@ class TestIRTextCodec: FunSpec({
         roundtrip("ffromuq.f fr1.f,r1.q")
         roundtrip("ftosq.f r1.q,fr1.f")
         roundtrip("ftouq.f r1.q,fr1.f")
+        roundtrip("push.q r1.q")
+        roundtrip("pop.q r2.q")
         IRTextCodec.parse("load.q r1.q,#-1.q").immediate shouldBe ImmediateOperand.QuadValue(-1L)
         IRTextCodec.parse("load.q r1.q,#18446744073709551615.q").immediate shouldBe ImmediateOperand.QuadValue(-1L)
         IRTextCodec.parse("load.q r1.q,#-9223372036854775808.q").immediate shouldBe ImmediateOperand.QuadValue(Long.MIN_VALUE)

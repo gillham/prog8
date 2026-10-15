@@ -145,6 +145,7 @@
       <item>pop</item>
       <item>popf</item>
       <item>popl</item>
+      <item>popq</item>
       <item>popw</item>
       <item>popp</item>
       <item>psg</item>
@@ -152,6 +153,7 @@
       <item>push</item>
       <item>pushf</item>
       <item>pushl</item>
+      <item>pushq</item>
       <item>pushw</item>
       <item>pushp</item>
       <item>rol</item>

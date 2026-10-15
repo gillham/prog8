@@ -5,6 +5,7 @@ import prog8.ast.expressions.*
 import prog8.ast.statements.*
 import prog8.ast.walk.*
 import prog8.code.core.CompilationOptions
+import prog8.code.core.DataType
 import prog8.code.core.IErrorReporter
 import prog8.code.core.InternalCompilerException
 
@@ -642,7 +643,7 @@ class Inliner(private val program: Program, private val options: CompilationOpti
                 val target = n.targetStatement(program.builtinFunctions)
                 if (target is VarDecl) {
                     val arg = paramMap[target]
-                    if (arg != null) return arg.copy()
+                    if (arg != null) return argumentAsParameter(arg, target.datatype)
                 }
             }
 
@@ -732,5 +733,14 @@ class Inliner(private val program: Program, private val options: CompilationOpti
         } catch (_: CannotInlineException) {
             null
         }
+    }
+
+    /** The argument converted to the parameter type, as the call does: arithmetic on an address differs between pointers and integers. */
+    private fun argumentAsParameter(arg: Expression, paramType: DataType): Expression {
+        val argType = arg.inferType(program)
+        return if(argType.isKnown && !(argType istype paramType) && (argType.isPointer || paramType.isPointer))
+            TypecastExpression(arg.copy(), paramType, false, arg.position)
+        else
+            arg.copy()
     }
 }

@@ -1,11 +1,16 @@
 package prog8tests.vm
 
+import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
+import prog8.ast.expressions.FunctionCallExpression
+import prog8.ast.expressions.TypecastExpression
 import prog8.ast.statements.FunctionCallStatement
+import prog8.ast.walk.IAstVisitor
+import prog8.code.core.DataType
 import prog8.code.target.Cx16Target
 import prog8.code.target.LlvmTarget
 import prog8.code.target.VMTarget
@@ -398,5 +403,113 @@ main {
         errors.errors.size shouldBe 2
         errors.errors.forEach { it shouldContain "64-bit integer types (quad/uquad) are not supported on target cx16" }
         compileText(VMTarget(), false, src, outputDir, writeAssembly = false) shouldNotBe null
+    }
+
+    test("pushq and popq move quads over the value stack with PUSH.q and POP.q") {
+        val src = $$"""
+main {
+    sub start() {
+        quad @shared q = -5000000000
+        uquad @shared u = $1234_5678_9abc_def0
+        ubyte @shared counter
+        pushq(q)
+        pushq(u)
+        counter++
+        u = popq() as uquad
+        q = popq()
+    }
+}"""
+        val start = irFor(src).instructionsOf("main.start")
+        start.withOpcode(Opcode.PUSH, IRDataType.QUAD).size shouldBe 2
+        start.withOpcode(Opcode.POP, IRDataType.QUAD).size shouldBe 2
+        start.count { it.opcode == Opcode.PUSH || it.opcode == Opcode.POP } shouldBe 4
+    }
+
+    test("pushq and popq are rejected where quads aren't supported") {
+        val src = """
+main {
+    sub start() {
+        pushq(5)
+        uword @shared w = popq() as uword
+    }
+}"""
+        val errors = ErrorReporterForTests()
+        compileText(Cx16Target(), false, src, outputDir, errors = errors, writeAssembly = false) shouldBe null
+        errors.errors.size shouldBe 2
+        errors.errors.forEach { it shouldContain "64-bit integer types (quad/uquad) are not supported on target cx16" }
+        compileText(VMTarget(), false, src, outputDir, writeAssembly = false) shouldNotBe null
+    }
+
+    test("pushp, popp and peekp become the push, pop and peek builtins of the target's pointer size") {
+        val src = """
+main {
+    ubyte[8] @shared slot
+    sub start() {
+        ^^ubyte @shared p = &&slot
+        pushp(p)
+        p = popp()
+        p = peekp(&&slot)
+    }
+}"""
+        for ((target, suffix) in listOf(Cx16Target() to "w", VMTarget() to "l", LlvmTarget() to "q")) {
+            withClue(target.name) {
+                val calls = mutableListOf<String>()
+                compileText(target, false, src, outputDir, writeAssembly = false)!!.compilerAst.entrypoint.accept(object : IAstVisitor {
+                    override fun visit(functionCallExpr: FunctionCallExpression) {
+                        calls += functionCallExpr.target.nameInSource.joinToString(".")
+                        super.visit(functionCallExpr)
+                    }
+                    override fun visit(functionCallStatement: FunctionCallStatement) {
+                        calls += functionCallStatement.target.nameInSource.joinToString(".")
+                        super.visit(functionCallStatement)
+                    }
+                })
+                calls shouldBe listOf("push$suffix", "pop$suffix", "peek$suffix")
+            }
+        }
+    }
+
+    test("on llvm64 pushp, popp and peekp move whole addresses as uquads, with PUSH.q, POP.q and 8-byte loads") {
+        val src = """
+main {
+    ubyte[8] @shared buf
+    ubyte[8] @shared slot
+
+    sub start() {
+        ^^ubyte p = &&buf
+        ubyte @shared counter
+        pushp(p)
+        counter++
+        uquad @shared address = popp()
+        counter++
+        address = peekp(&&slot)
+    }
+}"""
+        val result = compileText(LlvmTarget(), false, src, outputDir, writeAssembly = true)!!
+        val pushCall = result.compilerAst.entrypoint.statements.filterIsInstance<FunctionCallStatement>().single { it.target.nameInSource == listOf("pushq") }
+        (pushCall.args.single() as TypecastExpression).type shouldBe DataType.UQUAD
+        val start = IRFileReader().read(result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")).instructionsOf("main.start")
+        start.withOpcode(Opcode.PUSH, IRDataType.QUAD).size shouldBe 1
+        start.withOpcode(Opcode.POP, IRDataType.QUAD).size shouldBe 1
+        start.count { it.opcode == Opcode.PUSH || it.opcode == Opcode.POP } shouldBe 2
+        start.count { (it.opcode == Opcode.LOADI || it.opcode == Opcode.LOADM) && it.type == IRDataType.QUAD } shouldBe 1
+    }
+
+    test("pushp of a float is an argument type error on llvm64 too") {
+        val src = """
+%option enable_floats
+main {
+    sub start() {
+        float @shared f = 1.5
+        pushp(f)
+    }
+}"""
+        for (target in listOf(LlvmTarget(), VMTarget())) {
+            withClue(target.name) {
+                val errors = ErrorReporterForTests()
+                compileText(target, false, src, outputDir, errors = errors, writeAssembly = false) shouldBe null
+                errors.errors.single() shouldContain "argument 1 type mismatch, was: float"
+            }
+        }
     }
 })

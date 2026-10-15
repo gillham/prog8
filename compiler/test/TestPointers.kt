@@ -3982,4 +3982,34 @@ main {
         errors.errors.size shouldBe 1
         errors.errors[0] shouldContain "no such field"
     }
+
+    test("indexing a struct field of the target's address integer type indexes the bytes at the address it holds") {
+        fun src(addressType: DataType) = """
+main {
+    struct Node {
+        ubyte kind
+        $addressType data
+    }
+
+    sub start() {
+        ^^Node node = ^^Node : [1, 0]
+        ubyte @shared i = 1
+        ubyte @shared v = node.data[i]
+        node.data[2] = 9
+    }
+}"""
+        fun indexers(node: PtNode): List<PtArrayIndexer> =
+            listOfNotNull(node as? PtArrayIndexer) + node.children.flatMap { indexers(it) }
+        for ((target, addressType) in listOf(Cx16Target() to DataType.UWORD, VMTarget() to DataType.LONG, LlvmTarget() to DataType.UQUAD)) {
+            withClue(target.name) {
+                val result = compileText(target, false, src(addressType), outputDir, writeAssembly = true, assemble = false)!!
+                val found = indexers(result.codegenAst!!.entrypoint()!!)
+                found.size shouldBe 2
+                found.forEach {
+                    it.type shouldBe DataType.UBYTE
+                    it.pointerderef!!.type shouldBe addressType
+                }
+            }
+        }
+    }
 })

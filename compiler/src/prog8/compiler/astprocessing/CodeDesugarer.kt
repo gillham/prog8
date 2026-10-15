@@ -259,23 +259,22 @@ _after:
         }
 
         if(outerFunc==listOf("pushp")) {
-            // pushp adapts to pointer size: pushw on 16-bit targets, pushl on 32-bit
-            val pushName = if(target.POINTER_MEM_SIZE > 2u) "pushl" else "pushw"
-            // with 8-byte pointers the long register still holds the whole address, which pushl pushes as 8 bytes
-            val args = if(target.POINTER_MEM_SIZE > 4u) functionCall.args.map { TypecastExpression(it, DataType.LONG, false, it.position) as Expression }.toMutableList()
-                else functionCall.args
+            // pushp adapts to pointer size: pushw on 16-bit targets, pushl on 32-bit, pushq on 64-bit
+            val pushName = "push${target.pointerPeekPokeSuffix}"
             val newCall = FunctionCallStatement(
                 IdentifierReference(listOf(pushName), position),
-                args, false, position
+                functionCall.args, false, position
             )
             return listOf(AstReplaceNode(functionCall as Node, newCall, parent))
         }
         if(outerFunc==listOf("popp")) {
-            val popName = if(target.POINTER_MEM_SIZE > 2u) "popl" else "popw"
-            val newCall = FunctionCallExpression(
+            val popName = "pop${target.pointerPeekPokeSuffix}"
+            val popCall = FunctionCallExpression(
                 IdentifierReference(listOf(popName), position),
                 mutableListOf(), position
             )
+            // popq gives a signed quad, but an address is a uquad
+            val newCall = if(target.POINTER_MEM_SIZE > 4u) TypecastExpression(popCall, DataType.UQUAD, true, position) else popCall
             return listOf(AstReplaceNode(functionCall as Node, newCall, parent))
         }
         if(outerFunc==listOf("pokep")) {
@@ -356,10 +355,11 @@ _after:
         }
         if(functionCallExpr.target.nameInSource==listOf("peekp")) {
             val peekName = "peek${target.pointerPeekPokeSuffix}"
-            val newCall = FunctionCallExpression(
+            val peekCall = FunctionCallExpression(
                 IdentifierReference(listOf(peekName), functionCallExpr.position),
                 functionCallExpr.args.toMutableList(), functionCallExpr.position
             )
+            val newCall = if(target.POINTER_MEM_SIZE > 4u) TypecastExpression(peekCall, DataType.UQUAD, true, functionCallExpr.position) else peekCall
             return listOf(AstReplaceNode(functionCallExpr, newCall, parent))
         }
         return noModifications
@@ -617,6 +617,7 @@ _after:
                 // a uword or long only holds a string's address where pointers have 2 or 4 bytes
                 leftDt issimpletype BaseDataType.UWORD && rightDt issimpletype BaseDataType.STR || leftDt issimpletype BaseDataType.STR && rightDt issimpletype BaseDataType.UWORD -> target.POINTER_MEM_SIZE <= 4u
                 leftDt issimpletype BaseDataType.LONG && rightDt issimpletype BaseDataType.STR || leftDt issimpletype BaseDataType.STR && rightDt issimpletype BaseDataType.LONG -> target.POINTER_MEM_SIZE == 4u
+                leftDt issimpletype BaseDataType.UQUAD && rightDt issimpletype BaseDataType.STR || leftDt issimpletype BaseDataType.STR && rightDt issimpletype BaseDataType.UQUAD -> target.POINTER_MEM_SIZE > 4u
                 leftDt.isPointer && leftDt.getOrUndef().sub == BaseDataType.UBYTE -> rightDt issimpletype BaseDataType.STR
                 rightDt.isPointer && rightDt.getOrUndef().sub == BaseDataType.UBYTE -> leftDt issimpletype BaseDataType.STR
                 else -> false
@@ -976,11 +977,12 @@ _after:
     override fun after(deref: PtrDereference, parent: Node): Iterable<AstModification> {
         val isLHS = parent is AssignTarget
         val varDt = (deref.firstTarget() as? VarDecl)?.datatype
-        val isRawAddressHolder = varDt?.isUnsignedWord==true || (target.POINTER_MEM_SIZE > 2u && varDt==target.pointerType)
+        val isAddressInteger = target.POINTER_MEM_SIZE > 2u && varDt==target.pointerType
+        val isRawAddressHolder = varDt?.isUnsignedWord==true || isAddressInteger
         if(isRawAddressHolder || (varDt?.isPointer==true && varDt.sub?.isByte==true)) {
             // replace  ptr^^   by  @(ptr)    when ptr is raw address holder or ^^byte
             val identifier = IdentifierReference(deref.chain, deref.position)
-            if(isLHS && varDt.sub==BaseDataType.UBYTE) {
+            if(isLHS && (varDt.sub==BaseDataType.UBYTE || isAddressInteger)) {
                 val memwrite = DirectMemoryWrite(identifier, deref.position)
                 return listOf(AstReplaceNode(deref, memwrite, parent))
             } else if(!isLHS) {

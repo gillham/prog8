@@ -434,6 +434,14 @@ class TestDataType: FunSpec({
         }
     }
 
+    test("the size of a pointer type is the size of its element, and a pointer without an element type has none") {
+        for ((target, pointerSize) in listOf(Cx16Target() to 2, VMTarget() to 4, LlvmTarget() to 8)) {
+            DataType.pointer(BaseDataType.UWORD).size(target) shouldBe 2
+            DataType.pointer(BaseDataType.POINTER).size(target) shouldBe pointerSize
+            shouldThrow<IllegalArgumentException> { DataType.forDt(BaseDataType.POINTER).size(target) }
+        }
+    }
+
     test("smaller integers widen to quad without loss, and only the unsigned ones to uquad") {
         for (dt in listOf(DataType.UBYTE, DataType.BYTE, DataType.UWORD, DataType.WORD, DataType.LONG))
             dt.isAssignableTo(DataType.QUAD) shouldBe true

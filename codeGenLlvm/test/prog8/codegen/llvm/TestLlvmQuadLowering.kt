@@ -116,6 +116,17 @@ class TestLlvmQuadLowering: FunSpec({
         lines shouldHave "  store i64 0, ptr %addr.3, align 1"
     }
 
+    test("PUSH.q and POP.q move all 8 bytes of a quad over the value stack") {
+        val lines = focused.function("main.stackq").lines()
+        lines shouldHave "  %sp.2 = getelementptr i8, ptr @.stack.data, i64 %sp.1"
+        lines shouldHave "  store i64 %r1.2, ptr %sp.2, align 1"
+        lines shouldHave "  %sp.3 = add i64 %sp.1, 8"
+        lines shouldHave "  %sp.5 = sub i64 %sp.4, 8"
+        lines shouldHave "  %sp.6 = getelementptr i8, ptr @.stack.data, i64 %sp.5"
+        lines shouldHave "  %r2.1 = load i64, ptr %sp.6, align 1"
+        lines shouldHave "  store i64 %r2.1, ptr %r2.slot"
+    }
+
     test("QUADARRAY_CONTAINS searches the 8-byte elements with an i64 helper") {
         focused.function("main.findq").lines() shouldHave "  %found.1 = call i8 @.contains.i64(i64 %r1.2, ptr %r2.3, i16 %r3.1)"
         val helper = focused.function(".contains.i64").lines()
@@ -371,6 +382,11 @@ private fun quadChecks() = QuadChecks().apply {
     check("$fill; loadm.q ra.q,[${quad(stored)}]; storem.q ra.q,[main.qmem+8]; $readBack",
         Equals("rf.q", quadMemory[0]), Equals("rg.q", stored), Equals("rh.q", quadMemory[2]))
 
+    // the value stack keeps all 64 bits of every quad, also below a byte
+    check("loadm.q ra.q,[${quad(stored)}]; push.q ra.q; loadm.q rb.q,[${quad(-2)}]; push.q rb.q; load.b rc.b,#7.b; push.b rc.b; " +
+            "pop.b rd.b; pop.q re.q; pop.q rf.q",
+        Equals("rd.b", 7), Equals("re.q", -2), Equals("rf.q", stored))
+
     // QUADARRAY_CONTAINS compares whole elements, and the initial values of quads keep all 64 bits
     val contains = IMSyscall.QUADARRAY_CONTAINS.number
     fun found(needle: Long, count: Int) = if (needle in quadArray.take(count)) 1L else 0L
@@ -479,6 +495,13 @@ private fun TestProgram.quadSubs() {
         loadr.q r10.q,r1.q
         lsri.q r10.q,#-1.q
         returnr.q r3.q
+        """)
+    sub("main.stackq", listOf("v" to DataType.QUAD), listOf(DataType.QUAD), """
+        _main.stackq:
+        loadm.q r1.q,[main.stackq.v]
+        push.q r1.q
+        pop.q r2.q
+        returnr.q r2.q
         """)
     sub("main.findq", listOf("q" to DataType.QUAD), listOf(DataType.UBYTE), """
         _main.findq:

@@ -29,7 +29,7 @@ internal class AstChecker(private val program: Program,
     }
 
     private fun checkQuadBuiltin(functionName: String?, args: List<Expression>, position: Position) {
-        if(functionName=="peekq" || functionName=="pokeq" || (functionName in setOf("lsb", "lsw", "msb", "msw") && args.any { it.inferType(program).isQuad }))
+        if(functionName in setOf("peekq", "pokeq", "pushq", "popq") || (functionName in setOf("lsb", "lsw", "msb", "msw") && args.any { it.inferType(program).isQuad }))
             checkQuadSupported(DataType.QUAD, position)
     }
 
@@ -325,6 +325,14 @@ internal class AstChecker(private val program: Program,
                             errors.warn("for loop using a long counter could be very slow", forLoop.position)
                     }
 
+                    BaseDataType.QUAD, BaseDataType.UQUAD -> {
+                        val dt = loopvar.datatype
+                        if(forLoop.iterable is RangeExpression)
+                            errors.err("$dt loop variable can't loop over a range, only over a $dt array", forLoop.position)
+                        else if(!iterableDt.isArray || iterableDt.elementType() != dt)
+                            errors.err("$dt loop variable can only loop over a $dt array", forLoop.position)
+                    }
+
                     BaseDataType.FLOAT -> {
                         // Looping over float variables is very inefficient because the loopvar is going to
                         // get copied over with new values all the time. We don't support this for now.
@@ -334,10 +342,12 @@ internal class AstChecker(private val program: Program,
 
                     BaseDataType.POINTER -> {
                         if (!iterableDt.isUnsignedWord) {
-                            if (iterableDt.isPointerArray || iterableDt.isUnsignedWordArray || iterableDt.isLongArray) {
+                            // with 8-byte pointers a uquad array holds addresses, as a uword array does with 2-byte pointers
+                            val addressArray = options.compTarget.POINTER_MEM_SIZE > 4u && iterableDt.isUnsignedQuadArray
+                            if (iterableDt.isPointerArray || iterableDt.isUnsignedWordArray || iterableDt.isLongArray || addressArray) {
                                 val elementDt = iterableDt.elementType()
                                 if(loopvar.datatype != elementDt) {
-                                    if(!elementDt.isUnsignedWord)
+                                    if(!elementDt.isUnsignedWord && !addressArray)
                                         errors.err("loopvar type differs from the pointer types in the collection", forLoop.position)
                                 }
 
@@ -939,10 +949,13 @@ internal class AstChecker(private val program: Program,
     override fun visit(assignTarget: AssignTarget) {
         super.visit(assignTarget)
 
-        val memAddr = assignTarget.memoryAddress?.addressExpression?.constValue(program)?.number?.toLong()
-        if (memAddr != null) {
+        val constAddress = assignTarget.memoryAddress?.addressExpression?.constValue(program)
+        if (constAddress != null) {
+            val memAddr = constAddress.number.toLong()
             val maxAddr = if(options.compTarget.POINTER_MEM_SIZE > 2u) 0xFFFFFFFFL else 0xFFFFL
-            if (memAddr !in 0..maxAddr)
+            if(options.compTarget.POINTER_MEM_SIZE > 4u && isUnsupportedConstantAddress(constAddress))
+                errors.err(unsupportedConstantAddressMessage(constAddress), assignTarget.position)
+            else if (memAddr !in 0..maxAddr)
                 errors.err("address out of range", assignTarget.position)
         }
 
@@ -2251,6 +2264,8 @@ internal class AstChecker(private val program: Program,
                 if (target.name == "peekf" || target.name == "pokef")
                     errors.err("floating point used, but that is not enabled via options", position)
             }
+            if(target.name.startsWith("peek") || target.name.startsWith("poke"))
+                args.firstOrNull()?.let { checkConstantMemoryAddress(it) }
 
             if(target.name=="callfar" || target.name=="callfar2") {
                 if(!options.compTarget.supportsBankedCalls) {
@@ -2557,6 +2572,8 @@ internal class AstChecker(private val program: Program,
     override fun visit(memread: DirectMemoryRead) {
         if(!allowedMemoryAccessAddressExpression(memread.addressExpression, program))
             errors.err("invalid address type for memory access", memread.position)
+        else
+            checkConstantMemoryAddress(memread.addressExpression)
 
         val pointervar = memread.addressExpression as? IdentifierReference
         if(pointervar!=null)
@@ -2587,6 +2604,17 @@ internal class AstChecker(private val program: Program,
 
     private fun unsupportedConstantAddressMessage(value: NumericLiteral) =
         "constant address ${value.valueText} doesn't fit in 32 bits, which is the limit for constant addresses for now"
+
+    /** The code generators clamp a constant memory address that isn't an unsigned 32-bit number, so that is an error. */
+    private fun checkConstantMemoryAddress(address: Expression) {
+        if(options.compTarget.POINTER_MEM_SIZE <= 2u)
+            return
+        val value = address.constValue(program) ?: return
+        if(options.compTarget.POINTER_MEM_SIZE > 4u && isUnsupportedConstantAddress(value))
+            errors.err(unsupportedConstantAddressMessage(value), address.position)
+        else if(value.type.isInteger && value.integerBits !in 0L..0xFFFFFFFFL)
+            errors.err("address out of range", address.position)
+    }
 
     private fun allowedMemoryAccessAddressExpression(addressExpression: Expression, program: Program): Boolean {
         val dt = addressExpression.inferType(program)
@@ -3119,7 +3147,8 @@ internal class AstChecker(private val program: Program,
                     struct.fields.zip(args).forEachIndexed { index, (field, arg) ->
                         val expectedDt = field.type
                         val argDt = arg.inferType(program)
-                        if (argDt isNotAssignableTo expectedDt) {
+                        val addressForAddressField = argDt.isPointer && expectedDt == options.compTarget.pointerType
+                        if (argDt isNotAssignableTo expectedDt && !addressForAddressField) {
                             errors.err("value #${index + 1} has incompatible type $argDt for field '${field.name}' (expected $expectedDt)", arg.position)
                         }
                     }

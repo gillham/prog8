@@ -269,7 +269,7 @@ class Prog8TextDocumentService: TextDocumentService {
                     // Math
                     "abs", "clamp", "divmod", "gcd", "max", "min", "sgn", "sqrt",
                     // CPU Stack
-                    "push", "pushw", "pushl", "pushf", "pushp", "pop", "popw", "popl", "popf", "popp",
+                    "push", "pushw", "pushl", "pushq", "pushf", "pushp", "pop", "popw", "popl", "popq", "popf", "popp",
                     // Memory access
                     "peek", "peekw", "peekl", "peekq", "peekf", "peekbool",
                     "poke", "pokew", "pokel", "pokeq", "pokef", "pokebool",

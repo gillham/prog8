@@ -68,10 +68,12 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
             "push" -> funcPush(call)
             "pushw" -> funcPushW(call)
             "pushl" -> funcPushL(call)
+            "pushq" -> funcPushQ(call)
             "pushf" -> funcPushF(call)
             "pop" -> funcPop()
             "popw" -> funcPopW()
             "popl" -> funcPopL()
+            "popq" -> funcPopQ()
             "popf" -> funcPopF()
             "sizeof" -> throw AssemblyError("sizeof must have been replaced with a constant  ${call.position}")
             "offsetof" -> throw AssemblyError("offsetof must have been replaced with a constant  ${call.position}")
@@ -103,6 +105,14 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         return ExpressionCodeResult(result, IRDataType.BYTE, -1, -1)
     }
 
+    private fun funcPushQ(call: PtFunctionCall): ExpressionCodeResult {
+        val result = mutableListOf<IRCodeChunkBase>()
+        val tr = exprGen.translateExpression(call.args[0])
+        addToResult(result, tr, tr.resultReg, -1)
+        addInstr(result, IRInstructions.push(IRDataType.QUAD, tr.resultReg), null)
+        return ExpressionCodeResult(result, IRDataType.BYTE, -1, -1)
+    }
+
     private fun funcPushF(call: PtFunctionCall): ExpressionCodeResult {
         val result = mutableListOf<IRCodeChunkBase>()
         val tr = exprGen.translateExpression(call.args[0])
@@ -130,6 +140,13 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         val resultRegister = codeGen.registers.next(IRDataType.LONG)
         addInstr(result, IRInstructions.pop(IRDataType.LONG, resultRegister), null)
         return ExpressionCodeResult(result, IRDataType.BYTE, resultRegister, -1)
+    }
+
+    private fun funcPopQ(): ExpressionCodeResult {
+        val result = mutableListOf<IRCodeChunkBase>()
+        val resultRegister = codeGen.registers.next(IRDataType.QUAD)
+        addInstr(result, IRInstructions.pop(IRDataType.QUAD, resultRegister), null)
+        return ExpressionCodeResult(result, IRDataType.QUAD, resultRegister, -1)
     }
 
     private fun funcPopF(): ExpressionCodeResult {
@@ -299,7 +316,8 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         addToResult(result, left, left.resultReg, -1)
         addToResult(result, right, right.resultReg, -1)
         val resultReg = codeGen.registers.next(IRDataType.BYTE)
-        val addressDt = codeGen.addressDt
+        // with 8-byte pointers an address can be in a uquad register, whose type a LONG parameter would conflict with
+        val addressDt = if(codeGen.options.compTarget.POINTER_MEM_SIZE > 4u) IRDataType.POINTER else codeGen.addressDt
         result += codeGen.makeSyscall(IMSyscall.COMPARE_STRINGS, listOf(addressDt to left.resultReg, addressDt to right.resultReg), IRDataType.BYTE to resultReg)
         return ExpressionCodeResult(result, IRDataType.BYTE, resultReg, -1)
     }

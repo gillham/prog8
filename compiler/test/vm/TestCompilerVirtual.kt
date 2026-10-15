@@ -16,6 +16,7 @@ import prog8.ast.statements.Assignment
 import prog8.code.SymbolNames
 import prog8.code.target.C64Target
 import prog8.code.target.Cx16Target
+import prog8.code.target.Qemu68kTarget
 import prog8.code.target.VMTarget
 import prog8.intermediate.*
 import prog8.vm.VmRunner
@@ -2048,6 +2049,124 @@ main {
         val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
         VmRunner().runAndTestProgram(virtfile.readText(), false) { vm ->
             vm.memory.getSW(allocations["main.value"]!!) shouldBe (-14).toShort()
+        }
+    }
+
+    test("typed addresses initialize the long arrays and struct fields that hold addresses where pointers have 4 bytes") {
+        val src = """
+main {
+    ubyte @shared first = 11
+    ubyte @shared second = 22
+    long[3] @shared typed = [&&first, &&second, 0]
+    long[3] @shared mixed = [&first, &&second, 0]
+    ubyte @shared failed = 99
+
+    struct Holder {
+        ubyte tag
+        long addr
+    }
+
+    sub start() {
+        failed = check()
+    }
+
+    sub check() -> ubyte {
+        if typed[0] != &first or @(typed[1]) != 22 or typed[2] != 0 or mixed[0] != &first or mixed[1] != &second
+            return 1
+        ^^Holder holder = ^^Holder : [5, &&second]
+        if holder.addr != &second or @(holder.addr) != 22
+            return 2
+        return 0
+    }
+}"""
+        compileText(Qemu68kTarget(), false, src, outputDir, writeAssembly = false) shouldNotBe null
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+                val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+                val irProgram = IRFileReader().read(virtfile)
+                val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+                VmRunner().runAndTestProgram(virtfile.readText(), false) { vm ->
+                    vm.memory.getUB(allocations["main.failed"]!!) shouldBe 0u
+                }
+            }
+        }
+    }
+
+    test("a long struct field indexes the bytes at the address it holds where pointers have 4 bytes") {
+        val src = $$"""
+main {
+    ubyte[8] @shared buf = [1, 2, 3, 4, 5, 6, 7, 8]
+    ubyte[8] @shared buf2 = [10, 20, 30, 40, 50, 60, 70, 80]
+    ubyte @shared failed = 99
+
+    struct Node {
+        ubyte kind
+        long data
+        long[2] items
+    }
+
+    struct Wrapper {
+        bool flag
+        ^^Node node
+    }
+
+    sub start() {
+        failed = check()
+    }
+
+    sub check() -> ubyte {
+        ^^Node node = ^^Node : [1, &buf, [5, 70000]]
+        ^^Wrapper w = ^^Wrapper : [false, 0]
+        w.node = node
+        ubyte @shared i = 2
+        uword @shared wi = 3
+        ubyte v = node.data[1]
+        if v != 2 or node.data[i] != 3 or node.data[wi] != 4
+            return 1
+        node.data[1] = 9
+        if buf[1] != 9
+            return 2
+        node.data[i] += 10
+        node.data[i]++
+        if buf[2] != 14
+            return 3
+        node.data[0] |= $80
+        if buf[0] != $81
+            return 4
+        node.data[5] = node.data[6] + node.data[7]
+        if buf[5] != 15
+            return 5
+        if w.node.data[3] != 4
+            return 6
+        w.node.data[4] = 77
+        if buf[4] != 77
+            return 7
+        node.data += 1
+        if node.data[0] != 9 or node.data != &buf + 1
+            return 8
+        node.data = &buf2
+        if node.data[i] != 30 or w.node.data[i + 1] != 40
+            return 9
+        if node.items[1] != 70000 or node.items[0] != 5
+            return 10
+        node.items[i - 1] = 99
+        if node.items[1] != 99 or node.items[0] != 5
+            return 11
+        return 0
+    }
+}"""
+        compileText(Qemu68kTarget(), false, src, outputDir, writeAssembly = true, assemble = false) shouldNotBe null
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+                val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+                val irProgram = IRFileReader().read(virtfile)
+                val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+                VmRunner().runAndTestProgram(virtfile.readText(), false) { vm ->
+                    vm.memory.getUB(allocations["main.failed"]!!) shouldBe 0u
+                }
+            }
         }
     }
 

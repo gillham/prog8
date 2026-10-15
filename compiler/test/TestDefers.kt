@@ -1,5 +1,6 @@
 package prog8tests.compiler
 
+import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.ints.shouldBeGreaterThan
@@ -10,7 +11,10 @@ import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import io.kotest.matchers.types.instanceOf
 import prog8.code.ast.*
+import prog8.code.core.BaseDataType
+import prog8.code.core.DataType
 import prog8.code.target.Cx16Target
+import prog8.code.target.LlvmTarget
 import prog8.code.target.Qemu68kTarget
 import prog8.code.target.VMTarget
 import prog8.intermediate.IRFileReader
@@ -274,6 +278,86 @@ main {
         popFacIdx shouldBeGreaterThan -1
         plyIdx shouldBeGreaterThan -1
         popFacIdx shouldBeLessThan plyIdx   // float restored before uword, so AY isn't clobbered
+    }
+
+    test("defer saves complex return values with the push and pop of their size, and addresses with those of the target's pointers") {
+        val src = """
+main {
+    ubyte[8] @shared buf
+    uquad @shared big = 5000000000
+    quad @shared negative = -5000000000
+    ubyte @shared counter
+
+    sub start() {
+        uquad @shared u = unsigned(1)
+        quad @shared q = signed(2)
+        ^^ubyte @shared p = address(3)
+    }
+
+    sub unsigned(ubyte i) -> uquad {
+        defer counter++
+        return big + i
+    }
+
+    sub signed(ubyte i) -> quad {
+        defer counter++
+        return negative - i
+    }
+
+    sub address(ubyte i) -> ^^ubyte {
+        defer counter++
+        return &&buf[i] + 1
+    }
+}"""
+        fun savedReturnValue(program: PtProgram, subName: String): Pair<PtFunctionCall, PtExpression> {
+            val sub = program.allBlocks().single { it.name == "main" }.children.filterIsInstance<PtSub>().single { it.name == "main.$subName" }
+            val group = sub.children.filterIsInstance<PtNodeGroup>().single()
+            val push = group.children.filterIsInstance<PtFunctionCall>().single { it.name.startsWith("push") }
+            return push to group.children.filterIsInstance<PtReturn>().single().children.single() as PtExpression
+        }
+        for ((target, addressSize) in listOf(VMTarget() to "l", LlvmTarget() to "q")) {
+            withClue(target.name) {
+                val program = compileText(target, false, src, outputDir, writeAssembly = true)!!.codegenAst!!
+                val (pushUnsigned, popUnsigned) = savedReturnValue(program, "unsigned")
+                pushUnsigned.name shouldBe "pushq"
+                (popUnsigned as PtTypeCast).type shouldBe DataType.UQUAD
+                (popUnsigned.value as PtFunctionCall).name shouldBe "popq"
+                val (pushSigned, popSigned) = savedReturnValue(program, "signed")
+                pushSigned.name shouldBe "pushq"
+                (popSigned as PtFunctionCall).name shouldBe "popq"
+                popSigned.type shouldBe DataType.QUAD
+                val (pushAddress, popAddress) = savedReturnValue(program, "address")
+                pushAddress.name shouldBe "push$addressSize"
+                (pushAddress.args.single() as PtTypeCast).type shouldBe target.pointerType
+                (popAddress as PtTypeCast).type shouldBe DataType.pointer(BaseDataType.UBYTE)
+                (popAddress.value as PtFunctionCall).name shouldBe "pop$addressSize"
+            }
+        }
+    }
+
+    test("defer saves an array value returned as an address with the push and pop of the target's pointer size") {
+        val src = """
+main {
+    ubyte[4] @shared first = [1, 2, 3, 4]
+    ubyte[4] @shared second = [5, 6, 7, 8]
+    ubyte @shared counter
+
+    sub start() {
+        long @shared l = pick(1)
+    }
+
+    sub pick(ubyte i) -> long {
+        defer counter++
+        return if i==1 first else second
+    }
+}"""
+        val program = compileText(VMTarget(), false, src, outputDir, writeAssembly = true)!!.codegenAst!!
+        val sub = program.allBlocks().single { it.name == "main" }.children.filterIsInstance<PtSub>().single { it.name == "main.pick" }
+        val group = sub.children.filterIsInstance<PtNodeGroup>().single()
+        val push = group.children.filterIsInstance<PtFunctionCall>().single { it.name.startsWith("push") }
+        push.name shouldBe "pushl"
+        push.args.single().type.isArray shouldBe true
+        (group.children.filterIsInstance<PtReturn>().single().children.single() as PtFunctionCall).name shouldBe "popl"
     }
 
     test("defer program-wide no overhead when unused") {

@@ -387,7 +387,11 @@ private val quadProgramsForTheVm = listOf(
     "quad and uquad conversions",
     "quad and uquad arrays, structs and memory",
     "pointer element updates and offsets beyond 64 KiB",
-    "lsb, msb, lsw and msw of quads and addresses, and signed offsets to addresses"
+    "lsb, msb, lsw and msw of quads and addresses, and signed offsets to addresses",
+    "arithmetic on the elements of a pointer to untyped pointers",
+    "pushq, popq, pushp, popp, pokep and peekp, and defer with quad, long and pointer return values",
+    "quad and uquad loop variables over quad and uquad arrays",
+    "never written quad and uquad variables become constants of their own type"
 )
 
 /** Complete programs that exit with 0, or with the number of the first check that fails. @shared inputs can't be constant folded. */
@@ -2100,6 +2104,656 @@ main {
         if @(&buffer + 100000 - 99999) != 2 or @(&buffer + -1 + longoffset) != 3
             return 13
         return 0
+    }
+}""",
+    "arithmetic on the elements of a pointer to untyped pointers" to """
+main {
+    ubyte[16] @shared buf
+    pointer[4] @shared slots
+
+    struct Holder {
+        ubyte tag
+        ^^pointer items
+    }
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ^^pointer pp = &slots
+        ubyte @shared i = 1
+        ubyte @shared k = 2
+        pp[i] = &buf
+        pp[i] += 2
+        if pp[i] != &buf + 2
+            return 1
+        pp[0] = &buf
+        pp[0] += 2
+        pp[0] = pp[0] + 2
+        if pp[0] != &buf + 4
+            return 2
+        pp[i] -= 1
+        pp[i]++
+        pp[i] += k
+        if pp[i] != &buf + 4
+            return 3
+        pp^^ += 1
+        if pp^^ != &buf + 5
+            return 4
+        pp++
+        if pp != &slots + sizeof(pointer) or pp^^ != &buf + 4
+            return 5
+        ^^Holder holder = ^^Holder : [7, &slots]
+        holder.items[1] += 2
+        if pp^^ != &buf + 6
+            return 6
+        return 0
+    }
+}""",
+    "pushq, popq, pushp, popp, pokep and peekp, and defer with quad, long and pointer return values" to $$"""
+main {
+    ubyte[16] @shared buf
+    ubyte[8] @shared slot
+    ubyte @shared counter
+    uquad @shared pattern = $1234_5678_9abc_def0
+    quad @shared negative = -5000000000
+    long @shared longvalue = -123456789
+
+    struct Node {
+        ubyte value
+        ^^Node next
+    }
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        pushq(pattern)
+        pushq(negative)
+        pushq(-2)
+        push(7)
+        if pop() != 7
+            return 1
+        if popq() != -2
+            return 2
+        if popq() != negative
+            return 3
+        uquad unsigned = popq() as uquad
+        if unsigned != pattern
+            return 4
+        pushq($1_0000_0001)
+        if (popq() as uquad) != $1_0000_0001
+            return 5
+        ^^ubyte p = &&buf[3]
+        ^^Node node = ^^Node : [5, 0]
+        pushp(p)
+        pushp(node)
+        ^^Node node2 = popp()
+        ^^ubyte p2 = popp()
+        if p2 != p or node2 != node or node2.value != 5
+            return 6
+        pokep(&&slot, p)
+        if peekp(&&slot) != p
+            return 7
+        if bigger(1) != pattern + 1 or counter != 1
+            return 8
+        if smaller(2) != negative - 2 or counter != 2
+            return 9
+        if longer(3) != longvalue + 3 or counter != 3
+            return 10
+        if address(4) != &&buf[4] + 1 or counter != 4
+            return 11
+        return 0
+    }
+
+    sub bigger(ubyte i) -> uquad {
+        defer counter++
+        return pattern + i
+    }
+
+    sub smaller(ubyte i) -> quad {
+        defer counter++
+        return negative - i
+    }
+
+    sub longer(ubyte i) -> long {
+        defer counter++
+        return longvalue + i
+    }
+
+    sub address(ubyte i) -> ^^ubyte {
+        defer counter++
+        return &&buf[i] + 1
+    }
+}""",
+    "64-bit addresses beyond 4 GiB through pushp, popp, pokep and peekp, and defer with computed untyped addresses" to $$"""
+main {
+    ubyte[16] @shared buf
+    ubyte[8] @shared slot
+    ubyte @shared counter
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ^^ubyte p = &&buf
+        uquad @shared offset = $1_0000_0000
+        ^^ubyte far = p + offset
+        pushp(far)
+        ^^ubyte back = popp()
+        if back != far
+            return 1
+        pushp(far)
+        uquad address = popp()
+        if address != (far as uquad) or address - (p as uquad) != offset
+            return 2
+        pokep(&&slot, far)
+        uquad peeked = peekp(&&slot)
+        if peeked != address
+            return 3
+        ^^ubyte peekedpointer = peekp(&&slot)
+        if peekedpointer != far
+            return 4
+        uquad @shared q = $1234_5678_9abc_def0
+        pushp(q)
+        uquad r = popp()
+        if r != q
+            return 5
+        pushp(&buf + 3)
+        if popp() != &buf + 3
+            return 6
+        ^^ubyte fromstr = untypedstr(2)
+        if fromstr != &&buf[2] or counter != 1
+            return 7
+        ^^ubyte frompointer = untypedpointer(5)
+        if frompointer != &&buf[5] or counter != 2
+            return 8
+        if fromarray(1) != &buf or fromarray(2) != &slot or counter != 4
+            return 9
+        return 0
+    }
+
+    sub untypedstr(ubyte i) -> str {
+        defer counter++
+        return &buf + i
+    }
+
+    sub untypedpointer(ubyte i) -> ^^ubyte {
+        defer counter++
+        return &buf + i
+    }
+
+    sub fromarray(ubyte i) -> uquad {
+        defer counter++
+        return if i==1 buf else slot
+    }
+}""",
+    "uquad addresses with signed operands, long values, strings and typed address initializers" to $$"""
+main {
+    ubyte[8] @shared buffer = [1, 2, 3, 4, 5, 6, 7, 8]
+    str text1 = "abc"
+    str text2 = "abd"
+    ubyte @shared first = 11
+    ubyte @shared second = 22
+    long @shared minus = -2
+    long @shared positive = 123456
+    word @shared wminus = -300
+    byte @shared bminus = -5
+    quad @shared qminus = -7
+    quad @shared qbig = $1_0000_0000
+    uquad[3] @shared typed = [&&first, &&second, 0]
+    uquad[3] @shared mixed = [&first, &&second, 0]
+
+    struct Holder {
+        ubyte tag
+        uquad addr
+    }
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ; a signed operand is sign extended to a uquad, so a negative one is above every address
+        uquad @shared u = &buffer
+        if u == minus or minus == u or u > minus or not (minus > u)
+            return 1
+        if u >= wminus or bminus <= u or u >= qminus or u == minus + 1
+            return 2
+        if u < 70000 or 100000 >= u or u == $ff0000 or u >= -5000000000
+            return 3
+        uquad @shared all = $ffff_ffff_ffff_ffff
+        if all != -1 or -1 != all or all != minus + 1 or all - 1 != minus or all < qminus
+            return 4
+        uquad @shared small = 123456
+        if small != positive or positive != small or small < positive or all == bminus
+            return 5
+        ; quad operands keep the address arithmetic in uquads
+        uquad far = u + $1_0000_0000
+        if far - u != $1_0000_0000 or far - qbig != u
+            return 6
+        far -= qbig
+        if far != u
+            return 7
+        far = qbig + u
+        far = far - qbig
+        far += $1_0000_0000
+        far -= $1_0000_0000
+        if far != u or @(u + 7 + qminus) != 1 or @(qminus + u + 9) != 3
+            return 8
+        ; a long converts to a uquad, sign extended
+        uquad fromlong = minus
+        if fromlong != $ffff_ffff_ffff_fffe
+            return 9
+        fromlong = positive
+        if fromlong != 123456 or widened(minus) != $ffff_ffff_ffff_fffe or identity(minus) != $ffff_ffff_ffff_fffe
+            return 10
+        ; a uquad holds the address of a string, which it is compared with
+        uquad text = text1
+        if text != "abc" or "abc" != text or text == "abd" or text >= "abd" or text != text1 or text == text2 or text2 <= text
+            return 11
+        if typed[0] != &first or @(typed[1]) != 22 or typed[2] != 0 or mixed[0] != &first or mixed[1] != &second
+            return 12
+        ^^Holder holder = ^^Holder : [5, &&second]
+        if holder.addr != &second or @(holder.addr) != 22
+            return 13
+        ; arrays, strings and subroutines are passed to a uquad as their address, also when the call is inlined
+        if identity(buffer) != &buffer or identity(text1) != &text1 or identity(widened) != &widened
+            return 14
+        if identity("abc") != "abc" or identity("abc") == 0
+            return 15
+        return 0
+    }
+
+    sub identity(uquad a) -> uquad {
+        return a
+    }
+
+    sub widened(long l) -> uquad {
+        return l
+    }
+}""",
+    "quad and uquad loop variables over quad and uquad arrays" to $$"""
+main {
+    uquad[3] @shared uarr = [1, $ffff_ffff_ffff_ff00, $1_0000_0000]
+    quad[4] @shared qarr = [-1, 5, -5000000000, 9223372036854775807]
+    uquad[1] @shared usingle = [$1234_5678_9abc_def0]
+    quad[1] @shared qsingle = [-5000000000]
+    quad looper
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ; every element once and in order: the elements are 8 bytes apart
+        uquad e
+        uquad usum = 0
+        ubyte count = 0
+        for e in uarr {
+            usum += e
+            count++
+            if count == 2 and e != $ffff_ffff_ffff_ff00
+                return 1
+        }
+        if usum != $0_ffff_ff01 or count != 3 or e != $1_0000_0000
+            return 2
+        quad qsum = 0
+        count = 0
+        for looper in qarr {
+            qsum += looper
+            count++
+        }
+        if qsum != 9223372031854775811 or count != 4 or looper != 9223372036854775807
+            return 3
+        uquad[4] localu = [10, 20, $10_0000_0000, 40]
+        quad[2] localq = [-7, -8]
+        usum = 0
+        for e in localu
+            usum += e
+        quad q
+        qsum = 0
+        for q in localq
+            qsum += q
+        if usum != $10_0000_0046 or qsum != -15 or q != -8
+            return 4
+        ; a single element is assigned without a loop, with all of its 64 bits
+        usum = 0
+        for e in usingle
+            usum += e
+        qsum = 0
+        for q in qsingle
+            qsum += q
+        if usum != $1234_5678_9abc_def0 or qsum != -5000000000
+            return 5
+        usum = 0
+        for x in uarr
+            usum ^= x
+        if usum != $ffff_fffe_ffff_ff01
+            return 6
+        count = 0
+        for e in uarr {
+            if e == 1
+                continue
+            count++
+            if e == $ffff_ffff_ffff_ff00
+                break
+        }
+        if count != 1
+            return 7
+        count = 0
+        for q in qarr step -1 {
+            if (count == 0 and q != 9223372036854775807) or (count == 3 and q != -1)
+                return 8
+            count++
+        }
+        if count != 4
+            return 9
+        count = 0
+        for e in uarr {
+            for q in localq
+                count++
+        }
+        if count != 6
+            return 10
+        return 0
+    }
+}""",
+    "uquad and typed pointer loop variables over uquad address arrays" to $$"""
+main {
+    ubyte @shared a = 11
+    ubyte @shared b = 22
+    ubyte @shared c = 33
+    uquad[3] @shared addrs = [&a, &b, &c]
+    uquad[2] @shared nodes
+
+    struct Node {
+        ubyte kind
+        uquad data
+    }
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ; the address array has native ptr elements, which a uquad loop variable gets as integers
+        uquad u
+        ubyte count = 0
+        for u in addrs {
+            if (count == 0 and u != &a) or (count == 1 and u != &b) or (count == 2 and u != &c)
+                return 1
+            count++
+        }
+        if count != 3 or u != &c
+            return 2
+        ; a uquad converts to a pointer, so a typed pointer loop variable can take the addresses
+        ^^ubyte p
+        ubyte sum = 0
+        for p in addrs
+            sum += p^^
+        if sum != 66 or p != &&c
+            return 3
+        ^^Node n1 = ^^Node : [1, 100]
+        ^^Node n2 = ^^Node : [2, $1_0000_0000]
+        nodes[0] = n1
+        nodes[1] = n2
+        ^^Node n
+        ubyte kinds = 0
+        uquad datas = 0
+        for n in nodes {
+            kinds = kinds * 10 + n.kind
+            datas += n.data
+        }
+        if kinds != 12 or datas != $1_0000_0064 or n != n2
+            return 4
+        uquad[2] localaddrs = [&b, &c]
+        sum = 0
+        for ^^ubyte lp in localaddrs
+            sum += lp^^
+        if sum != 55
+            return 5
+        uquad[2] localnodes
+        localnodes[0] = n2
+        localnodes[1] = n1
+        kinds = 0
+        for ^^Node ln in localnodes
+            kinds = kinds * 10 + ln.kind
+        if kinds != 21
+            return 6
+        return 0
+    }
+}""",
+    "uquad struct fields indexed like the address they hold" to $$"""
+main {
+    ubyte[8] @shared buf = [1, 2, 3, 4, 5, 6, 7, 8]
+    ubyte[8] @shared buf2 = [10, 20, 30, 40, 50, 60, 70, 80]
+
+    struct Node {
+        ubyte kind
+        uquad data
+        uquad[2] items
+    }
+
+    struct Wrapper {
+        bool flag
+        ^^Node node
+    }
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ^^Node node = ^^Node : [1, &buf, [5, $1_0000_0000]]
+        ^^Wrapper w = ^^Wrapper : [false, 0]
+        w.node = node
+        ubyte @shared i = 2
+        uword @shared wi = 3
+        ; a uquad field holds an address whose bytes it indexes, like a uquad variable
+        ubyte v = node.data[1]
+        if v != 2 or node.data[i] != 3 or node.data[wi] != 4
+            return 1
+        node.data[1] = 9
+        if buf[1] != 9
+            return 2
+        node.data[i] += 10
+        node.data[i]++
+        if buf[2] != 14
+            return 3
+        node.data[0] |= $80
+        if buf[0] != $81
+            return 4
+        node.data[5] = node.data[6] + node.data[7]
+        if buf[5] != 15
+            return 5
+        if w.node.data[3] != 4
+            return 6
+        w.node.data[4] = 77
+        if buf[4] != 77
+            return 7
+        node.data += 1
+        if node.data[0] != 9 or node.data != &buf + 1
+            return 8
+        node.data = &buf2
+        if node.data[i] != 30 or w.node.data[i + 1] != 40
+            return 9
+        ; an array field still indexes its uquad elements
+        if node.items[1] != $1_0000_0000 or node.items[0] != 5
+            return 10
+        node.items[i - 1] = 99
+        if node.items[1] != 99 or node.items[0] != 5
+            return 11
+        return 0
+    }
+}""",
+    "never written quad and uquad variables become constants of their own type" to $$"""
+main {
+    uquad gu = 70000
+    quad gq = -70000
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ; never written, so these become constants, of their own type and with their exact value
+        uquad u1 = 70000
+        uquad u2 = 1234567
+        uquad u3 = $12345
+        uquad u4 = $ff0000
+        uquad u5 = $1_0000_0000
+        uquad u6 = 255
+        quad q1 = -5
+        quad q2 = 70000
+        quad q3 = -70000
+        if gu != 70000 or u1 != 70000 or u2 != 1234567 or u3 != 74565 or u4 != 16711680 or u5 != 4294967296 or u6 != 255
+            return 1
+        if gq != -70000 or q1 != -5 or q2 != 70000 or q3 != -70000
+            return 2
+        uquad @shared ubig = 100000
+        quad @shared qbig = 100000
+        if u1 * ubig != 7000000000 or gu * ubig != 7000000000 or u2 << 32 != $12_d687_0000_0000 or u4 + u5 != $1_00ff_0000
+            return 3
+        if q2 * qbig != 7000000000 or q3 * qbig != -7000000000 or gq * qbig != -7000000000 or q1 * qbig * qbig != -50000000000
+            return 4
+        if q2 * q2 != 4900000000 or q3 * q2 != -4900000000 or u1 * u1 != 4900000000
+            return 5
+        return 0
+    }
+}""",
+    "uquad constants folded with signed operands as at runtime, and typed pointers compared with negative numbers" to $$"""
+main {
+    const uquad ALL = $ffff_ffff_ffff_ffff
+    const uquad FIVE = 5
+    const quad QMINUS = -7
+    const long LMINUS = -2
+    uquad @shared all = $ffff_ffff_ffff_ffff
+    uquad @shared five = 5
+    ubyte[4] @shared buf
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ; a signed operand is sign extended to 64 bits and compared unsigned, when folded as at runtime
+        if ALL != -1 or -1 != ALL or not (ALL == -1) or all != -1
+            return 1
+        if not (FIVE < -1) or FIVE >= -1 or -1 <= FIVE or not (five < -1)
+            return 2
+        if not (ALL > -2) or ALL < -2 or not (all > -2)
+            return 3
+        if ALL != QMINUS + 6 or not (ALL == LMINUS + 1) or ALL < QMINUS or not (FIVE < QMINUS)
+            return 4
+        ; and added or subtracted with 64-bit wraparound, giving a uquad
+        uquad x = ALL + -1
+        if x != $ffff_ffff_ffff_fffe or x != all + -1
+            return 5
+        uquad y = ALL - -1
+        if y != 0 or y != all - -1
+            return 6
+        uquad z = -1 + FIVE
+        if z != 4 or z != -1 + five
+            return 7
+        uquad w = FIVE + QMINUS
+        if w != $ffff_ffff_ffff_fffe or w != five + QMINUS or FIVE + LMINUS != 3 or FIVE - LMINUS != 7
+            return 8
+        const uquad SUM = ALL + -1
+        uquad[2] folded = [ALL + -2, FIVE + LMINUS]
+        if SUM != $ffff_ffff_ffff_fffe or folded[0] != $ffff_ffff_ffff_fffd or folded[1] != 3
+            return 9
+        ; a typed pointer compares with the 64-bit two's complement of a negative number
+        ^^ubyte p = &&buf
+        if p == -1 or -1 == p or p > -1 or -2 < p or not (p < -1)
+            return 10
+        p = all
+        if p != -1 or -1 != p or p == -2 or p != -5000000000 + 4999999999
+            return 11
+        ^^uword wp = all - 1
+        if wp != -2 or wp == -1 or wp >= -1 or not (wp > -3)
+            return 12
+        return 0
+    }
+}""",
+    "a uquad address dereferenced with ^^ reads and writes the byte at that address" to """
+main {
+    ubyte[4] @shared buf = [1, 2, 3, 4]
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        uquad @shared p = &buf + 1
+        ubyte @shared i = 1
+        if p^^ != 2
+            return 1
+        p^^ = 20
+        if buf[1] != 20
+            return 2
+        p^^ += 5
+        p^^++
+        if buf[1] != 26 or p^^ != 26
+            return 3
+        p++
+        p^^ -= i
+        if buf[2] != 2
+            return 4
+        ^^ubyte @shared bp = &&buf
+        bp^^ = 9
+        bp^^ += 1
+        bp^^++
+        if buf[0] != 11 or bp^^ != 11
+            return 5
+        return 0
+    }
+}""",
+    "inlined subroutines compute with pointer arguments as their integer parameters, and with integer arguments as their pointer parameters" to """
+main {
+    uword[4] @shared wordarray = [1, 2, 3, 4]
+
+    struct Node {
+        ubyte a
+        uword b
+        ^^Node next
+    }
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ^^Node np = ^^Node : [1, 2, 0]
+        uquad @shared address = np
+        if ident(np) + 1 - (np as uquad) != 1
+            return 1
+        if plus1(np) - (np as uquad) != 1
+            return 2
+        if ident(&&wordarray) + 1 - &wordarray != 1
+            return 3
+        if plus1(&&wordarray) - &wordarray != 1
+            return 4
+        if ident(wordarray) + 1 - &wordarray != 1
+            return 5
+        if (nextnode(address) as uquad) - address != sizeof(Node)
+            return 6
+        return 0
+    }
+
+    sub ident(uquad a) -> uquad {
+        return a
+    }
+
+    sub plus1(uquad a) -> uquad {
+        return a + 1
+    }
+
+    sub nextnode(^^Node n) -> ^^Node {
+        return n + 1
     }
 }"""
 )

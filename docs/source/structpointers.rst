@@ -74,6 +74,8 @@ because you don't need to manually switch between ``uword`` and ``long`` via con
 
 You can assign any other pointer type to an untyped pointer variable (``uword``, ``long``` or ``pointer``) without the need for an explicit cast.
 You can assign an untyped pointer to a typed pointer variable without the need for an explicit cast.
+A ``^^pointer`` points to addresses: it is a ``^^uword`` on the 6502 targets, a ``^^long`` on the m68k and virtual targets
+and a ``^^uquad`` on llvm64, so ``pp[i] += 2`` adds 2 to the address in element ``i``, while ``pp++`` moves on to the next address.
 Prog8 *typed pointers* better express the intent and better tell the compiler how to use the pointer. 
 These are preferred to be used in new code, and are explained below.
 

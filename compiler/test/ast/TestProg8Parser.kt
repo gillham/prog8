@@ -20,6 +20,7 @@ import prog8.code.core.*
 import prog8.code.source.ImportFileSystem
 import prog8.code.source.SourceCode
 import prog8.code.target.C64Target
+import prog8.code.target.LlvmTarget
 import prog8.code.target.VMTarget
 import prog8.code.target.encodings.PetsciiEncoding
 import prog8.parser.MultipleParseErrors
@@ -1327,13 +1328,17 @@ main {
                 }
             }
         """.trimIndent())
-        val module = parseModule(src, c64Target)
-        val selector = module.statements.filterIsInstance<Block>().single()
-            .statements.filterIsInstance<StructDecl>().single()
-        val choices = selector.fields.single { it.name == "choices" }
-        choices.type.base shouldBe BaseDataType.POINTER
-        choices.type.sub shouldBe BaseDataType.POINTER
-        choices.type.subType shouldBe null
+        // it points to the target's untyped pointer type, the address integer of the target's pointer size
+        for ((target, addressType) in listOf(c64Target to BaseDataType.UWORD, VMTarget() to BaseDataType.LONG, LlvmTarget() to BaseDataType.UQUAD)) {
+            withClue(target.name) {
+                val module = parseModule(src, target)
+                val selector = module.statements.filterIsInstance<Block>().single()
+                    .statements.filterIsInstance<StructDecl>().single()
+                val choices = selector.fields.single { it.name == "choices" }
+                choices.type shouldBe DataType.pointer(addressType)
+                choices.type.subType shouldBe null
+            }
+        }
     }
 
     test("'quad' and 'uquad' parse as the 64-bit integer types") {

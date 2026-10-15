@@ -241,11 +241,14 @@ class StatementOptimizer(private val program: Program,
                 val size = iterable.arraysize!!.constIndex()
                 if(size==1) {
                     // loop over array of length 1 -> just assign the single value
-                    val av = (iterable.value as ArrayLiteral).value[0].constValue(program)?.number
+                    val av = (iterable.value as ArrayLiteral).value[0].constValue(program)
                     if(av!=null) {
+                        // the Double number of a quad is inexact, and doesn't fit in an Int
+                        val value = if(av.type.isQuad) NumericLiteral.fromQuadBits(av.type, av.integerBits, iterable.position)
+                            else NumericLiteral.optimalInteger(av.number.toInt(), iterable.position)
                         val scope = AnonymousScope.empty(forLoop.position)
                         scope.statements.add(Assignment(
-                                AssignTarget(forLoop.loopVar, null, null, null, false, position = forLoop.position), NumericLiteral.optimalInteger(av.toInt(), iterable.position),
+                                AssignTarget(forLoop.loopVar, null, null, null, false, position = forLoop.position), value,
                                 AssignmentOrigin.OPTIMIZER, forLoop.position))
                         scope.statements.addAll(forLoop.body.statements)
                         return listOf(AstReplaceNode(forLoop, scope, parent))

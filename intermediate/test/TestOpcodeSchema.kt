@@ -147,13 +147,15 @@ class TestOpcodeSchema: FunSpec({
         slotType(Opcode.LSIGB, IRDataType.QUAD, InstructionSlot.DEST) shouldBe IRDataType.BYTE
         slotType(Opcode.FFROMUQ, IRDataType.FLOAT, InstructionSlot.SRC_A) shouldBe IRDataType.QUAD
         slotType(Opcode.FTOSQ, IRDataType.FLOAT, InstructionSlot.DEST) shouldBe IRDataType.QUAD
+        slotType(Opcode.PUSH, IRDataType.QUAD, InstructionSlot.SRC_A) shouldBe IRDataType.QUAD
+        slotType(Opcode.POP, IRDataType.QUAD, InstructionSlot.DEST) shouldBe IRDataType.QUAD
         val quadOpcodes = listOf(Opcode.LOAD, Opcode.LOADM, Opcode.LOADX, Opcode.LOADI, Opcode.STOREM, Opcode.STOREI,
             Opcode.STOREIM, Opcode.ADDR, Opcode.SUB, Opcode.MULSR, Opcode.DIV, Opcode.MODS, Opcode.ADDM, Opcode.AND,
             Opcode.XORR, Opcode.INV, Opcode.NEG, Opcode.LSLN, Opcode.ASRI, Opcode.LSR, Opcode.CMP, Opcode.CMPI,
-            Opcode.BGTS, Opcode.BGER, Opcode.RETURNI, Opcode.BITTST)
+            Opcode.BGTS, Opcode.BGER, Opcode.RETURNI, Opcode.BITTST, Opcode.PUSH, Opcode.POP)
         quadOpcodes.filter { IRDataType.QUAD !in OpcodeSchemas.typesFor(it) } shouldBe emptyList()
         val noQuadOpcodes = listOf(Opcode.SQRT, Opcode.SQUARE, Opcode.SGN, Opcode.ROL, Opcode.ROXR, Opcode.CONCAT,
-            Opcode.MSIGW, Opcode.PUSH, Opcode.LOADP_INC, Opcode.DIVMOD)
+            Opcode.MSIGW, Opcode.LOADP_INC, Opcode.DIVMOD)
         noQuadOpcodes.filter { IRDataType.QUAD in OpcodeSchemas.typesFor(it) } shouldBe emptyList()
     }
 

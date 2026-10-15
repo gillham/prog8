@@ -11,7 +11,7 @@ interface IMemSizer {
     val pointerBaseType: BaseDataType
         get() = if(POINTER_MEM_SIZE > 4u) BaseDataType.UQUAD else if(POINTER_MEM_SIZE > 2u) BaseDataType.LONG else BaseDataType.UWORD
 
-    /** The suffix of the peek and poke builtins that move a whole pointer: w, l or q for 2, 4 or 8 byte pointers. */
+    /** The suffix of the peek, poke, push and pop builtins that move a whole pointer: w, l or q for 2, 4 or 8 byte pointers. */
     val pointerPeekPokeSuffix: String
         get() = if(POINTER_MEM_SIZE > 4u) "q" else if(POINTER_MEM_SIZE > 2u) "l" else "w"
 
@@ -27,6 +27,10 @@ interface IMemSizer {
         val untyped = DataType.pointer(BaseDataType.UBYTE)
         return untypedPointerIsBytePointer && from.isPointer && to.isPointer && from != to && (from == untyped || to == untyped)
     }
+
+    /** Whether a value of type [from] converts implicitly, sign extended, into [to]: a long into the uquad address integer type of 8-byte pointers, as it does into a pointer. */
+    fun longConvertsToAddress(from: DataType, to: DataType): Boolean =
+        POINTER_MEM_SIZE > 4u && from.isLong && to == pointerType
 
     /** Whether an integer array, of untyped addresses and numbers, initializes the [pointerArray], as it does a `pointer[]` (a long array) elsewhere. */
     fun addressListInitializes(pointerArray: DataType, values: DataType): Boolean =

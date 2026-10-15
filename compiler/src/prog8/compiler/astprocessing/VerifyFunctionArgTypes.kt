@@ -142,7 +142,7 @@ internal class VerifyFunctionArgTypes(val program: Program, val options: Compila
             if(paramDt.isLong && argDt.isPointer && is32bit)
                 return true
 
-            if(paramDt.isString && ((argDt.isPointer && argDt.sub==BaseDataType.UBYTE) || (argDt.isLong && is32bit)))
+            if(paramDt.isString && ((argDt.isPointer && argDt.sub==BaseDataType.UBYTE) || (argDt.isLong && is32bit) || argDt == target.pointerType))
                 return true
 
             return false

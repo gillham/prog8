@@ -92,7 +92,7 @@ See CpuType.statusBitsOnMultiByteOps for the per-CPU configuration.
 
 Instruction set is mostly a load/store architecture, there are few instructions operating on memory directly.
 
-Value types: integers (.b=byte=8 bits, .w=word=16 bits, .l=long=32 bits, .q=quad=64 bits), float (.f=64 bits), and pointer (.p=target specific pointer width: 2 bytes on 6502, 4 bytes on m68k and virtual). Omitting it defaults to b if the instruction requires a type.
+Value types: integers (.b=byte=8 bits, .w=word=16 bits, .l=long=32 bits, .q=quad=64 bits), float (.f=64 bits), and pointer (.p=target specific pointer width: 2 bytes on 6502, 4 bytes on m68k and virtual, 8 bytes on llvm64). Omitting it defaults to b if the instruction requires a type.
 There is no distinction between signed and unsigned for many instructions. Instead, a different instruction is used if a distinction should be made (for example div and divs).
 Floating point operations are just 'f' typed regular instructions, however there are a few unique fp conversion instructions.
 
@@ -365,8 +365,8 @@ msigw [l]     reg1, reg2                  - reg1 becomes the most significant wo
 bsigb [l]     reg1, reg2                  - reg1 becomes the bank byte of the long in reg2 (bits 16-23)
 midb  [l]     reg1, reg2                  - reg1 becomes the 'mid' byte of the long in reg2 (bits 8-15)
 concat [b, w] reg1, reg2, reg3            - reg1.w/l = 'concatenate' two registers: lsb/lsw of reg2 (as msb) and lsb/lsw of reg3 (as lsb) into word or int)
-push [b, w, f]   reg1                     - push value in reg1 on the stack
-pop [b, w, f]    reg1                     - pop value from stack into reg1
+push [b, w, l, q, f]   reg1               - push value in reg1 on the stack
+pop [b, w, l, q, f]    reg1               - pop value from stack into reg1
 pushst                                    - push status register bits to stack
 popst                                     - pop status register bits from stack
  */

@@ -14,6 +14,15 @@ internal fun makePushPopFunctionCalls(value: PtExpression, target: ICompilationT
     var pushWord = false
     var pushFloat = false
     var pushLong = false
+    var pushQuad = false
+
+    fun pushAddress() {
+        when {
+            target.POINTER_MEM_SIZE > 4u -> pushQuad = true
+            target.POINTER_MEM_SIZE > 2u -> pushLong = true
+            else -> pushWord = true
+        }
+    }
 
     when {
         value.type.isBool -> {
@@ -32,21 +41,23 @@ internal fun makePushPopFunctionCalls(value: PtExpression, target: ICompilationT
         value.type.isUnsignedByte -> {}
         value.type.isUnsignedWord -> pushWord = true
         value.type.isLong -> pushLong = true
-        value.type.isPassByRef -> pushWord = true
+        value.type.isSignedQuad -> pushQuad = true
+        value.type.isUnsignedQuad -> {
+            pushQuad = true
+            popTypecast = DataType.UQUAD
+        }
+        // already an address, but the IR codegen can't cast array values to an integer type
+        value.type.isPassByRef -> pushAddress()
         value.type.isFloat -> pushFloat = true
         value.type.isPointer -> {
-            if (target.POINTER_MEM_SIZE > 2u) {
-                pushLong = true
-            } else {
-                pushWord = true
-            }
-            pushTypecast = DataType.UWORD
+            pushAddress()
+            pushTypecast = target.pointerType
             popTypecast = value.type
         }
     }
 
-    val pushFunc = if(pushFloat) "pushf" else if(pushWord) "pushw" else if (pushLong) "pushl" else "push"
-    val popFunc = if(pushFloat) "popf" else if(pushWord) "popw" else if(pushLong) "popl" else "pop"
+    val pushFunc = if(pushFloat) "pushf" else if(pushWord) "pushw" else if (pushLong) "pushl" else if(pushQuad) "pushq" else "push"
+    val popFunc = if(pushFloat) "popf" else if(pushWord) "popw" else if(pushLong) "popl" else if(pushQuad) "popq" else "pop"
     val pushCall = PtFunctionCall(pushFunc, true, false, arrayOf(DataType.UNDEFINED), value.position)
     if(pushTypecast!=null) {
         val typecast = PtTypeCast(pushTypecast, true, value.position).also {
@@ -56,7 +67,7 @@ internal fun makePushPopFunctionCalls(value: PtExpression, target: ICompilationT
     } else {
         pushCall.add(value)
     }
-    val popReturnDt = if(pushWord) DataType.UWORD else if(pushLong) DataType.LONG else if(pushFloat) DataType.FLOAT else DataType.UBYTE
+    val popReturnDt = if(pushWord) DataType.UWORD else if(pushLong) DataType.LONG else if(pushQuad) DataType.QUAD else if(pushFloat) DataType.FLOAT else DataType.UBYTE
     val popCall = if(popTypecast!=null) {
         PtTypeCast(popTypecast, true, value.position).also {
             it.add(PtFunctionCall(popFunc, true, false, arrayOf(popReturnDt), value.position))

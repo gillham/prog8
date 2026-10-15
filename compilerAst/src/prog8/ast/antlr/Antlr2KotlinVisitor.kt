@@ -1128,6 +1128,8 @@ class Antlr2KotlinVisitor(val source: SourceCode, private val target: ICompilati
         if(pointertype==null)
             return null
         val base = baseDatatypeFor(pointertype.basedatatype())
+        if(base==BaseDataType.POINTER)
+            return DataType.pointer(target.pointerBaseType)     // ^^pointer points to addresses: uword, long or uquad
         if(base!=null)
             return DataType.pointer(base)
         val identifier = pointertype.scoped_identifier().identifier().map { it.text}

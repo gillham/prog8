@@ -105,7 +105,8 @@ CPU Stack
 
 :index:`pushp` (value)  **experimental, may change or be removed**
     pushes a pointer value on the CPU hardware stack.
-    On 2-byte pointer targets this is the same as pushw, on 32-bit pointer targets it acts as pushl.
+    On 2-byte pointer targets this is the same as pushw, on 32-bit pointer targets it acts as pushl,
+    and on 64-bit pointer targets (llvm64) it acts as pushq.
     Low-level function that is seldomly used in user code.
     Don't assume anything about the order in which the bytes are pushed - popp will make sense of them again.
 
@@ -113,6 +114,12 @@ CPU Stack
     pushes a 32-bit value on the CPU hardware stack.
     Low-level function that is seldomly used in user code.
     Don't assume anything about the order in which the bytes are pushed - popl will make sense of them again.
+
+:index:`pushq` (value)
+    pushes a 64-bit quad or uquad value on the CPU hardware stack.
+    Only available on the targets that support the quad types (virtual and llvm64).
+    Low-level function that is seldomly used in user code.
+    Don't assume anything about the order in which the bytes are pushed - popq will make sense of them again.
 
 :index:`pushf` (value)
     pushes a floating point value on the CPU hardware stack.
@@ -129,11 +136,18 @@ CPU Stack
 
 :index:`popp` ()   **experimental, may change or be removed**
     pops a pointer value off the CPU hardware stack that was pushed before by pushp, and returns it.
-    On 2-byte pointer targets this is the same as popw, on 32-bit pointer targets it acts as popl.
+    On 2-byte pointer targets this is the same as popw, on 32-bit pointer targets it acts as popl,
+    and on 64-bit pointer targets (llvm64) it acts as popq, but returns the address as a uquad.
     Low-level function that is seldomly used in user code.
 
 :index:`popl` ()
     pops a 32-bit value off the CPU hardware stack that was pushed before by pushl, and returns it.
+    Low-level function that is seldomly used in user code.
+
+:index:`popq` ()
+    pops a 64-bit value off the CPU hardware stack that was pushed before by pushq, and returns it as a signed quad
+    (use ``popq() as uquad`` for a uquad).
+    Only available on the targets that support the quad types (virtual and llvm64).
     Low-level function that is seldomly used in user code.
 
 :index:`popf` ()
@@ -234,7 +248,8 @@ Miscellaneous
 
 :index:`peekp` (address)  **experimental, may change or be removed**
     reads a pointer value at the given address in memory. This is the portable way to read an address:
-    On 16-bit targets this reads 2 bytes (like peekw), on 32-bit targets this reads 4 bytes (like peekl).
+    On 16-bit targets this reads 2 bytes (like peekw), on 32-bit targets this reads 4 bytes (like peekl),
+    and on 64-bit targets (llvm64) this reads 8 bytes (like peekq, but it returns the address as a uquad).
 
 :index:`peekl` (address)
     reads the signed long value at the given address in memory. Long is read in the target's native byte order:
@@ -272,7 +287,8 @@ Miscellaneous
 
 :index:`pokep` (address, value)  **experimental, may change or be removed**
     writes the pointer value at the given address in memory.
-    On 16-bit targets this writes 2 bytes (like pokew), on 32-bit targets this writes 4 bytes (like pokel).
+    On 16-bit targets this writes 2 bytes (like pokew), on 32-bit targets this writes 4 bytes (like pokel),
+    and on 64-bit targets (llvm64) this writes 8 bytes (like pokeq).
 
 :index:`pokemon` (address, value)
     Like poke(), but also returns the previous value in the given address.
