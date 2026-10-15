@@ -4012,4 +4012,30 @@ main {
             }
         }
     }
+
+    test("^^ on the address integer type of 4 and 8 byte pointers writes memory as @() does, just like it reads memory") {
+        fun src(addressType: DataType) = """
+main {
+    ubyte[4] @shared buf
+
+    sub start() {
+        $addressType @shared p = &buf
+        ubyte @shared value = p^^
+        p^^ = 20
+        p^^ += value
+    }
+}"""
+        for ((target, addressType) in listOf(VMTarget() to DataType.LONG, LlvmTarget() to DataType.UQUAD)) {
+            withClue(target.name) {
+                val result = compileText(target, false, src(addressType), outputDir, writeAssembly = false)!!
+                val assignments = result.compilerAst.entrypoint.statements.filterIsInstance<Assignment>()
+                assignments.count { it.target.pointerDereference != null } shouldBe 0
+                val writes = assignments.mapNotNull { it.target.memoryAddress }
+                writes.size shouldBe 2
+                writes.forEach { (it.addressExpression as IdentifierReference).nameInSource shouldBe listOf("p") }
+                val read = assignments.single { it.target.identifier?.nameInSource == listOf("value") }.value
+                ((read as DirectMemoryRead).addressExpression as IdentifierReference).nameInSource shouldBe listOf("p")
+            }
+        }
+    }
 })

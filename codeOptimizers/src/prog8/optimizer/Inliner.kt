@@ -738,9 +738,13 @@ class Inliner(private val program: Program, private val options: CompilationOpti
     /** The argument converted to the parameter type, as the call does: arithmetic on an address differs between pointers and integers. */
     private fun argumentAsParameter(arg: Expression, paramType: DataType): Expression {
         val argType = arg.inferType(program)
-        return if(argType.isKnown && !(argType istype paramType) && (argType.isPointer || paramType.isPointer))
+        return if(argType.isKnown && !(argType istype paramType) && (argType.isPointer || paramType.isPointer)) {
+            // a struct can be private to its block, so the cast to its pointer type can't be outside it
+            val struct = paramType.subType as? StructDecl
+            if(struct!=null && struct.definingBlock !== arg.definingBlock)
+                throw CannotInlineException()
             TypecastExpression(arg.copy(), paramType, false, arg.position)
-        else
+        } else
             arg.copy()
     }
 }

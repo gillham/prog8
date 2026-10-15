@@ -12,11 +12,14 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldEndWith
+import prog8.ast.expressions.NumericLiteral
+import prog8.ast.statements.Assignment
 import prog8.ast.statements.StructDecl
 import prog8.ast.statements.Subroutine
 import prog8.ast.statements.VarDecl
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
+import prog8.code.core.ICompilationTarget
 import prog8.code.core.OutputFiles
 import prog8.code.target.Amiga1200Target
 import prog8.code.target.Amiga500Target
@@ -205,27 +208,84 @@ main {
         shouldThrow<IllegalArgumentException> { getCompilationTargetByName("llvm32") }
     }
 
-    test("untyped pointers convert implicitly only on llvm64, where no integer type can hold an address") {
-        val bytePointer = DataType.pointer(BaseDataType.UBYTE)
-        val wordPointer = DataType.pointer(BaseDataType.UWORD)
-        LlvmTarget().untypedPointerIsBytePointer shouldBe true
-        LlvmTarget().pointerConvertsImplicitly(bytePointer, wordPointer) shouldBe true
-        LlvmTarget().pointerConvertsImplicitly(wordPointer, bytePointer) shouldBe true
-        LlvmTarget().pointerConvertsImplicitly(wordPointer, DataType.pointer(BaseDataType.WORD)) shouldBe false
-        LlvmTarget().pointerConvertsImplicitly(DataType.LONG, wordPointer) shouldBe false
-        for (target in listOf(VMTarget(), Cx16Target(), Qemu68kTarget())) {
-            withClue(target.name) {
-                target.untypedPointerIsBytePointer shouldBe false
-                target.pointerConvertsImplicitly(bytePointer, wordPointer) shouldBe false
-            }
-        }
+    test("a byte pointer or str parameter needs a cast to become another typed pointer, and call() an untyped address, on llvm64 as on the virtual machine") {
+        val src = """
+main {
+    struct Node {
+        ubyte kind
+    }
+    ubyte[4] @shared buffer
+    ^^Node @shared node
+
+    sub start() {
+        ^^ubyte @shared bytes = &buffer
+        ^^Node @shared other = bytes
+        node = bytes
+        bytes = node
+        setkind(bytes)
+        fromtext("abc")
+        uword @shared result = call(node)
     }
 
-    test("the untyped pointer type is a byte pointer on llvm64, and the address integer type elsewhere") {
+    sub setkind(^^Node n) {
+        n.kind = 1
+    }
+
+    sub fromtext(str s) {
+        node = s
+    }
+}"""
+        fun errorsOn(target: ICompilationTarget): List<String> {
+            val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+            compileText(target, false, src, outputDir, errors = errors, writeAssembly = false) shouldBe null
+            return errors.errors.map { it.substringAfter(".p8:") }
+        }
+        val llvmErrors = errorsOn(LlvmTarget())
+        llvmErrors shouldBe listOf(
+            "11:32: cannot assign different pointer type, expected ^^main.Node or uword but got ^^ubyte",
+            "12:16: cannot assign different pointer type, expected ^^main.Node or uword but got ^^ubyte",
+            "13:17: cannot assign different pointer type, expected ^^ubyte or uword but got ^^main.Node",
+            "14:17: argument 1 type mismatch, was: ^^ubyte expected: ^^main.Node",
+            "16:37: argument 1 type mismatch, was: ^^main.Node expected: POINTER",
+            "24:16: cannot assign different pointer type, expected ^^main.Node or uword but got ^^ubyte")
+        errorsOn(VMTarget()) shouldBe llvmErrors
+
+        val casted = """
+main {
+    struct Node {
+        ubyte kind
+    }
+    ubyte[4] @shared buffer
+    ^^Node @shared node
+
+    sub start() {
+        ^^ubyte @shared bytes = &buffer
+        ^^Node @shared other = bytes as ^^Node
+        node = bytes as ^^Node
+        bytes = node as ^^ubyte
+        setkind(bytes as ^^Node)
+        fromtext("abc")
+        uword @shared result = call(node as pointer)
+    }
+
+    sub setkind(^^Node n) {
+        n.kind = 1
+    }
+
+    sub fromtext(str s) {
+        node = s as ^^Node
+    }
+}"""
+        for (target in listOf(LlvmTarget(), VMTarget()))
+            withClue(target.name) { compileText(target, false, casted, outputDir, writeAssembly = false).shouldNotBeNull() }
+    }
+
+    test("the untyped pointer type is the address integer type on every target, uquad on llvm64, and has the size of a pointer") {
         val src = """
 main {
     pointer @shared global
     pointer[3] @shared table = [&global, 0, 0]
+    ubyte @shared size = sizeof(pointer)
 
     struct Node {
         pointer data
@@ -249,14 +309,22 @@ main {
             return listOf(variables.getValue("global"), local.datatype, identity.parameters.single().type, identity.returntypes.single(),
                 field.type, variables.getValue("table"))
         }
-        val bytePointer = DataType.pointer(BaseDataType.UBYTE)
-        types(compileText(LlvmTarget(), false, src, outputDir, writeAssembly = false)) shouldBe
-            List(5) { bytePointer } + DataType.arrayOfPointersTo(BaseDataType.UBYTE)
-        types(compileText(VMTarget(), false, src, outputDir, writeAssembly = false)) shouldBe
-            List(5) { DataType.LONG } + DataType.arrayFor(BaseDataType.LONG, VMTarget())
+        fun size(result: CompilationResult?): Double {
+            val main = result.shouldNotBeNull().compilerAst.allBlocks.first { it.name == "main" }
+            return (main.statements.filterIsInstance<Assignment>().single { it.target.identifier?.nameInSource == listOf("size") }.value as NumericLiteral).number
+        }
+        for (target in listOf(LlvmTarget(), VMTarget(), Qemu68kTarget(), Cx16Target())) {
+            withClue(target.name) {
+                val result = compileText(target, false, src, outputDir, writeAssembly = false)
+                val table = if (target.POINTER_MEM_SIZE == 2u) DataType.splitWordArrayFor(BaseDataType.UWORD) else DataType.arrayFor(target.pointerBaseType, target)
+                types(result) shouldBe List(5) { target.pointerType } + table
+                size(result) shouldBe target.POINTER_MEM_SIZE.toDouble()
+            }
+        }
+        LlvmTarget().pointerType shouldBe DataType.UQUAD
     }
 
-    test("on llvm64 the untyped pointer converts implicitly to and from typed pointers, as the long type does on the 32-bit targets") {
+    test("the untyped pointer converts implicitly to and from typed pointers on every target, as the address integer type that it is") {
         val src = """
 main {
     struct Node {
@@ -294,8 +362,8 @@ main {
         return 42
     }
 }"""
-        compileText(LlvmTarget(), false, src, outputDir, writeAssembly = false).shouldNotBeNull()
-        compileText(VMTarget(), false, src, outputDir, writeAssembly = false).shouldNotBeNull()
+        for (target in listOf(LlvmTarget(), VMTarget(), Cx16Target()))
+            withClue(target.name) { compileText(target, false, src, outputDir, writeAssembly = false).shouldNotBeNull() }
     }
 
     test("on llvm64 two different typed pointers still need an explicit cast") {
@@ -2754,6 +2822,100 @@ main {
 
     sub nextnode(^^Node n) -> ^^Node {
         return n + 1
+    }
+}""",
+    "the untyped pointer is a uquad in variables, constants, parameters, return values, struct fields and arrays" to $$"""
+main {
+    ubyte[16] @shared buffer = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    uword[2] @shared @nosplit words = [1111, 2222]
+    long @shared minus = -2
+    pointer @shared far = $1_0000_1234
+    uquad @shared expected = $1_0000_1234
+    pointer[3] @shared table = [&buffer, &&words, 0]
+    pointer[2] @shared @nosplit unsplit = [&buffer, 0]
+    pointer[3] @shared later
+
+    struct Node {
+        ubyte kind
+        pointer data
+        ^^Node next
+    }
+
+    struct Slots {
+        ubyte tag
+        pointer[2] slots
+    }
+
+    ^^Node @shared first = ^^Node : [1, &buffer, 0]
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        if sizeof(pointer) != 8 or sizeof(far) != 8 or far != expected or far >> 32 != 1
+            return 1
+        pointer big = $1234_5678_9abc_def0
+        if big >> 32 != $1234_5678 or lsw(big) != $def0
+            return 2
+        pointer p = &buffer + 5
+        uquad u = p
+        if u != p or @(p) != 5 or p[2] != 7 or p^^ != 5
+            return 3
+        if p & $ff != lsb(p) or p >> 4 != u / 16 or (p >> 4) << 4 != p & $ffff_ffff_ffff_fff0 or p ^ p != 0 or p | 0 != p
+            return 4
+        if table[0] != &buffer or table[1] != &words or table[2] != 0 or peekw(table[1] + 2) != 2222
+            return 5
+        if unsplit[0] != &buffer or @(unsplit[0] + 3) != 3
+            return 6
+        unsplit[1] = &words
+        if peekw(unsplit[1]) != 1111
+            return 7
+        later[1] = &buffer + 2
+        later[2] = first
+        if @(later[1]) != 2 or later[2] != first or later[0] != 0
+            return 8
+        if first.data != &buffer or @(first.data + 9) != 9
+            return 9
+        first.data = &words
+        ^^uword wp = first.data
+        if wp^^ != 1111 or wp[1] != 2222
+            return 10
+        pointer anything = first
+        ^^Node back = anything
+        if back != first or back.kind != 1
+            return 11
+        if identity(p) != p or identity(first) != first or nodeof(anything).kind != 1
+            return 12
+        pointer signext = minus
+        if signext != $ffff_ffff_ffff_fffe or identity(minus) != $ffff_ffff_ffff_fffe or @(&buffer + 4 + minus) != 2
+            return 13
+        pushp(p)
+        pushp(far)
+        pointer popped = popp()
+        if popped != expected or popp() != p
+            return 14
+        pointer routine = &answer
+        ^^ubyte code = routine
+        if call(routine) != 4242 or call(code as pointer) != 4242
+            return 15
+        ^^Slots holder = ^^Slots : [7, [&buffer, 0]]
+        holder.slots[1] = &words
+        if @(holder.slots[0] + 1) != 1 or peekw(holder.slots[1]) != 1111
+            return 16
+        return 0
+    }
+
+    sub identity(pointer address) -> pointer {
+        return address
+    }
+
+    sub nodeof(pointer address) -> ^^Node {
+        return address
+    }
+
+    sub answer() -> uword {
+        return 4242
     }
 }"""
 )

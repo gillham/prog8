@@ -185,11 +185,13 @@ The size of a pointer (memory address) depends on the target's CPU architecture:
 - **6502-family targets** (c64, cx16, c128, pet32): **2 bytes** (16-bit address space, 64 KB)
 - **m68k targets** (amiga500, amiga1200, qemu68k): **4 bytes** (32-bit address space, 16 MB)
 - **virtual target**: **4 bytes** (32-bit address space, 16 MB)
+- **llvm64 target**: **8 bytes** (the 64-bit address space of the host)
 
 The ``pointer`` type keyword automatically takes the correct size for the target,
 making it the natural choice for variables that hold a memory address in portable code.
-On 6502 targets it is equivalent to ``uword``; on m68k and virtual targets it is equivalent to ``long``.
-Alternatively, you can use ``uword`` or ``long`` directly if you know the target in advance.
+On 6502 targets it is equivalent to ``uword``; on m68k and virtual targets it is equivalent to ``long``;
+on the llvm64 target it is equivalent to ``uquad``.
+Alternatively, you can use ``uword``, ``long`` or ``uquad`` directly if you know the target in advance.
 
 Generic 6502 Physical address space layout
 ------------------------------------------

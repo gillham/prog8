@@ -65,14 +65,15 @@ which would be changed to ``uword`` by the compiler).
 Since version 12.6 there now is a dedicated ``pointer`` type keyword that serves as an untyped address
 and automatically takes the :ref:`pointer size <pointer_size>` for the target.
 This is useful when writing code that is compiled for different targets,
-because you don't need to manually switch between ``uword`` and ``long`` via conditional compilation::
+because you don't need to manually switch between ``uword``, ``long`` and ``uquad`` via conditional compilation::
 
     pointer ptr = $a000
     ; same program works on both 6502 and m68k targets
     ; ptr is 2 bytes on C64, CX16, etc.
     ; ptr is 4 bytes on qemu68k
+    ; ptr is 8 bytes on llvm64, where it is a uquad
 
-You can assign any other pointer type to an untyped pointer variable (``uword``, ``long``` or ``pointer``) without the need for an explicit cast.
+You can assign any other pointer type to an untyped pointer variable (``pointer``, or the integer type it is on the target: ``uword``, ``long`` or ``uquad``) without the need for an explicit cast.
 You can assign an untyped pointer to a typed pointer variable without the need for an explicit cast.
 A ``^^pointer`` points to addresses: it is a ``^^uword`` on the 6502 targets, a ``^^long`` on the m68k and virtual targets
 and a ``^^uquad`` on llvm64, so ``pp[i] += 2`` adds 2 to the address in element ``i``, while ``pp++`` moves on to the next address.
@@ -140,11 +141,11 @@ the pointer value (memory address) by the appropriate number of bytes (X times t
 More info about structs can be found below.
 
 You can subtract two pointers of the **same** type from each other. The result is the number of elements between them (C-style),
-using the same scaling rules as adding or subtracting an integer. The result has the target's address type (``uword`` on 16-bit targets, ``long`` on 32-bit targets).
+using the same scaling rules as adding or subtracting an integer. The result has the target's address type (``uword`` on 16-bit targets, ``long`` on 32-bit targets, ``uquad`` on llvm64).
 For example, if ``^^uword p1`` points at address ``$2000`` and ``^^uword p2`` points at address ``$2006``, then ``p2 - p1`` is ``3`` (because each ``uword`` is 2 bytes).
-Adding two pointers together is not supported. Other arithmetic operators such as ``*``, ``/``, ``%`` and bitwise operators are also not supported on typed pointers; cast to an unsigned word or long first if you need those operations.
+Adding two pointers together is not supported. Other arithmetic operators such as ``*``, ``/``, ``%`` and bitwise operators are also not supported on typed pointers; cast to ``pointer`` (an unsigned word, long or uquad) first if you need those operations.
 
-Untyped pointers (plain ``pointer`` or ``uword``/``long`` used as an address) do not use this scaling at all; arithmetic on them is plain numeric address arithmetic.
+Untyped pointers (plain ``pointer`` or ``uword``/``long``/``uquad`` used as an address) do not use this scaling at all; arithmetic on them is plain numeric address arithmetic.
 
 
 Structs

@@ -309,13 +309,13 @@ type identifier     type                     storage size            example var
 ``str``             string (PETSCII)         varies                  ``str myvar = "hello."``
                                                                       implicitly terminated by a 0-byte
 ``StructType[x]``   array of struct inst.    x * sizeof(struct)      ``Enemy[10] enemies``  see :ref:`structarrays`
-``^^type``          typed pointer            2 or 4 bytes            pointer types are explained in their own chapter :ref:`pointers`
-``pointer``         untyped address          2 or 4 bytes            ``pointer ptr = $a000``.  See :ref:`pointers` for details.
+``^^type``          typed pointer            2, 4 or 8 bytes         pointer types are explained in their own chapter :ref:`pointers`
+``pointer``         untyped address          2, 4 or 8 bytes         ``pointer ptr = $a000``.  See :ref:`pointers` for details.
 ==================  =======================  ======================  =========================================
 
 .. note::
     The actual size of pointer types (``^^type`` and ``pointer``) depends on the target's
-    :ref:`pointer size <pointer_size>`: 2 bytes on 6502 targets, 4 bytes on m68k and virtual targets.
+    :ref:`pointer size <pointer_size>`: 2 bytes on 6502 targets, 4 bytes on m68k and virtual targets, 8 bytes on llvm64.
 
 Integers (bytes, words, longs)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -561,7 +561,7 @@ Unlike array variables, negative indexing for pointer variables does *not* mean 
 Instead, it simply addresses memory that lies *before* the pointer variable.
 
 Which variable types can be used for pointer indexing depends on the :ref:`pointer size <pointer_size>` of the target:
-``uword`` on 6502 targets, ``long`` (or ``pointer``) on m68k targets.
+``uword`` on 6502 targets, ``long`` (or ``pointer``) on m68k and virtual targets, ``uquad`` (or ``pointer``) on llvm64.
 
 See also :ref:`pointervars` and the chapter about it :ref:`pointers`.
 
@@ -797,7 +797,8 @@ the index is not limited to an ubyte value. You can use a larger integer type to
 
     pointervar[999] = 0     ; set memory byte to zero at location pointervar + 999.
 
-The variable type must be able to hold a :ref:`pointer <pointer_size>` for the target: ``uword`` on 6502 targets, ``long`` on m68k targets.
+The variable type must be able to hold a :ref:`pointer <pointer_size>` for the target: ``uword`` on 6502 targets, ``long`` on m68k and virtual targets, ``uquad`` on llvm64
+(the ``pointer`` type is the right one on every target).
 
 More information about *typed pointers* can be found in the chapter :ref:`pointers`.
 

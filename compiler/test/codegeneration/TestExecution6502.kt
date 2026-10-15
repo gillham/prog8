@@ -1189,4 +1189,43 @@ class TestExecution6502 : FunSpec({
             }
         }
     }
+
+    test("an integer argument from another block for a pointer parameter to a private struct is passed by the call, not inlined") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+            %zeropage basicsafe
+
+            main {
+                &ubyte poweroff = $f203
+                &uword result = $02
+
+                sub start() {
+                    uword @shared address = $2000
+                    result = lib.nextnode(address)
+                    poweroff = 1
+                }
+            }
+
+            lib {
+                private struct Node {
+                    ubyte a
+                    uword b
+                }
+
+                sub nextnode(^^Node n) -> uword {
+                    return n + 1
+                }
+            }
+        """.trimIndent()
+
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+                machine.assertMemory(0x02, 0x03)
+                machine.assertMemory(0x03, 0x20)
+            }
+        }
+    }
 })

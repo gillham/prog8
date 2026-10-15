@@ -1,5 +1,5 @@
 ; Prog8 definitions for the llvm64 target: a hosted 64-bit program, compiled to LLVM IR and linked with the C runtime.
-; Note: pointer and str variables hold 8-byte addresses here, so %ir code loads them as .p and never as .l
+; Note: pointer (a uquad here) and str variables hold 8-byte addresses, so %ir code loads them as .p and never as .l
 
 %option ignore_unused
 

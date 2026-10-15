@@ -33,8 +33,7 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
                             // using a array of words as initializer to a pointer array is fine
                             val ok = valueDt.isSplitWordArray(options.compTarget) && decl.datatype.isPointerArray ||
                                     valueDt.isWordArray && decl.datatype.isPointerArray && decl.splitwordarray == SplitWish.DONTCARE ||
-                                    decl.datatype.isLongArray && (valueDt.isPointerArray || valueDt.isWordArray) ||
-                                    options.compTarget.addressListInitializes(decl.datatype, valueDt)
+                                    decl.datatype.isLongArray && (valueDt.isPointerArray || valueDt.isWordArray)
                             if (!ok) {
                                 val splitNote = when {
                                     valueDt.isSplitWordArray(options.compTarget) && decl.datatype.isSplitWordArray(options.compTarget) ->
@@ -96,7 +95,9 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
         // check splitting of word arrays
         if(decl.splitwordarray != SplitWish.DONTCARE && !decl.datatype.isWordArray && !decl.datatype.isPointerArray) {
             if(decl.origin != VarDeclOrigin.ARRAYLITERAL) {
-                if(decl.datatype.isLongArray) {
+                // pointer[] is a long[] where pointers have 4 bytes, and a uquad[] where they have 8
+                val quadsSupported = options.compTarget.cpu.isLlvm || options.compTarget.cpu.isVirtual
+                if(decl.datatype.isLongArray || (decl.datatype.isUnsignedQuadArray && quadsSupported)) {
                     errors.info("@nosplit is redundant here", decl.position)
                 }
                 else

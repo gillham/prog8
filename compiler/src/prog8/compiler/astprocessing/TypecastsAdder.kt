@@ -63,9 +63,6 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                     }
                 }
 
-                if(options.compTarget.pointerConvertsImplicitly(valueDt.getOrUndef(), decl.datatype))
-                    return listOf(pointerConversion(declValue, decl.datatype, decl))
-
                 // don't add a typecast if the initializer value is inherently not assignable
                 if(valueDt isNotAssignableTo decl.datatype)
                     return noModifications
@@ -307,9 +304,7 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
             val targettype = targetItype.getOrUndef()
             val valuetype = valueItype.getOrUndef()
             if (valuetype != targettype) {
-                if (options.compTarget.pointerConvertsImplicitly(valuetype, targettype)) {
-                    return listOf(pointerConversion(assignment.value, targettype, assignment))
-                } else if (options.compTarget.longConvertsToAddress(valuetype, targettype) && assignment.value.constValue(program)==null) {
+                if (options.compTarget.longConvertsToAddress(valuetype, targettype) && assignment.value.constValue(program)==null) {
                     return listOf(AstReplaceNode(assignment.value, TypecastExpression(assignment.value, targettype, true, assignment.value.position), assignment))
                 } else if (valuetype isAssignableTo targettype) {
                     if(valuetype.isIterable && targettype == options.compTarget.pointerType)
@@ -466,10 +461,6 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                     if(returnValue.type == ptrNumericType)
                         continue
                 }
-            }
-            if (options.compTarget.pointerConvertsImplicitly(returnDt.getOrUndef(), subReturnType)) {
-                modifications += pointerConversion(returnValue, subReturnType, returnStmt)
-                continue
             }
             if (options.compTarget.longConvertsToAddress(returnDt.getOrUndef(), subReturnType) && returnValue.constValue(program)==null) {
                 modifications += AstReplaceNode(returnValue, TypecastExpression(returnValue, subReturnType, true, returnValue.position), returnStmt)
@@ -802,10 +793,7 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
             val argIdt = it.second.inferType(program)
             if (argIdt.isKnown && !targetDt.isStructInstance) {
                 val argDt = argIdt.getOrUndef()
-                val convertedPointerDt = it.first.firstOrNull { paramDt -> options.compTarget.pointerConvertsImplicitly(argDt, paramDt) }
-                if (argDt !in it.first && convertedPointerDt != null) {
-                    modifications += pointerConversion(it.second, convertedPointerDt, parent)
-                } else if (argDt.isPointer && argDt !in it.first && options.compTarget.POINTER_MEM_SIZE>4u && possibleTargetDt != options.compTarget.pointerType && options.compTarget.pointerType in it.first) {
+                if (argDt.isPointer && argDt !in it.first && options.compTarget.POINTER_MEM_SIZE>4u && possibleTargetDt != options.compTarget.pointerType && options.compTarget.pointerType in it.first) {
                     // of the integer types only the uquad holds a whole 8-byte address, the first one would truncate it
                     modifications += AstReplaceNode(it.second, TypecastExpression(it.second, options.compTarget.pointerType, true, it.second.position), parent)
                 } else if (argDt !in it.first) {
@@ -869,10 +857,6 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
         }
         return modifications
     }
-
-    /** An implicit conversion between pointer types, see [IMemSizer.pointerConvertsImplicitly]: the same as an explicit `as` cast. */
-    private fun pointerConversion(value: Expression, pointerType: DataType, parent: Node): AstModification =
-        AstReplaceNode(value, TypecastExpression(value, pointerType, true, value.position), parent)
 
     private fun addTypecastOrCastedValueModification(
         modifications: MutableList<AstModification>,

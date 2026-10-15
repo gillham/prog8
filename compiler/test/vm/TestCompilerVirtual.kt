@@ -2170,5 +2170,126 @@ main {
         }
     }
 
+    test("a long address dereferenced with ^^ reads and writes the byte at that address where pointers have 4 bytes") {
+        val src = """
+main {
+    ubyte[4] @shared buf = [1, 2, 3, 4]
+    ubyte @shared failed = 99
+
+    sub start() {
+        failed = check()
+    }
+
+    sub check() -> ubyte {
+        long @shared p = &buf + 1
+        ubyte @shared i = 1
+        if p^^ != 2
+            return 1
+        ubyte @shared value = p^^
+        if value != 2
+            return 2
+        p^^ = 20
+        if buf[1] != 20
+            return 3
+        p^^ += 5
+        if buf[1] != 25
+            return 4
+        p^^++
+        if buf[1] != 26 or p^^ != 26
+            return 5
+        p++
+        p^^ -= i
+        if buf[2] != 2
+            return 6
+        pointer @shared q = &buf
+        q^^ = 9
+        q^^ += 1
+        q^^++
+        if buf[0] != 11 or q^^ != 11
+            return 7
+        return 0
+    }
+}"""
+        compileText(Qemu68kTarget(), false, src, outputDir, writeAssembly = true, assemble = false) shouldNotBe null
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+                val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+                val irProgram = IRFileReader().read(virtfile)
+                val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+                VmRunner().runAndTestProgram(virtfile.readText(), false) { vm ->
+                    vm.memory.getUB(allocations["main.failed"]!!) shouldBe 0u
+                }
+            }
+        }
+    }
+
+    test("an inlined subroutine computes with a pointer argument as its long parameter, and with an integer argument as its pointer parameter") {
+        val src = """
+main {
+    uword[4] @shared @nosplit wordarray = [1, 2, 3, 4]
+    ubyte @shared failed = 99
+
+    struct Node {
+        ubyte a
+        uword b
+        ^^Node next
+    }
+
+    sub start() {
+        failed = check()
+    }
+
+    sub check() -> ubyte {
+        ^^Node np = ^^Node : [1, 2, 0]
+        long @shared address = np
+        uword @shared waddress = 2000
+        if ident(np) + 1 - (np as long) != 1
+            return 1
+        if plus1(np) - (np as long) != 1
+            return 2
+        if ident(wordarray) + 1 - &wordarray != 1
+            return 3
+        if plus1(&&wordarray) - &wordarray != 1
+            return 4
+        if (nextnode(address) as long) - address != sizeof(Node)
+            return 5
+        if nextnode(address) != np + 1
+            return 6
+        if (nextnode(waddress) as long) - waddress != sizeof(Node)
+            return 7
+        return 0
+    }
+
+    sub ident(long a) -> long {
+        return a
+    }
+
+    sub plus1(long a) -> long {
+        return a + 1
+    }
+
+    sub nextnode(^^Node n) -> ^^Node {
+        return n + 1
+    }
+}"""
+        compileText(Qemu68kTarget(), true, src, outputDir, writeAssembly = true, assemble = false) shouldNotBe null
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+                val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+                if(optimize) {
+                    val ir = virtfile.readText()
+                    withClue("the subroutines are inlined") { listOf("ident", "plus1", "nextnode").forEach { ir shouldNotContain "call main.$it(" } }
+                }
+                val irProgram = IRFileReader().read(virtfile)
+                val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+                VmRunner().runAndTestProgram(virtfile.readText(), false) { vm ->
+                    vm.memory.getUB(allocations["main.failed"]!!) shouldBe 0u
+                }
+            }
+        }
+    }
+
 
 })

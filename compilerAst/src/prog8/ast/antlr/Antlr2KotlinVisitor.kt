@@ -1110,10 +1110,7 @@ class Antlr2KotlinVisitor(val source: SourceCode, private val target: ICompilati
         val base = baseDatatypeFor(dtctx.basedatatype())
          if(base!=null) {
             if(base==BaseDataType.POINTER) {
-                return if(target.untypedPointerIsBytePointer)
-                    DataType.pointer(BaseDataType.UBYTE)
-                else
-                    DataType.forDt(target.pointerBaseType)
+                return DataType.forDt(target.pointerBaseType)
             }
             return DataType.forDt(base)
         }

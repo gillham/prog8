@@ -8,6 +8,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import prog8.ast.expressions.NumericLiteral
+import prog8.ast.statements.Assignment
 import prog8.ast.statements.VarDecl
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
@@ -1222,8 +1223,25 @@ main {
             withClue(target.name) { compileText(target, false, src, outputDir, writeAssembly = false).shouldNotBeNull() }
     }
 
-    test("constant addresses are limited to 32 bits on llvm64 for now") {
+    test("constant addresses of typed pointers are limited to 32 bits on llvm64 for now, the untyped pointer is a uquad that keeps all 64 bits") {
         val src = $$"""
+            main {
+                ^^ubyte @shared global = $1_0000_1234
+                sub start() {
+                    ^^ubyte @shared p
+                    p = $1234_5678_9abc_def0
+                    p = $1_0000_0000 as ^^ubyte
+                    p = $1234_5678
+                }
+            }
+        """
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(LlvmTarget(), false, src, outputDir, errors, false) shouldBe null
+        errors.errors.map { it.substringAfter(": ") } shouldBe listOf("4294971956", "1311768467463790320", "4294967296").map {
+            "constant address $it doesn't fit in 32 bits, which is the limit for constant addresses for now"
+        }
+
+        val untyped = $$"""
             main {
                 pointer @shared global = $1_0000_1234
                 sub start() {
@@ -1234,10 +1252,137 @@ main {
                 }
             }
         """
+        val result = compileText(LlvmTarget(), false, untyped, outputDir, writeAssembly = false).shouldNotBeNull()
+        val main = result.compilerAst.allBlocks.first { it.name == "main" }
+        main.statements.filterIsInstance<VarDecl>().single { it.name == "global" }.datatype shouldBe DataType.UQUAD
+        val values = (main.statements + result.compilerAst.entrypoint.statements).filterIsInstance<Assignment>().map { it.value as NumericLiteral }
+        values.map { it.type } shouldBe List(4) { BaseDataType.UQUAD }
+        values.map { it.integerBits } shouldBe listOf(0x1_0000_1234L, 0x1234_5678_9abc_def0L, 0x1_0000_0000L, 0x1234_5678L)
+    }
+
+    test("@nosplit is redundant on a uquad array as on a long array, so also on the pointer[] and str[] arrays of llvm64") {
+        val src = """
+            main {
+                str[2] @shared @nosplit names = ["a", "b"]
+                pointer[2] @shared @nosplit addresses
+                uquad[2] @shared @nosplit numbers
+                long[2] @shared @nosplit longs
+                quad[2] @shared @nosplit signed
+                sub start() {
+                }
+            }
+        """
+        for (target in listOf(LlvmTarget(), VMTarget())) {
+            withClue(target.name) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(target, false, src, outputDir, errors, false) shouldBe null
+                errors.infos.map { it.substringAfter(".p8:") } shouldBe listOf(3, 4, 5, 6).map { "$it:17: @nosplit is redundant here" }
+                errors.errors.map { it.substringAfter(".p8:") } shouldBe listOf("7:17: @nosplit is for word or pointer arrays only")
+            }
+        }
+    }
+
+    test("constant memory addresses are limited to 32 bits on llvm64, also folded ones and those of peek and poke") {
+        val src = $$"""
+            main {
+                sub start() {
+                    uquad p = $1_0000_1234
+                    ubyte @shared x = @($1_0000_5678)
+                    @($1_0000_5678) = 3
+                    uword @shared w = peekw($1_0000_0000)
+                    pokew($1_0000_0000, 1)
+                    x = @(p)
+                    w = peekw(p+2)
+                }
+            }
+        """
         val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
         compileText(LlvmTarget(), false, src, outputDir, errors, false) shouldBe null
-        errors.errors.map { it.substringAfter(": ") } shouldBe listOf("4294971956", "1311768467463790320", "4294967296").map {
+        errors.errors.map { it.substringAfter(": ") } shouldBe listOf("4294989432", "4294989432", "4294967296", "4294967296", "4294971956", "4294971958").map {
             "constant address $it doesn't fit in 32 bits, which is the limit for constant addresses for now"
+        }
+    }
+
+    test("a constant address for peek and poke is out of range above 32 bits where pointers have 4 bytes, and when negative on llvm64") {
+        val quadAddress = $$"""
+            main {
+                sub start() {
+                    uquad p = $1_0000_1234
+                    uword @shared w = peekw(p+2)
+                    pokew(p+2, 1)
+                }
+            }
+        """
+        val negativeAddress = $$"""
+            main {
+                sub start() {
+                    uword @shared w = peekw($ff00_8000)
+                    pokew($ff00_8000, 1)
+                }
+            }
+        """
+        for ((target, src) in listOf(VMTarget() to quadAddress, LlvmTarget() to negativeAddress)) {
+            withClue(target.name) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(target, false, src, outputDir, errors, false) shouldBe null
+                errors.errors.map { it.substringAfter(": ") } shouldBe List(2) { "address out of range" }
+            }
+        }
+    }
+
+    test("constant memory addresses up to the 32-bit or 16-bit limit of the target still compile") {
+        val llvm = $$"""
+            main {
+                sub start() {
+                    ubyte @shared x = @($0_ffff_ffff)
+                    @($0_ffff_ffff) = x
+                    x = @($7fff_ffff)
+                    @($7fff_ffff) = x
+                    uword @shared w = peekw($0_ffff_fffe)
+                    pokew($0_ffff_fffe, w)
+                    uquad p = $0_ffff_fff0
+                    x = @(p)
+                    w = peekw(p+2)
+                }
+            }
+        """
+        val fourBytes = $$"""
+            main {
+                sub start() {
+                    ubyte @shared x = @($ffff_ffff)
+                    x = @($8000_0000)
+                    @($7fff_ffff) = x
+                    uword @shared w = peekw($8000_0000)
+                    pokew($ff00_8000, w)
+                }
+            }
+        """
+        val virtual = $$"""
+            main {
+                sub start() {
+                    uquad p = $0_ffff_fff0
+                    uword @shared w = peekw(p+2)
+                    pokew(p+4, w)
+                }
+            }
+        """
+        val cx16 = $$"""
+            main {
+                sub start() {
+                    ubyte @shared x = @($ffff)
+                    @($ffff) = x
+                    uword @shared w = peekw($fffe)
+                    pokew($fffe, w)
+                }
+            }
+        """
+        for ((target, src) in listOf(LlvmTarget() to llvm, VMTarget() to fourBytes, Qemu68kTarget() to fourBytes, VMTarget() to virtual, Cx16Target() to cx16)) {
+            withClue(target.name) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                val result = compileText(target, false, src, outputDir, errors, false)
+                errors.errors shouldBe emptyList()
+                result.shouldNotBeNull()
+            }
         }
     }
 

@@ -1255,7 +1255,7 @@ internal class AstChecker(private val program: Program,
             val iDt = declValue.inferType(program)
             if (!(iDt istype decl.datatype)) {
                 if(decl.datatype.isPointerArray) {
-                    if(!iDt.getOrUndef().isWordArray && !options.compTarget.addressListInitializes(decl.datatype, iDt.getOrUndef()))
+                    if(!iDt.getOrUndef().isWordArray)
                         valueerr("initialization value for pointer array must be a word array")
                 }
                 else if(decl.datatype.isLongArray && decl.datatype.subType!=null) {
@@ -1651,7 +1651,7 @@ internal class AstChecker(private val program: Program,
             val parentDt = (array.parent as VarDecl).datatype
             if(parentDt.isArray) {
                 val elementDt = parentDt.elementType()
-                if(elementDt.isPointer && !options.compTarget.addressListInitializes(parentDt, array.type.getOrUndef())) {
+                if(elementDt.isPointer) {
                     // all elements in the initializer array should be of the same element type
                     array.value.forEach {
                         val valueDt = it.inferType(program).getOrUndef()
@@ -2051,8 +2051,7 @@ internal class AstChecker(private val program: Program,
             errors.err(narrowedAddressMessage(typecast.type), typecast.position)
 
         if(typecast.implicit && typecast.type.isPointer && !typecast.expression.inferType(program).isLong && !typecast.expression.inferType(program).getOrUndef().isPassByRef && options.compTarget.POINTER_MEM_SIZE>2u
-            && !(typecast.expression.inferType(program).isQuad && options.compTarget.POINTER_MEM_SIZE>4u)
-            && !options.compTarget.pointerConvertsImplicitly(typecast.expression.inferType(program).getOrUndef(), typecast.type))
+            && !(typecast.expression.inferType(program).isQuad && options.compTarget.POINTER_MEM_SIZE>4u))
             errors.err("explicit typecast is needed to convert a non-long value to a pointer", typecast.position)
 
         super.visit(typecast)
@@ -2605,14 +2604,16 @@ internal class AstChecker(private val program: Program,
     private fun unsupportedConstantAddressMessage(value: NumericLiteral) =
         "constant address ${value.valueText} doesn't fit in 32 bits, which is the limit for constant addresses for now"
 
-    /** The code generators clamp a constant memory address that isn't an unsigned 32-bit number, so that is an error. */
+    /** The code generators clamp a constant memory address that doesn't fit in 32 bits, so that is an error. */
     private fun checkConstantMemoryAddress(address: Expression) {
         if(options.compTarget.POINTER_MEM_SIZE <= 2u)
             return
         val value = address.constValue(program) ?: return
+        // with 4-byte pointers a long is all 32 bits of an address: $ffff_ffff is the long -1
+        val extendsTo64Bits = value.type.isQuad || options.compTarget.POINTER_MEM_SIZE > 4u
         if(options.compTarget.POINTER_MEM_SIZE > 4u && isUnsupportedConstantAddress(value))
             errors.err(unsupportedConstantAddressMessage(value), address.position)
-        else if(value.type.isInteger && value.integerBits !in 0L..0xFFFFFFFFL)
+        else if(value.type.isInteger && extendsTo64Bits && value.integerBits !in 0L..0xFFFFFFFFL)
             errors.err("address out of range", address.position)
     }
 
