@@ -4,18 +4,23 @@ interface IMemSizer {
     val FLOAT_MEM_SIZE: UInt
     val POINTER_MEM_SIZE: UInt
 
+    /** The integer type that holds an address: uword, long or uquad for 2, 4 or 8 byte pointers. */
     val pointerType: DataType
-        get() = if(POINTER_MEM_SIZE > 2u) DataType.LONG else DataType.UWORD
+        get() = if(POINTER_MEM_SIZE > 4u) DataType.UQUAD else if(POINTER_MEM_SIZE > 2u) DataType.LONG else DataType.UWORD
 
     val pointerBaseType: BaseDataType
-        get() = if(POINTER_MEM_SIZE > 2u) BaseDataType.LONG else BaseDataType.UWORD
+        get() = if(POINTER_MEM_SIZE > 4u) BaseDataType.UQUAD else if(POINTER_MEM_SIZE > 2u) BaseDataType.LONG else BaseDataType.UWORD
+
+    /** The suffix of the peek and poke builtins that move a whole pointer: w, l or q for 2, 4 or 8 byte pointers. */
+    val pointerPeekPokeSuffix: String
+        get() = if(POINTER_MEM_SIZE > 4u) "q" else if(POINTER_MEM_SIZE > 2u) "l" else "w"
 
     /**
-     * True where even [pointerBaseType] is too small for an address (llvm64). The untyped `pointer` type is a `^^ubyte` there,
+     * True where pointers have 8 bytes (llvm64). The untyped `pointer` type is a `^^ubyte` there,
      * and that converts implicitly to and from every other pointer type, as the address integer type does on the other targets.
      */
     val untypedPointerIsBytePointer: Boolean
-        get() = POINTER_MEM_SIZE.toInt() > memorySize(pointerBaseType)
+        get() = POINTER_MEM_SIZE > 4u
 
     /** Whether a pointer of type [from] converts implicitly into a pointer of type [to], see [untypedPointerIsBytePointer]. */
     fun pointerConvertsImplicitly(from: DataType, to: DataType): Boolean {
@@ -26,7 +31,7 @@ interface IMemSizer {
     /** Whether an integer array, of untyped addresses and numbers, initializes the [pointerArray], as it does a `pointer[]` (a long array) elsewhere. */
     fun addressListInitializes(pointerArray: DataType, values: DataType): Boolean =
         untypedPointerIsBytePointer && pointerArray == DataType.arrayOfPointersTo(BaseDataType.UBYTE) &&
-            (values.isByteArray || values.isWordArray || values.isLongArray)
+            (values.isByteArray || values.isWordArray || values.isLongArray || values.isQuadArray)
 
     fun memorySize(dt: DataType, numElements: Int?): Int
 

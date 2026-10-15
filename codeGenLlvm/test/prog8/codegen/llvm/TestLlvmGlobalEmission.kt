@@ -42,7 +42,7 @@ class TestLlvmGlobalEmission: FunSpec({
         mapper.storageType(DataType.STR, 6u) shouldBe LlvmType.Array(6, LlvmType.I8)
         mapper.storageType(DataType.arrayFor(BaseDataType.UBYTE, target), 3u) shouldBe LlvmType.Array(3, LlvmType.I8)
         mapper.storageType(DataType.arrayFor(BaseDataType.WORD, target), 4u) shouldBe LlvmType.Array(4, LlvmType.I16)
-        mapper.storageType(DataType.arrayFor(BaseDataType.STR, target), 2u) shouldBe LlvmType.Array(2, LlvmType.I32)
+        mapper.storageType(DataType.arrayFor(BaseDataType.STR, target), 2u) shouldBe LlvmType.Array(2, LlvmType.I64)
         mapper.storageType(DataType.arrayFor(BaseDataType.FLOAT, target), 2u) shouldBe LlvmType.Array(2, LlvmType.Double)
         mapper.storageType(DataType.arrayOfPointersTo(BaseDataType.UBYTE), 2u) shouldBe LlvmType.Array(2, LlvmType.Ptr)
         mapper.storageType(DataType.arrayOfStructs(NodeType), 2u) shouldBe LlvmType.Array(2, nodeLlvmType)
@@ -154,7 +154,7 @@ class TestLlvmGlobalEmission: FunSpec({
         module.printed("main.nodes") shouldBe "@main.nodes = internal global [2 x ptr] [ptr @main.name, ptr inttoptr (i64 4096 to ptr)]"
         module.printed("main.longs") shouldBe "@main.longs = internal global [2 x i32] [i32 1, i32 2]"
         LlvmPrinter.print(module) shouldNotContain "ptrtoint"
-        symbols.pointerArrays["main.names"] shouldBe PointerArray("main.names", LlvmValue.Global("main.names"), 2, 4)
+        symbols.pointerArrays["main.names"] shouldBe PointerArray("main.names", LlvmValue.Global("main.names"), 2, 8)
         symbols.pointerArrays["main.jumps"] shouldBe PointerArray("main.jumps", LlvmValue.Global("main.jumps"), 2, 2)
         symbols.pointerArrays["main.nodes"] shouldBe PointerArray("main.nodes", LlvmValue.Global("main.nodes"), 2, 8)
         symbols.pointerArrays.keys shouldBe setOf("main.names", "main.jumps", "main.nodes")

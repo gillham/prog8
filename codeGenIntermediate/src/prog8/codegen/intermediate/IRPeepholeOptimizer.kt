@@ -940,7 +940,9 @@ jump p8_label_gen_2
                     if(sameReg) {
                         val newIns = when(val immediate = prev.immediate) {
                             is ImmediateOperand.Integer -> IRInstructions.storeImmediate(ins.type!!, immediate.value, ins.requireMemory())
-                            is ImmediateOperand.QuadValue -> IRInstructions.storeImmediate(ins.type!!, immediate.value, ins.requireMemory())
+                            // only a quad store holds all 64 bits of the immediate, such as a quad stored into an 8-byte pointer
+                            is ImmediateOperand.QuadValue -> if(ins.type == IRDataType.QUAD || immediate.value in Int.MIN_VALUE..Int.MAX_VALUE)
+                                    IRInstructions.storeImmediate(ins.type!!, immediate.value, ins.requireMemory()) else null
                             is ImmediateOperand.FloatValue -> IRInstructions.storeImmediateFloat(immediate.value, ins.requireMemory())
                             else -> null
                         }
@@ -1096,7 +1098,8 @@ jump p8_label_gen_2
                     if(insBefore.opcode == Opcode.LOAD && insBefore.immediate!=null) {
                         val newIns = when(val imm = insBefore.immediate!!) {
                             is ImmediateOperand.Integer -> IRInstructions.returnImmediate(ins.type!!, imm.value)
-                            is ImmediateOperand.QuadValue -> IRInstructions.returnImmediate(ins.type!!, imm.value)
+                            is ImmediateOperand.QuadValue -> if(ins.type == IRDataType.QUAD || imm.value in Int.MIN_VALUE..Int.MAX_VALUE)
+                                    IRInstructions.returnImmediate(ins.type!!, imm.value) else null
                             is ImmediateOperand.FloatValue -> IRInstructions.returnImmediateFloat(imm.value)
                             is ImmediateOperand.SymbolAddress -> null
                         }

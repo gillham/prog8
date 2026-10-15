@@ -351,7 +351,11 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
 
             codeGen.storeValueAtPointersLocation(inplaceInstrs, addressReg, fieldOffset, pointerDeref.type, false, oldvalueReg)
             chunks = inplaceInstrs
-        } else if(array?.pointerderef != null) {
+        } else if(array?.pointerderef != null || array?.variable?.type?.isPointer == true) {
+            // the in-place operators below address the element relative to the array variable itself, not to where a pointer points
+            chunks = fallbackAssign(augAssign)
+        } else if(targetDt==IRDataType.POINTER && value is PtNumber && value.integerBits !in Int.MIN_VALUE..Int.MAX_VALUE) {
+            // their immediates have 32 bits, a bigger constant for an 8-byte pointer goes through a register
             chunks = fallbackAssign(augAssign)
         } else {
             chunks = when (augAssign.operator) {
@@ -656,6 +660,9 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                         targetDt==IRDataType.QUAD && valueDt in arrayOf(IRDataType.BYTE, IRDataType.WORD, IRDataType.LONG) -> {
                             extendSourceDt = valueDt; extendDestDt = IRDataType.QUAD; extendSigned = valueIsSigned
                         }
+                        // 8-byte pointers and quads have the same size
+                        (targetDt==IRDataType.POINTER && valueDt==IRDataType.QUAD || targetDt==IRDataType.QUAD && valueDt==IRDataType.POINTER)
+                                && codeGen.options.compTarget.POINTER_MEM_SIZE==8u -> { extendSourceDt = null; extendDestDt = null; extendSigned = false }
                         else -> throw AssemblyError("assignment value and target dt mismatch: $valueDt -> $targetDt")
                     }
                 }
@@ -694,7 +701,8 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                         constInt != null -> {
                             val v = when(targetDt) {
                                 IRDataType.BYTE -> constInt and 0xff
-                                IRDataType.WORD, IRDataType.POINTER -> constInt and 0xffff
+                                IRDataType.WORD -> constInt and 0xffff
+                                IRDataType.POINTER -> if(codeGen.options.compTarget.POINTER_MEM_SIZE<=2u) constInt and 0xffff else constInt
                                 IRDataType.LONG -> constInt
                                 else -> throw AssemblyError("invalid target dt $targetDt for const store")
                             }
@@ -744,7 +752,8 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                                 constInt != null -> {
                                     val v = when(targetDt) {
                                         IRDataType.BYTE -> constInt and 0xff
-                                        IRDataType.WORD, IRDataType.POINTER -> constInt and 0xffff
+                                        IRDataType.WORD -> constInt and 0xffff
+                                        IRDataType.POINTER -> if(codeGen.options.compTarget.POINTER_MEM_SIZE<=2u) constInt and 0xffff else constInt
                                         IRDataType.LONG -> constInt
                                     }
                                     IRInstructions.storeImmediate(targetDt, v, IRMemory.direct(constAddress.number.toUInt().toAddress()))
@@ -827,9 +836,9 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
             } else {
                 val (code, indexReg) = codeGen.loadIndexReg(targetArray.index, true)
                 result += code
-                if(eltSize!=1)
-                    result += codeGen.multiplyByConst(DataType.UWORD, indexReg, eltSize)
-                addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, indexReg), null)
+                val (offsetCode, offsetReg) = codeGen.elementOffset(indexReg, eltSize)
+                result += offsetCode
+                addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, offsetReg), null)
             }
             codeGen.storeValueAtPointersLocation(result, pointerReg, 0, targetIdent.type.dereference(), true, -1)
         } else {
@@ -839,9 +848,9 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
             } else {
                 val (code, indexReg) = codeGen.loadIndexReg(targetArray.index, true)
                 result += code
-                if(eltSize!=1)
-                    result += codeGen.multiplyByConst(DataType.UWORD, indexReg, eltSize)
-                addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, indexReg), null)
+                val (offsetCode, offsetReg) = codeGen.elementOffset(indexReg, eltSize)
+                result += offsetCode
+                addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, offsetReg), null)
             }
             val realValueReg = if(targetDt == IRDataType.FLOAT) valueFpRegister else valueRegister
             codeGen.storeValueAtPointersLocation(result, pointerReg, 0, targetIdent.type.dereference(), false, realValueReg)
@@ -963,9 +972,9 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
             // index is an expression
             val (code, indexReg) = codeGen.loadIndexReg(targetArray.index, true)
             result += code
-            if(eltSize!=1)
-                result += codeGen.multiplyByConst(DataType.UWORD, indexReg, eltSize)
-            addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, indexReg), null)
+            val (offsetCode, offsetReg) = codeGen.elementOffset(indexReg, eltSize)
+            result += offsetCode
+            addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, offsetReg), null)
             if(zero) {
                 addInstr(result, IRInstructions.storeZero(Opcode.STOREZI, targetDt, IRMemory.indirect(pointerReg, 0)), null)
             } else {

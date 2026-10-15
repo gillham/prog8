@@ -17,6 +17,7 @@ import prog8.intermediate.Opcode
 import prog8.intermediate.codeAddress
 import prog8.intermediate.requireCallSite
 import prog8.intermediate.requireImmediateQuad
+import prog8.intermediate.symbolName
 import prog8.intermediate.toAddress
 
 import prog8tests.helpers.ErrorReporterForTests
@@ -716,6 +717,37 @@ class TestVmCodeGen: FunSpec({
         val irVar = irProg.st.allVariables().single()
         irVar.name shouldBe "p8b_main.p8s_start.p8v_x"
     }    
+
+    test("an in-place operator on an element through a pointer variable reads and writes the element, not the pointer variable") {
+        val codegen = VmCodeGen(false)
+        val program = PtProgram("test", VMTarget())
+        val block = PtBlock("main", false, SourceCode.Generated("test"), PtBlock.Options(), Position.DUMMY)
+        val sub = PtSub("start", emptyList(), emptyList(), Position.DUMMY)
+        val pointerType = DataType.pointer(BaseDataType.QUAD)
+        sub.add(PtVariable("pq", pointerType, false, ZeropageWish.DONTCARE, 0u, false, null, null, Position.DUMMY))
+        sub.add(PtVariable("i", DataType.UBYTE, false, ZeropageWish.DONTCARE, 0u, false, null, null, Position.DUMMY))
+        for (index in listOf(PtNumber(BaseDataType.UBYTE, 2.0, Position.DUMMY), PtIdentifier("main.start.i", DataType.UBYTE, Position.DUMMY))) {
+            sub.add(PtAugmentedAssign("+=", Position.DUMMY).also {
+                it.add(PtAssignTarget(false, Position.DUMMY).also { target ->
+                    target.add(PtArrayIndexer(DataType.QUAD, false, Position.DUMMY).also { indexer ->
+                        indexer.add(PtIdentifier("main.start.pq", pointerType, Position.DUMMY))
+                        indexer.add(index)
+                    })
+                })
+                it.add(PtNumber.fromQuadBits(BaseDataType.QUAD, 5L, Position.DUMMY))
+            })
+        }
+        block.add(sub)
+        program.add(block)
+
+        val options = getTestOptions()
+        val st = SymbolTableMaker(program, options).make()
+        val result = codegen.generate(program, st, options, ErrorReporterForTests()) as VmAssemblyProgram
+        val instructions = result.irProgram.blocks.first().children.filterIsInstance<IRSubroutine>().single().chunks.flatMap { it.instructions }
+        instructions.filter { it.memory?.symbolName == "main.start.pq" }.map { it.opcode to it.type } shouldBe List(4) { Opcode.LOADM to IRDataType.POINTER }
+        instructions.count { it.opcode == Opcode.LOADI && it.type == IRDataType.QUAD } shouldBe 2
+        instructions.count { it.opcode == Opcode.STOREI && it.type == IRDataType.QUAD } shouldBe 2
+    }
 
     test("quad values keep all 64 bits through the IR code generator") {
         val codegen = VmCodeGen(false)

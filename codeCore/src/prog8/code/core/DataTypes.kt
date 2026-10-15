@@ -311,7 +311,7 @@ class DataType private constructor(
         }
 
     fun typeForUntypedAddressOf(msb: Boolean, mem: IMemSizer): DataType {
-        val untypedPointerType = if(mem.memorySize(BaseDataType.POINTER)>2) LONG else UWORD
+        val untypedPointerType = mem.pointerType
         if (isUndefined)
             return if(msb) pointer(BaseDataType.UBYTE) else untypedPointerType
         else {

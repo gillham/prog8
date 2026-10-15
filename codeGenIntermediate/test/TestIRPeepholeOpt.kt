@@ -67,6 +67,21 @@ class TestIRPeepholeOpt: FunSpec({
         instructions[1].requireImmediateQuad() shouldBe -1L
     }
 
+    test("a 64-bit immediate is only folded into a quad store or return, not into those of an 8-byte pointer") {
+        val big = 0x100000000L
+        val irProg = makeIRProgram(listOf(
+            IRInstructions.load(IRDataType.QUAD, 1, big),
+            IRInstructions.storeMemory(Opcode.STOREM, IRDataType.POINTER, 1, IRMemory.direct("main.p")),
+            IRInstructions.load(IRDataType.QUAD, 2, big),
+            IRInstructions.returnRegister(IRDataType.POINTER, 2)
+        ))
+        IRPeepholeOptimizer(irProg, false).optimize(true, ErrorReporterForTests())
+        val instructions = irProg.chunks().single().instructions
+        instructions.map { it.opcode } shouldBe listOf(Opcode.LOAD, Opcode.STOREM, Opcode.LOAD, Opcode.RETURNR)
+        instructions[0].requireImmediateQuad() shouldBe big
+        instructions[2].requireImmediateQuad() shouldBe big
+    }
+
     test("quad pointer accesses are not fused into post-increment loads") {
         val irProg = makeIRProgram(listOf(
             IRInstructions.loadMemory(Opcode.LOADM, IRDataType.POINTER, 1, IRMemory.direct("main.ptr")),

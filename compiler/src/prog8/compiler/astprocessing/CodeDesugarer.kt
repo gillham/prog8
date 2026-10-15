@@ -261,9 +261,12 @@ _after:
         if(outerFunc==listOf("pushp")) {
             // pushp adapts to pointer size: pushw on 16-bit targets, pushl on 32-bit
             val pushName = if(target.POINTER_MEM_SIZE > 2u) "pushl" else "pushw"
+            // with 8-byte pointers the long register still holds the whole address, which pushl pushes as 8 bytes
+            val args = if(target.POINTER_MEM_SIZE > 4u) functionCall.args.map { TypecastExpression(it, DataType.LONG, false, it.position) as Expression }.toMutableList()
+                else functionCall.args
             val newCall = FunctionCallStatement(
                 IdentifierReference(listOf(pushName), position),
-                functionCall.args, false, position
+                args, false, position
             )
             return listOf(AstReplaceNode(functionCall as Node, newCall, parent))
         }
@@ -276,10 +279,13 @@ _after:
             return listOf(AstReplaceNode(functionCall as Node, newCall, parent))
         }
         if(outerFunc==listOf("pokep")) {
-            val pokeName = if(target.POINTER_MEM_SIZE > 2u) "pokel" else "pokew"
+            val pokeName = "poke${target.pointerPeekPokeSuffix}"
+            // pokeq takes a quad value, which a pointer isn't implicitly
+            val args = if(target.POINTER_MEM_SIZE > 4u) mutableListOf(functionCall.args[0], TypecastExpression(functionCall.args[1], DataType.UQUAD, true, functionCall.args[1].position))
+                else functionCall.args
             val newCall = FunctionCallStatement(
                 IdentifierReference(listOf(pokeName), position),
-                functionCall.args, false, position
+                args, false, position
             )
             return listOf(AstReplaceNode(functionCall as Node, newCall, parent))
         }
@@ -349,7 +355,7 @@ _after:
             return mods
         }
         if(functionCallExpr.target.nameInSource==listOf("peekp")) {
-            val peekName = if(target.POINTER_MEM_SIZE > 2u) "peekl" else "peekw"
+            val peekName = "peek${target.pointerPeekPokeSuffix}"
             val newCall = FunctionCallExpression(
                 IdentifierReference(listOf(peekName), functionCallExpr.position),
                 functionCallExpr.args.toMutableList(), functionCallExpr.position
@@ -491,10 +497,9 @@ _after:
 
         val indexExpr = arrayIndexedExpression.indexer.indexExpr
         val arrayVar = arrayIndexedExpression.plainarrayvar!!.targetVarDecl()
-        // uword (16-bit) or long (32-bit) variables can hold a pointer value and can be indexed as such
-        val isUwordPointerHolder = arrayVar!=null && arrayVar.datatype.isUnsignedWord && target.POINTER_MEM_SIZE <= 2u
-        val isLongPointerHolder = arrayVar!=null && arrayVar.datatype.isLong && target.POINTER_MEM_SIZE > 2u
-        if(arrayVar!=null && (isUwordPointerHolder || isLongPointerHolder || arrayVar.datatype.isPointer)) {
+        // uword (16-bit), long (32-bit) or uquad (64-bit) variables can hold a pointer value and can be indexed as such
+        val isPointerHolder = arrayVar!=null && arrayVar.datatype == target.pointerType
+        if(arrayVar!=null && (isPointerHolder || arrayVar.datatype.isPointer)) {
             val indexType = target.pointerType
             val wordIndex = TypecastExpression(indexExpr, indexType, true, indexExpr.position)
             val address = BinaryExpression(
@@ -503,7 +508,7 @@ _after:
                 wordIndex,
                 arrayIndexedExpression.position
             )
-            if(isUwordPointerHolder || isLongPointerHolder || arrayVar.datatype.sub?.isByte==true) {
+            if(isPointerHolder || arrayVar.datatype.sub?.isByte==true) {
                 return if (parent is AssignTarget) {
                     // assignment to array
                     val memwrite = DirectMemoryWrite(address, arrayIndexedExpression.position)
@@ -566,6 +571,21 @@ _after:
                     val peek = FunctionCallExpression(IdentifierReference(listOf("peekf"), arrayIndexedExpression.position), mutableListOf(address), arrayIndexedExpression.position)
                     return listOf(AstReplaceNode(arrayIndexedExpression, peek, parent))
                 }
+            } else if(arrayVar.datatype.sub==BaseDataType.QUAD || arrayVar.datatype.sub==BaseDataType.UQUAD) {
+                // use peekq/pokeq
+                if(parent is AssignTarget) {
+                    val assignment = parent.parent as Assignment
+                    val args = mutableListOf(address, assignment.value)
+                    val poke = FunctionCallStatement(IdentifierReference(listOf("pokeq"), arrayIndexedExpression.position), args, false, arrayIndexedExpression.position)
+                    return listOf(AstReplaceNode(assignment, poke, assignment.parent))
+                } else {
+                    val peek = FunctionCallExpression(IdentifierReference(listOf("peekq"), arrayIndexedExpression.position), mutableListOf(address), arrayIndexedExpression.position)
+                    val replacement = if(arrayVar.datatype.sub==BaseDataType.UQUAD)
+                            TypecastExpression(peek, DataType.UQUAD, true, peek.position)
+                        else
+                            peek
+                    return listOf(AstReplaceNode(arrayIndexedExpression, replacement, parent))
+                }
             }
         } else if(arrayVar!=null && (arrayVar.type==VarDeclType.MEMORY || arrayVar.datatype.isString || arrayVar.datatype.isPointer || arrayVar.datatype.isArray)) {
             return noModifications
@@ -594,8 +614,9 @@ _after:
         fun isStringComparison(leftDt: InferredTypes.InferredType, rightDt: InferredTypes.InferredType): Boolean {
             return when {
                 leftDt issimpletype BaseDataType.STR && rightDt issimpletype BaseDataType.STR -> true
-                leftDt issimpletype BaseDataType.UWORD && rightDt issimpletype BaseDataType.STR || leftDt issimpletype BaseDataType.STR && rightDt issimpletype BaseDataType.UWORD -> true
-                leftDt issimpletype BaseDataType.LONG && rightDt issimpletype BaseDataType.STR || leftDt issimpletype BaseDataType.STR && rightDt issimpletype BaseDataType.LONG -> target.POINTER_MEM_SIZE > 2u
+                // a uword or long only holds a string's address where pointers have 2 or 4 bytes
+                leftDt issimpletype BaseDataType.UWORD && rightDt issimpletype BaseDataType.STR || leftDt issimpletype BaseDataType.STR && rightDt issimpletype BaseDataType.UWORD -> target.POINTER_MEM_SIZE <= 4u
+                leftDt issimpletype BaseDataType.LONG && rightDt issimpletype BaseDataType.STR || leftDt issimpletype BaseDataType.STR && rightDt issimpletype BaseDataType.LONG -> target.POINTER_MEM_SIZE == 4u
                 leftDt.isPointer && leftDt.getOrUndef().sub == BaseDataType.UBYTE -> rightDt issimpletype BaseDataType.STR
                 rightDt.isPointer && rightDt.getOrUndef().sub == BaseDataType.UBYTE -> leftDt issimpletype BaseDataType.STR
                 else -> false
@@ -738,7 +759,7 @@ _after:
                             fieldDt.isFloat -> peekCall("peekf")
                             fieldDt.isPointer -> {
                                 // pointer fields must be read with the target's pointer size
-                                val peekName = if(target.POINTER_MEM_SIZE > 2u) "peekl" else "peekw"
+                                val peekName = "peek${target.pointerPeekPokeSuffix}"
                                 TypecastExpression(peekCall(peekName), fieldDt, true, expr.position)
                             }
                             else -> {
@@ -955,7 +976,7 @@ _after:
     override fun after(deref: PtrDereference, parent: Node): Iterable<AstModification> {
         val isLHS = parent is AssignTarget
         val varDt = (deref.firstTarget() as? VarDecl)?.datatype
-        val isRawAddressHolder = varDt?.isUnsignedWord==true || (target.POINTER_MEM_SIZE > 2u && varDt?.isLong==true)
+        val isRawAddressHolder = varDt?.isUnsignedWord==true || (target.POINTER_MEM_SIZE > 2u && varDt==target.pointerType)
         if(isRawAddressHolder || (varDt?.isPointer==true && varDt.sub?.isByte==true)) {
             // replace  ptr^^   by  @(ptr)    when ptr is raw address holder or ^^byte
             val identifier = IdentifierReference(deref.chain, deref.position)
@@ -1228,7 +1249,7 @@ _after:
                     errors.err("cannot index into field '${field.first}' of struct '${struct.name}' here", deref.position)
                     return null
                 }
-                val peekName = if(target.POINTER_MEM_SIZE > 2u) "peekl" else "peekw"
+                val peekName = "peek${target.pointerPeekPokeSuffix}"
                 val peekCall = FunctionCallExpression(IdentifierReference(listOf(peekName), deref.position), mutableListOf(fieldAddr), deref.position)
                 val fieldPtr = TypecastExpression(peekCall, addrType, false, deref.position)
                 val elemSize = elemDt.size(target)
@@ -1583,8 +1604,8 @@ _after:
         // works on an already-evaluated simple value.
         // resolve the struct type of the base expression
         val baseDt = base.inferType(program).getOrUndef()
-        // use the target's natural pointer width for the hoisted address (uword on 6502, long on 32-bit targets)
-        val addressDt = if(program.target.POINTER_MEM_SIZE > 2u) DataType.LONG else DataType.UWORD
+        // use the target's natural pointer width for the hoisted address (uword on 6502, long on 32-bit targets, uquad on 64-bit targets)
+        val addressDt = program.target.pointerType
         val useTmpVar = baseDt.isPointer
         val tmpVar = if(useTmpVar) VarDecl.createAuto(addressDt, base.position) else null
         val tmpIdent = if(useTmpVar) IdentifierReference(listOf(tmpVar!!.name), base.position) else null
@@ -1649,7 +1670,7 @@ _after:
                     errors.err("cannot dereference field '$fieldName', expected a pointer to a struct", field.position)
                     return noModifications
                 }
-                val peekName = if(program.target.POINTER_MEM_SIZE > 2u) "peekl" else "peekw"
+                val peekName = "peek${program.target.pointerPeekPokeSuffix}"
                 val peekCall = FunctionCallExpression(IdentifierReference(listOf(peekName), field.position), mutableListOf(address), field.position)
                 address = TypecastExpression(peekCall, addressDt, false, field.position)
                 currentStruct = nextStruct
@@ -1672,8 +1693,8 @@ _after:
             dt.isQuad -> { funcName="pokeq"; pokeCast=null; peekFuncName="peekq"; peekCast=if(dt.isUnsignedQuad) DataType.UQUAD else null }
             dt.isFloat -> { funcName="pokef"; pokeCast=null; peekFuncName="peekf"; peekCast=null }
             dt.isPointer -> {
-                val ptrName = if(program.target.POINTER_MEM_SIZE > 2u) "l" else "w"
-                funcName="poke$ptrName"; pokeCast=null; peekFuncName="peek$ptrName"; peekCast=dt
+                val ptrName = program.target.pointerPeekPokeSuffix
+                funcName="poke$ptrName"; pokeCast=if(ptrName=="q") DataType.UQUAD else null; peekFuncName="peek$ptrName"; peekCast=dt
             }
             else -> {
                 errors.err("unsupported field datatype $dt for write through a pointer", target.position)

@@ -121,12 +121,12 @@ private fun stringsProgram(): LlvmModule {
     val third = LlvmValue.Local("third", LlvmType.Ptr)
     val first = LlvmValue.Local("first", LlvmType.Ptr)
     val code = buildList {
-        addAll(PointerArrayAccess.load(names, IRDataType.LONG, direct("main.names", 4), null, second))
+        addAll(PointerArrayAccess.load(names, IRDataType.QUAD, direct("main.names", 8), null, second))
         add(puts(second))
-        addAll(PointerArrayAccess.load(names, IRDataType.LONG, indexed("main.names", scale = 4), LlvmValue.IntConstant(2, LlvmType.I16), third))
+        addAll(PointerArrayAccess.load(names, IRDataType.QUAD, indexed("main.names", scale = 8), LlvmValue.IntConstant(2, LlvmType.I16), third))
         add(puts(third))
-        addAll(PointerArrayAccess.store(names, IRDataType.LONG, direct("main.names", 0), null, symbols.addresses.getValue("prog8_interned_strings.string_3"), "assign"))
-        addAll(PointerArrayAccess.load(names, IRDataType.LONG, direct("main.names", 0), null, first))
+        addAll(PointerArrayAccess.store(names, IRDataType.QUAD, direct("main.names", 0), null, symbols.addresses.getValue("prog8_interned_strings.string_3"), "assign"))
+        addAll(PointerArrayAccess.load(names, IRDataType.QUAD, direct("main.names", 0), null, first))
         add(puts(first))
         add(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I32)))
     }

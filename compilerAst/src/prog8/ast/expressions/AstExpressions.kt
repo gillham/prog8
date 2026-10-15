@@ -230,6 +230,9 @@ class BinaryExpression(
                     // ptrA - ptrB : the number of elements of the pointed-to type between the two pointers (C-style), as a target-sized address/count type
                     InferredTypes.knownFor(program.target.pointerType.base)
                 }
+                else if(isSignedAddressOffset(operator, leftDt, rightDt, program.target)) {
+                    InferredTypes.knownFor(program.target.pointerType.base)
+                }
                 else {
                     try {
                         val dt = InferredTypes.knownFor(
@@ -319,6 +322,15 @@ class BinaryExpression(
         (operator in CommutativeOperators) && (right.isSimple || left.isSimple)
 
     companion object {
+        /** With 8-byte pointers an address is a uquad: a signed integer added to or subtracted from it is an offset, sign extended as in pointer arithmetic. */
+        fun isSignedAddressOffset(operator: String, leftDt: InferredTypes.InferredType, rightDt: InferredTypes.InferredType, target: ICompilationTarget): Boolean {
+            if(target.POINTER_MEM_SIZE<=4u)
+                return false
+            fun isSignedOffset(dt: InferredTypes.InferredType) = dt.isInteger && !dt.isQuad && dt.getOrUndef().isSigned
+            return (operator=="+" || operator=="-") && leftDt istype target.pointerType && isSignedOffset(rightDt)
+                    || operator=="+" && rightDt istype target.pointerType && isSignedOffset(leftDt)
+        }
+
         fun commonDatatype(leftDt: DataType, rightDt: DataType,
                            left: Expression?, right: Expression?): Pair<DataType, Expression?> {
 
@@ -538,11 +550,10 @@ class ArrayIndexedExpression(var plainarrayvar: IdentifierReference?,
         if(plainarrayvar!=null) {
             val target = plainarrayvar!!.targetStatement()
             if(target is VarDecl) {
-                // uword (16-bit) or long (32-bit) variables can hold a pointer value, so indexing them reads a byte from that address
-                val isUwordPointerHolder = program.target.POINTER_MEM_SIZE <= 2u && target.datatype.isUnsignedWord
-                val isLongPointerHolder = program.target.POINTER_MEM_SIZE > 2u && target.datatype.isLong
+                // uword (16-bit), long (32-bit) or uquad (64-bit) variables can hold a pointer value, so indexing them reads a byte from that address
+                val isPointerHolder = target.datatype == program.target.pointerType
                 return when {
-                    target.datatype.isString || isUwordPointerHolder || isLongPointerHolder -> InferredTypes.knownFor(BaseDataType.UBYTE)
+                    target.datatype.isString || isPointerHolder -> InferredTypes.knownFor(BaseDataType.UBYTE)
                     target.datatype.isArray -> InferredTypes.knownFor(target.datatype.elementType())
                     target.datatype.isPointer -> InferredTypes.knownFor(target.datatype.dereference())
                     else -> InferredTypes.knownFor(target.datatype)
@@ -742,8 +753,7 @@ data class AddressOf(var identifier: IdentifierReference?, var arrayIndex: Array
     override fun referencesIdentifier(nameInSource: List<String>) = identifier?.nameInSource==nameInSource || arrayIndex?.referencesIdentifier(nameInSource)==true || dereference?.referencesIdentifier(nameInSource)==true
     override fun inferType(program: Program): InferredTypes.InferredType {
         if(!typed) {
-            val untypedPointerType = if(program.target.memorySize(BaseDataType.POINTER)>2) BaseDataType.LONG else BaseDataType.UWORD
-            return InferredTypes.knownFor(untypedPointerType)
+            return InferredTypes.knownFor(program.target.pointerBaseType)
         }
         if(identifier!=null) {
             val type = identifier!!.inferType(program).getOrUndef()
@@ -1227,7 +1237,12 @@ class NumericLiteral private constructor(val type: BaseDataType,    // only nume
                     // gives the target's address integer type, which doesn't convert back to a pointer, so no casting loop
                     targettype.isPointer -> {
                         val ptrType = target.pointerBaseType
-                        if(!aboveLongRange && quadBits in integerRange(ptrType))
+                        if(ptrType==BaseDataType.UQUAD) {
+                            // a uquad already is the address integer type: casting it again would loop
+                            if(type!=BaseDataType.UQUAD && !negative)
+                                return ValueAfterCast(true, null, fromQuadBits(ptrType, quadBits, position))
+                        }
+                        else if(!aboveLongRange && quadBits in integerRange(ptrType))
                             return ValueAfterCast(true, null, NumericLiteral(ptrType, number, position))
                     }
                 }

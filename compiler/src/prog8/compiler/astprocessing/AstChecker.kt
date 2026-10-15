@@ -28,8 +28,8 @@ internal class AstChecker(private val program: Program,
             errors.err("64-bit integer types (quad/uquad) are not supported on target ${options.compTarget.name}", position)
     }
 
-    private fun checkQuadBuiltin(functionName: String?, position: Position) {
-        if(functionName=="peekq" || functionName=="pokeq")
+    private fun checkQuadBuiltin(functionName: String?, args: List<Expression>, position: Position) {
+        if(functionName=="peekq" || functionName=="pokeq" || (functionName in setOf("lsb", "lsw", "msb", "msw") && args.any { it.inferType(program).isQuad }))
             checkQuadSupported(DataType.QUAD, position)
     }
 
@@ -196,15 +196,19 @@ internal class AstChecker(private val program: Program,
             if(valueDt.isKnown) {
                 val valueDataType = valueDt.getOrUndef()
                 if (expectedDt != valueDataType) {
-                    if(expectedDt.isUnsignedWord && (valueDataType.isIterable || valueDataType.isPointer)) {
+                    if(isNarrowedAddress(valueDataType, expectedDt)) {
+                        errors.err(narrowedAddressMessage(expectedDt), actual.position)
+                    } else if(expectedDt == options.compTarget.pointerType && options.compTarget.POINTER_MEM_SIZE>4u && (valueDataType.isIterable || valueDataType.isPointer)) {
+                        // you can return a string or array or pointer when a uquad (pointer) is returned on 64-bit targets
+                    } else if(expectedDt.isUnsignedWord && (valueDataType.isIterable || valueDataType.isPointer)) {
                         // you can return a string or array or pointer when an uword (pointer) is returned
                     } else if(valueDt issimpletype BaseDataType.UWORD && expectedDt.isString) {
                         // you can return an uword pointer when the return type is a string
                     } else if(expectedDt.isLong && options.compTarget.POINTER_MEM_SIZE>2u && (valueDataType.isIterable || valueDataType.isPointer)) {
                         // you can return a string or array or pointer when a long (pointer) is returned on 32-bit targets
-                    } else if((valueDataType.isUnsignedWord || valueDataType.isByte || valueDataType.isLong) && expectedDt.isPointer) {
+                    } else if((valueDataType.isUnsignedWord || valueDataType.isByte || valueDataType.isLong || valueDataType == options.compTarget.pointerType) && expectedDt.isPointer) {
                         // you can return an uword/ubyte/byte/long value when a pointer is required
-                        if(options.compTarget.POINTER_MEM_SIZE>2u && !valueDataType.isLong)
+                        if(options.compTarget.POINTER_MEM_SIZE>2u && !valueDataType.isLong && valueDataType != options.compTarget.pointerType)
                             errors.err("incompatible return value type $valueDt for $expectedDt (use explicit typecast?)", actual.position)
                     } else {
                         errors.err("return value type $valueDt doesn't match subroutine return type $expectedDt", actual.position)
@@ -1906,12 +1910,12 @@ internal class AstChecker(private val program: Program,
             errors.err("invalid right operand type", expr.right.position)
         if(leftDt!=rightDt) {
             if(leftDt.isPointer) {
-                if(!rightDt.isUnsignedWord && !rightDt.isLong && !rightDt.isPointer) {
+                if(!rightDt.isUnsignedWord && !rightDt.isLong && !rightDt.isPointer && rightDt != options.compTarget.pointerType) {
                     errors.err("pointer arithmetic requires unsigned word or long operand", expr.right.position)
                 }
             }
             else if(rightDt.isPointer) {
-                if(!leftDt.isUnsignedWord && !leftDt.isLong && !leftDt.isPointer) {
+                if(!leftDt.isUnsignedWord && !leftDt.isLong && !leftDt.isPointer && leftDt != options.compTarget.pointerType) {
                     errors.err("pointer arithmetic requires unsigned word or long operand", expr.left.position)
                 }
             }
@@ -1932,9 +1936,9 @@ internal class AstChecker(private val program: Program,
                 // exception allowed: shifting a word by a byte, long or quad by a word or byte
             } else if((expr.operator in BitwiseOperators) && (leftDt.isInteger && rightDt.isInteger)) {
                 // exception allowed: bitwise operations with any integers
-            } else if(options.compTarget.POINTER_MEM_SIZE==2u && (leftDt.isUnsignedWord && rightDt.isString) || (leftDt.isString && rightDt.isUnsignedWord)) {
+            } else if(options.compTarget.POINTER_MEM_SIZE==2u && ((leftDt.isUnsignedWord && rightDt.isString) || (leftDt.isString && rightDt.isUnsignedWord))) {
                 // exception allowed on 16 bits pointers: comparing uword (pointer) with string
-            } else if(options.compTarget.POINTER_MEM_SIZE>2u && ((leftDt.isPointer || leftDt.isLong) && rightDt.isString) || ((rightDt.isPointer || rightDt.isLong) && leftDt.isString)) {
+            } else if(options.compTarget.POINTER_MEM_SIZE==4u && (((leftDt.isPointer || leftDt.isLong) && rightDt.isString) || ((rightDt.isPointer || rightDt.isLong) && leftDt.isString))) {
                 // exception allowed on 32 bits pointers: comparing pointer (or long, which is the pointer type on 32 bits) with string
             } else if(options.compTarget.POINTER_MEM_SIZE>2u && ((leftDt.isLong && rightDt.isPointer) || (leftDt.isPointer && rightDt.isLong))) {
                 // exception allowed on 32 bits pointers: comparing long (untyped pointer) with pointer
@@ -2017,7 +2021,9 @@ internal class AstChecker(private val program: Program,
                 errors.err(castResult.whyFailed!!, typecast.expression.position)
             } else if (typecast.type.isPointer) {
                 val irtype = typecast.expression.inferType(program)
-                if(!(irtype.isUnsignedWord || irtype.isLong))
+                if(irtype.isQuad && options.compTarget.POINTER_MEM_SIZE>4u && isUnsupportedConstantAddress(cv))
+                    errors.err(unsupportedConstantAddressMessage(cv), typecast.position)
+                else if(!(irtype.isUnsignedWord || irtype.isLong || (irtype.isQuad && options.compTarget.POINTER_MEM_SIZE>4u)))
                     errors.err("can only cast uword or long to pointer", typecast.position)
             } else
                 errors.err("invalid type cast", typecast.position)
@@ -2028,7 +2034,11 @@ internal class AstChecker(private val program: Program,
                 errors.err("cannot use a pointer as a long, a pointer is an unsigned word", typecast.position)
         }
 
+        if(typecast.implicit && typecast.type.isInteger && isNarrowedAddress(typecast.expression.inferType(program).getOrUndef(), typecast.type))
+            errors.err(narrowedAddressMessage(typecast.type), typecast.position)
+
         if(typecast.implicit && typecast.type.isPointer && !typecast.expression.inferType(program).isLong && !typecast.expression.inferType(program).getOrUndef().isPassByRef && options.compTarget.POINTER_MEM_SIZE>2u
+            && !(typecast.expression.inferType(program).isQuad && options.compTarget.POINTER_MEM_SIZE>4u)
             && !options.compTarget.pointerConvertsImplicitly(typecast.expression.inferType(program).getOrUndef(), typecast.type))
             errors.err("explicit typecast is needed to convert a non-long value to a pointer", typecast.position)
 
@@ -2085,7 +2095,7 @@ internal class AstChecker(private val program: Program,
             checkFunctionCall(targetStatement, functionCallExpr.args, functionCallExpr.position)
 
         val builtinFunctionName = functionCallExpr.target.nameInSource.singleOrNull()
-        checkQuadBuiltin(builtinFunctionName, functionCallExpr.position)
+        checkQuadBuiltin(builtinFunctionName, functionCallExpr.args, functionCallExpr.position)
 
         // warn about sgn(unsigned) this is likely a mistake
         if(builtinFunctionName=="sgn") {
@@ -2133,7 +2143,7 @@ internal class AstChecker(private val program: Program,
     }
 
     override fun visit(functionCallStatement: FunctionCallStatement) {
-        checkQuadBuiltin(functionCallStatement.target.nameInSource.singleOrNull(), functionCallStatement.position)
+        checkQuadBuiltin(functionCallStatement.target.nameInSource.singleOrNull(), functionCallStatement.args, functionCallStatement.position)
         if(functionCallStatement.isMemoryCall || functionCallStatement.isMemoryRefCall) {
             errors.err("memory() function call should have been desugared into dedicated AST nodes", functionCallStatement.position)
         }
@@ -2359,13 +2369,11 @@ internal class AstChecker(private val program: Program,
         
         val target = arrayIndexedExpression.plainarrayvar?.targetStatement(program.builtinFunctions)
         if(target is VarDecl) {
-            // uword (16-bit) or long (32-bit) variables can hold a pointer value and can be indexed as such
-            val isUwordPointerHolder = options.compTarget.POINTER_MEM_SIZE <= 2u && target.datatype.isUnsignedWord
-            val isLongPointerHolder = options.compTarget.POINTER_MEM_SIZE > 2u && target.datatype.isLong
-            if (!target.datatype.isIterable && !target.datatype.isPointer && !isUwordPointerHolder && !isLongPointerHolder) {
-                val addressType = if(options.compTarget.POINTER_MEM_SIZE > 2u) "long" else "uword"
+            // uword (16-bit), long (32-bit) or uquad (64-bit) variables can hold a pointer value and can be indexed as such
+            val isPointerHolder = target.datatype == options.compTarget.pointerType
+            if (!target.datatype.isIterable && !target.datatype.isPointer && !isPointerHolder) {
                 errors.err(
-                    "indexing requires an iterable, address $addressType, or pointer variable",
+                    "indexing requires an iterable, address ${options.compTarget.pointerType}, or pointer variable",
                     arrayIndexedExpression.position
                 )
             }
@@ -2403,8 +2411,8 @@ internal class AstChecker(private val program: Program,
 
         if(arrayIndexedExpression.pointerderef!=null) {
             val dt = arrayIndexedExpression.pointerderef!!.inferType(program)
-            val isLongPtrHolder = options.compTarget.POINTER_MEM_SIZE > 2u && dt.isLong
-            if(!dt.isPointer && !dt.isUnsignedWord && !dt.isIterable && !isLongPtrHolder) {
+            val isPtrHolder = options.compTarget.POINTER_MEM_SIZE > 2u && dt issimpletype options.compTarget.pointerBaseType
+            if(!dt.isPointer && !dt.isUnsignedWord && !dt.isIterable && !isPtrHolder) {
                 errors.err("cannot array index on this field type", arrayIndexedExpression.indexer.position)
             }
             // check index out of bounds for struct field arrays via pointer
@@ -2566,9 +2574,25 @@ internal class AstChecker(private val program: Program,
             checkValueTypeAndRange(DataType.forDt(numLiteral.type), numLiteral)
     }
 
+    /** Whether an address (of a pointer, string or array) loses bits when it becomes the integer [target]; an error only where pointers have 8 bytes. */
+    private fun isNarrowedAddress(source: DataType, target: DataType): Boolean =
+        options.compTarget.POINTER_MEM_SIZE>4u && (source.isPointer || source.isPassByRef) && target.isInteger
+                && options.compTarget.memorySize(target, null) < options.compTarget.POINTER_MEM_SIZE.toInt()
+
+    private fun narrowedAddressMessage(target: DataType) =
+        "an address doesn't fit in a $target, pointers have ${options.compTarget.POINTER_MEM_SIZE} bytes here: use ${options.compTarget.pointerType}, or an explicit cast to truncate it"
+
+    /** The IR can't hold a constant address wider than 32 bits yet, so such a quad constant can't become a pointer. */
+    private fun isUnsupportedConstantAddress(value: NumericLiteral) = value.type.isQuad && value.integerBits !in 0L..0xFFFFFFFFL
+
+    private fun unsupportedConstantAddressMessage(value: NumericLiteral) =
+        "constant address ${value.valueText} doesn't fit in 32 bits, which is the limit for constant addresses for now"
+
     private fun allowedMemoryAccessAddressExpression(addressExpression: Expression, program: Program): Boolean {
         val dt = addressExpression.inferType(program)
         if(dt.isLong && program.target.POINTER_MEM_SIZE>2u)
+            return true
+        if(program.target.POINTER_MEM_SIZE>4u && dt issimpletype program.target.pointerBaseType)
             return true
         if(dt.isUnsignedWord || (dt.isPointer && dt.getOrUndef().sub?.isByteOrBool==true))
             return true
@@ -2873,6 +2897,8 @@ internal class AstChecker(private val program: Program,
                 return checkValueTypeAndRange(targetDt.elementType(), value)
             }
             targetDt.isPointer -> {
+                if(isUnsupportedConstantAddress(value))
+                    return err(unsupportedConstantAddressMessage(value))
                 return (value.type==BaseDataType.UWORD && options.compTarget.POINTER_MEM_SIZE==2u)
                     || (value.type==BaseDataType.LONG && options.compTarget.POINTER_MEM_SIZE==4u)
             }
@@ -2963,6 +2989,10 @@ internal class AstChecker(private val program: Program,
             errors.err("assignment right hand side doesn't result in a value", position)
             return false
         }
+        if(isNarrowedAddress(sourceDatatype, targetDatatype)) {
+            errors.err(narrowedAddressMessage(targetDatatype), position)
+            return false
+        }
 
         val result =  when {
             targetDatatype.isBool -> sourceDatatype.isBool
@@ -2973,6 +3003,7 @@ internal class AstChecker(private val program: Program,
             targetDatatype.isLong -> sourceDatatype.isLong || sourceDatatype.isPointer || sourceDatatype.isWord || sourceDatatype.isByte
             targetDatatype.isSignedQuad -> sourceDatatype.isSignedQuad || sourceDatatype.isLong || sourceDatatype.isWord || sourceDatatype.isByte
             targetDatatype.isUnsignedQuad -> sourceDatatype.isUnsignedQuad || sourceDatatype.isUnsignedWord || sourceDatatype.isUnsignedByte
+                    || (options.compTarget.POINTER_MEM_SIZE>4u && (sourceDatatype.isPointer || sourceDatatype.isPassByRef))
             targetDatatype.isFloat -> sourceDatatype.isNumeric
             targetDatatype.isString -> sourceDatatype.isString
             else -> false
@@ -3001,6 +3032,10 @@ internal class AstChecker(private val program: Program,
                     errors.err("cannot assign different pointer type, expected $targetDatatype or uword but got $sourceDatatype", position)
             } else if(sourceDatatype.isString && targetDatatype.sub?.isByte==true) {
                 // assigning a string to a byte pointer is allowed.
+            } else if(options.compTarget.POINTER_MEM_SIZE>4u) {
+                // with 8-byte pointers a uquad holds an address; a long is still accepted, as it is on 32-bit targets
+                if(!sourceDatatype.isLong && !sourceDatatype.isQuad && !sourceDatatype.isStructInstance)
+                    errors.err("incompatible value type, can only assign long, uquad or identical pointer type (use explicit typecast?)", position)
             } else if(options.compTarget.POINTER_MEM_SIZE>2u) {
                 // On 32-bit targets, only long or identical pointer types can be assigned to pointers
                 if(!sourceDatatype.isLong && !sourceDatatype.isStructInstance)

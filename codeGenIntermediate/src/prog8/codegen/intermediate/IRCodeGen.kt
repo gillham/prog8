@@ -48,6 +48,7 @@ class IRCodeGen(
         variableType.isPointer -> IRDataType.POINTER
         // a long can only hold a whole address where pointers are 4 bytes
         variableType.isLong -> if (options.compTarget.POINTER_MEM_SIZE == 4u) IRDataType.POINTER else IRDataType.LONG
+        variableType.isUnsignedQuad && options.compTarget.POINTER_MEM_SIZE == 8u -> IRDataType.POINTER
         else -> IRDataType.WORD
     }
 
@@ -1242,6 +1243,21 @@ class IRCodeGen(
     }
 
     internal fun multiplyByConst(dt: DataType, reg: Int, factor: Int): IRCodeChunk = multiplyByConst(dt, reg, factor.toLong())
+
+    /**
+     * The code and the register with the byte offset of element [indexWordReg] of [eltSize] bytes, to add to a pointer.
+     * Where pointers are wider than a word the offset is too, so it doesn't wrap around at 64 KiB.
+     */
+    internal fun elementOffset(indexWordReg: Int, eltSize: Int): Pair<IRCodeChunk, Int> {
+        if(eltSize==1 || options.compTarget.POINTER_MEM_SIZE <= 2u)
+            return multiplyByConst(DataType.UWORD, indexWordReg, eltSize) to indexWordReg
+        val offsetDt = options.compTarget.pointerType
+        val offsetReg = registers.next(irType(offsetDt))
+        val code = IRCodeChunk(null, null)
+        code += IRInstructions.binary(if(offsetDt.isQuad) Opcode.EXTQ else Opcode.EXT, IRDataType.WORD, offsetReg, indexWordReg)
+        code += multiplyByConst(offsetDt, offsetReg, eltSize)
+        return code to offsetReg
+    }
 
     internal fun multiplyByConst(dt: DataType, reg: Int, factor: Long): IRCodeChunk {
         val irdt = irType(dt)

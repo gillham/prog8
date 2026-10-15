@@ -212,7 +212,7 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
             }
         }
 
-        if(typecast.type.isWord && parent is Assignment && typecast.expression.inferType(program).isPointer) {
+        if(typecast.type.isWord && parent is Assignment && typecast.expression.inferType(program).isPointer && options.compTarget.POINTER_MEM_SIZE<=4u) {
             // a cast to uword can be removed if the assignment target type is uword (because any pointer can be assigned to uword)
             if(parent.target.inferType(program).isUnsignedWord)
                 return listOf(AstReplaceNode(typecast, typecast.expression, parent))
@@ -552,13 +552,13 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
         val name = functionCallExpr.target.nameInSource
         if(name==listOf("msw")) {
             val valueDt = functionCallExpr.args[0].inferType(program)
-            if(valueDt.isWords || valueDt.isBytes || valueDt.isPointer) {
+            if(valueDt.isWords || valueDt.isBytes || (valueDt.isPointer && options.compTarget.POINTER_MEM_SIZE<=4u)) {
                 val zero = NumericLiteral(BaseDataType.UWORD, 0.0, functionCallExpr.position)
                 return listOf(AstReplaceNode(functionCallExpr, zero, parent))
             }
         } else if(name==listOf("lsw")) {
             val valueDt = functionCallExpr.args[0].inferType(program)
-            if(valueDt.isWords || valueDt.isPointer)
+            if(valueDt.isWords || (valueDt.isPointer && options.compTarget.POINTER_MEM_SIZE<=4u))
                 return listOf(AstReplaceNode(functionCallExpr, functionCallExpr.args[0], parent))
             if(valueDt.isBytes) {
                 val cast = TypecastExpression(functionCallExpr.args[0], DataType.UWORD, true, functionCallExpr.position)

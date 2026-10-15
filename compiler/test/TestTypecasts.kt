@@ -38,7 +38,7 @@ class TestTypecasts: FunSpec({
         val result = compileText(C64Target(), false, text, outputDir, writeAssembly = false, errors = errors)
         result shouldBe null
         errors.errors.size shouldBe 1
-        errors.errors[0] shouldContain "type mismatch, was: float expected one of: [UWORD, WORD, LONG]"
+        errors.errors[0] shouldContain "type mismatch, was: float expected one of: [UWORD, WORD, LONG, QUAD, UQUAD]"
     }
 
     test("not casting bool operands to logical operators") {

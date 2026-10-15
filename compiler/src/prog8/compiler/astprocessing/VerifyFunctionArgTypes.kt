@@ -90,6 +90,12 @@ internal class VerifyFunctionArgTypes(val program: Program, val options: Compila
             // on 32 bits platforms the pointer type is long, so long can be used as an (untyped) pointer
             val is32bit = target.POINTER_MEM_SIZE > 2u
 
+            // with 8-byte pointers only a uquad holds an address, a narrower integer parameter would truncate it
+            if(target.POINTER_MEM_SIZE > 4u && (argDt.isPointer || argDt.isPassByRef) && paramDt.isInteger)
+                return paramDt == target.pointerType
+            if(target.POINTER_MEM_SIZE > 4u && paramDt.isPointer && argDt == target.pointerType)
+                return true
+
             // there are some exceptions that are considered compatible, such as STR <> UWORD,  UWORD <> pointer
             if(argDt.isUnsignedWord)
                 if((paramDt.isString || paramDt.isUnsignedByteArray || paramDt.isPointer))

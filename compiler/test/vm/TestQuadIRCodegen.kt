@@ -5,7 +5,9 @@ import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
+import prog8.ast.statements.FunctionCallStatement
 import prog8.code.target.Cx16Target
+import prog8.code.target.LlvmTarget
 import prog8.code.target.VMTarget
 import prog8.intermediate.*
 import prog8tests.helpers.ErrorReporterForTests
@@ -267,6 +269,120 @@ main {
         getq.quadImmediates(Opcode.RETURNI) shouldBe listOf(7000000000L)
         getq.withOpcode(Opcode.LSL, IRDataType.QUAD).size + getq.withOpcode(Opcode.LSLI, IRDataType.QUAD).size shouldBe 0
         getq.withOpcode(Opcode.MULS, IRDataType.QUAD).map { it.requireImmediateQuad() } shouldBe listOf(4294967298L)
+    }
+
+    test("compound assignments to elements through quad pointers update the elements, not the pointer variables") {
+        val src = """
+main {
+    quad[4] @shared values = [10, 20, 30, 40]
+    uquad[2] @shared uvalues = [1, 2]
+
+    sub start() {
+        ^^quad pq = &&values
+        ^^uquad pu = &&uvalues
+        ubyte @shared i = 3
+        pq[i] += 5
+        pq[0] += 5
+        pu[1] -= 1
+    }
+}"""
+        val ast = compileText(VMTarget(), false, src, outputDir, writeAssembly = false)!!.compilerAst
+        ast.entrypoint.statements.filterIsInstance<FunctionCallStatement>().map { it.target.nameInSource.single() } shouldBe List(3) { "pokeq" }
+        val start = irFor(src).instructionsOf("main.start")
+        start.filter { it.memory?.symbolName in setOf("main.start.pq", "main.start.pu") }.map { it.opcode to it.type }.toSet() shouldBe
+                setOf(Opcode.LOADM to IRDataType.POINTER, Opcode.STOREM to IRDataType.POINTER)
+        start.withOpcode(Opcode.LOADI, IRDataType.QUAD).size shouldBe 3
+        start.withOpcode(Opcode.STOREI, IRDataType.QUAD).size shouldBe 3
+    }
+
+    test("a typed pointer gets all bits of a constant address, and becomes a bool by comparing all its bits") {
+        val src = $$"""
+main {
+    sub start() {
+        ^^ubyte @shared p
+        p = $1_2345
+        bool @shared b = p as bool
+    }
+}"""
+        val start = irFor(src).instructionsOf("main.start")
+        start.withOpcode(Opcode.STOREIM, IRDataType.POINTER).single().requireImmediateInt() shouldBe 0x12345
+        start.withOpcode(Opcode.CMPI, IRDataType.POINTER).size shouldBe 1
+        start.withOpcode(Opcode.CMPI, IRDataType.WORD).size shouldBe 0
+    }
+
+    test("indexing a struct pointer scales the index in the address width, so offsets beyond 64 KiB don't wrap around") {
+        val src = $$"""
+main {
+    struct Node {
+        uword a
+        uword b
+        long c
+        quad d
+    }
+    quad[10000] @shared big
+
+    sub start() {
+        ^^Node np = &big
+        uword @shared i = 4500
+        np[i].a = $1234
+    }
+}"""
+        val start = irFor(src).instructionsOf("main.start")
+        start.withOpcode(Opcode.EXT, IRDataType.WORD).size shouldBe 1
+        start.withOpcode(Opcode.LSLI, IRDataType.LONG).size shouldBe 1
+        start.withOpcode(Opcode.LSLI, IRDataType.WORD).size shouldBe 0
+    }
+
+    test("lsb, lsw, msb and msw of a quad take the lowest and the highest byte and word of all 64 bits") {
+        val src = $$"""
+main {
+    sub start() {
+        uquad @shared u = $1234_5678_9abc_def0
+        ubyte @shared b = lsb(u)
+        b = msb(u)
+        uword @shared w = lsw(u)
+        w = msw(u)
+    }
+}"""
+        val start = irFor(src).instructionsOf("main.start")
+        start.withOpcode(Opcode.LSIGB, IRDataType.QUAD).size shouldBe 2
+        start.withOpcode(Opcode.LSIGW, IRDataType.QUAD).size shouldBe 2
+        start.quadImmediates(Opcode.LSRI) shouldBe listOf(56L, 48L)
+    }
+
+    test("lsb, lsw, msb and msw of a quad constant are folded from all 64 bits") {
+        val src = $$"""
+main {
+    sub start() {
+        ubyte @shared b
+        uword @shared w
+        b = lsb($1234_5678_9abc_def0)
+        b = msb($1234_5678_9abc_def0)
+        w = lsw($1234_5678_9abc_def0)
+        w = msw($1234_5678_9abc_def0)
+    }
+}"""
+        val start = irFor(src).instructionsOf("main.start")
+        start.withOpcode(Opcode.STOREIM, IRDataType.BYTE).map { it.requireImmediateInt() } shouldBe listOf(0xf0, 0x12)
+        start.withOpcode(Opcode.STOREIM, IRDataType.WORD).map { it.requireImmediateInt() } shouldBe listOf(0xdef0, 0x1234)
+    }
+
+    test("msb and msw of an 8-byte address take the highest byte and word of all its bits") {
+        val src = """
+main {
+    ubyte[4] @shared buffer
+    sub start() {
+        ^^ubyte p = &&buffer
+        ubyte @shared b = msb(&buffer)
+        uword @shared w = msw(&buffer)
+        w = msw(p)
+        w = msw(buffer)
+    }
+}"""
+        val result = compileText(LlvmTarget(), false, src, outputDir, writeAssembly = true)!!
+        val start = IRFileReader().read(result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")).instructionsOf("main.start")
+        start.withOpcode(Opcode.EXTQ, IRDataType.POINTER).size shouldBe 4
+        start.quadImmediates(Opcode.LSRI) shouldBe listOf(56L, 48L, 48L, 48L)
     }
 
     test("peekq and pokeq are rejected where quads aren't supported") {

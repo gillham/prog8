@@ -180,8 +180,9 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     } else {
                         indexReg = indexTr.resultReg
                     }
-                    it += codeGen.multiplyByConst(DataType.UWORD, indexReg, struct.size.toInt())
-                    it += IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, indexReg)
+                    val (offsetCode, offsetReg) = codeGen.elementOffset(indexReg, struct.size.toInt())
+                    it += offsetCode
+                    it += IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, offsetReg)
                 }
             }
 
@@ -409,20 +410,19 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                         identifier.type.subType!!.memsize(codeGen.program.memsizer)
                 result += IRCodeChunk(null, null).also {
                     addInstr(result, IRInstructions.loadMemory(Opcode.LOADM, vmDt, resultRegister, IRMemory.direct(identifier.name)), null)
-                    if (eltSize > 1) {
-                        it += codeGen.multiplyByConst(DataType.UWORD, indexWordReg, eltSize)
-                    }
-                    it += IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, resultRegister, indexWordReg)
+                    val (offsetCode, offsetReg) = codeGen.elementOffset(indexWordReg, eltSize)
+                    it += offsetCode
+                    it += IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, resultRegister, offsetReg)
                 }
             } else {
                 // regular array indexing
                 val eltSize = codeGen.program.memsizer.memorySize(identifier.type, 1)
                 result += IRCodeChunk(null, null).also {
                     loadAddressOfArrayLabel(resultRegister)
-                    if (eltSize > 1 && !identifier.type.isSplitWordArray(codeGen.options.compTarget)) {
-                        it += codeGen.multiplyByConst(DataType.UWORD, indexWordReg, eltSize)
-                    }
-                    it += IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, resultRegister, indexWordReg)
+                    val scale = if(identifier.type.isSplitWordArray(codeGen.options.compTarget)) 1 else eltSize
+                    val (offsetCode, offsetReg) = codeGen.elementOffset(indexWordReg, scale)
+                    it += offsetCode
+                    it += IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, resultRegister, offsetReg)
                 }
             }
             return ExpressionCodeResult(result, vmDt, resultRegister, -1)
@@ -695,9 +695,9 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
         else {
             val (code, indexWordReg) = codeGen.loadIndexReg(index, true)
             result += code
-            if(eltSize!=1)
-                result += codeGen.multiplyByConst(DataType.UWORD, indexWordReg, eltSize)
-            addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, indexWordReg), null)
+            val (offsetCode, offsetReg) = codeGen.elementOffset(indexWordReg, eltSize)
+            result += offsetCode
+            addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, offsetReg), null)
         }
 
         if(resultDt==IRDataType.FLOAT) {
@@ -753,7 +753,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                         actualResultReg2 = loadStatusAsBooleanResult(Opcode.BSTNE, result)
                     }
                     valueDt.isWord || valueDt.isPointer -> {
-                        addInstr(result, IRInstructions.compareImmediate(IRDataType.WORD, tr.resultReg, 0), null)
+                        addInstr(result, IRInstructions.compareImmediate(codeGen.irType(valueDt), tr.resultReg, 0), null)
                         actualResultReg2 = loadStatusAsBooleanResult(Opcode.BSTNE, result)
                     }
                     valueDt.isLong -> {
@@ -1841,6 +1841,10 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
         }
     }
 
+    // only a quad instruction holds a 64-bit immediate: a bigger constant, like an 8-byte pointer's offset, goes into a register
+    private fun isImmediateOperand(operand: PtExpression, type: IRDataType) =
+        operand is PtNumber && (type == IRDataType.QUAD || operand.integerBits in Int.MIN_VALUE..Int.MAX_VALUE)
+
     private fun operatorMinus(binExpr: PtBinaryExpression, vmDt: IRDataType): ExpressionCodeResult {
         val result = mutableListOf<IRCodeChunkBase>()
         if(vmDt==IRDataType.FLOAT) {
@@ -1873,7 +1877,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                 return ExpressionCodeResult(result, vmDt, tr.resultReg, -1)
             }
             else {
-                return if(binExpr.right is PtNumber) {
+                return if(isImmediateOperand(binExpr.right, vmDt)) {
                     val tr = translateExpression(binExpr.left)
                     addToResult(result, tr, tr.resultReg, -1)
                     addInstr(result, IRInstructions.binaryImmediate(Opcode.SUB, vmDt, tr.resultReg, (binExpr.right as PtNumber).integerBits), null)
@@ -1934,7 +1938,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                 return ExpressionCodeResult(result, vmDt, tr.resultReg, -1)
             }
             else {
-                return if(binExpr.right is PtNumber) {
+                return if(isImmediateOperand(binExpr.right, vmDt)) {
                     val tr = translateExpression(binExpr.left)
                     addToResult(result, tr, tr.resultReg, -1)
                     addInstr(result, IRInstructions.binaryImmediate(Opcode.ADD, vmDt, tr.resultReg, (binExpr.right as PtNumber).integerBits), null)
@@ -1997,9 +2001,9 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     pointerReg = pointerTr.resultReg
                     val (chunks, indexReg) = codeGen.loadIndexReg(left.index, true)
                     result += chunks
-                    if(struct.size.toInt()!=1)
-                        result += codeGen.multiplyByConst(DataType.UWORD, indexReg, struct.size.toInt())
-                    addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, indexReg), null)
+                    val (offsetCode, offsetReg) = codeGen.elementOffset(indexReg, struct.size.toInt())
+                    result += offsetCode
+                    addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, offsetReg), null)
                 }
             } else if(left.pointerderef!=null) {
                 TODO("get pointer from deref $left  ${left.position}")

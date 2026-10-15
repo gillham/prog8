@@ -708,12 +708,26 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         val tr = exprGen.translateExpression(call.args.single())
         addToResult(result, tr, tr.resultReg, -1)
         val resultReg = codeGen.registers.next(IRDataType.BYTE)
-        if(fromLong)
+        val quadReg = quadArgument(call.args.single(), tr, result)
+        if(quadReg!=null)
+            addInstr(result, IRInstructions.binary(Opcode.LSIGB, IRDataType.QUAD, resultReg, quadReg), null)
+        else if(fromLong)
             addInstr(result, IRInstructions.binary(Opcode.LSIGB, IRDataType.LONG, resultReg, tr.resultReg), null)
         else
             addInstr(result, IRInstructions.binary(Opcode.LSIGB, IRDataType.WORD, resultReg, tr.resultReg), null)
         // note: if a word result is needed, the upper byte is cleared by the typecast that follows. No need to do it here.
         return ExpressionCodeResult(result, IRDataType.BYTE, resultReg, -1)
+    }
+
+    /** The register with the quad argument of lsb, lsw, msb or msw, or null for another type; an untyped 8-byte address arrives in a pointer register. */
+    private fun quadArgument(arg: PtExpression, tr: ExpressionCodeResult, result: MutableList<IRCodeChunkBase>): Int? {
+        if(!arg.type.isQuad)
+            return null
+        if(tr.dt==IRDataType.QUAD)
+            return tr.resultReg
+        val quadReg = codeGen.registers.next(IRDataType.QUAD)
+        addInstr(result, IRInstructions.binary(Opcode.EXTQ, tr.dt, quadReg, tr.resultReg), null)
+        return quadReg
     }
 
     private fun funcLmh(call: PtFunctionCall): ExpressionCodeResult {
@@ -748,7 +762,11 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         val tr = exprGen.translateExpression(call.args.single())
         addToResult(result, tr, tr.resultReg, -1)
         val resultReg = codeGen.registers.next(IRDataType.WORD)
-        addInstr(result, IRInstructions.binary(Opcode.LSIGW, IRDataType.LONG, resultReg, tr.resultReg), null)
+        val quadReg = quadArgument(call.args.single(), tr, result)
+        if(quadReg!=null)
+            addInstr(result, IRInstructions.binary(Opcode.LSIGW, IRDataType.QUAD, resultReg, quadReg), null)
+        else
+            addInstr(result, IRInstructions.binary(Opcode.LSIGW, IRDataType.LONG, resultReg, tr.resultReg), null)
         return ExpressionCodeResult(result, IRDataType.WORD, resultReg, -1)
     }
 
@@ -757,7 +775,13 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         val tr = exprGen.translateExpression(call.args.single())
         addToResult(result, tr, tr.resultReg, -1)
         val resultReg = codeGen.registers.next(IRDataType.BYTE)
-        if(fromLong)
+        val quadReg = quadArgument(call.args.single(), tr, result)
+        if(quadReg!=null) {
+            // the top byte of the quad: msigb has no quad form
+            addInstr(result, IRInstructions.binaryImmediate(Opcode.LSRI, IRDataType.QUAD, quadReg, 56), null)
+            addInstr(result, IRInstructions.binary(Opcode.LSIGB, IRDataType.QUAD, resultReg, quadReg), null)
+        }
+        else if(fromLong)
             addInstr(result, IRInstructions.binary(Opcode.MSIGB, IRDataType.LONG, resultReg, tr.resultReg), null)
         else
             addInstr(result, IRInstructions.binary(Opcode.MSIGB, IRDataType.WORD, resultReg, tr.resultReg), null)
@@ -770,7 +794,14 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         val tr = exprGen.translateExpression(call.args.single())
         addToResult(result, tr, tr.resultReg, -1)
         val resultReg = codeGen.registers.next(IRDataType.WORD)
-        addInstr(result, IRInstructions.binary(Opcode.MSIGW, IRDataType.LONG, resultReg, tr.resultReg), null)
+        val quadReg = quadArgument(call.args.single(), tr, result)
+        if(quadReg!=null) {
+            // the top word of the quad: msigw has no quad form
+            addInstr(result, IRInstructions.binaryImmediate(Opcode.LSRI, IRDataType.QUAD, quadReg, 48), null)
+            addInstr(result, IRInstructions.binary(Opcode.LSIGW, IRDataType.QUAD, resultReg, quadReg), null)
+        }
+        else
+            addInstr(result, IRInstructions.binary(Opcode.MSIGW, IRDataType.LONG, resultReg, tr.resultReg), null)
         return ExpressionCodeResult(result, IRDataType.WORD, resultReg, -1)
     }
 
@@ -880,9 +911,9 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
                     } else {
                         val (code, indexWordReg) = codeGen.loadIndexReg(target.index, true)
                         result += code
-                        if(eltSize!=1)
-                            result += codeGen.multiplyByConst(DataType.UWORD, indexWordReg, eltSize)
-                        addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerTr.resultReg, indexWordReg), null)
+                        val (offsetCode, offsetReg) = codeGen.elementOffset(indexWordReg, eltSize)
+                        result += offsetCode
+                        addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerTr.resultReg, offsetReg), null)
                         if(elementByteOffset > 0)
                             addInstr(result, IRInstructions.binaryImmediate(Opcode.ADD, IRDataType.POINTER, pointerTr.resultReg, elementByteOffset), null)
                     }

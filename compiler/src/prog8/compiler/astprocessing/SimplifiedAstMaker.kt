@@ -279,7 +279,7 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
                             else {
                                 val assign = PtAugmentedAssign(operator, srcAssign.position)
                                 assign.add(transform(srcAssign.target))
-                                assign.add(PtNumber(BaseDataType.UWORD, total, srcAssign.position))
+                                assign.add(PtNumber(addrType.base, total, srcAssign.position))
                                 return assign
                             }
                         } else {
@@ -287,13 +287,13 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
                                 val offset: PtBinaryExpression
                                 if(structSize in powersOfTwoInt) {
                                     // use shift instead of multiply for powers of two
-                                    offset = PtBinaryExpression("<<", DataType.UWORD, srcAssign.position)
+                                    offset = PtBinaryExpression("<<", addrType, srcAssign.position)
                                     offset.add(transformExpression(augmentedValue))
                                     offset.add(PtNumber(BaseDataType.UBYTE, log2(structSize.toDouble()), srcAssign.position))
                                 } else {
-                                    offset = PtBinaryExpression("*", DataType.UWORD, srcAssign.position)
+                                    offset = PtBinaryExpression("*", addrType, srcAssign.position)
                                     offset.add(transformExpression(augmentedValue))
-                                    offset.add(PtNumber(BaseDataType.UWORD, structSize.toDouble(), srcAssign.position))
+                                    offset.add(PtNumber(addrType.base, structSize.toDouble(), srcAssign.position))
                                 }
                                 val assign = PtAugmentedAssign(operator, srcAssign.position)
                                 assign.add(transform(srcAssign.target))

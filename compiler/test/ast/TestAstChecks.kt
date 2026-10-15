@@ -948,6 +948,35 @@ main {
         }
     }
 
+    test("lsb, lsw, msb and msw only take a quad on the virtual and llvm64 targets") {
+        val src = $$"""
+            main {
+                sub start() {
+                    uword @shared w = 1234
+                    ubyte @shared b = lsb($1_0000_0012)
+                    b = msb($1_0000_0012)
+                    w = lsw($1_0000_0012)
+                    w = msw($1_0000_0012)
+                }
+            }
+        """.trimIndent()
+        for (target in listOf(C64Target(), Cx16Target(), Qemu68kTarget())) {
+            withClue(target.name) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(target, false, src, outputDir, errors, false) shouldBe null
+                errors.errors.size shouldBe 4
+                errors.errors.forEach { it shouldContain "64-bit integer types (quad/uquad) are not supported on target ${target.name}" }
+            }
+        }
+        for (target in listOf(VMTarget(), LlvmTarget())) {
+            for (optimize in listOf(false, true)) {
+                withClue("${target.name} optimize=$optimize") {
+                    compileText(target, optimize, src, outputDir, writeAssembly = false).shouldNotBeNull()
+                }
+            }
+        }
+    }
+
     test("integer literals wider than 32 bits still work as float values on the targets without quads") {
         val src = $$"""
             %import floats
@@ -1096,6 +1125,119 @@ main {
             val wideErrors = ErrorReporterForTests(keepMessagesAfterReporting = true)
             compileText(VMTarget(), false, tooWide, outputDir, wideErrors, false) shouldBe null
             wideErrors.printedErrors.single() shouldContain error
+        }
+    }
+
+    test("an address only becomes an integer as wide as a pointer without a cast, which is a uquad on llvm64") {
+        val narrowing = """
+            main {
+                ubyte[4] @shared buffer
+                sub start() {
+                    ^^ubyte p = &&buffer
+                    long @shared l = p
+                    uword @shared w = p
+                    takeslong(p)
+                    void aslong()
+                }
+                sub aslong() -> long {
+                    return &&buffer
+                }
+                sub takeslong(long value) {
+                }
+            }
+        """
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(LlvmTarget(), false, narrowing, outputDir, errors, false) shouldBe null
+        errors.errors.map { it.substringAfter(": ") } shouldBe List(4) { index ->
+            val type = if(index==1) "uword" else "long"
+            "an address doesn't fit in a $type, pointers have 8 bytes here: use uquad, or an explicit cast to truncate it"
+        }
+        compileText(VMTarget(), false, narrowing, outputDir, writeAssembly = false).shouldNotBeNull()
+
+        val wideEnough = """
+            main {
+                ubyte[4] @shared buffer
+                sub start() {
+                    ^^ubyte p = &&buffer
+                    long @shared l = p as long
+                    uword @shared w = p as uword
+                    uquad @shared u = p
+                    uquad @shared u2 = &buffer
+                    ^^ubyte back = u
+                    takesuquad(p)
+                }
+                sub takesuquad(uquad value) {
+                }
+            }
+        """
+        compileText(LlvmTarget(), false, wideEnough, outputDir, writeAssembly = false).shouldNotBeNull()
+    }
+
+    test("the integer variable that can be indexed like a pointer is as wide as a pointer") {
+        fun holder(type: String) = """
+            main {
+                ubyte[4] @shared buffer
+                sub start() {
+                    $type @shared holder = 0
+                    holder[3] = 1
+                }
+            }
+        """
+        compileText(LlvmTarget(), false, holder("uquad"), outputDir, writeAssembly = false).shouldNotBeNull()
+        compileText(VMTarget(), false, holder("long"), outputDir, writeAssembly = false).shouldNotBeNull()
+        for ((target, type, expected) in listOf(Triple(LlvmTarget(), "long", "uquad"), Triple(VMTarget(), "uquad", "long"))) {
+            val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+            compileText(target, false, holder(type), outputDir, errors, false) shouldBe null
+            errors.errors.single() shouldContain "indexing requires an iterable, address $expected, or pointer variable"
+        }
+    }
+
+    test("a long is compared with a string as an address only where a long holds one") {
+        val src = """
+            main {
+                long @shared l = 5
+                sub start() {
+                    if l == "abc"
+                        l++
+                }
+            }
+        """
+        compileText(VMTarget(), false, src, outputDir, writeAssembly = false).shouldNotBeNull()
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(LlvmTarget(), false, src, outputDir, errors, false) shouldBe null
+        errors.errors.single() shouldContain "left and right operands aren't the same type: long vs str"
+    }
+
+    test("a pointer variable that never changes from its constant value doesn't loop the constant folder") {
+        val src = """
+            main {
+                sub start() {
+                    ^^ubyte p = 0
+                    bool @shared b = p != 0
+                    ^^ubyte @shared q = p
+                }
+            }
+        """
+        for (target in listOf(VMTarget(), LlvmTarget(), Cx16Target()))
+            withClue(target.name) { compileText(target, false, src, outputDir, writeAssembly = false).shouldNotBeNull() }
+    }
+
+    test("constant addresses are limited to 32 bits on llvm64 for now") {
+        val src = $$"""
+            main {
+                pointer @shared global = $1_0000_1234
+                sub start() {
+                    pointer @shared p
+                    p = $1234_5678_9abc_def0
+                    p = $1_0000_0000 as pointer
+                    p = $1234_5678
+                }
+            }
+        """
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(LlvmTarget(), false, src, outputDir, errors, false) shouldBe null
+        errors.errors.map { it.substringAfter(": ") } shouldBe listOf("4294971956", "1311768467463790320", "4294967296").map {
+            "constant address $it doesn't fit in 32 bits, which is the limit for constant addresses for now"
         }
     }
 })

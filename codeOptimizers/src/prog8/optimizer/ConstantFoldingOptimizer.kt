@@ -41,6 +41,10 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
             if(parentVarDecl!=null && parentVarDecl.type==VarDeclType.CONST && parentVarDecl.datatype.isLong) {
                 return noModifications
             }
+            // after(VarDecl) casts the value of a const pointer back to a long where pointers are wider than a word: don't loop endlessly
+            if(parentVarDecl!=null && parentVarDecl.type==VarDeclType.CONST && parentVarDecl.datatype.isPointer) {
+                return noModifications
+            }
 
             // see if LONG values may be reduced to something smaller
             val smaller = NumericLiteral.optimalInteger(numLiteral.number.toInt(), numLiteral.position)

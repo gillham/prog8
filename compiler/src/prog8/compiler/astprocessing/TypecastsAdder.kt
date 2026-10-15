@@ -151,7 +151,7 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                         return listOf(AstReplaceNode(expr.right, value, expr))
                     }
                     if(leftCv!=null && leftCv.number<0 && !leftDt.isQuad) {
-                        val value = if(rightDt.isBytes) 256+leftCv.number else 65536+leftCv.number
+                        val value = if(rightDt.isBytes) 256+leftCv.number else if(rightDt.isWords) 65536+leftCv.number else (0x100000000L+leftCv.number).toLong().toInt().toDouble()
                         return listOf(AstReplaceNode(
                             expr.left,
                             NumericLiteral(rightDt.getOrUndef().base, value, expr.left.position),
@@ -201,6 +201,12 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                     }
                 }
 
+                if(BinaryExpression.isSignedAddressOffset(expr.operator, leftDt, rightDt, options.compTarget)) {
+                    val addressDt = options.compTarget.pointerType
+                    val modifications = mutableListOf<AstModification>()
+                    addTypecastOrCastedValueModification(modifications, if(leftDt istype addressDt) expr.right else expr.left, addressDt, expr)
+                    return modifications
+                }
 
                 if((expr.operator!="<<" && expr.operator!=">>") || !leftDt.isInteger || !rightDt.isBytes) {
                     // determine common datatype and add typecast as required to make left and right equal types
@@ -225,15 +231,18 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                 }
 
                 // comparison of a pointer with a number treats the pointer as its numeric type
-                // (uword on 6502, long on m68k); the other operand gets cast to match.
+                // (uword on 6502, long on m68k, uquad on llvm64); the other operand gets cast to match.
                  if(expr.operator in ComparisonOperators) {
                     val pointerNumericType = options.compTarget.pointerType
                     val pointerNumericBasetype = options.compTarget.pointerBaseType
                     val modifications = mutableListOf<AstModification>()
+                    // with 8-byte pointers the signed integers aren't implicitly a uquad, but are compared with an address as one
+                    fun castsToPointerNumericType(dt: InferredTypes.InferredType) = dt.getOrUndef().base != pointerNumericBasetype &&
+                            (dt isAssignableTo InferredTypes.knownFor(pointerNumericBasetype) || (options.compTarget.POINTER_MEM_SIZE>4u && dt.isInteger))
                     if(leftDt.isNumeric && rightDt.isPointer) {
                         val cast = TypecastExpression(expr.right, pointerNumericType, true, expr.right.position)
                         modifications += AstReplaceNode(expr.right, cast, expr)
-                        if(leftDt.getOrUndef().base != pointerNumericBasetype && leftDt isAssignableTo InferredTypes.knownFor(pointerNumericBasetype)) {
+                        if(castsToPointerNumericType(leftDt)) {
                             val cast2 = TypecastExpression(expr.left, pointerNumericType, true, expr.left.position)
                             modifications += AstReplaceNode(expr.left, cast2, expr)
                         }
@@ -241,7 +250,7 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                     else if(leftDt.isPointer && rightDt.isNumeric) {
                         val cast = TypecastExpression(expr.left, pointerNumericType, true, expr.left.position)
                         modifications += AstReplaceNode(expr.left, cast, expr)
-                        if(rightDt.getOrUndef().base != pointerNumericBasetype && rightDt isAssignableTo InferredTypes.knownFor(pointerNumericBasetype)) {
+                        if(castsToPointerNumericType(rightDt)) {
                             val cast2 = TypecastExpression(expr.right, pointerNumericType, true, expr.right.position)
                             modifications += AstReplaceNode(expr.right, cast2, expr)
                         }
@@ -780,6 +789,9 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                 val convertedPointerDt = it.first.firstOrNull { paramDt -> options.compTarget.pointerConvertsImplicitly(argDt, paramDt) }
                 if (argDt !in it.first && convertedPointerDt != null) {
                     modifications += pointerConversion(it.second, convertedPointerDt, parent)
+                } else if (argDt.isPointer && argDt !in it.first && options.compTarget.POINTER_MEM_SIZE>4u && possibleTargetDt != options.compTarget.pointerType && options.compTarget.pointerType in it.first) {
+                    // of the integer types only the uquad holds a whole 8-byte address, the first one would truncate it
+                    modifications += AstReplaceNode(it.second, TypecastExpression(it.second, options.compTarget.pointerType, true, it.second.position), parent)
                 } else if (argDt !in it.first) {
                     val identifier = it.second as? IdentifierReference
                     val number = it.second as? NumericLiteral

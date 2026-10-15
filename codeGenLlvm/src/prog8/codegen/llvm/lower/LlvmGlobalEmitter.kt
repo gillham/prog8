@@ -67,7 +67,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         }
     }
 
-    // word and long arrays holding addresses (str[] is a long[] in the IR) get native ptr elements, so no address is truncated
+    // word, long and uquad arrays holding addresses (str[] is a uquad[] in the IR) get native ptr elements, so no address is truncated
     private val pointerArrays: Map<String, PointerArray> by lazy {
         val storedWithPointers = symbolsStoredWithPointers()
         st.allVariables().mapNotNull { variable ->
@@ -168,7 +168,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
 
     private fun holdsAddresses(variable: IRStStaticVariable, storedWithPointers: Set<String>): Boolean {
         val dt = variable.dt
-        if (dt.base != BaseDataType.ARRAY || dt.sub !in setOf(BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG))
+        if (dt.base != BaseDataType.ARRAY || dt.sub !in setOf(BaseDataType.UWORD, BaseDataType.WORD, BaseDataType.LONG, BaseDataType.UQUAD))
             return false
         val initialValues = (variable.initializationValue as? IRVariableInitializer.Array)?.elements.orEmpty()
         return variable.name in storedWithPointers || initialValues.any { it is IRStSymbolicReference.Symbol }

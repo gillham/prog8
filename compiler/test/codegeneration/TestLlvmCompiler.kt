@@ -385,7 +385,9 @@ private val quadProgramsForTheVm = listOf(
     "quad and uquad arithmetic, bitwise logic and shifts",
     "64-bit literals and constant folding",
     "quad and uquad conversions",
-    "quad and uquad arrays, structs and memory"
+    "quad and uquad arrays, structs and memory",
+    "pointer element updates and offsets beyond 64 KiB",
+    "lsb, msb, lsw and msw of quads and addresses, and signed offsets to addresses"
 )
 
 /** Complete programs that exit with 0, or with the number of the first check that fails. @shared inputs can't be constant folded. */
@@ -1916,6 +1918,187 @@ main {
             return 2
         if sys.argv(1) != "" or sys.argv(65535) != ""
             return 3
+        return 0
+    }
+}""",
+    "pointer element updates and offsets beyond 64 KiB" to $$"""
+main {
+    struct Node {
+        uword a
+        uword b
+        long c
+        quad d
+    }
+    quad[4] @shared values = [10, 20, 30, 40]
+    uquad[3] @shared uvalues = [1, $1_0000_0000, 3]
+    uquad @shared expected = $1_0000_0001
+    quad[10000] @shared big
+    ubyte[65535] @shared slab
+    long @shared longvalue = $1234_5678
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ^^quad pq = &&values
+        ^^quad original = pq
+        ubyte @shared i = 3
+        pq[i] += 5
+        pq[0] += 5
+        if pq != original or values[3] != 45 or values[0] != 15
+            return 1
+        ^^uquad pu = &&uvalues
+        pu[1] += 1
+        if uvalues[1] != expected
+            return 2
+        ^^quad qp = &&big
+        uword @shared index = 8500
+        qp[index] = 77
+        if big[8500] != 77 or big[308] == 77
+            return 3
+        ^^Node np = &big
+        index = 4500
+        np[index].a = $1234
+        if big[9000] != $1234 or big[808] == $1234
+            return 4
+        ^^ubyte @shared typed
+        typed = $1_2345
+        if typed != $1_2345
+            return 5
+        long @shared allbits = -1 & longvalue
+        if allbits != $1234_5678
+            return 6
+        ^^ubyte nothing = 0
+        if nothing != 0
+            return 7
+        ; a pointer whose lowest 16 bits are 0
+        uword low = &&slab as uword
+        ^^ubyte aligned = &&slab + (~low + 1)
+        if aligned == 0 or not (aligned as bool)
+            return 8
+        return 0
+    }
+}""",
+    "64-bit addresses" to $$"""
+main {
+    ubyte[8] @shared buffer = [1, 2, 3, 4, 5, 6, 7, 8]
+    ubyte[8] @shared slot
+    uquad @shared nearvalue = $1234_5678
+
+    struct Node {
+        ubyte value
+        ^^Node next
+    }
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        uquad holder = &buffer
+        ubyte @shared i = 3
+        if holder[i] != 4
+            return 1
+        holder[i] = 40
+        if buffer[3] != 40
+            return 2
+        ^^ubyte p = &&buffer
+        if (p as uquad) != holder
+            return 3
+        uquad @shared offset = $1_0000_0000
+        ^^ubyte far = p + offset
+        if (far as uquad) - holder != offset
+            return 4
+        pokep(&&slot, p)
+        if peekp(&&slot) != p
+            return 5
+        pointer @shared q
+        q = $1234_5678
+        if (q as uquad) != nearvalue
+            return 6
+        far = p + $1_0000_0000
+        if (far as uquad) - holder != offset
+            return 7
+        far -= $1_0000_0000
+        if far != p or (distant() as uquad) != offset
+            return 11
+        ^^Node second = ^^Node : [2, 0]
+        ^^Node first = ^^Node : [1, 0]
+        first.next = second
+        pointer anything = first
+        if (anything as ^^Node).next != second
+            return 8
+        (anything as ^^Node).value = 5
+        if first.value != 5
+            return 9
+        long truncated = p as long
+        if truncated != (holder as long)
+            return 10
+        long @shared longoffset = 3
+        long @shared minus = -2
+        holder = &buffer
+        holder += longoffset
+        if @(holder) != 40
+            return 12
+        holder -= minus
+        if @(holder) != 6 or @(&buffer + minus + 3) != 2
+            return 13
+        if msb(p) != (((p as uquad) >> 56) as ubyte) or msw(p) != (((p as uquad) >> 48) as uword)
+            return 14
+        if msb(&buffer) != msb(p) or msw(&buffer) != msw(p) or msb(buffer) != msb(p) or msw(buffer) != msw(p)
+            return 15
+        return 0
+    }
+
+    sub distant() -> ^^ubyte {
+        return $1_0000_0000
+    }
+}""",
+    "lsb, msb, lsw and msw of quads and addresses, and signed offsets to addresses" to $$"""
+main {
+    ubyte[8] @shared buffer = [1, 2, 3, 4, 5, 6, 7, 8]
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        uquad @shared uq = $1234_5678_9abc_def0
+        quad @shared q = -2
+        if lsb(uq) != $f0 or msb(uq) != $12
+            return 1
+        if lsw(uq) != $def0 or msw(uq) != $1234
+            return 2
+        if lsb(q) != $fe or msb(q) != $ff or lsw(q) != $fffe or msw(q) != $ffff
+            return 3
+        if lsb($1234_5678_9abc_def0) != $f0 or msb($1234_5678_9abc_def0) != $12
+            return 4
+        if lsw($1234_5678_9abc_def0) != $def0 or msw($1234_5678_9abc_def0) != $1234
+            return 5
+        if msb(uq + $0100_0000_0000_0000) != $13 or msw(uq >> 8) != $0012
+            return 6
+        ubyte @shared b = msb(uq)
+        uword @shared w = msw(uq)
+        if b != $12 or w != $1234 or uq != $1234_5678_9abc_def0
+            return 7
+        ^^ubyte p = &&buffer
+        if lsb(&buffer) != lsb(&buffer as uword) or lsw(&buffer) != (&buffer as uword)
+            return 8
+        if lsb(p) != lsb(p as uword) or lsw(p + 2) != (p as uword) + 2
+            return 9
+        if lsb(&&buffer[2] - &&buffer) != 2 or lsb(buffer) != lsb(&buffer as uword) or lsw(buffer) != (&buffer as uword)
+            return 10
+        long @shared longoffset = 3
+        long @shared minus = -2
+        word @shared wordoffset = 4
+        byte @shared byteoffset = -1
+        if @(&buffer + longoffset) != 4 or @(longoffset + &buffer) != 4 or @(&buffer - minus) != 3
+            return 11
+        if @(&buffer + longoffset + minus) != 2 or @(&buffer + wordoffset + byteoffset) != 4
+            return 12
+        if @(&buffer + 100000 - 99999) != 2 or @(&buffer + -1 + longoffset) != 3
+            return 13
         return 0
     }
 }"""

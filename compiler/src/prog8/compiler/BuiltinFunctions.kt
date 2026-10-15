@@ -11,6 +11,7 @@ import prog8.code.core.BaseDataType
 import prog8.code.core.BuiltinFunctions
 import prog8.code.core.Position
 import prog8.code.core.isInteger
+import prog8.code.core.isQuad
 import kotlin.math.*
 
 // Maps builtin functions to constant evaluators for compile-time execution
@@ -38,12 +39,12 @@ internal val constEvaluatorsForBuiltinFuncs: Map<String, (args: List<Expression>
         else
             sqrt(it)
     }) },
-    "lsb" to { a, p, prg -> listOf(oneIntArgOutputInt(a, p, prg, true) { x: Int -> (x and 255).toDouble() }) },
+    "lsb" to { a, p, prg -> listOf(constQuadPart(a, prg, 0, 255) ?: oneIntArgOutputInt(a, p, prg, true) { x: Int -> (x and 255).toDouble() }) },
     "lsb__long" to { a, p, prg -> listOf(oneIntArgOutputInt(a, p, prg, true) { x: Int -> (x and 255).toDouble() }) },
-    "lsw" to { a, p, prg -> listOf(oneIntArgOutputInt(a, p, prg, true) { x: Int -> (x and 65535).toDouble() }) },
-    "msb" to { a, p, prg -> listOf(oneIntArgOutputInt(a, p, prg, true) { x: Int -> (x ushr 8 and 255).toDouble()}) },
+    "lsw" to { a, p, prg -> listOf(constQuadPart(a, prg, 0, 65535) ?: oneIntArgOutputInt(a, p, prg, true) { x: Int -> (x and 65535).toDouble() }) },
+    "msb" to { a, p, prg -> listOf(constQuadPart(a, prg, 56, 255) ?: oneIntArgOutputInt(a, p, prg, true) { x: Int -> (x ushr 8 and 255).toDouble()}) },
     "msb__long" to { a, p, prg -> listOf(oneIntArgOutputInt(a, p, prg, true) { x: Int -> (x ushr 24 and 255).toDouble()}) },
-    "msw" to { a, p, prg -> listOf(oneIntArgOutputInt(a, p, prg, true) { x: Int -> (x ushr 16 and 65535).toDouble()}) },
+    "msw" to { a, p, prg -> listOf(constQuadPart(a, prg, 48, 65535) ?: oneIntArgOutputInt(a, p, prg, true) { x: Int -> (x ushr 16 and 65535).toDouble()}) },
     "mkword" to { a, p, prg -> listOf(builtinMkword(a, p, prg)) },
     "mklong" to { a, p, prg -> listOf(builtinMklong(a, p, prg)) },
     "mklong2" to { a, p, prg -> listOf(builtinMklong(a, p, prg)) },
@@ -98,6 +99,14 @@ private fun oneIntArgOutputInt(args: List<Expression>, position: Position, progr
     if(result.isNaN())
         throw CannotEvaluateException("built-in function", "result is NaN $position")
     return NumericLiteral.optimalInteger(result.toInt(), args[0].position)
+}
+
+/** The bits from [shift] up of a constant quad argument, masked with [mask]; null for any other argument. */
+private fun constQuadPart(args: List<Expression>, program: Program, shift: Int, mask: Long): NumericLiteral? {
+    val constval = args.singleOrNull()?.constValue(program) ?: return null
+    if(!constval.type.isQuad)
+        return null
+    return NumericLiteral.optimalInteger(((constval.integerBits ushr shift) and mask).toInt(), args[0].position)
 }
 
 private fun oneFloatArgOutputFloat(args: List<Expression>, position: Position, program: Program, function: (arg: Double)->Double): NumericLiteral {

@@ -330,8 +330,8 @@ private fun vmChecks() = Checks().apply {
         Is("rb.b", 1), Is("rc.b", 2), Is("re.b", 3))
     check("load.p ra.p,#main.words2; storem.p ra.p,[main.ptr]; load.w rb.w,#1111.w; storep_inc.w rb.w,[main.ptr]; load.w rc.w,#2222.w; storep_inc.w rc.w,[main.ptr]; " +
             "loadm.w rd.w,[main.words2+2]; loadm.w re.w,[main.words2]", Is("rd.w", 2222), Is("re.w", 1111))
-    check("load.w ra.w,#2.w; loadx.l rb.l,[main.names+ra.w*4]; loadi.b rc.b,[rb.p]", Is("rc.b", 'c'.code.toLong()))
-    check("load.l ra.l,#main.s3; load.w rb.w,#0.w; storex.l ra.l,[main.names+rb.w*4]; loadm.l rc.l,[main.names]; loadi.b rd.b,[rc.p+1]", Is("rd.b", 'z'.code.toLong()))
+    check("load.w ra.w,#2.w; loadx.q rb.q,[main.names+ra.w*8]; loadi.b rc.b,[rb.p]", Is("rc.b", 'c'.code.toLong()))
+    check("load.p ra.p,#main.s3; load.w rb.w,#0.w; storex.q ra.q,[main.names+rb.w*8]; loadm.q rc.q,[main.names]; loadi.b rd.b,[rc.p+1]", Is("rd.b", 'z'.code.toLong()))
     check("load.l ra.l,#main.bytes; loadr.l rb.l,ra.l; storehr.l rb.l,s12.l; loadhr.l rc.l,s12.l; loadi.b rd.b,[rc.p+1]", Is("rd.b", 2))
     check("load.l ra.l,#main.bytes; add.l ra.l,#1.l; call main.peek(p=ra.l):rb.b", Is("rb.b", 2))
 
@@ -451,9 +451,9 @@ private fun TestProgram.focusedSubs() {
         """)
     sub("main.rename", code = """
         _main.rename:
-        load.l r1.l,#main.s3
+        load.p r1.p,#main.s3
         load.w r2.w,#1.w
-        storex.l r1.l,[main.names+r2.w*4]
+        storex.q r1.q,[main.names+r2.w*8]
         return
         """)
     sub("main.next", returns = listOf(DataType.UBYTE), code = """

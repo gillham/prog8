@@ -158,14 +158,16 @@ Miscellaneous
 
 :index:`lsb` (x)
     Get the least significant (lower) byte of the value x. Equivalent to ``x & 255`` or even ``x as ubyte``.
+    Like ``lsw``, ``msb`` and ``msw``, it takes a quad value only on the targets that support the quad types (virtual and llvm64).
 
 :index:`lsw` (x)
     Get the least significant (lower) word of the value x. Equivalent to ``x & 65535`` or even ``x as uword``.
 
 :index:`msb` (x)
-    Get the most significant (highest) byte of the word or long value
+    Get the most significant (highest) byte of the word, long or quad value
     (so for a long value, msb($11223344) is $11, not $33. To grab the bank byte of a long variable, you need to do this:
     ``lsb(msw(longvariable))`` or the equivalent ``@(&longvariable+2)``.)  But also look at the ``lmh`` function.
+    For a quad value it is bits 56 to 63.
 
 :index:`lmh` (x)
     Get the three low, mid and high (bank) bytes of the given long value. The upper byte (bits 24-31) of the long value is not considered.
@@ -175,7 +177,7 @@ Miscellaneous
 
 :index:`msw` (x)
     Get the most significant (higher) word of the value x. For all word and byte numbers this will always result in 0.
-    For a long integer though, it returns the upper 16 bits of x as an uword.
+    For a long integer though, it returns the upper 16 bits of x as an uword, and for a quad bits 48 to 63.
     If x is a constant integer not greater than a 24 bit number ($ffffff), ``msw(x)`` will actually give you the bank byte of x (bits 16 to 23).
     You can treat this as an ubyte value, even if the function is normally returning a uword:
     ``msw($123456)`` is $0012, which you can treat as an ubyte.  ``msw($12345678)`` is $1234, an uword.

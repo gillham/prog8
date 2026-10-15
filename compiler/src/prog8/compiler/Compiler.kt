@@ -446,9 +446,10 @@ private class BuiltinFunctionsFacade(functions: Map<String, FSignature>): IBuilt
 
     override fun constValues(funcName: String, args: List<Expression>, position: Position): List<NumericLiteral>? {
         // the constant evaluators of the others can't do 64-bit values, so their argument check reports the quad instead
-        if(funcName !in setOf("sizeof", "len", "offsetof") && args.any { it.inferType(program).isQuad })
+        val quadEvaluators = if(program.target.cpu.isLlvm || program.target.cpu.isVirtual) setOf("sizeof", "len", "offsetof", "lsb", "lsw", "msb", "msw") else setOf("sizeof", "len", "offsetof")
+        if(funcName !in quadEvaluators && args.any { it.inferType(program).isQuad })
             return null
-        if(funcName=="msw" && !args[0].inferType(program).isLong)
+        if(funcName=="msw" && args[0].inferType(program).let { !it.isLong && !it.isQuad && !(program.target.POINTER_MEM_SIZE>4u && (it.isPointer || it.isIterable)) })
             return listOf(NumericLiteral.optimalInteger(0, position))
 
         val func = BuiltinFunctions[funcName]
