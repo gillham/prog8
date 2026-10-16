@@ -62,7 +62,7 @@ Source → parseMainModule() → processAst() → optimizeAst() → postprocessA
 - **CPU instruction set differences**: Only the CommanderX16 target (cx16) can use 65C02 instructions such as STZ. The other targets (C64, C128, PET32) can only use original 6502 instructions.
 - When writing or understanding 6502/65C02 assembly code, load the `asm6502-coder` skill for 64tass syntax and conventions.
 - When writing or understanding M68K assembly code (amiga500, amiga1200, qemu68k targets), load the `m68k-coder` skill for vasm mot syntax and conventions.
-- M68K ordinary subroutine locals and parameters use `A5`-based stack frames. Normal calls pass padded 4-byte argument slots on the stack, and the caller cleans up; see `docs/source/technical.rst` for the complete convention and frame eligibility rules.
+- M68K ordinary subroutine locals and parameters use `A5`-based stack frames. Normal calls pass word-packed argument slots on the stack (2-byte slots for byte/word args, 4-byte for wide args, byte values at the slot base), and the caller cleans up; see `docs/source/technical.rst` for the complete convention and frame eligibility rules.
 
 
 ## DEBUGGING TIP: Use `-noopt` to isolate problems
@@ -271,14 +271,20 @@ Names follow the source file name, or the stem of the `-o` file when that option
 
 ### Automated Tests (gradle)
 Always use the `--console=plain` flag with these commands to avoid messing up the agent's text interface.
-- `gradle build --console=plain` - Full build including all tests (about 50s)
-- `gradle :compiler:test --console=plain` - Run only compiler tests (faster)
-- `gradle :compiler:test --tests "prog8tests.compiler.TestOptimization" --console=plain` - Run specific test class
+- `ionice -c 3 nice gradle build --console=plain` - Full build including all tests (about 50s)
+- `ionice -c 3 nice gradle :compiler:test --console=plain` - Run only compiler tests (faster)
+- `ionice -c 3 nice gradle :compiler:test --tests "prog8tests.compiler.TestOptimization" --console=plain` - Run specific test class
 
 Note: By default, Gradle only shows failed tests. Passed and skipped tests are silent.
 
-A full `gradle build` is CPU- and IO-heavy; on Unix-like systems prefix it with `nice`
-(e.g. `nice gradle build --console=plain`) to lower its priority.
+On Unix-like systems, prefix **every** gradle invocation with `nice` to lower its CPU priority,
+because gradle is CPU-heavy. This applies to all gradle commands (build, compile, test, install), not
+just `gradle build`. Use the same prefix for the quick compile checks and install commands in
+"Building and Installing the Compiler" above.
+
+On **Linux** additionally put `ionice -c 3` in front (idle-class I/O scheduling), so the build doesn't
+compete for disk with whatever else is running: `ionice -c 3 nice gradle ...`. `ionice` is
+Linux-only (util-linux); on macOS/BSD just use `nice`.
 
 **⚠️ CRITICAL: Test Filtering Patterns - Read This First!**
 

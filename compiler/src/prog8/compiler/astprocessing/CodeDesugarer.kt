@@ -933,8 +933,9 @@ _after:
         val conditionVar: VarDecl?
         val assignIndex: Assignment?
 
-        // put condition in temp var, if it is not simple; to avoid evaluating expression multiple times
-        if (ongoto.index.isSimple) {
+        // put condition in temp var, unless it is just a plain variable or constant,
+        // to avoid evaluating a more complex expression multiple times
+        if (ongoto.index is IdentifierReference || ongoto.index is NumericLiteral) {
             indexValue = ongoto.index
             assignIndex = null
             conditionVar = null
@@ -1020,24 +1021,16 @@ _after:
     }
 
     override fun after(forLoop: ForLoop, parent: Node): Iterable<AstModification> {
-        // Desugar list iteration and reverse array/string iteration (ideas/list-iteration.md Option A)
-        // - for x in list [step -1]  -> while cursor.Succ/Pred !=0 with next/prev saved
+        // Desugar reverse array/string iteration
         // - for x in array step -1  -> index loop len-1 downto 0
         // - for c in string step -1 -> similar via index
         val iterableDt = forLoop.iterable.inferType(program).getOrUndef()
-        val isList = isListIterable(iterableDt)
         val isArray = iterableDt.isArray
         val isString = iterableDt.isString
         val stepVal = forLoop.step?.constValue(program)?.number
         val isReverse = stepVal == -1.0
-        val isForward = forLoop.step==null || stepVal==1.0
-        if(!isList && !(isArray || isString)) return noModifications
-        if(isList) {
-            // only 1 / -1 already validated in AstChecker
-            if(!isForward && !isReverse) return noModifications
-            return desugarListForLoop(forLoop, parent, isReverse)
-        }
-        if((isArray || isString) && isReverse) {
+        if(!(isArray || isString)) return noModifications
+        if(isReverse) {
             // Keep this in desugaring: backend support would duplicate descending
             // index handling for every array/string kind in every code generator,
             // for a relatively uncommon use case.
@@ -1047,65 +1040,6 @@ _after:
         return noModifications
     }
 
-    private fun isListIterable(dt: DataType): Boolean = ListIterationHelper.isListIterable(dt, program)
-    private fun structDeclFor(dt: DataType): StructDecl? = ListIterationHelper.structDeclFor(dt, program)
-    private fun desugarListForLoop(forLoop: ForLoop, parent: Node, reverse: Boolean): Iterable<AstModification> {
-        val pos = forLoop.position
-        // need list struct to know Head/TailPred field names and node link names
-        val iterableDt = forLoop.iterable.inferType(program).getOrUndef()
-        val listDecl = structDeclFor(iterableDt) ?: return noModifications
-        val nodeDecl = structDeclFor(listDecl.fields[0].type) ?: return noModifications
-        val linkSuccName = nodeDecl.fields[0].name // Succ or Next
-        val linkPredName = nodeDecl.fields[1].name // Pred or Prev
-        val linkName = if(reverse) linkPredName else linkSuccName
-        val headField = if(reverse) "TailPred" else "Head"
-        // Instead create a synthetic pointer variable in the enclosing scope - typed to the list's node
-        // For simplicity, create a new VarDecl for cursor in the same block as the for loop
-        val cursorDt = DataType.pointer(nodeDecl)
-        val loopVarName = forLoop.loopVar.nameInSource.singleOrNull() ?: return noModifications
-        // ensure loop var exists (implicit var may not have been created if AstChecker/Implicit pass missed it)
-        val existingLoopVar = forLoop.loopVar.targetVarDecl()
-        val loopVarDecl: VarDecl? = if(existingLoopVar==null) {
-            val effType = forLoop.loopVarType ?: DataType.pointer(nodeDecl)
-            VarDecl.builder(effType, pos).names(loopVarName).type(VarDeclType.VAR).build()
-        } else null
-        // make cursor/next names unique per for-loop position to avoid hoisting collisions in the same subroutine
-        val uniq = "${pos.line}_${pos.startCol}"
-        val cursorVar = VarDecl(VarDeclType.VAR, VarDeclOrigin.USERCODE, cursorDt, ZeropageWish.DONTCARE, SplitWish.DONTCARE, null, null, "list_cursor_${loopVarName}_${uniq}", emptyList(), null, false, 0u, false, null, pos)
-        // Build: cursor = iterable.Head (or TailPred) - use IdentifierReference with dotted name for struct field
-        val iterableRefCopy = forLoop.iterable.copy()
-        val iterableName = (iterableRefCopy as? IdentifierReference)?.nameInSource ?: return noModifications
-        val headAccess: Expression = IdentifierReference(iterableName + headField, pos)
-        val cursorAssign = Assignment(AssignTarget(IdentifierReference(listOf(cursorVar.name), pos), null, null, null, false, position=pos), headAccess, AssignmentOrigin.OPTIMIZER, pos)
-        // Stop at the embedded list sentinel rather than relying on a null link.
-        val sentinel: Expression = if(reverse) {
-            // AddressOf a pointer field is represented as the target's raw address.
-            AddressOf(IdentifierReference(iterableName + "Head", pos), null, null, false, false, pos)
-        } else {
-            AddressOf(IdentifierReference(iterableName + "Tail", pos), null, null, false, false, pos)
-        }
-        val condition = BinaryExpression(IdentifierReference(listOf(cursorVar.name), pos), "!=", sentinel, pos)
-        // use IdentifierReference with dotted access; later desugarer pass will convert pointer field access to PtrDereference
-        val linkFieldAccessForNext = IdentifierReference(listOf(cursorVar.name, linkName), pos)
-        // next/prev temp - also typed to node pointer for dereference
-        val nextDt = DataType.pointer(nodeDecl)
-        val nextVar = VarDecl(VarDeclType.VAR, VarDeclOrigin.USERCODE, nextDt, ZeropageWish.DONTCARE, SplitWish.DONTCARE, null, null, "list_next_${loopVarName}_${uniq}", emptyList(), null, false, 0u, false, null, pos)
-        val nextAssign = Assignment(AssignTarget(IdentifierReference(listOf(nextVar.name), pos), null, null, null, false, position=pos), linkFieldAccessForNext, AssignmentOrigin.OPTIMIZER, pos)
-        val loopVarAssign = Assignment(AssignTarget(forLoop.loopVar.copy(), null, null, null, false, position=pos), IdentifierReference(listOf(cursorVar.name), pos), AssignmentOrigin.OPTIMIZER, pos)
-        val cursorUpdate = Assignment(AssignTarget(IdentifierReference(listOf(cursorVar.name), pos), null, null, null, false, position=pos), IdentifierReference(listOf(nextVar.name), pos), AssignmentOrigin.OPTIMIZER, pos)
-        val whileBody = AnonymousScope(mutableListOf<Statement>(nextAssign, loopVarAssign).apply { addAll(forLoop.body.statements) }.apply { add(cursorUpdate) }, pos)
-        val whileLoop = WhileLoop(condition, whileBody, pos)
-        val stmts = mutableListOf<Statement>()
-        if(loopVarDecl!=null) stmts.add(loopVarDecl)
-        stmts.add(cursorVar)
-        stmts.add(nextVar)
-        stmts.add(cursorAssign)
-        stmts.add(whileLoop)
-        val replacement = AnonymousScope(stmts, pos)
-        // set parents
-        replacement.linkParents(parent)
-        return listOf(AstReplaceNode(forLoop, replacement, parent))
-    }
     private fun desugarReverseArrayStringForLoop(forLoop: ForLoop, parent: Node, iterableDt: DataType): Iterable<AstModification> {
         val pos = forLoop.position
         // Create index variable - make unique per loop position to avoid hoisting collisions
@@ -1158,7 +1092,7 @@ _after:
             val idxDec = Assignment(AssignTarget(IdentifierReference(listOf(idxName), pos), null, null, null, false, position=pos), BinaryExpression(IdentifierReference(listOf(idxName), pos), "-", NumericLiteral.optimalInteger(1, pos), pos), AssignmentOrigin.OPTIMIZER, pos)
             val whileBody = AnonymousScope(mutableListOf<Statement>(elementAssign).apply { addAll(forLoop.body.statements) }.apply { add(idxDec) }, pos)
             val whileLoop = WhileLoop(condition, whileBody, pos)
-            val replacement = AnonymousScope(mutableListOf<Statement>(wordIdxVar, wordIdxInit, whileLoop), pos)
+            val replacement = AnonymousScope(mutableListOf(wordIdxVar, wordIdxInit, whileLoop), pos)
             replacement.linkParents(parent)
             return listOf(AstReplaceNode(forLoop, replacement, parent))
         } else if(iterableDt.isString) {
@@ -1172,7 +1106,7 @@ _after:
             val lenInit = Assignment(AssignTarget(IdentifierReference(listOf(lenName), pos), null, null, null, false, position=pos), NumericLiteral.optimalInteger(0, pos), AssignmentOrigin.OPTIMIZER, pos)
             val lenCond = BinaryExpression(ArrayIndexedExpression(iterableRef.copy(), null, null, ArrayIndex(IdentifierReference(listOf(lenName), pos), pos), pos), "!=", NumericLiteral.optimalInteger(0, pos), pos)
             val lenInc = Assignment(AssignTarget(IdentifierReference(listOf(lenName), pos), null, null, null, false, position=pos), BinaryExpression(IdentifierReference(listOf(lenName), pos), "+", NumericLiteral.optimalInteger(1, pos), pos), AssignmentOrigin.OPTIMIZER, pos)
-            val lenLoop = WhileLoop(lenCond, AnonymousScope(mutableListOf<Statement>(lenInc), pos), pos)
+            val lenLoop = WhileLoop(lenCond, AnonymousScope(mutableListOf(lenInc), pos), pos)
             val idxInit = Assignment(AssignTarget(IdentifierReference(listOf(idxName), pos), null, null, null, false, position=pos), BinaryExpression(IdentifierReference(listOf(lenName), pos), "-", NumericLiteral.optimalInteger(1, pos), pos), AssignmentOrigin.OPTIMIZER, pos)
             // unsigned wrap condition: idx < len (start len-1, wraps to 65535 after 0 and exits)
             val cond = BinaryExpression(IdentifierReference(listOf(idxName), pos), "<", IdentifierReference(listOf(lenName), pos), pos)
@@ -1247,7 +1181,7 @@ _after:
             fieldDt.isPointer -> {
                 // the field is itself a pointer: load it, then index into what it points to
                 val elemDt = fieldDt.dereference()
-                if(!elemDt.isNumericOrBool) {
+                if(!elemDt.isNumericOrBool && !elemDt.isPointer) {
                     errors.err("cannot index into field '${field.first}' of struct '${struct.name}' here", deref.position)
                     return null
                 }
@@ -1260,7 +1194,7 @@ _after:
             }
             fieldDt.isArray -> {
                 val elemDt = fieldDt.elementType()
-                if(!elemDt.isNumericOrBool) {
+                if(!elemDt.isNumericOrBool && !elemDt.isPointer) {
                     errors.err("cannot index into field '${field.first}' of struct '${struct.name}' here", deref.position)
                     return null
                 }
@@ -1284,9 +1218,8 @@ _after:
         fun buildChainFromDotExpression(expr: BinaryExpression): List<Pair<String, ArrayIndex?>>? {
             if(expr.operator!=".") return null
             val right = expr.right as? IdentifierReference ?: return null
-            val left = expr.left
             // left could be ArrayIndexedExpression (for ptr[idx]) or IdentifierReference (for ptr)
-            return when(left) {
+            return when(val left = expr.left) {
                 is ArrayIndexedExpression -> {
                     val ptrName = left.plainarrayvar?.nameInSource ?: return null
                     listOf(Pair(ptrName[0], left.indexer), Pair(right.nameInSource[0], null))
@@ -1316,7 +1249,7 @@ _after:
             // Handle "ptr[idx].field" represented as BinaryExpression with "." operator
             if(value is BinaryExpression && value.operator==".") {
                 val chain = buildChainFromDotExpression(value)
-                if(chain != null && chain == origDeref.chain && origDeref.derefLast == false) {
+                if(chain != null && chain == origDeref.chain && !origDeref.derefLast) {
                     return DirectMemoryRead(address.copy(), value.position)
                 }
             }
@@ -1358,7 +1291,8 @@ _after:
                 dt.isLong -> "pokel" to null
                 dt.isQuad -> "pokeq" to null
                 dt.isFloat -> "pokef" to null
-                else -> throw FatalAstException("can only deref a numeric or boolean pointer here")
+                dt.isPointer -> "pokep" to null
+                else -> throw FatalAstException("cannot poke into a value of type $dt")
             }
         }
 
@@ -1469,7 +1403,8 @@ _after:
                 elemDt.isSignedQuad -> "peekq" to null
                 elemDt.isUnsignedQuad -> "peekq" to DataType.UQUAD
                 elemDt.isFloat -> "peekf" to null
-                else -> return noModifications  // guarded in helper; unreachable
+                elemDt.isPointer -> "peekp" to null
+                else -> return noModifications
             }
             val peekCall = FunctionCallExpression(IdentifierReference(listOf(peekFunc), deref.position), mutableListOf(address), deref.position)
             val replacement: Expression = if(cast==null) peekCall else TypecastExpression(peekCall, cast, true, deref.position)

@@ -66,10 +66,7 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
                             return listOf(AstReplaceNode(decl, vardecl, parent))
                         }
                         if(valueDt.largerSizeThan(decl.datatype)) {
-                            val constValue = decl.value!!.constValue(program)
-                            if(constValue==null) {
-                                return noModifications
-                            }
+                            val constValue = decl.value!!.constValue(program) ?: return noModifications
                             errors.err("value '${constValue.number}' out of range for ${decl.datatype}", constValue.position)
                         } else if(decl.datatype.largerSizeThan(valueDt)) {
                             // don't make it signed if it was unsigned and vice versa, except when it is a long const declaration
@@ -621,7 +618,8 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
                 dt.isLong -> "peekl" to null
                 dt.isFloat -> "peekf" to null
                 dt.isQuad -> null
-                else -> throw FatalAstException("unexpected peek type $dt")
+                dt.isPointer -> "peekp" to null
+                else -> null
             }
         }
 
@@ -636,6 +634,7 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
                 // ptr1.field[0]  -->  peek(ptr.field)
                 val dt=deref.inferType(program).getOrUndef()
                 if(dt.sub!=null) {
+                    // other pointee types (such as ^^str) are left alone for later validation
                     val (peek, valueCast) = peekFunc(dt.sub!!) ?: return noModifications
                     val peekF = FunctionCallExpression(IdentifierReference(listOf(peek), deref.position), mutableListOf(replaceDerefWithIdentifier(deref)), deref.position)
                     val typedPeek = if(valueCast==null) peekF else TypecastExpression(peekF, valueCast, true, deref.position)
@@ -645,6 +644,7 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
                 // ptr1.field[index]  -->  peek(ptr.field + index)    (making sure the index is uword typed)
                 val dt=deref.inferType(program).getOrUndef()
                 if(dt.sub!=null) {
+                    // other pointee types (such as ^^str) are left alone for later validation
                     val (peek, valueCast) = peekFunc(dt.sub!!) ?: return noModifications
                     val indexer = if(constIndex==null) {
                         if(parent.indexer.indexExpr.inferType(program).isUnsignedWord)
@@ -685,8 +685,7 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
 
     private fun replaceDerefWithIdentifier(deref: PtrDereference): IdentifierReference {
         val ident = IdentifierReference(deref.chain, deref.position)
-        val target = deref.definingScope.lookup(ident.nameInSource)
-        when (target) {
+        when (val target = deref.definingScope.lookup(ident.nameInSource)) {
             is VarDecl -> require(target.datatype.isPointer || target.datatype == options.compTarget.pointerType)
             is StructFieldRef -> require(target.type.isPointer || target.type == options.compTarget.pointerType)
             else -> throw FatalAstException("requires pointer or uword dereference target at ${deref.position}")

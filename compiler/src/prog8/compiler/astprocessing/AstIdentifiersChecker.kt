@@ -51,8 +51,11 @@ internal class AstIdentifiersChecker(private val errors: IErrorReporter,
     }
 
     override fun visit(decl: VarDecl) {
-        if(decl.name in BuiltinFunctions)
+        val names = decl.names.ifEmpty { listOf(decl.name) }
+        if(names.any { it in BuiltinFunctions })
             errors.err("builtin function cannot be redefined", decl.position)
+        else if(names.any { it == "pointer" })
+            errors.err("variable name cannot be a keyword", decl.position)      // 'pointer' is the only datatype name the grammar accepts as an identifier
 
         fun checkNameForErrors(name: String) {
             val existingInSameScope = decl.definingScope.lookup(listOf(name))
@@ -98,6 +101,8 @@ internal class AstIdentifiersChecker(private val errors: IErrorReporter,
         struct.fields.forEach { field ->
             if(field.type.isArray && field.type.sub==BaseDataType.STRUCT_INSTANCE)
                 errors.err("arrays of struct instances are currently not supported as struct fields at '${field.name}'", struct.position)
+            else if(field.name == "pointer")
+                errors.err("struct field name cannot be a keyword", struct.position)
         }
         super.visit(struct)
     }
@@ -106,6 +111,8 @@ internal class AstIdentifiersChecker(private val errors: IErrorReporter,
         if(subroutine.name in BuiltinFunctions) {
             // the builtin functions can't be redefined
             errors.err("builtin function cannot be redefined", subroutine.position)
+        } else if(subroutine.name == "pointer") {
+            errors.err("subroutine name cannot be a keyword", subroutine.position)
         } else {
             // already reported elsewhere:
             // if (subroutine.parameters.any { it.name in BuiltinFunctions })
@@ -147,15 +154,23 @@ internal class AstIdentifiersChecker(private val errors: IErrorReporter,
     }
 
     override fun visit(alias: Alias) {
-        val existing = alias.definingScope.lookup(listOf(alias.alias))
-        if(existing != null && existing !== alias)
-            nameError(alias.alias, alias.position, existing)
+        if(alias.alias in BuiltinFunctions)
+            errors.err("builtin function cannot be redefined", alias.position)
+        else if(alias.alias == "pointer")
+            errors.err("alias name cannot be a keyword", alias.position)
+        else {
+            val existing = alias.definingScope.lookup(listOf(alias.alias))
+            if(existing != null && existing !== alias)
+                nameError(alias.alias, alias.position, existing)
+        }
         super.visit(alias)
     }
 
     override fun visit(label: Label) {
         if(label.name in BuiltinFunctions) {
             errors.err("builtin function cannot be redefined", label.position)
+        } else if(label.name == "pointer") {
+            errors.err("label name cannot be a keyword", label.position)
         } else {
             val existing = (label.definingSubroutine ?: label.definingBlock).getAllLabels(label.name)
             for(el in existing) {

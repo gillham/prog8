@@ -239,7 +239,42 @@ internal class AstChecker(private val program: Program,
             errors.warn("condition is always ${constvalue.asBooleanValue}", ifElse.condition.position)
         }
 
+        checkIfElseChainAsWhen(ifElse)
         super.visit(ifElse)
+    }
+
+    private fun checkIfElseChainAsWhen(ifElse: IfElse) {
+        // only consider the outermost link of a chain, otherwise a single long chain reports repeatedly
+        val scope = ifElse.parent
+        if(scope is AnonymousScope && scope.parent is IfElse && (scope.parent as IfElse).elsepart===scope)
+            return
+
+        // walk down the `else if` chain, gathering the constants that are compared against one and the same value
+        val testedValues = mutableSetOf<Double>()
+        var tested: Expression? = null
+        var node: IfElse? = ifElse
+        var choices = 0
+        while(node!=null) {
+            val binExpr = node.condition as? BinaryExpression ?: return
+            val rightConst = binExpr.right as? NumericLiteral ?: return
+            if(binExpr.operator!="==")
+                return
+            // a side-effecting expression is re-evaluated by every link in the chain, but only once by a when
+            if(binExpr.left.hasSideEffects(options.compTarget))
+                return
+            if(tested==null)
+                tested = binExpr.left
+            else if(!(binExpr.left isSameAs tested))
+                return
+            // a repeated constant isn't expressible as a when choice (it would be a compile error)
+            if(!testedValues.add(rightConst.number))
+                return
+            choices++
+            node = node.elsepart.statements.singleOrNull() as? IfElse
+        }
+
+        if(choices>=3)
+            errors.info("chain of if-else on the same value is better written as a when statement", ifElse.position)
     }
 
     override fun visit(forLoop: ForLoop) {
@@ -255,7 +290,7 @@ internal class AstChecker(private val program: Program,
             }
         }
 
-        // step validation for non-range iterables (AST desugaring, see ideas/list-iteration.md)
+        // step validation for non-range iterables
         if(forLoop.step != null) {
             if(forLoop.iterable is RangeExpression) {
                 errors.err("step on for-loop cannot be combined with range step - use 'to/downto ... step ...' inside the range", forLoop.position)
@@ -264,25 +299,22 @@ internal class AstChecker(private val program: Program,
                 if(stepVal==null) {
                     errors.err("step for non-range iterable must be a constant 1 or -1", forLoop.position)
                 } else if(stepVal != 1.0 && stepVal != -1.0) {
-                    errors.err("step for non-range iterable must be 1 or -1 (arrays, strings and lists have no stride)", forLoop.position)
+                    errors.err("step for non-range iterable must be 1 or -1 (arrays and strings have no stride)", forLoop.position)
                 }
             }
         }
 
         val iterableDt = forLoop.iterable.inferType(program).getOrUndef()
         val isTypedForLoop = forLoop.loopVarType != null
-        val isList = isListIterable(iterableDt)
 
         if(forLoop.iterable is IFunctionCall) {
             errors.err("can not loop over function call return value", forLoop.position)
-        } else if(!(iterableDt.isIterable) && forLoop.iterable !is RangeExpression && !isList) {
+        } else if(!(iterableDt.isIterable) && forLoop.iterable !is RangeExpression) {
             errors.err("can only loop over an iterable type", forLoop.position)
         } else {
             val loopvar = forLoop.loopVar.targetVarDecl()
             if(loopvar==null || loopvar.type== VarDeclType.CONST) {
                 errors.err("for loop requires a variable to loop with", forLoop.position)
-            } else if(isList) {
-                validateListForLoop(forLoop, loopvar, iterableDt, isTypedForLoop)
             } else {
                 when (loopvar.datatype.base) {
                     BaseDataType.UBYTE -> {
@@ -383,55 +415,6 @@ internal class AstChecker(private val program: Program,
         super.visit(forLoop)
     }
 
-    private fun isListIterable(dt: DataType): Boolean = ListIterationHelper.isListIterable(dt, program)
-    private fun structDeclFor(dt: DataType): StructDecl? = ListIterationHelper.structDeclFor(dt, program)
-    private fun isNodeStruct(decl: StructDecl): Boolean = decl.isNodeStruct()
-
-    private fun validateListForLoop(forLoop: ForLoop, loopvar: VarDecl, iterableDt: DataType, isTyped: Boolean) {
-        // loop var must be pointer to node
-        if(!loopvar.datatype.isPointer) {
-            errors.err("for loop over list requires a pointer variable (^^Node)", forLoop.position)
-            return
-        }
-        val listDecl = structDeclFor(iterableDt) ?: run {
-            errors.err("unable to resolve list type", forLoop.position)
-            return
-        }
-        val expectedNodeDecl = structDeclFor(listDecl.fields[0].type) ?: run {
-            errors.err("list Head field must be a typed pointer", forLoop.position)
-            return
-        }
-        // if explicit type given on for (^^Type var), forLoop.loopVarType holds it, but loopvar.datatype is the actual var's type.
-        // We validate that loopvar's type is compatible with expected node type, or if explicit type differs, validate that explicit node is also a valid node.
-        val loopVarNodeDecl = structDeclFor(loopvar.datatype)
-        if(loopVarNodeDecl==null) {
-            errors.err("loop variable must be a typed pointer to a node struct with Succ/Pred", forLoop.position)
-            return
-        }
-        if(!isNodeStruct(loopVarNodeDecl)) {
-            errors.err("loop variable's struct must have Succ/Pred (or Next/Prev) pointer fields at offset 0", forLoop.position)
-            return
-        }
-        // if explicit for type differs from list's node, we allow it as reinterpretation but still require valid node layout (already checked)
-        // otherwise enforce that loop var type matches list's node type when not explicitly typed differently
-        if(!isTyped) {
-            // inferred case: require exact match to list's node type
-            if(loopVarNodeDecl.name != expectedNodeDecl.name) {
-                errors.err("loop variable type ^^${loopVarNodeDecl.name} does not match list's node type ^^${expectedNodeDecl.name} - use explicit 'for ^^${expectedNodeDecl.name} ${forLoop.loopVar.nameInSource.single()}' or declare variable as ^^${expectedNodeDecl.name}", forLoop.position)
-            }
-        } else {
-            // explicit typed loop: check that explicit type matches loopvar's declared type
-            val explicitDt = forLoop.loopVarType!!
-            val explicitDecl = structDeclFor(explicitDt)
-            if(explicitDecl!=null && explicitDecl.name != loopVarNodeDecl.name) {
-                errors.err("explicit for loop type ^^${explicitDecl.name} does not match loop variable's declared type ^^${loopVarNodeDecl.name}", forLoop.position)
-            }
-            if(explicitDecl!=null && !isNodeStruct(explicitDecl)) {
-                errors.err("explicit loop type must be a node struct with Succ/Pred", forLoop.position)
-            }
-        }
-    }
-
     override fun visit(jump: Jump) {
         val ident = jump.target as? IdentifierReference
         if(ident!=null) {
@@ -451,7 +434,7 @@ internal class AstChecker(private val program: Program,
 
             val addressDt = jump.target.inferType(program).getOrUndef()
             val validAddrType = addressDt.isUnsignedByte || addressDt.isUnsignedWord ||
-                    (options.compTarget.POINTER_MEM_SIZE > 2u && addressDt.isLong)
+                    (options.compTarget.POINTER_MEM_SIZE > 2u && addressDt.isLong) || addressDt == options.compTarget.pointerType
             if(!validAddrType)
                 errors.err("goto address must fit in a pointer", jump.position)
         }
@@ -2433,8 +2416,7 @@ internal class AstChecker(private val program: Program,
             val constIdx = arrayIndexedExpression.indexer.constIndex()
             if(constIdx!=null) {
                 val deref = arrayIndexedExpression.pointerderef!!
-                val target = deref.definingScope.lookup(deref.chain)
-                val arraysize: Int? = when(target) {
+                val arraysize: Int? = when(val target = deref.definingScope.lookup(deref.chain)) {
                     is StructFieldRef -> target.field.constSize()
                     is VarDecl -> target.arraysize?.constIndex()
                     else -> null
@@ -2507,9 +2489,6 @@ internal class AstChecker(private val program: Program,
 
         if(whenStmt.condition.constValue(program)!=null)
             errors.warn("when-value is a constant and will always result in the same choice", whenStmt.condition.position)
-
-        if(whenStmt.betterAsOnGoto(program, options))
-            errors.info("when statement can be replaced with on..goto", whenStmt.position)
 
         super.visit(whenStmt)
     }
@@ -2730,24 +2709,22 @@ internal class AstChecker(private val program: Program,
     }
 
     private fun checkValueTypeAndRangeString(targetDt: DataType, value: StringLiteral) : Boolean {
-        return if (targetDt.isString) {
-            when {
-                value.value.length > 255 -> {
-                    errors.err("string length must be 0-255", value.position)
-                    false
-                }
-                value.value.isEmpty() -> {
-                    val decl = value.parent as? VarDecl
-                    if(decl!=null && (decl.zeropage==ZeropageWish.REQUIRE_ZEROPAGE || decl.zeropage==ZeropageWish.PREFER_ZEROPAGE)) {
-                        errors.err("string in Zeropage must be non-empty", value.position)
-                        false
-                    }
-                    else true
-                }
-                else -> true
+        return targetDt.isString && when {
+            value.value.length > 255 -> {
+                errors.err("string length must be 0-255", value.position)
+                false
             }
+
+            value.value.isEmpty() -> {
+                val decl = value.parent as? VarDecl
+                if(decl!=null && (decl.zeropage==ZeropageWish.REQUIRE_ZEROPAGE || decl.zeropage==ZeropageWish.PREFER_ZEROPAGE)) {
+                    errors.err("string in Zeropage must be non-empty", value.position)
+                    false
+                } else true
+            }
+
+            else -> true
         }
-        else false
     }
 
     private fun checkValueTypeAndRangeArray(targetDt: DataType, arrayspec: ArrayIndex, value: ArrayLiteral) : Boolean {
@@ -2773,9 +2750,7 @@ internal class AstChecker(private val program: Program,
                         if(arraySpecSize>byteLimit)
                             return err("boolean array length must be 1-$byteLimit")
                         val expectedSize = arrayspec.constIndex() ?: return err("array size specifier must be constant integer value")
-                        if (arraySize != expectedSize)
-                            return err("array size mismatch (expecting $expectedSize, got $arraySize)")
-                        return true
+                        return arraySize == expectedSize || err("array size mismatch (expecting $expectedSize, got $arraySize)")
                     }
                     return err("invalid boolean array size, must be 1-$byteLimit")
                 }
@@ -2792,9 +2767,7 @@ internal class AstChecker(private val program: Program,
                         if(arraySpecSize>byteLimit)
                             return err("byte array length must be 1-$byteLimit")
                         val expectedSize = arrayspec.constIndex() ?: return err("array size specifier must be constant integer value")
-                        if (arraySize != expectedSize)
-                            return err("array size mismatch (expecting $expectedSize, got $arraySize)")
-                        return true
+                        return arraySize == expectedSize || err("array size mismatch (expecting $expectedSize, got $arraySize)")
                     }
                     return err("invalid byte array size, must be 1-$byteLimit")
                 }
@@ -2812,9 +2785,7 @@ internal class AstChecker(private val program: Program,
                         if(arraySpecSize>maxLength)
                             return err("array length must be 1-$maxLength")
                         val expectedSize = arrayspec.constIndex() ?: return err("array size specifier must be constant integer value")
-                        if (arraySize != expectedSize)
-                            return err("array size mismatch (expecting $expectedSize, got $arraySize)")
-                        return true
+                        return arraySize == expectedSize || err("array size mismatch (expecting $expectedSize, got $arraySize)")
                     }
                     return err("invalid array size, must be 1-$maxLength")
                 }
@@ -2828,9 +2799,7 @@ internal class AstChecker(private val program: Program,
                     if(arraySpecSize>maxLength)
                         return err("array length must be 1-$maxLength")
                     val expectedSize = arrayspec.constIndex() ?: return err("array size specifier must be constant integer value")
-                    if (arraySize != expectedSize)
-                        return err("array size mismatch (expecting $expectedSize, got $arraySize)")
-                    return true
+                    return arraySize == expectedSize || err("array size mismatch (expecting $expectedSize, got $arraySize)")
                 }
                 return err("invalid array size, must be 1-$maxLength")
             }
@@ -2853,9 +2822,7 @@ internal class AstChecker(private val program: Program,
 
                     // check if the floating point values are all within range
                     val doubles = value.value.map { it.constValue(program)?.number!! }.toDoubleArray()
-                    if(doubles.any { it < options.compTarget.FLOAT_MAX_NEGATIVE || it > options.compTarget.FLOAT_MAX_POSITIVE })
-                        return err("floating point value overflow")
-                    return true
+                    return !doubles.any { it < options.compTarget.FLOAT_MAX_NEGATIVE || it > options.compTarget.FLOAT_MAX_POSITIVE } || err("floating point value overflow")
                 }
                 return err("invalid float array initialization value ${value.type}, expected $targetDt")
             }

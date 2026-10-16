@@ -9,7 +9,7 @@ import prog8.intermediate.RegisterNum
  */
 class Registers {
     private val registers = LongArray(99999)
-    private val floatRegisters = Array(99999) { 0.0 }
+    private val floatRegisters = DoubleArray(99999)
     var cpuA: UByte = 0u
     var cpuX: UByte = 0u
     var cpuY: UByte = 0u

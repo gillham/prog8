@@ -5,7 +5,7 @@ import prog8.ast.expressions.*
 import prog8.ast.walk.AstWalker
 import prog8.ast.walk.IAstVisitor
 import prog8.code.core.*
-import java.util.Objects
+import java.util.*
 
 
 interface INamedStatement {
@@ -582,9 +582,7 @@ class StructDecl(override val name: String, val fields: Array<StructField>, val 
             sizer.memorySize(field.type, 1)
     }
     override fun sameas(other: ISubType): Boolean {
-        if(other !is StructDecl || other.name!=name || other.fields.size!=fields.size || other.isUnion!=isUnion)
-            return false
-        return fields.zip(other.fields).all { (a, b) ->
+        return !(other !is StructDecl || other.name!=name || other.fields.size!=fields.size || other.isUnion!=isUnion) && fields.zip(other.fields).all { (a, b) ->
             a.name==b.name && a.type==b.type && when {
                 a.arraySize==null && b.arraySize==null -> true
                 a.arraySize!=null && b.arraySize!=null -> a.arraySize!! isSameAs b.arraySize!!
@@ -610,36 +608,6 @@ class StructDecl(override val name: String, val fields: Array<StructField>, val 
         return null
     }
 
-    fun isNodeStruct(): Boolean {
-        if(isUnion || fields.size < 2) return false
-        val f0 = fields[0]
-        val f1 = fields[1]
-        val namesOk = (f0.name=="Succ" && f1.name=="Pred") || (f0.name=="Next" && f1.name=="Prev")
-        if(!namesOk) return false
-        if(!f0.type.isPointer || !f1.type.isPointer) return false
-        val t0Name = (f0.type.subType as? StructDecl)?.name ?: f0.type.subTypeFromAntlr?.lastOrNull()
-        val t1Name = (f1.type.subType as? StructDecl)?.name ?: f1.type.subTypeFromAntlr?.lastOrNull()
-        return t0Name==name && t1Name==name
-    }
-
-    fun isListStruct(): Boolean {
-        if(isUnion || fields.size < 3) return false
-        val h = fields[0]
-        val t = fields[1]
-        val tp = fields[2]
-        if(h.name!="Head" || t.name!="Tail" || tp.name!="TailPred") return false
-        if(!h.type.isPointer || !tp.type.isPointer) return false
-        if(h.type.subType==null && h.type.subTypeFromAntlr==null) return false
-        if(tp.type.subType==null && tp.type.subTypeFromAntlr==null) return false
-        val headNodeName = (h.type.subType as? StructDecl)?.name ?: h.type.subTypeFromAntlr?.lastOrNull() ?: return false
-        val tailPredNodeName = (tp.type.subType as? StructDecl)?.name ?: tp.type.subTypeFromAntlr?.lastOrNull() ?: return false
-        if(headNodeName!=tailPredNodeName) return false
-        // if node type is resolved, validate it is a node struct; otherwise rely on name match
-        val nodeDecl = h.type.subType as? StructDecl
-        if(nodeDecl!=null) return nodeDecl.isNodeStruct()
-        // unresolved - assume ok if names match (will be validated later when resolved)
-        return true
-    }
 }
 
 
@@ -970,10 +938,7 @@ data class AssignTarget(
         if (void) return false
         if (identifier != null) {
             val symbol = definingScope.lookup(identifier!!.nameInSource)
-            if (symbol is VarDecl && symbol.type == VarDeclType.MEMORY && symbol.value is NumericLiteral) {
-                return target.isIOAddress((symbol.value as NumericLiteral).number.toUInt())
-            }
-            return false
+            return symbol is VarDecl && symbol.type == VarDeclType.MEMORY && symbol.value is NumericLiteral && target.isIOAddress((symbol.value as NumericLiteral).number.toUInt())
         }
         return true // memoryAddress, arrayindexed, pointerDereference, arrayIndexedDereference
     }
@@ -1041,14 +1006,10 @@ data class AssignTarget(
             arrayindexed != null -> value is ArrayIndexedExpression && arrayindexed!!.isSameArrayIndexedAs(value)
             multi != null -> false
             pointerDereference != null -> {
-                if (value is PtrDereference) {
-                    pointerDereference!!.chain==value.chain
-                } else false
+                value is PtrDereference && pointerDereference!!.chain==value.chain
             }
             arrayIndexedDereference != null -> {
-                if (value is ArrayIndexedPtrDereference) {
-                    arrayIndexedDereference!!.chain==value.chain && arrayIndexedDereference!!.derefLast==value.derefLast
-                } else false
+                value is ArrayIndexedPtrDereference && arrayIndexedDereference!!.chain==value.chain && arrayIndexedDereference!!.derefLast==value.derefLast
             }
             else -> false
         }
@@ -1101,10 +1062,7 @@ data class AssignTarget(
                 return when (memAddr.addressExpression) {
                     is IdentifierReference -> {
                         val decl = (memAddr.addressExpression as IdentifierReference).targetVarDecl()
-                        val result = if ((decl?.type == VarDeclType.MEMORY || decl?.type == VarDeclType.CONST) && decl.value is NumericLiteral)
-                            target.isIOAddress((decl.value as NumericLiteral).number.toUInt())
-                        else
-                            false
+                        val result = (decl?.type == VarDeclType.MEMORY || decl?.type == VarDeclType.CONST) && decl.value is NumericLiteral && target.isIOAddress((decl.value as NumericLiteral).number.toUInt())
                         result
                     }
                     else -> false
@@ -1115,10 +1073,7 @@ data class AssignTarget(
                     val targetStmt = arrayIdx.plainarrayvar!!.targetVarDecl()
                     return if (targetStmt?.type == VarDeclType.MEMORY) {
                         val addr = targetStmt.value as? NumericLiteral
-                        if (addr != null)
-                            target.isIOAddress(addr.number.toUInt())
-                        else
-                            false
+                        addr != null && target.isIOAddress(addr.number.toUInt())
                     } else false
                 }
                 // can't really tell for the other types... assume false.
@@ -1126,10 +1081,7 @@ data class AssignTarget(
             }
             ident != null -> {
                 val decl = ident.targetVarDecl() ?: throw FatalAstException("invalid identifier ${ident.nameInSource}")
-                return if (decl.type == VarDeclType.MEMORY && decl.value is NumericLiteral)
-                    target.isIOAddress((decl.value as NumericLiteral).number.toUInt())
-                else
-                    false
+                return decl.type == VarDeclType.MEMORY && decl.value is NumericLiteral && target.isIOAddress((decl.value as NumericLiteral).number.toUInt())
             }
             multi != null -> {
                 return multi.any { it.isIOAddress(target) }
@@ -1656,32 +1608,58 @@ class When(var condition: Expression,
     override fun referencesIdentifier(nameInSource: List<String>): Boolean =
         condition.referencesIdentifier(nameInSource) || choices.any { it.referencesIdentifier(nameInSource) }
 
-    fun betterAsOnGoto(program: Program, compilerOptions: CompilationOptions): Boolean {
-        // a when that has only goto's and the values 0,1,2,3,4... is better written as a on..goto
-        val sizeLimit = when {
-            compilerOptions.compTarget.cpu == CpuType.CPU65C02 -> 4
-            compilerOptions.compTarget.cpu.is68k -> 5
-            else -> 6
+    /**
+     * A when with only goto's and near-contiguous choice values is better written as an on..goto.
+     * Returns the value to subtract from the condition to get the jump table index, or null when
+     * a jump table isn't possible or not worthwhile here.
+     */
+    fun onGotoIndexOffset(program: Program, compilerOptions: CompilationOptions): Int? {
+        // Jump-table cutoff per CPU family, picked by the resource that family is short of:
+        // 6502 by size (11; on plain 6502 the table is not even faster below ~15, since its
+        // dispatch lacks jmp (abs,x)), m68k/virtual by speed (6/4, well under the m68k size
+        // break-even), 65C02 keeps 4 (cheap jmp (abs,x); short hot dispatches like gfx_hires).
+        val (sizeLimit, spanFactor) = when {
+            compilerOptions.compTarget.cpu == CpuType.CPU65C02 -> 4 to 2
+            compilerOptions.compTarget.cpu == CpuType.CPU6502 -> 11 to 2
+            compilerOptions.compTarget.cpu.is68k -> 6 to 4
+            else -> 4 to 4
         }
         if(choices.size >= sizeLimit) {
-            if (condition.inferType(program).isBytes) {
-                if (choices.all { (it.statements.statements.singleOrNull() as? Jump)?.target is IdentifierReference }) {
-                    val values = choices.flatMap {
-                        it.values ?: mutableListOf()
-                    }.map {
-                        it.constValue(program)?.number?.toInt()
-                    }
-                    if(null !in values) {
-                        val sortedValues = values.filterNotNull().sorted()
-                        val range = IntRange(sortedValues.first(), sortedValues.last())
-                        if(range.toList() == sortedValues) {
-                            return true
+            if (condition.inferType(program).isUnsignedByte) {
+                // the else part becomes the on..goto's else part verbatim, so it can be any body;
+                // value choice bodies are moved behind the dispatch and receive generated labels
+                val valueChoices = choices.filter { it.values!=null }
+                val hasNestedDeclaration = valueChoices.any { choice ->
+                    var found = false
+                    val visitor = object : IAstVisitor {
+                        override fun visit(decl: VarDecl) {
+                            found = true
                         }
                     }
+                    visitor.visit(choice.statements)
+                    found
+                }
+                if(hasNestedDeclaration)
+                    return null
+                val values = valueChoices.flatMap {
+                    it.values ?: mutableListOf()
+                }.map {
+                    it.constValue(program)?.number?.toInt()
+                }
+                if(null !in values) {
+                    val sortedValues = values.filterNotNull().sorted()
+                    val lowest = sortedValues.first()
+                    val span = sortedValues.last() - lowest + 1
+                    // cap the table so that a sparse set of values can't blow the table up out of all
+                    // proportion to the number of choices; within the cap the O(1) dispatch wins even
+                    // when the table itself is a bit bigger than the compare chain it replaces.
+                    // the cap is looser on m68k/virtual where a bigger table costs no scarce memory
+                    if(span <= sortedValues.size * spanFactor)
+                        return lowest
                 }
             }
         }
-        return false
+        return null
     }
 }
 

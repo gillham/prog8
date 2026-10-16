@@ -18,7 +18,7 @@ dependencies {
     implementation(project(":intermediate"))
     implementation(project(":virtualmachine"))
     implementation("com.github.ajalt.clikt:clikt:5.1.0")
-    implementation("com.github.ajalt.mordant:mordant:3.0.2")
+    implementation("com.github.ajalt.mordant:mordant:3.1.0")
     implementation("com.michael-bull.kotlin-result:kotlin-result-jvm:2.3.1")
 
     testImplementation(project(":codeCore"))
@@ -54,7 +54,7 @@ fi
         val marker = "@rem Execute prog8c"
         val text = windowsScript.readText()
         check(marker in text) { "unexpected Windows launch script layout for prog8c" }
-        val probe = $$"""@rem Prog8: add --enable-native-access on JVMs that support it (JDK 18+) to avoid JNA restricted-method warnings
+        val probe = """@rem Prog8: add --enable-native-access on JVMs that support it (JDK 18+) to avoid JNA restricted-method warnings
 "%JAVA_EXE%" --enable-native-access=ALL-UNNAMED -version >NUL 2>&1
 if not errorlevel 1 set JAVA_OPTS=%JAVA_OPTS% --enable-native-access=ALL-UNNAMED
 

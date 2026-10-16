@@ -1553,10 +1553,10 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                 if(valueTr!=null)
                     addToResult(result, valueTr, -1, valueTr.resultFpReg)
                 result += IRCodeChunk(null, null).also {
-                    if(constFloat!=null)
-                        it += IRInstructions.binaryImmediateFloat(divROpcode, loadReg, constFloat)
+                    it += if(constFloat!=null)
+                        IRInstructions.binaryImmediateFloat(divROpcode, loadReg, constFloat)
                     else
-                        it += IRInstructions.binary(divROpcode, IRDataType.FLOAT, loadReg, valueTr!!.resultFpReg)
+                        IRInstructions.binary(divROpcode, IRDataType.FLOAT, loadReg, valueTr!!.resultFpReg)
                     it += IRInstructions.storeMemory(Opcode.STOREX, IRDataType.FLOAT, loadReg, IRMemory.indexed(arrayVariableName, indexReg, codeGen.options.compTarget.indexRegType))
                 }
                 return result
@@ -3087,14 +3087,14 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
         result += idxCode
         if(zero) {
             result += IRCodeChunk(null, null).also {
-                if(info.fieldOffset==0) it += IRInstructions.storeZero(Opcode.STOREZX, targetDt, IRMemory.indexed(info.arrayName, indexReg, codeGen.options.compTarget.indexRegType, scale=info.structSize))
-                else it += IRInstructions.storeZero(Opcode.STOREZX, targetDt, IRMemory.indexed(info.arrayName, indexReg, codeGen.options.compTarget.indexRegType, scale=info.structSize, displacement=info.fieldOffset))
+                it += if(info.fieldOffset==0) IRInstructions.storeZero(Opcode.STOREZX, targetDt, IRMemory.indexed(info.arrayName, indexReg, codeGen.options.compTarget.indexRegType, scale=info.structSize))
+                else IRInstructions.storeZero(Opcode.STOREZX, targetDt, IRMemory.indexed(info.arrayName, indexReg, codeGen.options.compTarget.indexRegType, scale=info.structSize, displacement=info.fieldOffset))
             }
         } else {
             if(valueReg<0) return false
             result += IRCodeChunk(null, null).also {
-                if(info.fieldOffset==0) it += IRInstructions.storeMemory(Opcode.STOREX, targetDt, valueReg, IRMemory.indexed(info.arrayName, indexReg, codeGen.options.compTarget.indexRegType, scale=info.structSize))
-                else it += IRInstructions.storeMemory(Opcode.STOREX, targetDt, valueReg, IRMemory.indexed(info.arrayName, indexReg, codeGen.options.compTarget.indexRegType, scale=info.structSize, displacement=info.fieldOffset))
+                it += if(info.fieldOffset==0) IRInstructions.storeMemory(Opcode.STOREX, targetDt, valueReg, IRMemory.indexed(info.arrayName, indexReg, codeGen.options.compTarget.indexRegType, scale=info.structSize))
+                else IRInstructions.storeMemory(Opcode.STOREX, targetDt, valueReg, IRMemory.indexed(info.arrayName, indexReg, codeGen.options.compTarget.indexRegType, scale=info.structSize, displacement=info.fieldOffset))
             }
         }
         return true

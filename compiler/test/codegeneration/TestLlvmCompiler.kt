@@ -2917,6 +2917,56 @@ main {
     sub answer() -> uword {
         return 4242
     }
+}""",
+    "when with goto choices to routines and with return choices, as jump tables on llvm64 only where the table holds routines" to """
+main {
+    ubyte @shared total
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        total = 0
+        ubyte @shared sel
+        for sel in 0 to 5 {
+            dispatch(sel)
+        }
+        dispatch(9)
+        if total != 115
+            return 1
+        if weekday(1) + weekday(3) + weekday(5) != 90 or weekday(9) != 99
+            return 2
+        return 0
+    }
+
+    sub dispatch(ubyte s) {
+        when s {
+            0 -> goto r0
+            1 -> goto r1
+            2 -> goto r2
+            3 -> goto r3
+            4 -> goto r4
+            5 -> goto r5
+            else -> total += 100
+        }
+    }
+
+    sub r0() { total += 0 }
+    sub r1() { total += 1 }
+    sub r2() { total += 2 }
+    sub r3() { total += 3 }
+    sub r4() { total += 4 }
+    sub r5() { total += 5 }
+
+    sub weekday(ubyte day) -> ubyte {
+        when day {
+            1 -> return 10
+            2, 3 -> return day * 10
+            4 to 5 -> return 50
+            else -> return 99
+        }
+    }
 }"""
 )
 

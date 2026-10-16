@@ -805,8 +805,7 @@ private fun CallSite.argumentRegister(index: Int, what: String): Int =
 
 private fun AsmGen.translateSyscall(insn: IRInstruction) {
     val site = insn.requireCallSite()
-    val syscallNum = (site.target as CallTarget.SystemCall).number
-    when (syscallNum) {
+    when (val syscallNum = (site.target as CallTarget.SystemCall).number) {
         IMSyscall.CLAMP_UBYTE.number -> translateSyscallClampUbyte(site)
         IMSyscall.CLAMP_BYTE.number -> translateSyscallClampByte(site)
         IMSyscall.CLAMP_UWORD.number -> translateSyscallClampUword(site)
@@ -1436,8 +1435,7 @@ private fun AsmGen.translateFloatSign(insn: IRInstruction) {
 }
 
 private fun AsmGen.jsrfarRoutine(): String {
-    val targetName = program.options.compTarget.name
-    return when (targetName) {
+    return when (val targetName = program.options.compTarget.name) {
         "cx16" -> "cx16.JSRFAR"
         "c64" -> "c64.x16jsrfar"
         "c128" -> "c128.x16jsrfar"
