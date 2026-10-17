@@ -22,6 +22,21 @@ internal class ExpressionCodeResult(val chunks: IRCodeChunks, val dt: IRDataType
     }
 }
 
+/**
+ * True if the explicit CMPI #0 that would test a translated result value against zero can be
+ * skipped, because the last emitted instruction of that translation already sets the status
+ * bits. This is only allowed on targets that honor the "multi-byte ops set status bits based
+ * on the full value" contract (see CpuType.statusBitsOnMultiByteOps): on 8-bit targets,
+ * multi-byte ops may only set Z from the last byte, so the explicit CMPI is required there.
+ *
+ * Note: when the CMPI is skipped, a following branch tests Z meaning "the compared value is
+ * zero". That is only meaningful when the last instruction was itself a CMP/CMPI/SGN/BITTST
+ * (what OpcodesThatSetStatusbits guarantees). A future target that honors the contract while
+ * setting status bits with other instructions must re-check this assumption.
+ */
+internal fun CpuType.canSkipExplicitCmpi(lastInstr: IRInstruction?): Boolean =
+        statusBitsOnMultiByteOps && lastInstr != null && lastInstr.opcode in OpcodesThatSetStatusbits
+
 internal class ExpressionGen(private val codeGen: IRCodeGen) {
 
     fun translateExpression(expr: PtExpression): ExpressionCodeResult {
@@ -270,14 +285,8 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
         // Use status flags from condition expression when possible, avoiding redundant CMPI #0
         val condTr = translateExpression(ifExpr.condition)
         addToResult(result, condTr, condTr.resultReg, -1)
-        // Only skip the CMPI if the target honors the "multi-byte ops set Z based on full
-        // value" contract. On 8-bit targets (6502/65C02) this is false, so we always emit
-        // an explicit CMPI - a multi-byte op may have set Z based on only the last byte.
-        // See CpuType.statusBitsOnMultiByteOps for the rationale.
         val lastInstr = condTr.chunks.lastOrNull()?.instructions?.lastOrNull()
-        val skipCmpi = codeGen.options.compTarget.cpu.statusBitsOnMultiByteOps
-                && lastInstr != null
-                && lastInstr.opcode in OpcodesThatSetZeroFlagOnM68k
+        val skipCmpi = codeGen.options.compTarget.cpu.canSkipExplicitCmpi(lastInstr)
         if (!skipCmpi) {
             addInstr(result, IRInstructions.compareImmediate(IRDataType.BYTE, condTr.resultReg, 0), null)
         }
@@ -1464,14 +1473,8 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     val leftTr = translateExpression(binExpr.left)
                     addToResult(result, leftTr, leftTr.resultReg, -1)
                     val lastInstr = leftTr.chunks.lastOrNull()?.instructions?.lastOrNull()
-                    // Only skip the CMPI if the target honors the "multi-byte ops set Z
-                    // based on full value" contract. On 8-bit targets a previous op like
-                    // DEC only set Z from the last byte, so the explicit CMPI is required.
-                    // See CpuType.statusBitsOnMultiByteOps for the rationale.
                     val skipCmpi = rightConst.toInt() == 0
-                            && codeGen.options.compTarget.cpu.statusBitsOnMultiByteOps
-                            && lastInstr != null
-                            && lastInstr.opcode in OpcodesThatSetZeroFlagOnM68k
+                            && codeGen.options.compTarget.cpu.canSkipExplicitCmpi(lastInstr)
                     if (!skipCmpi) {
                         addInstr(result, IRInstructions.compareImmediate(leftTr.dt, leftTr.resultReg, constImmediate(binExpr.right, rightConst)), null)
                     }
@@ -1641,6 +1644,25 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
         }
     }
 
+    /**
+     * Emit the branch that decides if the short-circuit evaluation of a boolean `or`/`and` has to
+     * skip its right hand side: [branchWhenZeroTrue] selects if the branch is taken when the left
+     * hand side value in the register is zero (false) instead of when it is non-zero (true).
+     * The status bits have to be set from that register first, because only CMP/CMPI/SGN/BITTST do
+     * that on targets that don't honor CpuType.statusBitsOnMultiByteOps, and the value can also come
+     * straight from a load or a register move. [canSkipExplicitCmpi] decides if setting them can be
+     * skipped on this target.
+     */
+    private fun addShortCircuitBranch(result: MutableList<IRCodeChunkBase>, leftTr: ExpressionCodeResult, shortcutLabel: String, branchWhenZeroTrue: Boolean) {
+        val lastInstr = leftTr.chunks.lastOrNull()?.instructions?.lastOrNull()
+        val skipCmpi = codeGen.options.compTarget.cpu.canSkipExplicitCmpi(lastInstr)
+        if (!skipCmpi) {
+            addInstr(result, IRInstructions.compareImmediate(IRDataType.BYTE, leftTr.resultReg, 0), null)
+        }
+        val branchOpcode = if (branchWhenZeroTrue) Opcode.BSTEQ else Opcode.BSTNE
+        addInstr(result, IRInstructions.branch(branchOpcode, codeLabel(shortcutLabel)), null)
+    }
+
     private fun operatorAnd(binExpr: PtBinaryExpression, vmDt: IRDataType, bitwise: Boolean): ExpressionCodeResult {
         val result = mutableListOf<IRCodeChunkBase>()
         if(!bitwise && !binExpr.right.isSimple()) {
@@ -1648,9 +1670,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
             val leftTr = translateExpression(binExpr.left)
             addToResult(result, leftTr, leftTr.resultReg, -1)
             val shortcutLabel = codeGen.createLabelName()
-            if(!codeGen.options.compTarget.cpu.statusBitsOnMultiByteOps)
-                addInstr(result, IRInstructions.compareImmediate(vmDt, leftTr.resultReg, 0), null)
-            addInstr(result, IRInstructions.branch(Opcode.BSTEQ, codeLabel(shortcutLabel)), null)
+            addShortCircuitBranch(result, leftTr, shortcutLabel, branchWhenZeroTrue = true)
             val rightTr = translateExpression(binExpr.right)
             addToResult(result, rightTr, leftTr.resultReg, -1)
             result += IRCodeChunk(shortcutLabel, null)
@@ -1684,9 +1704,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
             val leftTr = translateExpression(binExpr.left)
             addToResult(result, leftTr, leftTr.resultReg, -1)
             val shortcutLabel = codeGen.createLabelName()
-            if(!codeGen.options.compTarget.cpu.statusBitsOnMultiByteOps)
-                addInstr(result, IRInstructions.compareImmediate(vmDt, leftTr.resultReg, 0), null)
-            addInstr(result, IRInstructions.branch(Opcode.BSTNE, codeLabel(shortcutLabel)), null)
+            addShortCircuitBranch(result, leftTr, shortcutLabel, branchWhenZeroTrue = false)
             val rightTr = translateExpression(binExpr.right)
             addToResult(result, rightTr, leftTr.resultReg, -1)
             result += IRCodeChunk(shortcutLabel, null)
