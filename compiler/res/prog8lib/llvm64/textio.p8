@@ -3,15 +3,32 @@
 ; txt.print_f is not here: as on the other targets, it belongs in the floats module (which can't format floats on llvm64 yet).
 
 %import conv
-%option ignore_unused
 
 txt {
+%option no_symbol_prefixing, ignore_unused
 
     alias print_u16 = print_uw
     alias print_i16 = print_w
     alias print_i32 = print_l
     alias print_uq = print_u64
     alias print_q = print_i64
+
+    ; generic "terminal" dimensions
+    const ubyte DEFAULT_WIDTH = 80
+    const ubyte DEFAULT_HEIGHT = 25
+
+sub width() -> ubyte {
+    return DEFAULT_WIDTH
+}
+
+sub height() -> ubyte {
+    return DEFAULT_HEIGHT
+}
+
+sub size() -> ubyte, ubyte {
+    ; -- returns the text screen width and height (number of columns and rows)
+    return width(), height()
+}
 
 sub  clear_screen() {
     print("\x1b[2J\x1b[H")
@@ -247,4 +264,95 @@ sub setchr (ubyte col, ubyte row, ubyte char) {
     plot(col, row)
     chrout(char)
 }
+
+sub setcc(ubyte col, ubyte row, ubyte char, ubyte color) {
+    ; move to col/row
+    ; don't call plot() as it will be tracking vcol/vrow soon
+    chrout(27)
+    chrout('[')
+    print_ub(row)
+    chrout(';')
+    print_ub(col)
+    chrout('H')
+    ; ---- set the text color, one of the 8 ANSI colors 0-7
+    print("\x1b[3")
+    chrout('0' + color)
+    chrout('m')
+    chrout(char)
+}
+
+sub clear_screenchars(ubyte character) {
+    plot(0,0)
+    ubyte w,h
+    for h in 0 to DEFAULT_HEIGHT-1 {
+        for h in 0 to DEFAULT_WIDTH-1 {
+            chrout(character)
+        }
+    }
+}
+
+sub fill_screen(ubyte character, ubyte color) {
+    ; ---- set the text color, one of the 8 ANSI colors 0-7
+    print("\x1b[3")
+    chrout('0' + color)
+    chrout('m')
+    ; fill screen
+    plot(0,0)
+    ubyte w,h
+    for h in 0 to DEFAULT_HEIGHT-1 {
+        for h in 0 to DEFAULT_WIDTH-1 {
+            chrout(character)
+        }
+    }
+}
+
+sub petscii2scr(ubyte petscii_char) -> ubyte {
+    ; -- convert petscii character to screencode
+    ubyte[8] offsets = [128, 0, 64, 32, 64, 192, 128, 128]
+    return petscii_char ^ offsets[petscii_char>>5]
+}
+
+sub petscii2scr_str(str petscii_string) {
+    ; -- convert petscii string to screencodes string
+    pointer temp = petscii_string
+    while @(temp)!=0 {
+        @(temp) = petscii2scr(@(temp))
+        temp++
+    }
+}
+
+    sub iso2petscii(ubyte iso_char) -> ubyte {
+        ; --converts iso 8859-15 character to petscii character (lowercase)
+        if iso_char & $7f <= $20
+            return petscii:' '  ; whitspace
+        if iso_char <= $3f
+            return iso_char  ; numbers and symbols
+        if iso_char < $80
+            return translate40to7F[iso_char-$40]
+        return translateA0toFF[iso_char-$a0]
+
+        ubyte[$40] translate40to7F = [
+            $40, $c1, $c2, $c3, $c4, $c5, $c6, $c7, $c8, $c9, $ca, $cb, $cc, $cd, $ce, $cf,
+            $d0, $d1, $d2, $d3, $d4, $d5, $d6, $d7, $d8, $d9, $da, $5b, $3f, $5d, $5e, $e4,
+            $27, $41, $42, $43, $44, $45, $46, $47, $48, $49, $4a, $4b, $4c, $4d, $4e, $4f,
+            $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $5a, $f3, $7d, $eb, $3f, $3f,
+        ]
+        ubyte[$60] translateA0toFF = [
+            $20, $21, $20, $5c, $c5, $d9, $3f, $3f, $3f, $c3, $3f, $28, $3f, $3f, $d2, $e3,
+            $3f, $3f, $32, $33, $3f, $3f, $ff, $3f, $3f, $31, $3f, $3e, $3f, $3f, $d9, $3f,
+            $c1, $c1, $c1, $c1, $c1, $c1, $c1, $c3, $c5, $c5, $c5, $c5, $c9, $c9, $c9, $c9,
+            $c4, $ce, $cf, $cf, $cf, $cf, $cf, $58, $cf, $d5, $d5, $d5, $d5, $d9, $3f, $53,
+            $41, $41, $41, $41, $41, $41, $41, $43, $45, $45, $45, $45, $49, $49, $49, $49,
+            $4f, $4e, $4f, $4f, $4f, $4f, $4f, $3f, $4f, $55, $55, $55, $55, $59, $3f, $59,
+        ]
+    }
+
+    sub iso2petscii_str(str iso_string) {
+        ; -- convert iso string to petscii (lowercase) string
+        pointer temp = iso_string
+        while @(temp)!=0 {
+            @(temp) = iso2petscii(@(temp))
+            temp++
+        }
+    }
 }
