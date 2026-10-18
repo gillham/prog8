@@ -28,6 +28,28 @@ internal class AstChecker(private val program: Program,
             errors.err("64-bit integer types (quad/uquad) are not supported on target ${options.compTarget.name}", position)
     }
 
+    private fun checkExternalSubroutine(subroutine: Subroutine) {
+        if(!options.compTarget.cpu.isLlvm) {
+            errors.err("address-free extsub (external C routine) is not supported on target ${options.compTarget.name}", subroutine.position)
+            return
+        }
+        if(subroutine.returntypes.size>1)
+            errors.err("extsub (external C routine) can have at most one return value", subroutine.position)
+        for(p in subroutine.parameters) {
+            if(p.registerOrPair!=null)
+                errors.err("extsub (external C routine) parameters cannot have a register annotation", p.position)
+            if(!isExternalCType(p.type))
+                errors.err("extsub (external C routine) parameter '${p.name}' must be a scalar type: bool, (u)byte, (u)word, long, (u)quad, float, str or a pointer", p.position)
+        }
+        subroutine.returntypes.forEachIndexed { index, rt ->
+            if(!isExternalCType(rt))
+                errors.err("extsub (external C routine) return type #${index+1} must be a scalar type: bool, (u)byte, (u)word, long, (u)quad, float, str or a pointer", subroutine.position)
+        }
+    }
+
+    private fun isExternalCType(dt: DataType) =
+        dt.isByteOrBool || dt.isWord || dt.isLong || dt.isQuad || dt.isFloat || dt.isString || dt.isPointer
+
     private fun checkQuadBuiltin(functionName: String?, args: List<Expression>, position: Position) {
         if(functionName in setOf("peekq", "pokeq", "pushq", "popq") || (functionName in setOf("lsb", "lsw", "msb", "msw") && args.any { it.inferType(program).isQuad }))
             checkQuadSupported(DataType.QUAD, position)
@@ -590,6 +612,11 @@ internal class AstChecker(private val program: Program,
             checkQuadSupported(rt, subroutine.position)
         }
 
+        if(subroutine.isExternal)
+            checkExternalSubroutine(subroutine)
+        else if(subroutine.asmAddress!=null && options.compTarget.cpu.isLlvm)
+            err("extsub with an address is not supported on target ${options.compTarget.name}, declare the C routine without an address")
+
         super.visit(subroutine)
 
         // subroutine must contain at least one 'return' or 'goto'
@@ -598,7 +625,7 @@ internal class AstChecker(private val program: Program,
         if(!hasReturnOrExternalJumpOrRts(subroutine)) {
             if (subroutine.returntypes.isNotEmpty()) {
                 // for asm subroutines with an address, no statement check is possible.
-                if (subroutine.asmAddress == null && !subroutine.inline) {
+                if (subroutine.asmAddress == null && !subroutine.inline && !subroutine.isExternal) {
                     err("non-inline subroutine has result value(s) and thus must have at least one 'return' or external 'goto' in it (or the assembler equivalent in case of %asm)")
                     haveReturnError = true
                 }

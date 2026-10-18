@@ -1385,4 +1385,100 @@ main {
         result.compilerAst.entrypoint.statements.filterIsInstance<Assignment>().size shouldBe 3
     }
 
+    context("extsub") {
+        fun subs(src: String): Map<String, Subroutine> =
+            parseModule(SourceCode.Text(src), LlvmTarget()).statements.filterIsInstance<Block>().single()
+                .statements.filterIsInstance<Subroutine>().associateBy { it.name }
+
+        test("address-free form parses into an external Subroutine") {
+            val subs = subs("""
+                main {
+                    extsub putchar(ubyte char) -> ubyte
+                    extsub puts(str msg) -> uword
+                    extsub getchar() -> ubyte
+                    extsub abort()
+                    extsub mix(float f, long l, ^^ubyte p, bool b)
+                    private extsub hidden(uword w) -> bool
+                    public extsub shown()
+                }
+            """.trimIndent())
+            subs.size shouldBe 7
+            subs.values.forEach {
+                it.isExternal shouldBe true
+                it.isAsmSubroutine shouldBe true
+                it.asmAddress shouldBe null
+                it.inline shouldBe false
+                it.asmClobbers shouldBe emptySet()
+                it.statements.size shouldBe 0
+                it.asmParameterRegisters shouldBe it.parameters.map { RegisterOrStatusflag(null, null) }
+                it.asmReturnvaluesRegisters shouldBe it.returntypes.map { RegisterOrStatusflag(null, null) }
+            }
+            subs.getValue("putchar").parameters.map { it.name to it.type } shouldBe listOf("char" to DataType.UBYTE)
+            subs.getValue("putchar").returntypes shouldBe listOf(DataType.UBYTE)
+            subs.getValue("puts").parameters.single().type shouldBe DataType.STR
+            subs.getValue("puts").returntypes shouldBe listOf(DataType.UWORD)
+            subs.getValue("getchar").parameters.size shouldBe 0
+            subs.getValue("getchar").returntypes shouldBe listOf(DataType.UBYTE)
+            subs.getValue("abort").returntypes.size shouldBe 0
+            subs.getValue("mix").parameters.map { it.type } shouldBe listOf(DataType.FLOAT, DataType.LONG, DataType.pointer(BaseDataType.UBYTE), DataType.BOOL)
+            subs.getValue("hidden").visibility shouldBe Visibility.PRIVATE
+            subs.getValue("shown").visibility shouldBe Visibility.PUBLIC
+            subs.getValue("putchar").visibility shouldBe null
+        }
+
+        test("forms with an address still parse as before and are not external") {
+            val subs = subs($$"""
+                main {
+                    const uword address = $c000
+                    ubyte @shared selector
+                    extsub $ffd2 = chrout(ubyte char @A)
+                    extsub @bank 1 $c000 = banked(ubyte c @A) -> ubyte @A
+                    extsub @bank selector $c002 = varbanked()
+                    extsub address+3 = computed() -> ubyte @A
+                    extsub rom.addr = scoped()
+                    extsub address = named()
+                    private extsub $c010 = hidden()
+                }
+            """.trimIndent())
+            subs.size shouldBe 7
+            subs.values.forEach {
+                it.isExternal shouldBe false
+                it.isAsmSubroutine shouldBe true
+                it.asmAddress shouldNotBe null
+            }
+            subs.getValue("chrout").asmParameterRegisters.single().registerOrPair shouldBe RegisterOrPair.A
+            (subs.getValue("chrout").asmAddress!!.address as NumericLiteral).number shouldBe 0xffd2
+            subs.getValue("banked").asmAddress!!.constbank shouldBe 1.toUByte()
+            subs.getValue("banked").asmReturnvaluesRegisters.single().registerOrPair shouldBe RegisterOrPair.A
+            subs.getValue("varbanked").asmAddress!!.varbank!!.nameInSource shouldBe listOf("selector")
+            subs.getValue("computed").asmAddress!!.address shouldBe instanceOf<BinaryExpression>()
+            subs.getValue("scoped").asmAddress!!.address shouldBe instanceOf<IdentifierReference>()
+            subs.getValue("hidden").visibility shouldBe Visibility.PRIVATE
+        }
+
+        test("register annotation on the return value, inline and a body are syntax errors") {
+            for (decl in listOf("extsub f() -> ubyte @A", "inline extsub f()", "extsub f() { }")) {
+                withClue(decl) {
+                    shouldThrow<MultipleParseErrors> { subs("main {\n$decl\n}") }
+                }
+            }
+        }
+
+        test("normal sub and asmsub are not external") {
+            val subs = subs("""
+                main {
+                    sub normal(ubyte a) -> ubyte {
+                        return a
+                    }
+                    asmsub asm(ubyte a @A) {
+                        %asm {{
+                            rts
+                        }}
+                    }
+                }
+            """.trimIndent())
+            subs.values.forEach { it.isExternal shouldBe false }
+        }
+    }
+
 })

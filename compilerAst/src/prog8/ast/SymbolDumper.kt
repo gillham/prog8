@@ -188,7 +188,7 @@ private class SymbolDumper(val skipLibraries: Boolean): IAstVisitor {
         if(!isVisible(subroutine, subroutine.definingBlock))
             return
 
-        if(subroutine.isAsmSubroutine) {
+        if(subroutine.isAsmSubroutine && !subroutine.isExternal) {
             output("${subroutine.name}  (")
             for((first, second) in subroutine.parameters.zip(subroutine.asmParameterRegisters)) {
                 val reg =
@@ -223,7 +223,7 @@ private class SymbolDumper(val skipLibraries: Boolean): IAstVisitor {
         }
         if(subroutine.returntypes.any()) {
             output(" ")
-            if(subroutine.asmReturnvaluesRegisters.isNotEmpty()) {
+            if(subroutine.asmReturnvaluesRegisters.isNotEmpty() && !subroutine.isExternal) {
                 val rts = subroutine.returntypes.zip(subroutine.asmReturnvaluesRegisters).joinToString(", ") {
                     val dtstr = it.first.sourceString()
                     if(it.second.registerOrPair!=null)

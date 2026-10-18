@@ -7,6 +7,7 @@ import prog8.ast.AstToSourceTextConverter
 import prog8.ast.Module
 import prog8.ast.Program
 import prog8.ast.statements.StructDecl
+import prog8.code.core.DataType
 import prog8.code.PROG8_CONTAINER_MODULES
 import prog8.code.source.SourceCode
 import prog8.code.target.VMTarget
@@ -147,6 +148,28 @@ class TestAstToSourceText: FunSpec({
         val roundTrippedBlock = parsedAgain.statements.filterIsInstance<prog8.ast.statements.Block>().single()
         val roundTrippedUnion = roundTrippedBlock.statements.filterIsInstance<StructDecl>().single()
         roundTrippedUnion.isUnion shouldBe true
+    }
+
+    test("address-free extsub is written in its own syntax and round-trips") {
+        val orig = SourceCode.Text("""
+            main {
+                extsub putchar(ubyte char) -> ubyte
+                extsub puts(str msg, uword n) -> uword
+                private extsub abort()
+            }
+        """.trimIndent())
+        val (txt, parsedAgain) = roundTrip(parseModule(orig, target))
+        txt shouldContain Regex("extsub +putchar +\\(ubyte +char\\) +-> +ubyte")
+        txt shouldContain Regex("extsub +puts +\\(str +msg, +uword +n\\) +-> +uword")
+        txt shouldContain Regex("private +extsub +abort +\\(\\)")
+        txt.contains("@null") shouldBe false
+        txt.contains("?????") shouldBe false
+        txt.contains("{ ") shouldBe false
+        val subs = parsedAgain.statements.filterIsInstance<prog8.ast.statements.Block>().single().statements.filterIsInstance<prog8.ast.statements.Subroutine>()
+        subs.map { it.name } shouldBe listOf("putchar", "puts", "abort")
+        subs.all { it.isExternal } shouldBe true
+        subs[1].parameters.map { it.name } shouldBe listOf("msg", "n")
+        subs[1].returntypes shouldBe listOf(DataType.UWORD)
     }
 
 })

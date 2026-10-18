@@ -1255,7 +1255,8 @@ class Subroutine(override val name: String,
                  val visibility: Visibility?,
                  override val statements: MutableList<Statement>,
                  override val position: Position,
-                 val blockComment: String? = null) : Statement(), INameScope {
+                 val blockComment: String? = null,
+                 val isExternal: Boolean = false) : Statement(), INameScope {
     override lateinit var parent: Node
 
     override fun copy() = throw NotImplementedError("no support for duplicating a Subroutine")

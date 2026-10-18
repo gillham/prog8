@@ -1644,6 +1644,26 @@ When a subroutine is used, the compiler will pass a unique **call-site ID** in r
 The compiler will write the assigned IDs for all call-sites into a ``.bankedcalls`` output file during compilation.
 See :ref:`banking` for more information.
 
+**C library functions (llvm64 only):** on the llvm64 target, an ``extsub`` without an address and without register
+assignments declares a C function that is linked in from the C library::
+
+    extsub putchar(ubyte char) -> ubyte
+    extsub puts(str msg) -> uword
+    extsub getchar() -> ubyte
+
+You call it like any other subroutine, for instance ``void puts("Hello\n")`` or ``value = getchar() + 1``.
+The call goes to the C symbol with the bare name, so ``putchar`` in block ``main`` is the C function ``putchar``.
+It takes at most one return value, and the parameters and the return value must be scalar types:
+booleans, (unsigned) bytes, words, longs and quads, floats, and strings or pointers. C variadic functions such as ``printf`` can't be declared.
+The compiler does not know the C prototype. It declares the function with the sizes of the Prog8 types as you wrote them,
+and doesn't extend arguments or return values for you. A byte or word argument or return value that the C function
+declares as an ``int`` should be written as a ``long``, because that is also 32 bits. Your declaration must match the C function.
+
+Other targets report an error for this form, and so does an ``extsub`` with an address on llvm64.
+A C function can't be declared with a different signature than the llvm64 runtime library uses for the same name: ``putchar``, ``getchar``,
+``exit`` and the file functions (``fopen``, ``fclose``, ...). Declaring ``putchar`` for a program that imports ``textio`` for example is a compile error.
+Two declarations of the same C function in different blocks are fine if they have the same types.
+
 
 Calling a subroutine
 ^^^^^^^^^^^^^^^^^^^^

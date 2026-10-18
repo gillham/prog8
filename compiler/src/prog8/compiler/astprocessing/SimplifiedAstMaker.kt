@@ -728,12 +728,13 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
             params,
             srcSub.asmReturnvaluesRegisters.zip(srcSub.returntypes),
             srcSub.inline,
-            srcSub.position)
+            srcSub.position,
+            srcSub.isExternal)
         sub.parameters.forEach { it.second.parent=sub }
         if(varbank!=null)
             asmAddr?.varbank?.parent = sub
 
-        if(srcSub.asmAddress==null) {
+        if(srcSub.asmAddress==null && !srcSub.isExternal) {
             var combinedTrueAsm = ""
             var combinedIrAsm = ""
             for (asm in srcSub.statements) {

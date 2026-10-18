@@ -334,7 +334,8 @@ class StExtSub(name: String,
                val address: PtAsmSub.Address?,      // null in case of asmsub, specified in case of extsub.
                val parameters: List<StExtSubParameter>,
                val returns: List<StExtSubParameter>,
-               astNode: PtNode) :
+               astNode: PtNode,
+               val isExternal: Boolean = false) :
     StNode(name, StNodeType.EXTSUB, astNode)
 
 

@@ -113,7 +113,7 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
                         val clobbers = child.clobbers.joinToString(",")
                         val returns = child.returns.joinToString(",") { ret ->
                             if (ret.reg.registerOrPair != null) "${ret.reg.registerOrPair}:${ret.dt.irTypeString(null)}"
-                            else "${ret.reg.statusflag}:${ret.dt.irTypeString(null)}"
+                            else "${ret.reg.statusflag ?: NO_REGISTER}:${ret.dt.irTypeString(null)}"
                         }
                         xml.writeStartElement("ASMSUB")
                         xml.writeAttribute("NAME", child.label)
@@ -122,13 +122,14 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
                         xml.writeAttribute("RETURNS", returns)
                         xml.writeAttribute("POS", child.position.toString())
                         xml.writeAttribute("INLINE", child.isInline.toString())
+                        if(child.isExternal) xml.writeAttribute("EXTERNAL", "true")
                         xml.writeCharacters("\n")
                         xml.writeStartElement("ASMPARAMS")
                         xml.writeCharacters("\n")
                         child.parameters.forEach { ret ->
                             val reg = if(ret.reg.registerOrPair!=null) ret.reg.registerOrPair.toString()
-                            else ret.reg.statusflag.toString()
-                            emitLine("${ret.dt.toString().lowercase()} $reg")
+                            else (ret.reg.statusflag ?: NO_REGISTER).toString()
+                            emitLine("${if(child.isExternal) ret.dt.irTypeString(null) else ret.dt.toString().lowercase()} $reg")
                         }
                         xml.writeEndElement()
                         xml.writeCharacters("\n")

@@ -83,6 +83,11 @@ fun printAst(root: PtNode, skipLibraries: Boolean, output: (text: String) -> Uni
                     "%asm {{ ...${node.assembly.length} characters... }}"
             }
             is PtJump -> "goto"
+            is PtAsmSub if node.isExternal -> {
+                val params = node.parameters.joinToString(", ") { "${it.second.type} ${it.second.name}" }
+                val returns = if (node.returns.isEmpty()) "" else "-> ${node.returns.joinToString(", ") { it.second.toString() }}"
+                "extsub ${node.name}($params) $returns"
+            }
             is PtAsmSub -> {
                 val params = node.parameters.joinToString(", ") {
                     val register = it.first.registerOrPair

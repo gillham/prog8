@@ -190,6 +190,7 @@ subroutinedeclaration :
     subroutine
     | asmsubroutine
     | extsubroutine
+    | externalsubroutine
     ;
 
 alias: PRIVATE? PUBLIC? 'alias' identifier '=' (scoped_identifier | basedatatype | pointertype) ;
@@ -382,6 +383,10 @@ asmsubroutine :
 
 extsubroutine :
     PRIVATE? PUBLIC? 'extsub' (TAG (constbank=integerliteral | varbank=scoped_identifier))? address=expression '=' asmsub_decl
+    ;
+
+externalsubroutine :
+    PRIVATE? PUBLIC? 'extsub' identifier '(' sub_params? ')' sub_return_part?
     ;
 
 asmsub_signature : '(' asmsub_params? ')' asmsub_clobbers? asmsub_returns? ;

@@ -667,7 +667,8 @@ class IRAsmSubroutine(
     val returns: List<IRAsmParam>,
     val asmChunk: IRInlineAsmChunk,
     val position: Position,
-    val isInline: Boolean = false   // if true, the codegen MUST inline the assembly body at the call site (no jsr, no rts)
+    val isInline: Boolean = false,   // if true, the codegen MUST inline the assembly body at the call site (no jsr, no rts)
+    val isExternal: Boolean = false   // if true, this is a body-less routine implemented outside the program (C library function)
 ): IIRBlockElement {
 
     class IRAsmParam(val reg: RegisterOrStatusflag, val dt: DataType)
@@ -676,12 +677,13 @@ class IRAsmSubroutine(
         require('.' in label) { "subroutine name is not scoped: $label" }
         require(!label.startsWith("main.main.")) { "subroutine name invalid main prefix: $label" }
         require(label==asmChunk.label)
+        require(isExternal || (parameters + returns).none { it.reg.registerOrPair==null && it.reg.statusflag==null }) { "asmsub $label has a parameter or return value without register" }
     }
 
     private val registersUsed by lazy { registersUsedInAssembly(asmChunk.isIR, asmChunk.assembly) }
 
     fun usedRegisters() = registersUsed
-    override fun isEmpty(): Boolean = address==null && asmChunk.isEmpty()
+    override fun isEmpty(): Boolean = address==null && !isExternal && asmChunk.isEmpty()
     override fun isNotEmpty(): Boolean = !isEmpty()
 }
 

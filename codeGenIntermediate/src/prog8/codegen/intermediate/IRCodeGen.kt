@@ -1978,7 +1978,19 @@ class IRCodeGen(
                 }
                 is PtAsmSub -> {
                     val addr = child.address
-                    if(addr!=null) {
+                    if(child.isExternal) {
+                        require(child.children.isEmpty()) { "external routine should be empty at ${child.position}" }
+                        irBlock += IRAsmSubroutine(
+                            child.name,
+                            null,
+                            emptySet(),
+                            child.parameters.map { IRAsmSubroutine.IRAsmParam(it.first, it.second.type) },
+                            child.returns.map { IRAsmSubroutine.IRAsmParam(it.first, it.second) },
+                            IRInlineAsmChunk(child.name, "", false, null),
+                            child.position,
+                            isExternal = true
+                        )
+                    } else if(addr!=null) {
                         // extsub: emit as inline assembly equate so that other tools (vm, 6502 codegen) can reference the symbol as an address label
                         require(child.children.isEmpty()) {
                             "extsub should be empty at ${child.position}"

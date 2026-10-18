@@ -30,7 +30,8 @@ class PtAsmSub(
     val parameters: List<Pair<RegisterOrStatusflag, PtSubroutineParameter>>,
     val returns: List<Pair<RegisterOrStatusflag, DataType>>,
     val inline: Boolean,
-    position: Position
+    position: Position,
+    val isExternal: Boolean = false
 ) : PtNamedNode(name, position), IPtSubroutine {
 
     class Address(val constbank: UByte?, var varbank: PtIdentifier?, val address: UInt)
@@ -45,6 +46,7 @@ class PtAsmSub(
         private var parameters: MutableList<Pair<RegisterOrStatusflag, PtSubroutineParameter>> = mutableListOf()
         private var returns: MutableList<Pair<RegisterOrStatusflag, DataType>> = mutableListOf()
         private var inline: Boolean = false
+        private var isExternal: Boolean = false
 
         fun address(a: Address?) = apply { address = a }
         fun clobbers(c: Set<CpuRegister>) = apply { clobbers = c }
@@ -55,8 +57,9 @@ class PtAsmSub(
         fun returns(vararg r: Pair<RegisterOrStatusflag, DataType>) = apply { returns = r.toMutableList() }
         fun addReturn(reg: RegisterOrStatusflag, type: DataType) = apply { returns.add(reg to type) }
         fun inline(i: Boolean) = apply { inline = i }
+        fun isExternal(e: Boolean) = apply { isExternal = e }
 
-        fun build() = PtAsmSub(name, address, clobbers, parameters, returns, inline, position)
+        fun build() = PtAsmSub(name, address, clobbers, parameters, returns, inline, position, isExternal)
     }
 }
 

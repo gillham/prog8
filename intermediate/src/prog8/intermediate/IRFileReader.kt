@@ -683,7 +683,8 @@ class IRFileReader {
             returns,
             assembly,
             parsePosition(attrs.getValue("POS")),
-            attrs.getOrDefault("INLINE", "false").toBoolean()
+            attrs.getOrDefault("INLINE", "false").toBoolean(),
+            attrs.getOrDefault("EXTERNAL", "false").toBoolean()
         )
     }
 

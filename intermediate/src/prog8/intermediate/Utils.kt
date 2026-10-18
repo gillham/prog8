@@ -134,7 +134,11 @@ fun parseIRCodeLine(line: String): ParsedIRLine {
 }
 
 
+internal const val NO_REGISTER = "-"    // placeholder for the register of a parameter/return value of an external routine
+
 internal fun parseRegisterOrStatusflag(sourceregs: String): RegisterOrStatusflag {
+    if(sourceregs==NO_REGISTER)
+        return RegisterOrStatusflag(null, null)
     var reg: RegisterOrPair? = null
     var sf: Statusflag? = null
 

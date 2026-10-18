@@ -3,6 +3,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.ints.shouldBeGreaterThan
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
+import io.kotest.matchers.nulls.shouldNotBeNull
 import prog8.code.core.*
 import prog8.code.target.Amiga500Target
 import prog8.code.target.Cx16Target
@@ -790,5 +791,92 @@ return
         } finally {
             file.deleteExisting()
         }
+    }
+
+    fun externalRoutinesProgram(name: String, callTarget: String): IRProgram {
+        val target = VMTarget()
+        val options = CompilationOptions.builder(target)
+            .output(OutputType.RAW)
+            .zeropage(ZeropageType.DONTUSE)
+            .noSysInit(true)
+            .compilerVersion("99.99")
+            .loadAddress(target.PROGRAM_LOAD_ADDRESS)
+            .memtopAddress(0xffffu)
+            .outputDir(Path(""))
+            .build()
+        val program = IRProgram(name, IRSymbolTable(), options, target)
+        val block = IRBlock("main", library = false, IRBlock.Options(), Position.DUMMY)
+        val none = RegisterOrStatusflag(null, null)
+        fun external(label: String, params: List<DataType>, returns: List<DataType>) = IRAsmSubroutine(
+            label, null, emptySet(), params.map { IRAsmSubroutine.IRAsmParam(none, it) }, returns.map { IRAsmSubroutine.IRAsmParam(none, it) },
+            IRInlineAsmChunk(label, "", false, null), Position("unittest", 3, 5, 9), isExternal = true)
+        block += external("main.putchar", listOf(DataType.UBYTE), listOf(DataType.UBYTE))
+        block += external("main.puts", listOf(DataType.pointer(BaseDataType.UBYTE)), listOf(DataType.UWORD))
+        block += external("main.srand", listOf(DataType.UWORD, DataType.LONG, DataType.FLOAT), emptyList())
+        block += IRAsmSubroutine("main.plain", null, setOf(CpuRegister.A),
+            listOf(IRAsmSubroutine.IRAsmParam(RegisterOrStatusflag(RegisterOrPair.A, null), DataType.UBYTE)),
+            listOf(IRAsmSubroutine.IRAsmParam(RegisterOrStatusflag(null, Statusflag.Pc), DataType.BOOL)),
+            IRInlineAsmChunk("main.plain", "rts", false, null), Position.DUMMY)
+        val start = IRSubroutine("main.start", emptyList(), emptyList(), Position.DUMMY)
+        val chunk = IRCodeChunk("main.start", null)
+        chunk += IRInstructions.call(CallSite(CallTarget.Direct(codeLabel(callTarget)),
+            arguments = listOf(Calls.argument(1, IRDataType.BYTE, CallLocation.ParameterMemory("char"))),
+            results = listOf(Calls.result(2, IRDataType.BYTE))))
+        chunk += IRInstructions.returnVoid()
+        start += chunk
+        block += start
+        program.addBlock(block)
+        return program
+    }
+
+    test("external routines round-trip through the IR file with their flag, parameters and returns, other asmsubs are written as before") {
+        val program = externalRoutinesProgram("unittest-external-routines", "main.putchar")
+        val file = IRFileWriter(program, Path("intermediate-external-routines-test-output.p8ir")).write()
+        try {
+            val lines = file.readLines()
+            lines.count { it.startsWith("<ASMSUB ") && it.endsWith(" EXTERNAL=\"true\">") } shouldBe 3
+            lines.any { it == "<ASMSUB NAME=\"main.putchar\" ADDRESS=\"\" CLOBBERS=\"\" RETURNS=\"-:ubyte\" POS=\"[unittest: line 3 col 5-9]\" INLINE=\"false\" EXTERNAL=\"true\">" } shouldBe true
+            lines.any { it == "<ASMSUB NAME=\"main.plain\" ADDRESS=\"\" CLOBBERS=\"A\" RETURNS=\"Pc:bool\" POS=\"[~dummy~: line 0 col 0-0]\" INLINE=\"false\">" } shouldBe true
+            lines.any { it == "pointer -" } shouldBe true
+            lines.any { it == "ubyte A" } shouldBe true
+
+            val readBack = IRFileReader().read(file)
+            val subs = readBack.allAsmSubs().associateBy { it.label }
+            subs.keys shouldBe setOf("main.putchar", "main.puts", "main.srand", "main.plain")
+            subs.values.filter { it.isExternal }.map { it.label } shouldBe listOf("main.putchar", "main.puts", "main.srand")
+            subs.getValue("main.plain").isExternal shouldBe false
+            val putchar = subs.getValue("main.putchar")
+            putchar.address shouldBe null
+            putchar.position shouldBe Position("unittest", 3, 5, 9)
+            putchar.isEmpty() shouldBe false
+            putchar.parameters.map { it.dt } shouldBe listOf(DataType.UBYTE)
+            putchar.parameters.map { it.reg } shouldBe listOf(RegisterOrStatusflag(null, null))
+            putchar.returns.map { it.dt } shouldBe listOf(DataType.UBYTE)
+            putchar.returns.map { it.reg } shouldBe listOf(RegisterOrStatusflag(null, null))
+            subs.getValue("main.puts").parameters.single().dt.base shouldBe BaseDataType.POINTER
+            subs.getValue("main.puts").returns.single().dt shouldBe DataType.UWORD
+            subs.getValue("main.srand").parameters.map { it.dt } shouldBe listOf(DataType.UWORD, DataType.LONG, DataType.FLOAT)
+            subs.getValue("main.srand").returns shouldBe emptyList()
+            subs.getValue("main.plain").parameters.single().reg shouldBe RegisterOrStatusflag(RegisterOrPair.A, null)
+            subs.getValue("main.plain").returns.single().reg shouldBe RegisterOrStatusflag(null, Statusflag.Pc)
+            subs.getValue("main.plain").clobbers shouldBe setOf(CpuRegister.A)
+        } finally {
+            file.deleteExisting()
+        }
+    }
+
+    test("a call to an external routine links like a call to an asmsub, a call to a routine that doesn't exist doesn't") {
+        val program = externalRoutinesProgram("unittest-external-link", "main.putchar")
+        program.linkChunks()
+        program.resolveCodeTarget(codeLabel("main.putchar")).shouldNotBeNull()
+        shouldThrow<AssemblyError> { externalRoutinesProgram("unittest-external-missing", "main.nothing").linkChunks() }.message shouldBe "Missing jump/call target: main.nothing"
+    }
+
+    test("an asmsub needs registers for its parameters and returns unless it is external") {
+        val none = listOf(IRAsmSubroutine.IRAsmParam(RegisterOrStatusflag(null, null), DataType.UBYTE))
+        fun routine(external: Boolean) = IRAsmSubroutine("main.f", null, emptySet(), none, emptyList(), IRInlineAsmChunk("main.f", "", false, null), Position.DUMMY, isExternal = external)
+        shouldThrow<IllegalArgumentException> { routine(false) }.message shouldBe "asmsub main.f has a parameter or return value without register"
+        routine(true).isEmpty() shouldBe false
+        IRAsmSubroutine("main.g", null, emptySet(), emptyList(), emptyList(), IRInlineAsmChunk("main.g", "", false, null), Position.DUMMY).isEmpty() shouldBe true
     }
 })

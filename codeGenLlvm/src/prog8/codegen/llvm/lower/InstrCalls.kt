@@ -49,15 +49,16 @@ private fun FunctionLowering.directCall(ins: IRInstruction) {
     }
     require(values.size == signature.paramTypes.size) { "${sub.label} calls $name with ${values.size} arguments instead of ${signature.paramTypes.size}" }
     val arguments = values.zip(signature.paramTypes) { value, type -> convert(value, type) }
+    val function = LlvmValue.Global(builder.functionName(name))
     forgetFlags()
     val result = site.results.singleOrNull()
     if (result == null || signature.returnType == LlvmType.Void) {
         require(result == null) { "${sub.label} expects a result from $name, which doesn't return one" }
-        emit(LlvmInstruction.Call(null, LlvmValue.Global(name), arguments, signature.returnType))
+        emit(LlvmInstruction.Call(null, function, arguments, signature.returnType))
         return
     }
     val value = derive(result.destination?.register?.toString() ?: "call", signature.returnType) {
-        LlvmInstruction.Call(it, LlvmValue.Global(name), arguments, signature.returnType)
+        LlvmInstruction.Call(it, function, arguments, signature.returnType)
     }
     result.destination?.let { write(it, value) }
     (result.location as? CallLocation.StatusFlag)?.let { location ->

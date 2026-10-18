@@ -270,7 +270,15 @@ class AstToSourceTextConverter(val output: (text: String) -> Unit, val program: 
             output("public ")
         if(subroutine.inline)
             output("inline ")
-        if(subroutine.isAsmSubroutine) {
+        if(subroutine.isExternal) {
+            output("extsub ${subroutine.name} (")
+            for(param in subroutine.parameters) {
+                output("${param.type.sourceString()} ${param.name}")
+                if(param!==subroutine.parameters.last())
+                    output(", ")
+            }
+        }
+        else if(subroutine.isAsmSubroutine) {
             if(subroutine.asmAddress!=null) {
                 val bank = if(subroutine.asmAddress.constbank!=null) "@bank ${subroutine.asmAddress.constbank}"
                     else if(subroutine.asmAddress.varbank!=null) "@bank ${subroutine.asmAddress.varbank?.nameInSource?.joinToString(".")}"
@@ -314,7 +322,7 @@ class AstToSourceTextConverter(val output: (text: String) -> Unit, val program: 
             output(") ")
         }
         if(subroutine.returntypes.any()) {
-            if(subroutine.asmReturnvaluesRegisters.isNotEmpty()) {
+            if(subroutine.asmReturnvaluesRegisters.isNotEmpty() && !subroutine.isExternal) {
                 val rts = subroutine.returntypes.zip(subroutine.asmReturnvaluesRegisters).joinToString(", ") {
                     val dtstr = it.first.sourceString()
                     if(it.second.registerOrPair!=null)
@@ -328,7 +336,7 @@ class AstToSourceTextConverter(val output: (text: String) -> Unit, val program: 
                 output("-> $rts ")
             }
         }
-        if (subroutine.asmAddress == null) {
+        if (subroutine.asmAddress == null && !subroutine.isExternal) {
             outputln("{ ")
             scopelevel++
             outputStatements(subroutine.statements.filter { it !is VarDecl || it.origin!=VarDeclOrigin.SUBROUTINEPARAM})

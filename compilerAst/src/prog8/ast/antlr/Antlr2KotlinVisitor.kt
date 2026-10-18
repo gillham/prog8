@@ -140,6 +140,8 @@ class Antlr2KotlinVisitor(val source: SourceCode, private val target: ICompilati
             return ctx.asmsubroutine().accept(this) as Subroutine
         if(ctx.extsubroutine()!=null)
             return ctx.extsubroutine().accept(this) as Subroutine
+        if(ctx.externalsubroutine()!=null)
+            return ctx.externalsubroutine().accept(this) as Subroutine
         throw FatalAstException("weird subroutine")
     }
 
@@ -693,6 +695,27 @@ class Antlr2KotlinVisitor(val source: SourceCode, private val target: ICompilati
         return Subroutine(subdecl.name, subdecl.parameters, subdecl.returntypes,
             subdecl.asmParameterRegisters, subdecl.asmReturnvaluesRegisters,
             subdecl.asmClobbers, address, true, inline = false, visibility = visibilityFromTokens(ctx), statements = mutableListOf(), position = ctx.toPosition(), blockComment = leadingBlockComment(ctx)
+        )
+    }
+
+    override fun visitExternalsubroutine(ctx: ExternalsubroutineContext): Subroutine {
+        val parameters = ctx.sub_params()?.sub_param()?.mapTo(mutableListOf()) { it.accept(this) as SubroutineParameter } ?: mutableListOf()
+        val returntypes = ctx.sub_return_part()?.datatype()?.mapTo(mutableListOf()) { dataTypeFor(it)!! } ?: mutableListOf()
+        return Subroutine(
+            getname(ctx.identifier()),
+            parameters,
+            returntypes,
+            parameters.map { RegisterOrStatusflag(null, null) },
+            returntypes.map { RegisterOrStatusflag(null, null) },
+            emptySet(),
+            asmAddress = null,
+            isAsmSubroutine = true,
+            inline = false,
+            visibility = visibilityFromTokens(ctx),
+            statements = mutableListOf(),
+            position = ctx.toPosition(),
+            blockComment = leadingBlockComment(ctx),
+            isExternal = true
         )
     }
 

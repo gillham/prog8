@@ -53,7 +53,7 @@ class SymbolTableMaker(private val program: PtProgram, private val options: Comp
             is PtAsmSub -> {
                 val parameters = node.parameters.map { StExtSubParameter(it.second.name, it.second.type, it.first) }
                 val returns = node.returns.map { StExtSubParameter("", it.second, it.first) }
-                StExtSub(node.name, node.address, parameters, returns, node)
+                StExtSub(node.name, node.address, parameters, returns, node, node.isExternal)
             }
             is PtBlock -> {
                 StNode(node.name, StNodeType.BLOCK, node)

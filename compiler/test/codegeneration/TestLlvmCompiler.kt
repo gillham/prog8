@@ -378,6 +378,223 @@ main {
         compileText(LlvmTarget(), false, src, outputDir, errors = errors, writeAssembly = false) shouldBe null
         errors.errors.single() shouldContain "cannot assign different pointer type, expected ^^word or uword but got ^^uword"
     }
+
+    for ((name, program) in externalPrograms) {
+        test("$name: extsubs are declared and called by their bare C name, with the Prog8 widths and no extension attributes, with and without optimization") {
+            for (optimize in listOf(false, true)) {
+                withClue("optimize=$optimize") {
+                    val lines = compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir)).readLines()
+                    lines.filter { it.startsWith("declare") && "putchar" in it } shouldBe listOf("declare i8 @putchar(i8)")
+                    lines.none { ("declare" in it || "call" in it) && ("@main." in it && ("putchar" in it || "puts" in it || "getchar" in it)) } shouldBe true
+                    lines.none { it.startsWith("declare") && ("zeroext" in it || "signext" in it) } shouldBe true
+                    lines.any { it.trim().startsWith("call i8 @putchar(i8 ") || it.trim().contains("= call i8 @putchar(i8 ") } shouldBe true
+                }
+            }
+        }
+
+        test("$name: gives the expected exit code and output as a native arm64 macOS executable").config(enabledOrReasonIf = requiresNativeLlvm) {
+            for (optimize in listOf(false, true)) {
+                withClue("optimize=$optimize") {
+                    val llFile = compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir))
+                    val (exitCode, output) = buildAndRun(llFile, program.input)
+                    withClue(output) { exitCode shouldBe program.exitCode }
+                    output shouldBe program.output
+                }
+            }
+        }
+    }
+
+    test("the declarations and calls of extsubs for putchar, puts and getchar, with their Prog8 types") {
+        val src = """
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    extsub putchar(ubyte char) -> ubyte
+    extsub puts(str msg) -> uword
+    extsub getchar() -> ubyte
+
+    sub start() {
+        putchar('A')
+        void puts("Hello world\n")
+        ubyte @shared x = getchar() + 1
+        void putchar(x)
+    }
+}"""
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val lines = compiledLlFile(compileText(LlvmTarget(), optimize, src, outputDir)).readLines().map { it.trim() }
+                lines shouldContain "declare i8 @putchar(i8)"
+                lines shouldContain "declare i16 @puts(ptr)"
+                lines shouldContain "declare i8 @getchar()"
+                lines.count { it.startsWith("call i8 @putchar(i8 ") } shouldBe 2
+                lines.count { it.startsWith("call i16 @puts(ptr ") } shouldBe 1
+                lines.count { it.contains("= call i8 @getchar()") } shouldBe 1
+            }
+        }
+    }
+
+    test("extsub parameter and return types keep their exact LLVM widths") {
+        val src = """
+%zeropage basicsafe
+%option no_sysinit
+%option enable_floats
+
+main {
+    struct Point { ubyte x, y }
+    extsub all(bool a, byte b, ubyte c, word d, uword e, long f, quad g, uquad h, float i, ^^Point j, ^^ubyte k, str l) -> float
+    extsub nothing(long value)
+    extsub flag() -> bool
+    extsub quads() -> uquad
+    extsub node() -> ^^Point
+
+    sub start() {
+        ^^Point @shared p = 0
+        ubyte @shared bytes = 5
+        float @shared r = all(true, -1, 2, -3, 4, 5, 6, 7, 8.5, p, &bytes, "text")
+        nothing(9)
+        bool @shared flagged = flag()
+        uquad @shared big = quads()
+        p = node()
+    }
+}"""
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val lines = compiledLlFile(compileText(LlvmTarget(), optimize, src, outputDir)).readLines().map { it.trim() }
+                lines shouldContain "declare double @all(i8, i8, i8, i16, i16, i32, i64, i64, double, ptr, ptr, ptr)"
+                lines shouldContain "declare void @nothing(i32)"
+                lines shouldContain "declare i8 @flag()"
+                lines shouldContain "declare i64 @quads()"
+                lines shouldContain "declare ptr @node()"
+                lines.any { it.startsWith("call void @nothing(i32 ") } shouldBe true
+                lines.any { it.contains("= call double @all(i8 ") } shouldBe true
+            }
+        }
+    }
+
+    test("the .p8ir file has the external routines with their flag, and reading it back keeps them") {
+        val src = """
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    extsub putchar(ubyte char) -> ubyte
+    extsub puts(str msg) -> uword
+
+    sub start() {
+        void putchar('A')
+        void puts("Hello")
+    }
+}"""
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val result = compileText(LlvmTarget(), optimize, src, outputDir).shouldNotBeNull()
+                val irFile = compiledLlFile(result).resolveSibling("${result.compilerAst.name}.p8ir")
+                val lines = irFile.readLines()
+                lines.count { it.startsWith("<ASMSUB NAME=\"main.putchar\"") && it.endsWith("EXTERNAL=\"true\">") } shouldBe 1
+                lines.count { it.startsWith("<ASMSUB NAME=\"main.puts\"") && it.endsWith("EXTERNAL=\"true\">") } shouldBe 1
+                lines.any { it.trim().startsWith("call main.putchar(char=") } shouldBe true
+                val subs = IRFileReader().read(irFile).allAsmSubs().filter { it.isExternal }.associateBy { it.label }
+                subs.keys shouldBe setOf("main.putchar", "main.puts")
+                subs.getValue("main.putchar").returns.single().dt shouldBe DataType.UBYTE
+                subs.getValue("main.puts").parameters.single().dt.base shouldBe BaseDataType.POINTER
+            }
+        }
+    }
+
+    test("an extsub that nothing calls is dropped by the optimizer, and declared without it") {
+        val src = """
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    extsub getchar() -> ubyte
+    sub start() {
+        cx16.r0L = 1
+    }
+}"""
+        compiledLlFile(compileText(LlvmTarget(), false, src, outputDir)).readLines() shouldContain "declare i8 @getchar()"
+        compiledLlFile(compileText(LlvmTarget(), true, src, outputDir)).readLines().none { "@getchar" in it } shouldBe true
+    }
+
+    test("extsubs whose C function the llvm64 runtime declares differently are a compilation error that names the extsub") {
+        fun errorsOf(src: String, optimize: Boolean): List<String> {
+            val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+            compileText(LlvmTarget(), optimize, src, outputDir, errors = errors) shouldBe null
+            return errors.errors
+        }
+        val textio = """
+%import textio
+%zeropage basicsafe
+
+main {
+    extsub putchar(ubyte char) -> ubyte
+    sub start() {
+        txt.print("hi")
+        void putchar('A')
+    }
+}"""
+        val getchar = """
+%import textio
+%zeropage basicsafe
+
+main {
+    extsub getchar() -> ubyte
+    sub start() {
+        void txt.chrin()
+        void getchar()
+    }
+}"""
+        val die = """
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    extsub putchar(ubyte char) -> ubyte
+    sub start() {
+        void putchar('A')
+        sys.die(1, "x")
+    }
+}"""
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                errorsOf(textio, optimize).single() shouldContain "extsub main.putchar declares C function 'putchar' as i8 (i8), which conflicts with the llvm64 runtime that declares it as i32 (i32)"
+                errorsOf(getchar, optimize).single() shouldContain "extsub main.getchar declares C function 'getchar' as i8 (), which conflicts with the llvm64 runtime that declares it as i32 ()"
+                errorsOf(die, optimize).single() shouldContain "extsub main.putchar declares C function 'putchar' as i8 (i8), which conflicts with the llvm64 runtime"
+            }
+        }
+    }
+
+    test("two extsubs that declare a C function with different types are a compilation error that names both, with the same types it is fine") {
+        fun src(otherType: String) = """
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    extsub putchar(ubyte char) -> ubyte
+    sub start() {
+        void putchar('A')
+        other.hello()
+    }
+}
+
+other {
+    extsub putchar($otherType
+    sub hello() {
+        void putchar('B')
+    }
+}"""
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(LlvmTarget(), optimize, src("long char) -> long"), outputDir, errors = errors) shouldBe null
+                val message = errors.errors.single()
+                message shouldContain "extsub other.putchar declares C function 'putchar' as i32 (i32), which conflicts with extsub main.putchar (at "
+                message shouldContain ") that declares it as i8 (i8)"
+                compiledLlFile(compileText(LlvmTarget(), optimize, src("ubyte c) -> ubyte"), outputDir)).readLines().count { it == "declare i8 @putchar(i8)" } shouldBe 1
+            }
+        }
+    }
 })
 
 
@@ -2967,6 +3184,59 @@ main {
             else -> return 99
         }
     }
+}""",
+    "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types" to """
+%option enable_floats
+
+main {
+    extsub llabs(quad value) -> quad
+    extsub labs(quad value) -> quad
+    extsub fabs(float x) -> float
+    extsub atoi(str s) -> long
+    extsub atol(str s) -> quad
+    extsub strlen(str s) -> uquad
+    extsub toupper(ubyte c) -> ubyte
+    extsub isdigit(ubyte c) -> bool
+    extsub cbrt(float x) -> float
+    extsub srand(uword seed)
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        quad @shared q = -5000000000
+        if llabs(q) != 5000000000
+            return 1
+        if labs(-7) != 7
+            return 2
+        float @shared f = -2.5
+        if fabs(f) != 2.5
+            return 3
+        if atoi("1234") + 1 != 1235
+            return 4
+        if atol("-5000000000") != -5000000000
+            return 5
+        if strlen("hello") != 5
+            return 6
+        str @shared text = "abcdef"
+        if strlen(text) != 6
+            return 7
+        if toupper('a') != 'A'
+            return 8
+        ubyte @shared digit = '7'
+        if not isdigit(digit)
+            return 9
+        if isdigit('x')
+            return 10
+        if cbrt(27.0) != 3.0
+            return 11
+        ^^ubyte @shared chars = text
+        if strlen(chars) != 6
+            return 12
+        srand(5)
+        return 0
+    }
 }"""
 )
 
@@ -2976,6 +3246,74 @@ main {
  * for the [input] and the command line [args]. It runs in an empty directory named run, which it has to leave empty.
  */
 private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0, val input: String = "", val args: List<String> = emptyList())
+
+/** Programs with extsubs that call the C library: they can't import textio, which uses the runtime's own declarations of putchar and getchar. */
+private val externalPrograms = mapOf(
+    "putchar and puts" to OutputProgram("""
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    extsub putchar(ubyte char) -> ubyte
+    extsub puts(str msg) -> uword
+
+    sub start() {
+        putchar('A')
+        putchar('B')
+        putchar('\n')
+        void puts("Hello world")
+        ubyte @shared echoed = putchar('Z')
+        putchar('\n')
+        sys.exit(echoed - 'Z' + 3)
+    }
+}""", "AB\nHello world\nZ\n", exitCode = 3),
+
+    "getchar in an expression, until the end of the input" to OutputProgram("""
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    extsub putchar(ubyte char) -> ubyte
+    extsub getchar() -> ubyte
+
+    sub start() {
+        ubyte @shared next = getchar() + 1
+        putchar(next)
+        next = getchar()
+        putchar(next)
+        putchar('\n')
+        next = getchar()
+        sys.exit(next)
+    }
+}""", "bb\n", exitCode = 255, input = "ab"),
+
+    "the same C function in several scopes with the same types" to OutputProgram("""
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    extsub putchar(ubyte char) -> ubyte
+
+    sub start() {
+        extsub puts(str msg) -> uword
+        putchar('M')
+        other.hello()
+        putchar('\n')
+        void puts("done")
+        sys.exit(other.counter)
+    }
+}
+
+other {
+    extsub putchar(ubyte c) -> ubyte
+    ubyte @shared counter = 5
+
+    sub hello() {
+        void putchar('O')
+        counter++
+    }
+}""", "MO\ndone\n", exitCode = 6)
+)
 
 private val nativeHello = OutputProgram("""
 %import textio

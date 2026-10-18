@@ -1,6 +1,7 @@
 package prog8.codegen.llvm.lower
 
 import prog8.code.core.Position
+import prog8.codegen.llvm.LlvmPrinter
 import prog8.codegen.llvm.model.BinaryOperator
 import prog8.codegen.llvm.model.CastOperator
 import prog8.codegen.llvm.model.IcmpCondition
@@ -28,6 +29,11 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     private val subroutines = program.allSubs().associateBy { it.label }
     private val asmSubroutines = program.allAsmSubs().associateBy { it.label }
     private val externalFunctions = linkedMapOf<String, LlvmFunction>()
+    private val externalRoutines = linkedMapOf<String, Pair<IRAsmSubroutine, LlvmFunction>>()
+    private val runtimeConflicts = mutableListOf<Pair<String, LlvmLoweringException>>()
+    private val helperConflicts = mutableMapOf<String, MutableList<LlvmLoweringException>>()
+    private var loweringSub = ""
+    private var definingHelper: String? = null
     private val helperFunctions = linkedMapOf<String, LlvmFunction>()
     private val hardwareSlots = sortedMapOf<String, LlvmGlobal>()
     private val runtimeGlobals = linkedMapOf<String, LlvmGlobal>()
@@ -37,17 +43,19 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
      * plus the declarations, helper functions and globals that those need.
      */
     fun build(module: LlvmModule) {
+        declareExternalRoutines()
         for (block in program.blocks) {
             for (child in block.children) {
                 when (child) {
                     is IRSubroutine -> module.functions += function(child)
-                    is IRAsmSubroutine -> module.functions += declaration(child)
+                    is IRAsmSubroutine -> declaration(child).let { if (!child.isExternal || externalRoutines.getValue(it.name).first === child) module.functions += it }
                     is IRCodeChunkBase -> require(child.isEmpty()) { "block ${block.label} has code outside of a subroutine, which isn't supported" }
                 }
             }
         }
         if (program.globalInits.isNotEmpty())
             module.functions += function(IRSubroutine(GLOBAL_INITS, emptyList(), emptyList(), Position.DUMMY).also { it += program.globalInits })
+        reportReachableConflict()
         module.functions += helperFunctions.values
         module.functions += externalFunctions.values
         module.globals += hardwareSlots.values
@@ -89,6 +97,7 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
 
     fun function(sub: IRSubroutine): LlvmFunction =
         try {
+            loweringSub = sub.label
             try {
                 FunctionLowering(this, sub, flagSlots = false).lower()
             } catch (_: FlagsFromOtherBlock) {
@@ -98,12 +107,68 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
             throw LlvmLoweringException(x.message ?: "${sub.label} can't be translated to LLVM IR", sub.position, x)
         }
 
-    /** asmsubs and extsubs have assembly bodies for another target, so they become declarations that a runtime has to define. */
+    /**
+     * asmsubs and extsubs have assembly bodies for another target, so they become declarations that a runtime has to define.
+     * An external routine is a C function: it is declared under its bare name, with the exact widths of its Prog8 types.
+     */
     fun declaration(asmsub: IRAsmSubroutine): LlvmFunction {
         require(asmsub.returns.size <= 1) { "asmsub ${asmsub.label} returns several values, which isn't supported yet" }
         val params = asmsub.parameters.mapIndexed { index, param -> LlvmValue.Local("p$index", mapper.map(param.dt.base)) }
         val returnType = asmsub.returns.singleOrNull()?.let { mapper.map(it.dt.base) } ?: LlvmType.Void
-        return LlvmFunction(asmsub.label, returnType, params, isExternal = true)
+        return LlvmFunction(functionName(asmsub), returnType, params, isExternal = true)
+    }
+
+    /** The name of the LLVM function of the asmsub or extsub with IR label [label]; external routines are C functions without block scope. */
+    fun functionName(label: String): String = asmSubroutines[label]?.let { functionName(it) } ?: label
+
+    private fun functionName(asmsub: IRAsmSubroutine): String = if (asmsub.isExternal) asmsub.label.substringAfterLast('.') else asmsub.label
+
+    private fun declareExternalRoutines() {
+        for (sub in program.allAsmSubs().filter { it.isExternal }) {
+            val function = declaration(sub)
+            val previous = externalRoutines.putIfAbsent(function.name, sub to function) ?: continue
+            if (previous.second.type != function.type)
+                throw conflict(sub, function, "extsub ${previous.first.label} (at ${previous.first.position.shortText()})", previous.second.type)
+        }
+    }
+
+    private fun conflict(sub: IRAsmSubroutine, function: LlvmFunction, other: String, otherType: LlvmType): LlvmLoweringException {
+        val message = "extsub ${sub.label} declares C function '${function.name}' as ${LlvmPrinter.format(function.type)}, " +
+            "which conflicts with $other that declares it as ${LlvmPrinter.format(otherType)}"
+        return LlvmLoweringException(message, sub.position, IllegalArgumentException(message))
+    }
+
+    private fun Position.shortText() = "$file:$line:$startCol"
+
+    /**
+     * The runtime library routines always include code like sys.die that uses C functions such as putchar,
+     * so a conflict with an extsub is only an error when the code that uses the runtime's declaration can be reached.
+     */
+    private fun reportReachableConflict() {
+        if (runtimeConflicts.isEmpty())
+            return
+        val reachable = reachableSubroutines()
+        runtimeConflicts.firstOrNull { it.first in reachable }?.let { throw it.second }
+    }
+
+    private fun reachableSubroutines(): Set<String> {
+        fun references(instructions: List<IRInstruction>): List<String> =
+            instructions.flatMap { listOfNotNull(it.labelTarget, (it.immediate as? ImmediateOperand.SymbolAddress)?.symbol) }
+        val roots = if (PROGRAM_START in subroutines) listOf(PROGRAM_START, GLOBAL_INITS) else subroutines.keys + GLOBAL_INITS
+        val reachable = mutableSetOf<String>()
+        val pending = ArrayDeque(roots)
+        while (pending.isNotEmpty()) {
+            val label = pending.removeLast()
+            if (!reachable.add(label))
+                continue
+            val instructions = mutableListOf<IRInstruction>()
+            if (label == GLOBAL_INITS)
+                program.globalInits.forEachChunkRecursive { instructions += it.instructions }
+            else
+                subroutines[label]?.forEachInstruction { instructions += it }
+            pending += references(instructions).filter { it in subroutines }
+        }
+        return reachable
     }
 
     fun subroutine(name: String): IRSubroutine? = subroutines[name]
@@ -117,6 +182,15 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
 
     /** Declares a routine that isn't part of the program, such as a C library function, with the signature of its first call. */
     fun externalFunction(name: String, returnType: LlvmType, paramTypes: List<LlvmType>): LlvmFunction {
+        externalRoutines[name]?.let { (sub, declared) ->
+            val used = LlvmType.Function(returnType, paramTypes)
+            if (declared.type != used) {
+                val error = conflict(sub, declared, "the llvm64 runtime", used)
+                runtimeConflicts += loweringSub to error
+                definingHelper?.let { helperConflicts.getOrPut(it) { mutableListOf() } += error }
+            }
+            return declared
+        }
         val function = externalFunctions.getOrPut(name) {
             LlvmFunction(name, returnType, paramTypes.mapIndexed { index, type -> LlvmValue.Local("p$index", type) }, isExternal = true)
         }
@@ -136,7 +210,16 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
 
     /** An internal function of the generated code itself, such as the search loop of a syscall; [define] makes it on first use. */
     fun helperFunction(name: String, define: () -> LlvmFunction): LlvmValue.Global {
-        helperFunctions.getOrPut(name, define)
+        if (name !in helperFunctions) {
+            val outer = definingHelper
+            definingHelper = name
+            try {
+                helperFunctions[name] = define()
+            } finally {
+                definingHelper = outer
+            }
+        }
+        helperConflicts[name]?.forEach { runtimeConflicts += loweringSub to it }
         return LlvmValue.Global(name)
     }
 
@@ -298,7 +381,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
 
     fun symbolAddress(name: String, offset: Int = 0): LlvmValue {
         val base = builder.symbols.addresses[name]
-            ?: LlvmValue.Global(name).takeIf { builder.subroutine(name) != null || builder.asmSubroutine(name) != null }
+            ?: LlvmValue.Global(builder.functionName(name)).takeIf { builder.subroutine(name) != null || builder.asmSubroutine(name) != null }
             ?: throw IllegalArgumentException("${sub.label} takes the address of unknown symbol $name")
         return if (offset == 0) base else LlvmValue.ConstantGep(LlvmType.I8, base, listOf(LlvmValue.IntConstant(offset.toLong(), LlvmType.I64)))
     }
@@ -487,7 +570,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
         val signature = builder.subroutine(name)?.let { LlvmType.Function(builder.returnType(it), builder.parameterTypes(it)) }
             ?: builder.declaration(checkNotNull(builder.asmSubroutine(name))).type
         require(signature.paramTypes.isEmpty()) { "${sub.label} jumps to $name, which has parameters" }
-        val callee = LlvmValue.Global(name)
+        val callee = LlvmValue.Global(builder.functionName(name))
         if (signature.returnType == LlvmType.Void || returnType == LlvmType.Void) {
             emit(LlvmInstruction.Call(null, callee, emptyList(), signature.returnType))
             emit(LlvmInstruction.Ret(if (returnType == LlvmType.Void) null else LlvmValue.ZeroInitializer(returnType)))

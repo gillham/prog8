@@ -8,17 +8,28 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import prog8.ast.expressions.NumericLiteral
+import prog8.ast.printSymbols
 import prog8.ast.statements.Assignment
+import prog8.ast.statements.Subroutine
 import prog8.ast.statements.VarDecl
+import prog8.code.StExtSub
+import prog8.code.SymbolTableMaker
+import prog8.code.ast.PtAsmSub
+import prog8.code.ast.PtFunctionCall
+import prog8.code.ast.printAst
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
+import prog8.code.core.RegisterOrStatusflag
 import prog8.code.target.C64Target
 import prog8.code.target.Cx16Target
 import prog8.code.target.LlvmTarget
 import prog8.code.target.Qemu68kTarget
 import prog8.code.target.VMTarget
+import prog8.compiler.astprocessing.SimplifiedAstMaker
 import prog8tests.helpers.ErrorReporterForTests
 import prog8tests.helpers.compileText
+import java.io.ByteArrayOutputStream
+import java.io.PrintStream
 
 
 class TestAstChecks: FunSpec({
@@ -1693,4 +1704,231 @@ main {
             }
         }
     }
+
+    context("address-free extsub (external C routine)") {
+        val externalDecls = """
+            extsub putchar(ubyte char) -> ubyte
+            extsub puts(str msg) -> uword
+            extsub getchar() -> ubyte
+            extsub abort()
+        """.trimIndent()
+
+        fun externalSrc(decls: String = externalDecls, body: String = "") = """
+            main {
+                $decls
+
+                sub start() {
+                    $body
+                }
+            }
+        """.trimIndent()
+
+        val externalBody = """
+            void putchar('A')
+            putchar('B')
+            void puts("Hello\n")
+            ubyte @shared v = getchar() + 1
+            if getchar() == 3
+                abort()
+            v = putchar(v) + putchar(1)
+        """.trimIndent()
+
+        fun llvmErrors(src: String, optimize: Boolean = false): List<String>? {
+            val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+            val result = compileText(LlvmTarget(), optimize, src, outputDir, errors, writeAssembly = false)
+            return if (result == null) errors.errors.toList() else null
+        }
+
+        test("llvm64 accepts the declarations, calls in statements and expressions, with and without optimization") {
+            for (optimize in listOf(false, true)) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(LlvmTarget(), optimize, externalSrc(body = externalBody), outputDir, errors, writeAssembly = false).shouldNotBeNull()
+                withClue("optimize=$optimize") { errors.errors shouldBe emptyList() }
+            }
+        }
+
+        test("extsub in several blocks, also with the same name and private") {
+            val src = """
+                cio {
+                    private extsub putchar(ubyte char) -> ubyte
+                    sub out(ubyte c) {
+                        void putchar(c)
+                    }
+                }
+                other {
+                    extsub putchar(uword char)
+                }
+                main {
+                    sub start() {
+                        cio.out('x')
+                        other.putchar(3)
+                    }
+                }
+            """.trimIndent()
+            for (optimize in listOf(false, true))
+                compileText(LlvmTarget(), optimize, src, outputDir, writeAssembly = false).shouldNotBeNull()
+        }
+
+        test("all scalar parameter and return types are accepted on llvm64") {
+            val src = externalSrc("""
+                struct S { ubyte a }
+                extsub f1(bool b, byte c, ubyte d, word w, uword uw, long l, quad q, uquad uq) -> bool
+                extsub f2(^^S s, pointer p, ^^ubyte bp) -> ^^S
+                extsub f3(str s, ubyte[] a) -> pointer
+            """.trimIndent())
+            compileText(LlvmTarget(), false, src, outputDir, writeAssembly = false).shouldNotBeNull()
+            val floatSrc = "%option enable_floats\n" + externalSrc("extsub f(float a, float b) -> float", "float @shared x = f(1.5, 2.5)")
+            compileText(LlvmTarget(), false, floatSrc, outputDir, writeAssembly = false).shouldNotBeNull()
+        }
+
+        test("other targets give a clear target error and nothing else") {
+            for (target in listOf(Cx16Target(), C64Target(), VMTarget(), Qemu68kTarget())) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(target, false, externalSrc("extsub putchar(ubyte char) -> ubyte", "void putchar('A')"), outputDir, errors, writeAssembly = false) shouldBe null
+                withClue(target.name) {
+                    errors.errors.size shouldBe 1
+                    errors.errors[0] shouldContain "address-free extsub (external C routine) is not supported on target ${target.name}"
+                }
+            }
+        }
+
+        test("extsub with an address on llvm64 gives a clear error, other targets are unaffected") {
+            val src = externalSrc($$"extsub $c000 = foo(ubyte a @A)")
+            val errors = llvmErrors(src).shouldNotBeNull()
+            errors.size shouldBe 1
+            errors[0] shouldContain "extsub with an address is not supported on target llvm64, declare the C routine without an address"
+            compileText(Cx16Target(), false, src, outputDir, writeAssembly = false).shouldNotBeNull()
+            compileText(VMTarget(), false, src, outputDir, writeAssembly = false).shouldNotBeNull()
+        }
+
+        test("at most one return value") {
+            val errors = llvmErrors(externalSrc("extsub f() -> ubyte, ubyte")).shouldNotBeNull()
+            errors.size shouldBe 1
+            errors[0] shouldContain "extsub (external C routine) can have at most one return value"
+        }
+
+        test("only scalar parameter and return types") {
+            val array = llvmErrors(externalSrc("extsub f(uword[10] a)")).shouldNotBeNull()
+            array.any { it.contains("extsub (external C routine) parameter 'a' must be a scalar type") } shouldBe true
+            val struct = llvmErrors(externalSrc("struct S { ubyte a }\nextsub f(S s) -> S")).shouldNotBeNull()
+            struct.any { it.contains("extsub (external C routine) parameter 's' must be a scalar type") } shouldBe true
+            struct.any { it.contains("extsub (external C routine) return type #1 must be a scalar type") } shouldBe true
+        }
+
+        test("register annotation on a parameter is rejected") {
+            val errors = llvmErrors(externalSrc("extsub f(ubyte c @A)")).shouldNotBeNull()
+            errors.size shouldBe 1
+            errors[0] shouldContain "extsub (external C routine) parameters cannot have a register annotation"
+        }
+
+        test("wrong argument types and counts are rejected like for normal subroutines") {
+            val cases = listOf(
+                "uword @shared w\nputchar(w)" to "argument 1 type mismatch, was: uword expected: ubyte",
+                "putchar(1000)" to "no implicit cast available from UWORD to UBYTE for value 1000",
+                "putchar(\"abc\")" to "argument 1 type mismatch, was: str expected: ubyte",
+                "putchar(1, 2)" to "invalid number of arguments: expected 1 but got 2",
+                "void puts(42)" to "cannot use byte value for string parameter"
+            )
+            for ((body, expected) in cases) {
+                val errors = llvmErrors(externalSrc(body = body)).shouldNotBeNull()
+                withClue(body) {
+                    errors.size shouldBe 1
+                    errors[0] shouldContain expected
+                }
+            }
+        }
+
+        test("a void extsub has no value, a declared one differs from an undefined function") {
+            val voidValue = llvmErrors(externalSrc(body = "ubyte @shared x = abort()")).shouldNotBeNull()
+            voidValue.size shouldBe 1
+            voidValue[0] shouldContain "call returns too few values"
+            val declared = llvmErrors(externalSrc(body = "void putchar(1)\nvoid unknown_c_function(1)")).shouldNotBeNull()
+            declared.size shouldBe 1
+            declared[0] shouldContain "undefined symbol: unknown_c_function"
+        }
+
+        test("duplicate name in the same block is a name conflict") {
+            val errors = llvmErrors(externalSrc("extsub f(ubyte a)\nextsub f(ubyte b)")).shouldNotBeNull()
+            errors.any { it.contains("name conflict 'f'") } shouldBe true
+        }
+
+        test("simplified AST has a body-less external PtAsmSub and plain calls") {
+            for (optimize in listOf(false, true)) {
+                val result = compileText(LlvmTarget(), optimize, externalSrc(body = externalBody), outputDir, writeAssembly = false).shouldNotBeNull()
+                val ptProgram = SimplifiedAstMaker(result.compilerAst, ErrorReporterForTests(), result.compilationOptions).transform()
+                val subs = ptProgram.allBlocks().single { it.name == "main" }.children.filterIsInstance<PtAsmSub>().associateBy { it.name }
+                subs.keys shouldBe setOf("putchar", "puts", "getchar", "abort")
+                subs.values.forEach {
+                    it.isExternal shouldBe true
+                    it.address shouldBe null
+                    it.inline shouldBe false
+                    it.clobbers shouldBe emptySet()
+                    it.children.size shouldBe 0
+                    it.parameters.forEach { p -> p.first shouldBe RegisterOrStatusflag(null, null) }
+                    it.returns.forEach { r -> r.first shouldBe RegisterOrStatusflag(null, null) }
+                }
+                subs.getValue("putchar").parameters.map { it.second.name to it.second.type } shouldBe listOf("char" to DataType.UBYTE)
+                subs.getValue("putchar").returns.map { it.second } shouldBe listOf(DataType.UBYTE)
+                subs.getValue("puts").parameters.map { it.second.type } shouldBe listOf(DataType.pointer(BaseDataType.UBYTE))
+                subs.getValue("puts").returns.map { it.second } shouldBe listOf(DataType.UWORD)
+                subs.getValue("getchar").parameters.size shouldBe 0
+                subs.getValue("abort").returns.size shouldBe 0
+
+                val symbols = SymbolTableMaker(ptProgram, result.compilationOptions).make()
+                val st = symbols.lookup("main.putchar") as StExtSub
+                st.isExternal shouldBe true
+                st.address shouldBe null
+
+                val calls = ptProgram.entrypoint()!!.children.filterIsInstance<PtFunctionCall>()
+                calls.filter { it.name == "main.putchar" }.size shouldBe 2
+                calls.single { it.name == "main.puts" }.void shouldBe true
+            }
+        }
+
+        test("symbol dump and simplified AST print show the external form without registers") {
+            val result = compileText(LlvmTarget(), false, externalSrc(body = externalBody), outputDir, writeAssembly = false).shouldNotBeNull()
+            val originalOut = System.out
+            val captured = ByteArrayOutputStream()
+            System.setOut(PrintStream(captured, true))
+            try {
+                printSymbols(result.compilerAst)
+            } finally {
+                System.setOut(originalOut)
+            }
+            val dumped = captured.toString().lines().map { it.trim() }
+            dumped.any { it.matches(Regex("putchar +\\(ubyte char\\) -> ubyte")) } shouldBe true
+            dumped.any { it.matches(Regex("abort +\\(\\)")) } shouldBe true
+            dumped.none { it.contains("@null") || it.contains("?????") } shouldBe true
+
+            val ptProgram = SimplifiedAstMaker(result.compilerAst, ErrorReporterForTests(), result.compilationOptions).transform()
+            val printed = mutableListOf<String>()
+            printAst(ptProgram, true) { printed += it.trim() }
+            printed.any { it.startsWith("extsub putchar(ubyte char) -> ubyte") } shouldBe true
+            printed.any { it.startsWith("extsub puts(^^ubyte msg) -> uword") } shouldBe true
+            printed.any { it.startsWith("extsub abort()") } shouldBe true
+            printed.none { it.contains("@null") } shouldBe true
+        }
+
+        test("a normal asmsub with a body is not external") {
+            val src = """
+                main {
+                    asmsub foo(ubyte a @A) {
+                        %asm {{
+                            rts
+                        }}
+                    }
+                    sub start() {
+                    }
+                }
+            """.trimIndent()
+            val result = compileText(Cx16Target(), false, src, outputDir, writeAssembly = false).shouldNotBeNull()
+            val sub = result.compilerAst.allBlocks.single { it.name == "main" }.statements.filterIsInstance<Subroutine>().single { it.name == "foo" }
+            sub.isExternal shouldBe false
+            val ptProgram = SimplifiedAstMaker(result.compilerAst, ErrorReporterForTests(), result.compilationOptions).transform()
+            val pt = ptProgram.allBlocks().single { it.name == "main" }.children.filterIsInstance<PtAsmSub>().single { it.name == "foo" }
+            pt.isExternal shouldBe false
+            pt.children.size shouldBe 1
+        }
+    }
+
 })

@@ -9,12 +9,15 @@ import prog8.code.target.Cx16Target
 import prog8.code.target.VMTarget
 import prog8.codegen.vm.VmAssemblyProgram
 import prog8.codegen.vm.VmCodeGen
+import io.kotest.matchers.nulls.shouldNotBeNull
+import prog8.intermediate.IRAsmSubroutine
 import prog8.intermediate.IRDataType
 import prog8.intermediate.IRStStaticVariable
 import prog8.intermediate.IRSubroutine
 import prog8.intermediate.IRVariableInitializer
 import prog8.intermediate.Opcode
 import prog8.intermediate.codeAddress
+import prog8.intermediate.codeLabel
 import prog8.intermediate.requireCallSite
 import prog8.intermediate.requireImmediateQuad
 import prog8.intermediate.symbolName
@@ -653,6 +656,44 @@ class TestVmCodeGen: FunSpec({
         val callInstr = irChunks[0].instructions[0]
         callInstr.opcode shouldBe Opcode.CALL
         callInstr.requireCallSite().codeReference shouldBe codeAddress(0x5000u.toAddress())
+    }
+
+    test("an external routine without address becomes an external IRAsmSubroutine that calls link to") {
+//main {
+//    extsub putchar(ubyte char) -> ubyte
+//
+//    sub start()  {
+//        void putchar(65)
+//    }
+//}
+        val codegen = VmCodeGen(false)
+        val program = PtProgram("test", VMTarget())
+        val block = PtBlock("main", false, SourceCode.Generated("test"), PtBlock.Options(), Position.DUMMY)
+        val none = RegisterOrStatusflag(null, null)
+        val param = PtSubroutineParameter("char", DataType.UBYTE, null, Position.DUMMY)
+        val extsub = PtAsmSub("putchar", null, emptySet(), listOf(none to param), listOf(none to DataType.UBYTE), false, Position.DUMMY, isExternal = true)
+        block.add(extsub)
+        val sub = PtSub("start", emptyList(), emptyList(), Position.DUMMY)
+        val call = PtFunctionCall("main.putchar", false, false, emptyArray(), Position.DUMMY)
+        call.add(PtNumber(BaseDataType.UBYTE, 65.0, Position.DUMMY))
+        sub.add(call)
+        block.add(sub)
+        program.add(block)
+
+        val options = getTestOptions()
+        val st = SymbolTableMaker(program, options).make()
+        val result = codegen.generate(program, st, options, ErrorReporterForTests()) as VmAssemblyProgram
+        val irAsmSub = result.irProgram.blocks.first().children.filterIsInstance<IRAsmSubroutine>().single()
+        irAsmSub.label shouldBe "main.putchar"
+        irAsmSub.isExternal shouldBe true
+        irAsmSub.address shouldBe null
+        irAsmSub.isEmpty() shouldBe false
+        irAsmSub.parameters.map { it.dt } shouldBe listOf(DataType.UBYTE)
+        irAsmSub.returns.map { it.dt } shouldBe listOf(DataType.UBYTE)
+        val irSub = result.irProgram.blocks.first().children.filterIsInstance<IRSubroutine>().single()
+        val callInstr = irSub.chunks.flatMap { it.instructions }.single { it.opcode == Opcode.CALL }
+        callInstr.requireCallSite().codeReference shouldBe codeLabel("main.putchar")
+        result.irProgram.resolveCodeTarget(codeLabel("main.putchar")).shouldNotBeNull()
     }
 
     test("ir codegen for target 'virtual' produces no prefixed names") {
