@@ -3,6 +3,7 @@ package prog8.codegen.llvm
 import io.kotest.core.test.Enabled
 import io.kotest.core.test.TestCase
 import java.nio.file.Files
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
@@ -18,6 +19,29 @@ internal val requiresNativeArm64Mac: (TestCase) -> Enabled = {
         !arm64Mac -> Enabled.disabled("linking the default llvm64 target triple needs an arm64 macOS host")
         clang == null -> Enabled.disabled("clang not found next to llvm-as, on the PATH or in ${LlvmToolchain.homebrewLlvmBin}")
         else -> Enabled.enabled
+    }
+}
+
+private val wasiSysroot: Path? = (System.getenv("WASI_SYSROOT") ?: "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot")
+    .let { try { Path.of(it) } catch (_: InvalidPathException) { null } }?.takeIf { Files.isDirectory(it) }
+
+internal val requiresWasmClang: (TestCase) -> Enabled = {
+    when {
+        clang == null -> Enabled.disabled("clang not found next to llvm-as, on the PATH or in ${LlvmToolchain.homebrewLlvmBin}")
+        wasiSysroot == null -> Enabled.disabled("no WASI sysroot in WASI_SYSROOT or /opt/homebrew/opt/wasi-libc/share/wasi-sysroot")
+        else -> Enabled.enabled
+    }
+}
+
+/** Compiles [ir] into a wasm32-wasip1 object file with clang, without linking; returns clang's exit code and output. */
+internal fun compileWasmObject(ir: String): Pair<Int, String> {
+    val dir = createTempDirectory("prog8-llvm-wasm")
+    try {
+        val source = dir.resolve("program.ll").also { it.writeText(ir) }
+        return execute(checkNotNull(clang).toString(), "--target=wasm32-wasip1", "--sysroot=${checkNotNull(wasiSysroot)}", "-c", "-O2",
+            "-Wno-override-module", source.toString(), "-o", dir.resolve("program.o").toString())
+    } finally {
+        dir.toFile().deleteRecursively()
     }
 }
 

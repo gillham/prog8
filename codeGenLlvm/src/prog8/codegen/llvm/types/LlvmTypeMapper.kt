@@ -2,14 +2,36 @@ package prog8.codegen.llvm.types
 
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
+import prog8.code.core.ICompilationTarget
+import prog8.code.target.LlvmTarget
 import prog8.codegen.llvm.model.LlvmType
 import prog8.intermediate.IRDataType
 import prog8.intermediate.IRStStructDef
 import prog8.intermediate.IRStStructField
 import prog8.intermediate.IRSymbolTable
 
-/** Maps Prog8 IR and Prog8 data types onto LLVM types for the llvm64 target (8-byte pointers and doubles, packed Prog8 struct layout). */
-internal class LlvmTypeMapper(private val st: IRSymbolTable) {
+/**
+ * Maps Prog8 IR and Prog8 data types onto LLVM types for the llvm targets ([pointerBytes]-byte pointers, doubles, packed Prog8 struct layout).
+ * [cLongBytes] is the size of the C `long` of the target triple.
+ */
+internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: Int = 8, cLongBytes: Int = 8) {
+
+    constructor(st: IRSymbolTable, target: ICompilationTarget) :
+        this(st, target.POINTER_MEM_SIZE.toInt(), (target as? LlvmTarget)?.profile?.cLongSize ?: 8)
+
+    init {
+        require(pointerBytes == 4 || pointerBytes == 8) { "unsupported pointer size: $pointerBytes" }
+        require(cLongBytes == 4 || cLongBytes == 8) { "unsupported C long size: $cLongBytes" }
+    }
+
+    /** The integer type of the size of a pointer, for address arithmetic and offsets. */
+    val intPtr: LlvmType = if (pointerBytes == 8) LlvmType.I64 else LlvmType.I32
+
+    /** C's `size_t`. */
+    val sizeT: LlvmType get() = intPtr
+
+    /** C's `long`, which is 32 bits on ILP32 and LLP64 targets. */
+    val cLong: LlvmType = if (cLongBytes == 8) LlvmType.I64 else LlvmType.I32
 
     fun map(type: IRDataType): LlvmType = when (type) {
         IRDataType.BYTE -> LlvmType.I8
@@ -32,7 +54,7 @@ internal class LlvmTypeMapper(private val st: IRSymbolTable) {
     }
 
     fun storageType(dt: DataType, length: UInt?): LlvmType {
-        require(dt.base != BaseDataType.ARRAY_SPLITW) { "split word arrays don't exist on the llvm64 target" }
+        require(dt.base != BaseDataType.ARRAY_SPLITW) { "split word arrays don't exist on the llvm targets" }
         return when {
             dt.isString -> LlvmType.Array(requireLength(dt, length), LlvmType.I8)
             dt.isArray -> LlvmType.Array(requireLength(dt, length), arrayElementType(dt))
@@ -55,7 +77,8 @@ internal class LlvmTypeMapper(private val st: IRSymbolTable) {
         LlvmType.I1, LlvmType.I8 -> 1
         LlvmType.I16 -> 2
         LlvmType.I32 -> 4
-        LlvmType.I64, LlvmType.Double, LlvmType.Ptr -> 8
+        LlvmType.I64, LlvmType.Double -> 8
+        LlvmType.Ptr -> pointerBytes
         is LlvmType.Array -> type.size * byteSize(type.elementType)
         is LlvmType.Struct -> {
             require(type.packed) { "the size of unpacked struct $type depends on the target's alignment rules" }

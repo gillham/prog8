@@ -124,10 +124,19 @@ class TestLlvmCompiler: FunSpec({
         irTarget.profile.name shouldBe "x86_64-unknown-linux-gnu"
     }
 
-    test("the llvm32 target stops at code generation, which isn't implemented yet") {
-        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
-        compileText(LlvmTarget(4), false, nativeHello.source, outputDir.resolve("llvm32").createDirectories(), errors = errors) shouldBe null
-        errors.errors.any { "code generation for the llvm32 target is not implemented yet" in it } shouldBe true
+    test("the programs without 64-bit addresses compile for the llvm32 target, with 4-byte pointers, which llvm-as accepts when installed") {
+        val dir = outputDir.resolve("llvm32").createDirectories()
+        val sources = programs.filterKeys { it !in programsWith64BitAddresses } + outputPrograms.mapValues { it.value.source }
+        for ((name, source) in sources) {
+            for (optimize in listOf(false, true)) {
+                withClue("$name optimize=$optimize") {
+                    val lines = compiledLlFile(compileText(LlvmTarget(4), optimize, source, dir)).readLines()
+                    lines shouldContain "target triple = \"wasm32-unknown-wasip1\""
+                    lines shouldContain "define i32 @main(i32 %argc, ptr %argv) {"
+                    lines.none { it.startsWith("declare void @llvm.mem") && "i64" in it } shouldBe true
+                }
+            }
+        }
     }
 
     test("launchEmulator builds a native executable next to the .ll file and runs it").config(enabledOrReasonIf = requiresNativeLlvm) {
@@ -684,6 +693,19 @@ private fun exitStatusOnVirtualMachine(irFile: Path): Int {
         return exit.status
     }
 }
+
+// these use uquad as the address type, which only holds addresses where pointers have 8 bytes
+private val programsWith64BitAddresses = setOf(
+    "64-bit addresses",
+    "64-bit addresses beyond 4 GiB through pushp, popp, pokep and peekp, and defer with computed untyped addresses",
+    "uquad addresses with signed operands, long values, strings and typed address initializers",
+    "uquad and typed pointer loop variables over uquad address arrays",
+    "uquad struct fields indexed like the address they hold",
+    "a uquad address dereferenced with ^^ reads and writes the byte at that address",
+    "inlined subroutines compute with pointer arguments as their integer parameters, and with integer arguments as their pointer parameters",
+    "uquad constants folded with signed operands as at runtime, and typed pointers compared with negative numbers",
+    "the untyped pointer is a uquad in variables, constants, parameters, return values, struct fields and arrays"
+)
 
 // the 64-bit programs that don't use the constants of the llvm64 library, so they also run on the virtual machine
 private val quadProgramsForTheVm = listOf(

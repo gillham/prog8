@@ -1,4 +1,4 @@
-; Number conversion routines for the llvm64 target, in pure Prog8.
+; Number conversion routines for the llvm32 target, in pure Prog8.
 
 %import strings
 

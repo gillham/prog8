@@ -1,6 +1,6 @@
-; File I/O routines for the llvm64 target, on the filesystem of the host.
+; File I/O routines for the llvm32 target, on the filesystem of the host.
 ;
-; NOTE: some calls differ from the "official" diskio library, because a hosted 64-bit program has no carry flag to return
+; NOTE: some calls differ from the "official" diskio library, because a hosted program has no carry flag to return
 ;       and no 16-bit addresses: f_readline() returns a status instead, and load() and load_raw() return a pointer.
 ; NOTE: there are no directory listings. The fileio module has routines for several open files at the same time.
 

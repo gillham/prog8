@@ -58,7 +58,7 @@ internal fun FunctionLowering.lowerArithmetic(ins: IRInstruction) {
 
 /**
  * Applies [operation] to the register or the memory that [ins] modifies in place.
- * With [wide], a LONG register is operated on with all 64 bits, so that an address in it stays whole.
+ * With [wide], a LONG register is operated on with its whole slot, so that an address in it stays whole.
  */
 internal fun FunctionLowering.modify(ins: IRInstruction, wide: Boolean = false, operation: (LlvmValue, String) -> LlvmValue) {
     if (ins.memory != null)
@@ -72,7 +72,7 @@ internal fun FunctionLowering.modify(ins: IRInstruction, wide: Boolean = false, 
 /** The binary operations that combine a register or memory, in place, with a register or an immediate. */
 internal fun FunctionLowering.combine(ins: IRInstruction, operator: BinaryOperator) =
     modify(ins, wide = true) { left, base ->
-        val right = ins.srcA?.let { readWide(it) } ?: immediate(ins, if (left.type == LlvmType.Ptr) LlvmType.I64 else left.type)
+        val right = ins.srcA?.let { readWide(it) } ?: immediate(ins, if (left.type == LlvmType.Ptr) builder.mapper.intPtr else left.type)
         operation(operator, left, right, base)
     }
 
@@ -88,7 +88,8 @@ internal fun FunctionLowering.operation(operator: BinaryOperator, left: LlvmValu
         return derive(base, LlvmType.Double) { LlvmInstruction.BinaryOp(floatOperator, it, left, right) }
     }
     if (left.type == LlvmType.Ptr && right.type != LlvmType.Ptr && (operator == BinaryOperator.ADD || operator == BinaryOperator.SUB)) {
-        val offset = widen(right, LlvmType.I64, signed = true, base)
+        val intPtr = builder.mapper.intPtr
+        val offset = if (checkNotNull(right.type.bitWidth) > checkNotNull(intPtr.bitWidth)) convert(right, intPtr, base) else widen(right, intPtr, signed = true, base)
         val distance = if (operator == BinaryOperator.ADD) offset else negate(offset, base)
         return derive(base, LlvmType.Ptr) { LlvmInstruction.GetElementPtr(it, LlvmType.I8, left, listOf(distance), inBounds = false) }
     }
@@ -104,7 +105,7 @@ private fun FunctionLowering.step(value: LlvmValue, up: Boolean, base: String): 
         LlvmInstruction.BinaryOp(if (up) BinaryOperator.FADD else BinaryOperator.FSUB, it, value, LlvmValue.FloatConstant(1.0))
     }
     LlvmType.Ptr -> derive(base, LlvmType.Ptr) {
-        LlvmInstruction.GetElementPtr(it, LlvmType.I8, value, listOf(LlvmValue.IntConstant(if (up) 1 else -1, LlvmType.I64)), inBounds = false)
+        LlvmInstruction.GetElementPtr(it, LlvmType.I8, value, listOf(LlvmValue.IntConstant(if (up) 1 else -1, builder.mapper.intPtr)), inBounds = false)
     }
     else -> derive(base, value.type) {
         LlvmInstruction.BinaryOp(if (up) BinaryOperator.ADD else BinaryOperator.SUB, it, value, LlvmValue.IntConstant(1, value.type))

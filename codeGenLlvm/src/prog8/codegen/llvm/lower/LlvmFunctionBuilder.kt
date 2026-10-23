@@ -25,7 +25,7 @@ private const val GLOBAL_INITS = ".init.globals"
  * IR virtual registers live in entry-block stack slots, which LLVM's mem2reg pass turns into SSA values.
  */
 internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmDataSymbols) {
-    val mapper = LlvmTypeMapper(program.st)
+    val mapper = LlvmTypeMapper(program.st, program.options.compTarget)
     private val subroutines = program.allSubs().associateBy { it.label }
     private val asmSubroutines = program.allAsmSubs().associateBy { it.label }
     private val externalFunctions = linkedMapOf<String, LlvmFunction>()
@@ -185,7 +185,7 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
         externalRoutines[name]?.let { (sub, declared) ->
             val used = LlvmType.Function(returnType, paramTypes)
             if (declared.type != used) {
-                val error = conflict(sub, declared, "the llvm64 runtime", used)
+                val error = conflict(sub, declared, "the ${program.options.compTarget.name} runtime", used)
                 runtimeConflicts += loweringSub to error
                 definingHelper?.let { helperConflicts.getOrPut(it) { mutableListOf() } += error }
             }
@@ -263,7 +263,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     private var notTaken: (() -> String)? = null
 
     fun lower(): LlvmFunction {
-        require(sub.incomingSize == 0 && sub.frameVregSlots.isEmpty()) { "${sub.label} has a stack frame, which the llvm64 target doesn't use" }
+        require(sub.incomingSize == 0 && sub.frameVregSlots.isEmpty()) { "${sub.label} has a stack frame, which the llvm targets don't use" }
         val params = sub.parameters.zip(builder.parameterTypes(sub)) { param, type -> LlvmValue.Local(names.exact(param.name.substringAfterLast('.')), type) }
         val entryName = names.exact("entry")
         nameChunks(sub.chunks)
@@ -306,7 +306,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
         return convert(derive(base, slotType) { LlvmInstruction.Load(it, slot) }, typeOf(operand.type), base)
     }
 
-    /** Like [read], but a LONG register gives all 64 bits of its slot, as it may hold an address; for address arithmetic and copies. */
+    /** Like [read], but a LONG register gives its whole slot, which may hold a wider address; for address arithmetic and copies. */
     fun readWide(operand: RegisterOperand): LlvmValue {
         if (operand.type != IRDataType.LONG)
             return read(operand)
@@ -317,7 +317,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     fun write(operand: RegisterOperand, value: LlvmValue) {
         val (slot, slotType) = registerSlot(operand.register)
         val base = operand.register.toString()
-        // sign extended, a 32-bit long still works as an offset in the 64-bit address arithmetic of LONG registers
+        // sign extended, a 32-bit long still works as an offset in the wider address arithmetic of LONG registers
         val stored = if (operand.type == IRDataType.LONG && value.type == LlvmType.I32) widen(value, slotType, signed = true, base) else convert(value, slotType, base)
         emit(LlvmInstruction.Store(stored, slot))
     }
@@ -325,8 +325,8 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     /** The address in an integer or pointer register, as a ptr. */
     fun pointerValue(operand: RegisterOperand): LlvmValue = convert(readWide(operand), LlvmType.Ptr, operand.register.toString())
 
-    /** Pointers as 64-bit integers, for the integer instructions that work on them. */
-    fun asInteger(value: LlvmValue): LlvmValue = if (value.type == LlvmType.Ptr) convert(value, LlvmType.I64) else value
+    /** Pointers as pointer-sized integers, for the integer instructions that work on them. */
+    fun asInteger(value: LlvmValue): LlvmValue = if (value.type == LlvmType.Ptr) convert(value, builder.mapper.intPtr) else value
 
     /** Integers are truncated or zero extended, and converted to and from pointers; integer constants fold right away. */
     fun convert(value: LlvmValue, to: LlvmType, base: String = "cast"): LlvmValue {
@@ -368,7 +368,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     fun integerConstant(value: Long, type: LlvmType): LlvmValue = when {
         type != LlvmType.Ptr -> LlvmValue.IntConstant(truncate(value, checkNotNull(type.bitWidth) { "$type is no integer type" }), type)
         value == 0L -> LlvmValue.NullPtr()
-        else -> LlvmValue.ConstantCast(CastOperator.INTTOPTR, LlvmValue.IntConstant(value, LlvmType.I64), LlvmType.Ptr)
+        else -> LlvmValue.ConstantCast(CastOperator.INTTOPTR, LlvmValue.IntConstant(value, builder.mapper.intPtr), LlvmType.Ptr)
     }
 
     /** The immediate operand of [ins] as a value of [type]. */
@@ -383,7 +383,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
         val base = builder.symbols.addresses[name]
             ?: LlvmValue.Global(builder.functionName(name)).takeIf { builder.subroutine(name) != null || builder.asmSubroutine(name) != null }
             ?: throw IllegalArgumentException("${sub.label} takes the address of unknown symbol $name")
-        return if (offset == 0) base else LlvmValue.ConstantGep(LlvmType.I8, base, listOf(LlvmValue.IntConstant(offset.toLong(), LlvmType.I64)))
+        return if (offset == 0) base else LlvmValue.ConstantGep(LlvmType.I8, base, listOf(LlvmValue.IntConstant(offset.toLong(), builder.mapper.intPtr)))
     }
 
     /** The block of a label in this subroutine; a branch to another subroutine goes to a block that tail calls it. */
@@ -582,13 +582,15 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
         LlvmValue.Local(names.exact(base), LlvmType.Ptr).also { allocas += LlvmInstruction.Alloca(it, type) }
 
     /**
-     * A register used with a single IR type other than LONG gets a slot of that type. LONG registers, which can hold addresses
-     * on llvm64, and registers used with several types get an i64 slot that holds any integer or pointer.
+     * A register used with a single IR type other than LONG gets a slot of that type. LONG registers, which can hold addresses,
+     * and registers used with several types get a pointer-sized slot that holds any integer or pointer, or an i64 one for quads.
      */
     private fun registerSlot(register: VirtualRegister): Pair<LlvmValue.Local, LlvmType> {
+        val types = registerTypes[register]
         val type = when {
             register is VirtualRegister.FloatReg -> LlvmType.Double
-            else -> registerTypes[register]?.singleOrNull()?.takeIf { it != IRDataType.LONG }?.let { typeOf(it) } ?: LlvmType.I64
+            types == null || IRDataType.QUAD in types -> LlvmType.I64
+            else -> types.singleOrNull()?.takeIf { it != IRDataType.LONG }?.let { typeOf(it) } ?: builder.mapper.intPtr
         }
         return registerSlots.getOrPut(register) { stackSlot("$register.slot", type) } to type
     }
@@ -598,7 +600,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
 /** Thrown when a branch reads status flags set in another block; the function is then lowered again, with flag slots. */
 internal class FlagsFromOtherBlock : RuntimeException(null, null, false, false)
 
-/** A subroutine that the llvm64 target has no translation for; [position] is where it is in the source. */
+/** A subroutine that the llvm targets have no translation for; [position] is where it is in the source. */
 internal class LlvmLoweringException(message: String, val position: Position, cause: Throwable) : IllegalArgumentException(message, cause)
 
 private sealed interface FlagValue {

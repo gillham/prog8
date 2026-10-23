@@ -1,7 +1,7 @@
-; Math library routines for the llvm64 target.
+; Math library routines for the llvm32 target.
 ; note: some functions you might expect here are builtin functions,
 ;       such as abs, sqrt, clamp, min, max and sgn (the sign) for example.
-; Not available on llvm64: atan2 and the direction routines, and mul16_last_upper (multiply into a long instead).
+; Not available on llvm32: atan2 and the direction routines, and mul16_last_upper (multiply into a long instead).
 
 math {
     %option ignore_unused
@@ -154,7 +154,7 @@ math {
         prng_b1 = msb(seed2)
     }
 
-    ; there should be zero need to use these variants on llvm64, but whatever:
+    ; there should be zero need to use these variants on llvm32, but whatever:
     alias rndseed_rom = math.rndseed
     alias rnd_rom = math.rnd
     alias rndw_rom = math.rndw

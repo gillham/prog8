@@ -38,7 +38,7 @@ private const val STARTUP_INITIALIZER = ".init.addresses"
 internal class LlvmGlobalEmitter(private val program: IRProgram) {
     private val st = program.st
     private val target = program.options.compTarget
-    private val mapper = LlvmTypeMapper(st)
+    private val mapper = LlvmTypeMapper(st, target)
 
     private val internedStringNames: Map<String, String> by lazy {
         st.allVariables().filter { it.name.startsWith("$INTERNED_STRINGS_MODULENAME.") }
@@ -49,7 +49,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         val clusters = mutableListOf<MemoryMappedCluster>()
         for (memvar in st.allMemMappedVariables().sortedBy { it.address }) {
             val start = memvar.address.toLong()
-            val cluster = clusters.lastOrNull()?.takeIf { start <= it.end } ?: MemoryMappedCluster(start).also { clusters += it }
+            val cluster = clusters.lastOrNull()?.takeIf { start <= it.end } ?: MemoryMappedCluster(start, mapper.intPtr).also { clusters += it }
             cluster.members += memvar
             cluster.end = maxOf(cluster.end, start + target.memorySize(memvar.dt, memvar.length?.toInt()))
         }
@@ -67,7 +67,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         }
     }
 
-    // word, long and uquad arrays holding addresses (str[] is a uquad[] in the IR) get native ptr elements, so no address is truncated
+    // word, long and uquad arrays holding addresses (str[] is an array of the address integer type in the IR) get native ptr elements, so no address is truncated
     private val pointerArrays: Map<String, PointerArray> by lazy {
         val storedWithPointers = symbolsStoredWithPointers()
         st.allVariables().mapNotNull { variable ->
@@ -78,13 +78,13 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
             }
             irElementSize?.let {
                 val length = requireNotNull(variable.length) { "array ${variable.name} has no length" }.toInt()
-                variable.name to PointerArray(variable.name, addresses.getValue(variable.name), length, it)
+                variable.name to PointerArray(variable.name, addresses.getValue(variable.name), length, it, mapper.intPtr)
             }
         }.toMap()
     }
 
     fun emit(module: LlvmModule): LlvmDataSymbols {
-        require(target.POINTER_MEM_SIZE == 8u && target.FLOAT_MEM_SIZE == 8u) { "the LLVM backend needs 8-byte pointers and floats, as on the llvm64 target" }
+        require(target.FLOAT_MEM_SIZE == 8u) { "the LLVM backend needs 8-byte floats" }
         val globals = buildList {
             st.allVariables().mapTo(this) { variableGlobal(it) }
             st.allStructInstances().mapTo(this) { structInstanceGlobal(it) }
@@ -100,7 +100,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
     }
 
     /**
-     * Static data can only hold a symbol address as an 8-byte aligned `ptr`, arm64 macOS rejects other relocations.
+     * Static data can only hold a symbol address as a pointer-aligned `ptr`, arm64 macOS rejects other relocations.
      * Other address slots, like unaligned pointer fields of packed structs, are zeroed and get stored at startup instead.
      */
     private fun withStartupAddresses(global: LlvmGlobal, startupStores: MutableList<LlvmInstruction>): LlvmGlobal {
@@ -109,12 +109,12 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         val staticInitializer = deferAddresses(initializer, 0L, deferred)
         for ((offset, value) in deferred) {
             val base = LlvmValue.Global(global.name)
-            val slot = if (offset == 0L) base else LlvmValue.ConstantGep(LlvmType.I8, base, listOf(LlvmValue.IntConstant(offset, LlvmType.I64)))
+            val slot = if (offset == 0L) base else LlvmValue.ConstantGep(LlvmType.I8, base, listOf(LlvmValue.IntConstant(offset, mapper.intPtr)))
             // volatile, so that LLVM can't fold the store back into the static initializer
             startupStores += LlvmInstruction.Store(value, slot, align = 1, volatile = true)
         }
         val alignment = global.align ?: naturalAlignment(global.type)
-        val align = if (containsAddress(staticInitializer) && alignment < 8) 8 else global.align
+        val align = if (containsAddress(staticInitializer) && alignment < mapper.pointerBytes) mapper.pointerBytes else global.align
         return global.copy(initializer = staticInitializer, isConstant = global.isConstant && deferred.isEmpty(), align = align)
     }
 
@@ -132,7 +132,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
             })
         }
         else ->
-            if (isAddress(value) && (value.type != LlvmType.Ptr || offset % 8 != 0L)) {
+            if (isAddress(value) && (value.type != LlvmType.Ptr || offset % mapper.pointerBytes != 0L)) {
                 deferred += offset to value
                 LlvmValue.ZeroInitializer(value.type)
             } else value
@@ -311,7 +311,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         BaseDataType.FLOAT -> LlvmValue.FloatConstant(value)
         BaseDataType.POINTER ->
             if (value == 0.0) LlvmValue.NullPtr()
-            else LlvmValue.ConstantCast(CastOperator.INTTOPTR, LlvmValue.IntConstant(value.toLong(), LlvmType.I64), LlvmType.Ptr)
+            else LlvmValue.ConstantCast(CastOperator.INTTOPTR, LlvmValue.IntConstant(value.toLong(), mapper.intPtr), LlvmType.Ptr)
         BaseDataType.QUAD -> LlvmValue.IntConstant(quadBits ?: value.toLong(), LlvmType.I64)
         BaseDataType.UQUAD -> LlvmValue.IntConstant(quadBits ?: value.toULong().toLong(), LlvmType.I64)
         else -> LlvmValue.IntConstant(value.toLong(), mapper.map(base))
@@ -319,7 +319,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
 
     private fun addressAs(type: LlvmType, address: LlvmValue, user: String): LlvmValue = when {
         type == LlvmType.Ptr -> address
-        // truncates the 64-bit address; static data can't hold that, so withStartupAddresses stores it at startup
+        // truncates the address when the slot is narrower; static data can't hold that, so withStartupAddresses stores it at startup
         type.isInteger -> LlvmValue.ConstantCast(CastOperator.PTRTOINT, address, type)
         else -> throw IllegalArgumentException("$user can't hold an address in a $type slot")
     }
@@ -336,11 +336,14 @@ internal class LlvmDataSymbols(
         memoryMapped.firstOrNull { address >= it.start && address < it.end }?.addressAt(address)
 }
 
-/** A global array of native `ptr` elements that the IR addresses as [irElementSize]-byte elements (4 for str[], a long[] in the IR). */
-internal data class PointerArray(val name: String, val address: LlvmValue, val length: Int, val irElementSize: Int)
+/**
+ * A global array of native `ptr` elements that the IR addresses as [irElementSize]-byte elements, such as those of the address integer type for str[].
+ * [indexType] is the pointer-sized integer type of the target.
+ */
+internal data class PointerArray(val name: String, val address: LlvmValue, val length: Int, val irElementSize: Int, val indexType: LlvmType = LlvmType.I64)
 
 /** Backing storage shared by memory-mapped variables whose byte ranges overlap or touch, preserving their aliasing and layout. */
-internal class MemoryMappedCluster(val start: Long) {
+internal class MemoryMappedCluster(val start: Long, private val indexType: LlvmType) {
     var end = start
     val members = mutableListOf<IRStMemVar>()
     val name: String get() = ".memmapped." + start.toString(16)
@@ -351,6 +354,6 @@ internal class MemoryMappedCluster(val start: Long) {
     fun addressAt(address: Long): LlvmValue {
         val offset = address - start
         val base = LlvmValue.Global(name)
-        return if (offset == 0L) base else LlvmValue.ConstantGep(LlvmType.I8, base, listOf(LlvmValue.IntConstant(offset, LlvmType.I64)))
+        return if (offset == 0L) base else LlvmValue.ConstantGep(LlvmType.I8, base, listOf(LlvmValue.IntConstant(offset, indexType)))
     }
 }

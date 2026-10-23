@@ -11,9 +11,8 @@ import prog8.intermediate.*
 import kotlin.math.abs
 
 
-/** A test program for the llvm64 target, with subroutines written as IR text. */
-internal class TestProgram {
-    val target = LlvmTarget()
+/** A test program for an llvm [target], llvm64 by default, with subroutines written as IR text. */
+internal class TestProgram(val target: LlvmTarget = LlvmTarget()) {
     private val st = IRSymbolTable()
     private val program = IRProgram("test", st, CompilationOptions.builder(target).floats(true).compilerVersion("99.99").build(), target)
     private val block = IRBlock("main", false, IRBlock.Options(), Position.DUMMY).also { program.addBlock(it) }

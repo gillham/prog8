@@ -125,7 +125,7 @@ private fun FunctionLowering.extend(ins: IRInstruction) {
     write(dest, widen(read(ins.requireSrcA()), typeOf(dest.type), signed = ins.opcode == Opcode.EXTS || ins.opcode == Opcode.EXTLS, dest.register.toString()))
 }
 
-/** EXTQ and EXTQS widen a byte, word or long to a quad; EXTQ.p gives all 64 bits of the address in a pointer. */
+/** EXTQ and EXTQS widen a byte, word or long to a quad; EXTQ.p gives the whole address in a pointer, zero extended. */
 private fun FunctionLowering.extendToQuad(ins: IRInstruction) {
     val signed = ins.opcode == Opcode.EXTQS
     require(!signed || ins.type != IRDataType.POINTER) { "extqs.p in ${sub.label} makes no sense: a pointer is unsigned, use extq.p" }

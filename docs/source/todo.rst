@@ -11,6 +11,7 @@ Future Things and Ideas
 - implement the signed divmod byte and word routines on 6502 old codegen (virtual, m68k and IR-based codegens already have them working)
 - the c64 sprite multiplexer still needs adjustments to make it smooth, it lacks a proper raster event scheduler.
 - support typed pointer arrays as struct fields, curretly requires untyped pointers arrays.
+- fix the ``msw``/``lsw`` folding of pointers on targets with 4-byte pointers (m68k, virtual, llvm32): ``VariousCleanups.kt`` folds ``msw(ptr)`` to 0 and ``lsw(ptr)`` to the pointer itself, and drops a ``uword`` cast of a pointer (lines ~213, ~553, ~559). That is wrong for addresses above 64 KiB, such as m68k heap memory or wasm32 linear memory.
 - evaluated the feature suggestions in ideas/c16-banked-data.md (cx16 banked data): evaluated Sep 2026, the plan is not worth implementing as written. Banked data already works via ``-varshigh <bank>`` / ``%varsaddress`` + ``cx16.rambank()``, and the ``cx16.fetch``/``cx16.stash`` kernal primitives turn out to be neither IRQ-safe nor reentrant, and ~5x slower than a bank switch. Cheapest useful follow-up is documentation plus small ``asmsub`` wrappers in ``syslib.p8``; see the Recommendation section in that file.
 
 Won't do's or deferred

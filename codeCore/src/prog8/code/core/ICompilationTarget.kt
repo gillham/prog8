@@ -107,6 +107,10 @@ interface ICompilationTarget: IStringEncoding, IMemSizer {
      */
     val supportsStackFrames: Boolean
 
+    /** False for hosted targets, where the operating system owns memory: no load address, memtop, fixed variable addresses or ROM. */
+    val hasFixedMemoryAddresses: Boolean
+        get() = true
+
     fun initializeMemoryAreas(compilerOptions: CompilationOptions)
     fun getFloatAsmBytes(num: Number): String
 

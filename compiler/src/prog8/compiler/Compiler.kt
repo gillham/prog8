@@ -106,6 +106,13 @@ fun compileProgram(args: CompilerArguments): CompilationResult? {
         }
     }
 
+    if(!compTarget.hasFixedMemoryAddresses) {
+        if(args.varsGolden || args.varsHighBank!=null || args.varsAddress!=null) {
+            System.err.println("The -varsgolden/-varshigh/-varsaddress options are not available on the hosted ${compTarget.name} target")
+            return null
+        }
+    }
+
     try {
         var symbolTable: SymbolTable? = null
 
@@ -160,7 +167,11 @@ fun compileProgram(args: CompilerArguments): CompilationResult? {
             resultingProgram = program
             importedFiles = imported
 
-            if(compilationOptions.romable) {
+            if(compilationOptions.romable && !compTarget.hasFixedMemoryAddresses) {
+                args.errors.err("romable option is not available on the hosted ${compTarget.name} target", program.toplevelModule.position)
+                args.errors.report()
+            }
+            else if(compilationOptions.romable) {
                 val hasVars = compilationOptions.varsAddress != null || program.toplevelModule.varsAddress != null || compilationOptions.varsGolden || compilationOptions.varsHighBank!=null
                 if (!hasVars)
                     args.errors.err("When ROMable code is selected, variables and memory slabs should be moved to a RAM memory region using either -varsgolden, -varshigh or -varsaddress option or %varsaddress directive", program.toplevelModule.position)

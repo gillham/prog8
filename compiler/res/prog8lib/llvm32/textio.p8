@@ -1,6 +1,6 @@
-; Prog8 definitions for the Text I/O console routines for the llvm64 target.
+; Prog8 definitions for the Text I/O console routines for the llvm32 target.
 ; Text goes to stdout and input comes from stdin; colors, reverse video and cursor movement use ANSI escape sequences.
-; txt.print_f is not here: as on the other targets, it belongs in the floats module (which can't format floats on llvm64 yet).
+; txt.print_f is not here: as on the other targets, it belongs in the floats module (which can't format floats on llvm32 yet).
 
 %import conv
 
@@ -59,11 +59,11 @@ sub uppercase() {
 }
 
 sub iso() {
-    ; llvm64 target is iso always, this is just for code compatibility
+    ; llvm32 target is iso always, this is just for code compatibility
 }
 
 sub iso_off() {
-    ; llvm64 target is iso always, this is just for code compatibility
+    ; llvm32 target is iso always, this is just for code compatibility
 }
 
 sub rvs_on() {

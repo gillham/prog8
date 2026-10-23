@@ -94,6 +94,36 @@ class TestLlvmMemoryLowering: FunSpec({
         withClue(output) { exitCode shouldBe 0 }
         output shouldBe "bb\ncc\nzz\n"
     }
+
+    test("on llvm32, pointer array elements are indexed with i32, and a wider index register is truncated") {
+        val names32 = PointerArray("main.names", LlvmValue.Global("main.names"), 3, 4, LlvmType.I32)
+        formatted(PointerArrayAccess.load(names32, IRDataType.LONG, direct("main.names", 4), null, LlvmValue.Local("r1", LlvmType.Ptr))) shouldBe listOf(
+            "%r1.elem = getelementptr inbounds ptr, ptr @main.names, i32 1",
+            "%r1 = load ptr, ptr %r1.elem")
+        formatted(PointerArrayAccess.load(names32, IRDataType.LONG, indexed("main.names", scale = 4), LlvmValue.Local("r3", LlvmType.I16), LlvmValue.Local("r4", LlvmType.Ptr))) shouldBe listOf(
+            "%r4.index = zext i16 %r3 to i32",
+            "%r4.elem = getelementptr inbounds ptr, ptr @main.names, i32 %r4.index",
+            "%r4 = load ptr, ptr %r4.elem")
+        formatted(PointerArrayAccess.load(names32, IRDataType.LONG, indexed("main.names", scale = 4), LlvmValue.Local("r5", LlvmType.I64), LlvmValue.Local("r6", LlvmType.Ptr))) shouldBe listOf(
+            "%r6.index = trunc i64 %r5 to i32",
+            "%r6.elem = getelementptr inbounds ptr, ptr @main.names, i32 %r6.index",
+            "%r6 = load ptr, ptr %r6.elem")
+        val nodes32 = PointerArray("main.nodes", LlvmValue.Global("main.nodes"), 4, 4, LlvmType.I32)
+        formatted(PointerArrayAccess.load(nodes32, IRDataType.POINTER, indexed("main.nodes", scale = 4), LlvmValue.Local("r7", LlvmType.I32), LlvmValue.Local("r8", LlvmType.Ptr))) shouldBe listOf(
+            "%r8.elem = getelementptr inbounds ptr, ptr @main.nodes, i32 %r7",
+            "%r8 = load ptr, ptr %r8.elem")
+        shouldThrow<IllegalArgumentException> { PointerArrayAccess.load(names32, IRDataType.QUAD, direct("main.names", 0), null, LlvmValue.Local("r", LlvmType.Ptr)) }
+    }
+
+    test("an llvm32 str[] array with getelementptr ptr loads and stores is valid LLVM IR").config(enabledOrReasonIf = requiresLlvmAs) {
+        val (exitCode, output) = runLlvmAs(LlvmPrinter.print(stringsProgram(LlvmTarget(4))))
+        withClue(output) { exitCode shouldBe 0 }
+    }
+
+    test("an llvm32 str[] array compiles into a wasm32 object").config(enabledOrReasonIf = requiresWasmClang) {
+        val (exitCode, output) = compileWasmObject(LlvmPrinter.print(stringsProgram(LlvmTarget(4))))
+        withClue(output) { exitCode shouldBe 0 }
+    }
 })
 
 
@@ -102,9 +132,13 @@ private fun direct(symbol: String, displacement: Int) = MemoryReference.Direct(A
 private fun indexed(symbol: String, scale: Int, displacement: Int = 0) = MemoryReference.Indexed(AddressBase.Symbol(symbol),
     RegisterOperand(VirtualRegister.int(1), IRDataType.WORD, OperandRole.INDEX, OperandDirection.USE), scale, displacement)
 
-/** Prints names[1] (constant index) and names[i] with i=2 (index register), then stores "zz" in names[0] and prints that. */
-private fun stringsProgram(): LlvmModule {
-    val target = LlvmTarget()
+/**
+ * Prints names[1] (constant index) and names[i] with i=2 (index register), then stores "zz" in names[0] and prints that.
+ * The IR accesses the str[] elements as the address integer type of the [target]: a uquad, or a long with 4-byte pointers.
+ */
+private fun stringsProgram(target: LlvmTarget = LlvmTarget()): LlvmModule {
+    val size = target.pointerSize
+    val type = if (size == 8) IRDataType.QUAD else IRDataType.LONG
     val st = IRSymbolTable()
     listOf("aa", "bb", "cc", "zz").forEachIndexed { index, text ->
         st.add(IRStStaticVariable("prog8_interned_strings.string_$index", DataType.STR, IRVariableInitializer.Str(text, Encoding.ISO), 3u, ZeropageWish.DONTCARE, 0u, false))
@@ -121,12 +155,12 @@ private fun stringsProgram(): LlvmModule {
     val third = LlvmValue.Local("third", LlvmType.Ptr)
     val first = LlvmValue.Local("first", LlvmType.Ptr)
     val code = buildList {
-        addAll(PointerArrayAccess.load(names, IRDataType.QUAD, direct("main.names", 8), null, second))
+        addAll(PointerArrayAccess.load(names, type, direct("main.names", size), null, second))
         add(puts(second))
-        addAll(PointerArrayAccess.load(names, IRDataType.QUAD, indexed("main.names", scale = 8), LlvmValue.IntConstant(2, LlvmType.I16), third))
+        addAll(PointerArrayAccess.load(names, type, indexed("main.names", scale = size), LlvmValue.IntConstant(2, LlvmType.I16), third))
         add(puts(third))
-        addAll(PointerArrayAccess.store(names, IRDataType.QUAD, direct("main.names", 0), null, symbols.addresses.getValue("prog8_interned_strings.string_3"), "assign"))
-        addAll(PointerArrayAccess.load(names, IRDataType.QUAD, direct("main.names", 0), null, first))
+        addAll(PointerArrayAccess.store(names, type, direct("main.names", 0), null, symbols.addresses.getValue("prog8_interned_strings.string_3"), "assign"))
+        addAll(PointerArrayAccess.load(names, type, direct("main.names", 0), null, first))
         add(puts(first))
         add(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I32)))
     }

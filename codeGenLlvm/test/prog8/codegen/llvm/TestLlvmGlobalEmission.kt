@@ -7,7 +7,9 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import prog8.code.core.*
+import prog8.code.target.C64Target
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmTripleProfile
 import prog8.code.target.VMTarget
 import prog8.codegen.llvm.lower.LlvmDataSymbols
 import prog8.codegen.llvm.lower.LlvmGlobalEmitter
@@ -299,9 +301,10 @@ class TestLlvmGlobalEmission: FunSpec({
             listOf("main.counter", "prog8_struct_instances.node", "prog8_slabs.memory_buf", ".memmapped.d020", "main.LIMIT")
     }
 
-    test("the emitter only accepts the llvm64 data layout") {
+    test("the emitter only accepts targets with 4- or 8-byte pointers") {
         val st = IRSymbolTable().apply { add(variable("main.counter", DataType.UWORD)) }
-        shouldThrow<IllegalArgumentException> { emit(st, VMTarget()) }.message shouldContain "8-byte pointers"
+        shouldThrow<IllegalArgumentException> { emit(st, C64Target()) }.message shouldContain "unsupported pointer size: 2"
+        emit(st, VMTarget()).first.globals.map { it.name } shouldBe listOf("main.counter")
     }
 
     test("a module with every kind of global is accepted by llvm-as").config(enabledOrReasonIf = requiresLlvmAs) {
@@ -313,6 +316,52 @@ class TestLlvmGlobalEmission: FunSpec({
         val (exitCode, output) = compileAndRun(LlvmPrinter.print(everyKindOfGlobal(target)))
         withClue(output) { exitCode shouldBe 0 }
         output shouldBe "hi\n"
+    }
+
+    val target32 = LlvmTarget(4)
+
+    test("the pointer-sized integer, size_t and C long types follow the target's pointer size and triple") {
+        fun types(target: LlvmTarget) = LlvmTypeMapper(IRSymbolTable(), target).let { listOf(it.intPtr, it.sizeT, it.cLong, it.byteSize(LlvmType.Ptr)) }
+        types(target) shouldBe listOf(LlvmType.I64, LlvmType.I64, LlvmType.I64, 8)
+        types(target32) shouldBe listOf(LlvmType.I32, LlvmType.I32, LlvmType.I32, 4)
+        types(LlvmTarget(4, LlvmTripleProfile.resolve("armv7-unknown-linux-gnueabihf"))) shouldBe listOf(LlvmType.I32, LlvmType.I32, LlvmType.I32, 4)
+        types(LlvmTarget(8, LlvmTripleProfile.resolve("x86_64-unknown-linux-gnu"))) shouldBe listOf(LlvmType.I64, LlvmType.I64, LlvmType.I64, 8)
+        shouldThrow<IllegalArgumentException> { LlvmTypeMapper(IRSymbolTable(), 2) }
+    }
+
+    test("on llvm32, a pointer field takes 4 bytes in a packed struct, and the addresses in it are stored at i32 offsets") {
+        val (module, _) = emit(pointerFields32(), target32)
+        LlvmTypeMapper(pointerFields32(), target32).let {
+            it.structType("main.Node32") shouldBe LlvmType.Struct(listOf(LlvmType.I8, LlvmType.Ptr, LlvmType.I16), packed = true)
+            it.byteSize(it.structType("main.Node32")) shouldBe 7
+        }
+        module.printed("prog8_struct_instances.node") shouldBe
+            "@prog8_struct_instances.node = internal global <{ i8, ptr, i16 }> <{ i8 1, ptr null, i16 42 }>"
+        module.printed("prog8_struct_instances.link") shouldBe
+            "@prog8_struct_instances.link = internal global <{ ptr, i16 }> <{ ptr @main.name, i16 0 }>, align 4"
+        module.startupStores() shouldBe listOf(
+            "store volatile ptr @main.name, ptr getelementptr inbounds (i8, ptr @prog8_struct_instances.node, i32 1), align 1",
+            "store volatile i16 ptrtoint (ptr @main.name to i16), ptr getelementptr inbounds (i8, ptr @prog8_struct_instances.link, i32 4), align 1",
+            "ret void")
+    }
+
+    test("on llvm32, memory-mapped variables are addressed with i32 offsets, and pointer arrays with i32 indices") {
+        val (_, symbols) = emit(memoryMappedSymbols(target32).apply {
+            add(variable("main.name", DataType.STR, IRVariableInitializer.Str("hi", Encoding.ISO), length = 3u))
+            add(variable("main.ptrs", DataType.arrayOfPointersTo(BaseDataType.UBYTE), refs(sym("main.name")), length = 1u))
+        }, target32)
+        LlvmPrinter.format(symbols.addresses.getValue("cx16.r1")) shouldBe "getelementptr inbounds (i8, ptr @.memmapped.ff0000, i32 2)"
+        symbols.pointerArrays["main.ptrs"] shouldBe PointerArray("main.ptrs", LlvmValue.Global("main.ptrs"), 1, 4, LlvmType.I32)
+    }
+
+    test("the llvm32 globals are accepted by llvm-as").config(enabledOrReasonIf = requiresLlvmAs) {
+        val (exitCode, output) = runLlvmAs(LlvmPrinter.print(globals32(target32)))
+        withClue(output) { exitCode shouldBe 0 }
+    }
+
+    test("the llvm32 globals compile into a wasm32 object").config(enabledOrReasonIf = requiresWasmClang) {
+        val (exitCode, output) = compileWasmObject(LlvmPrinter.print(globals32(target32)))
+        withClue(output) { exitCode shouldBe 0 }
     }
 })
 
@@ -356,6 +405,32 @@ private fun everyKindOfGlobal(target: LlvmTarget): LlvmModule {
     return module
 }
 
+
+/** For 4-byte pointers: main.Node32 has a pointer at the unaligned offset 1, main.Link32 one at offset 0 and a uword holding an address at offset 4. */
+private fun pointerFields32() = IRSymbolTable().apply {
+    add(variable("main.name", DataType.STR, IRVariableInitializer.Str("hi", Encoding.ISO), length = 3u))
+    add(IRStStructDef("main.Node32", listOf(IRStStructField(DataType.UBYTE, "id"), IRStStructField(DataType.pointer(BaseDataType.UBYTE), "next"),
+        IRStStructField(DataType.UWORD, "value")), 7u))
+    add(IRStStructInstance("prog8_struct_instances.node", "main.Node32", listOf(
+        IRStructInitValue(BaseDataType.UBYTE, num(1.0)),
+        IRStructInitValue(BaseDataType.POINTER, sym("main.name")),
+        IRStructInitValue(BaseDataType.UWORD, num(42.0))), 7u))
+    add(IRStStructDef("main.Link32", listOf(IRStStructField(DataType.pointer(BaseDataType.UBYTE), "next"), IRStStructField(DataType.UWORD, "addr")), 6u))
+    add(IRStStructInstance("prog8_struct_instances.link", "main.Link32", listOf(
+        IRStructInitValue(BaseDataType.POINTER, sym("main.name")),
+        IRStructInitValue(BaseDataType.UWORD, sym("main.name"))), 6u))
+}
+
+private fun globals32(target: LlvmTarget): LlvmModule {
+    val st = pointerFields32()
+    memoryMappedSymbols(target).allMemMappedVariables().forEach { st.add(it) }
+    st.add(variable("main.names", DataType.arrayFor(BaseDataType.STR, target), refs(sym("main.name"), sym("main.name")), length = 2u))
+    st.add(variable("main.screen", DataType.pointer(BaseDataType.UBYTE), numeric(1024.0)))
+    val module = LlvmModule("globals", target.targetTriple, target.dataLayout)
+    LlvmGlobalEmitter(program(st, target)).emit(module)
+    module.functions += LlvmFunction("main", LlvmType.I32, emptyList(), mutableListOf(LlvmBlock("entry", mutableListOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I32))))))
+    return module
+}
 
 private object NodeType : ISubType {
     override val scopedNameString = "main.Node"

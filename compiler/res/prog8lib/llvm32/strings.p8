@@ -1,6 +1,6 @@
-; 0-terminated string manipulation routines for the llvm64 target.
-; Self-contained, without the shared_string_functions module: on llvm64 an address doesn't fit in a uword, so split() takes a pointer[] array.
-; Status flags don't carry over from a subroutine to its caller on llvm64, so these routines never report results in the Carry flag.
+; 0-terminated string manipulation routines for the llvm32 target.
+; Self-contained, without the shared_string_functions module: on llvm32 an address doesn't fit in a uword, so split() takes a pointer[] array.
+; Status flags don't carry over from a subroutine to its caller on llvm32, so these routines never report results in the Carry flag.
 ; The C-style names are aliases that keep the Prog8 argument order, so strcpy(source, target) copies like copy().
 
 strings {
@@ -269,7 +269,7 @@ strings {
 
     sub split(str s, ^^pointer parts, ubyte maxparts) -> ubyte {
         ; -- split string into parts (splits on whitespace and other non-printable characters).
-        ;    The addresses of the parts are stored in the given pointer[] array, which is a uquad[] array on llvm64.
+        ;    The addresses of the parts are stored in the given pointer[] array, which is a long[] array on llvm32.
         ;    Returns number of parts found (up to the given maximum). Modifies the string in place!
         if s==0 or s[0]==0
             return 0

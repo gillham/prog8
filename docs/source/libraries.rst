@@ -2088,8 +2088,13 @@ miscellaneous
     - 16 = Commander X16
     - 25 = Foenix F256 family
     - 32 = Commodore PET
+    - 50 = Amiga 500
     - 64 = Commodore 64
+    - 68 = qemu68k
+    - 120 = Amiga 1200
     - 128 = Commodore 128
+    - 253 = llvm32
+    - 254 = llvm64
     - 255 = Virtual machine
 
 ``wait (uword jiffies)``

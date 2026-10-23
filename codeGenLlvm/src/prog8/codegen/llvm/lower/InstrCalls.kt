@@ -21,7 +21,7 @@ internal fun FunctionLowering.lowerCall(ins: IRInstruction) {
     when (ins.opcode) {
         Opcode.CALL -> directCall(ins)
         Opcode.CALLI -> indirectCall(ins)
-        Opcode.CALLFAR, Opcode.CALLFARVB -> throw IllegalArgumentException("${ins.opcode} in ${sub.label} calls into another memory bank, which the llvm64 target doesn't have")
+        Opcode.CALLFAR, Opcode.CALLFARVB -> throw IllegalArgumentException("${ins.opcode} in ${sub.label} calls into another memory bank, which the llvm targets don't have")
         else -> throw IllegalArgumentException("${ins.opcode} is no call instruction")
     }
 }

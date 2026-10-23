@@ -7,6 +7,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
+import prog8.code.target.LlvmTarget
 import prog8.intermediate.IMSyscall
 import prog8.intermediate.IRStSymbolicReference
 import prog8.intermediate.IRVariableInitializer
@@ -134,7 +135,7 @@ class TestLlvmInstructionLowering: FunSpec({
         lines shouldHave "  ret i8 %jumpi.1"
     }
 
-    test("IR without a translation for llvm64 is rejected with a clear message") {
+    test("IR without a translation for the llvm targets is rejected with a clear message") {
         fun failure(code: String) = shouldThrow<IllegalArgumentException> {
             TestProgram().apply {
                 variable("main.names", DataType.arrayFor(BaseDataType.STR, target), IRVariableInitializer.Array(listOf(IRStSymbolicReference.Symbol("main.s"))), 1u)
@@ -144,7 +145,7 @@ class TestLlvmInstructionLowering: FunSpec({
         }.message.orEmpty()
         failure("callfar #1,40960()") shouldContain "another memory bank"
         failure("syscall ${IMSyscall.CALLFAR.number}()") shouldContain "another memory bank"
-        failure("syscall 8()") shouldContain "has syscall 8, which the llvm64 target doesn't have"
+        failure("syscall 8()") shouldContain "has syscall 8, which the llvm targets don't have"
         failure("load.l r1.l,#5.l\nsyscall ${IMSyscall.COMPARE_STRINGS.number}(r1.l):r2.b") shouldContain "needs 2 arguments, not 1"
         failure("load.l r1.l,#5.l\next.l r2.l,r1.l") shouldContain "can only extend a byte or a word"
         failure("load.p r1.p,#main.s\nconcat.p r2.l,r1.p,r1.p") shouldContain "can only join bytes or words"
@@ -163,6 +164,46 @@ class TestLlvmInstructionLowering: FunSpec({
         val module = TestProgram().apply { checkProgram() }.module().withMainCalling("main.check")
         val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+    }
+
+    val focused32 = TestProgram(LlvmTarget(4)).apply { focusedSubs() }.module()
+
+    test("on llvm32, LONG registers hold whole 32-bit addresses, and address arithmetic uses i32") {
+        val lines = focused32.function("main.address").lines()
+        lines shouldHave "  %r1.slot = alloca i32"
+        lines shouldHave "  %r1.1 = ptrtoint ptr @main.buffer to i32"
+        lines shouldHave "  %r1.3 = add i32 %r1.2, 3"
+        lines shouldHave "  %r1.5 = inttoptr i32 %r1.4 to ptr"
+        lines shouldHave "  store i32 -5, ptr %r3.slot"
+        lines.none { "i64" in it } shouldBe true
+        val next = focused32.function("main.next").lines()
+        next shouldHave "  %ptr.2 = getelementptr i8, ptr %ptr.1, i32 1"
+        next shouldHave "  %ptr.4 = getelementptr i8, ptr %ptr.3, i32 2"
+    }
+
+    test("on llvm32, the memory intrinsics take an i32 size, and the value stack has an i32 top") {
+        val lines = focused32.function("main.sys").lines()
+        lines shouldHave "  call void @llvm.memmove.p0.p0.i32(ptr %r2.5, ptr %r1.5, i32 %cast.1, i1 false)"
+        lines shouldHave "  call void @llvm.memset.p0.i32(ptr %r2.7, i8 %r3.1, i32 %cast.2, i1 false)"
+        val stack = focused32.function("main.stack").lines()
+        stack shouldHave "  %sp.2 = getelementptr i8, ptr @.stack.data, i32 %sp.1"
+        stack shouldHave "  %sp.3 = add i32 %sp.1, 2"
+        val module = LlvmPrinter.print(focused32).lines()
+        module shouldHave "declare void @llvm.memmove.p0.p0.i32(ptr, ptr, i32, i1)"
+        module shouldHave "@.stack.top = internal global i32 0"
+        module shouldHave "target triple = \"wasm32-unknown-wasip1\""
+    }
+
+    test("llvm-as accepts the llvm32 lowering of every kind of instruction").config(enabledOrReasonIf = requiresLlvmAs) {
+        for (module in listOf(focused32, TestProgram(LlvmTarget(4)).apply { checkProgram() }.module())) {
+            val (exitCode, output) = runLlvmAs(LlvmPrinter.print(module))
+            withClue(output) { exitCode shouldBe 0 }
+        }
+    }
+
+    test("the llvm32 lowering of every kind of instruction compiles into a wasm32 object").config(enabledOrReasonIf = requiresWasmClang) {
+        val (exitCode, output) = compileWasmObject(LlvmPrinter.print(TestProgram(LlvmTarget(4)).apply { checkProgram() }.module().withMainCalling("main.check")))
+        withClue(output) { exitCode shouldBe 0 }
     }
 })
 
@@ -200,11 +241,15 @@ private fun TestProgram.checkProgram() {
     sub("main.jumper", returns = listOf(DataType.UBYTE), code = "_main.jumper:\nload.l r1.l,#main.seven\njumpi (r1.p)")
     sub("main.peek", listOf("p" to DataType.pointer(BaseDataType.UBYTE)), listOf(DataType.UBYTE),
         "_main.peek:\nloadm.p r1.p,[main.peek.p]\nloadi.b r2.b,[r1.p]\nreturnr.b r2.b")
-    sub("main.check", returns = listOf(DataType.UBYTE), code = vmChecks().subroutine())
+    sub("main.check", returns = listOf(DataType.UBYTE), code = vmChecks(target.pointerSize).subroutine())
 }
 
-/** The expected results are those of the virtual machine (VirtualMachine.kt, VmArithmetic.kt and SysCalls.kt). */
-private fun vmChecks() = Checks().apply {
+/**
+ * The expected results are those of the virtual machine (VirtualMachine.kt, VmArithmetic.kt and SysCalls.kt).
+ * [pointerSize] is that of the target, whose str[] arrays are uquad[] or long[] arrays in the IR.
+ */
+private fun vmChecks(pointerSize: Int) = Checks().apply {
+    val address = if (pointerSize == 8) "q" else "l"
     // integer arithmetic wraps around; LONG registers compute with 64 bits, but read back as 32-bit longs
     check("load.b ra.b,#200.b; add.b ra.b,#100.b", Is("ra.b", 44))
     check("load.w ra.w,#5.w; sub.w ra.w,#10.w", Is("ra.w", 65531))
@@ -330,8 +375,9 @@ private fun vmChecks() = Checks().apply {
         Is("rb.b", 1), Is("rc.b", 2), Is("re.b", 3))
     check("load.p ra.p,#main.words2; storem.p ra.p,[main.ptr]; load.w rb.w,#1111.w; storep_inc.w rb.w,[main.ptr]; load.w rc.w,#2222.w; storep_inc.w rc.w,[main.ptr]; " +
             "loadm.w rd.w,[main.words2+2]; loadm.w re.w,[main.words2]", Is("rd.w", 2222), Is("re.w", 1111))
-    check("load.w ra.w,#2.w; loadx.q rb.q,[main.names+ra.w*8]; loadi.b rc.b,[rb.p]", Is("rc.b", 'c'.code.toLong()))
-    check("load.p ra.p,#main.s3; load.w rb.w,#0.w; storex.q ra.q,[main.names+rb.w*8]; loadm.q rc.q,[main.names]; loadi.b rd.b,[rc.p+1]", Is("rd.b", 'z'.code.toLong()))
+    check("load.w ra.w,#2.w; loadx.$address rb.$address,[main.names+ra.w*$pointerSize]; loadi.b rc.b,[rb.p]", Is("rc.b", 'c'.code.toLong()))
+    check("load.p ra.p,#main.s3; load.w rb.w,#0.w; storex.$address ra.$address,[main.names+rb.w*$pointerSize]; loadm.$address rc.$address,[main.names]; loadi.b rd.b,[rc.p+1]",
+        Is("rd.b", 'z'.code.toLong()))
     check("load.l ra.l,#main.bytes; loadr.l rb.l,ra.l; storehr.l rb.l,s12.l; loadhr.l rc.l,s12.l; loadi.b rd.b,[rc.p+1]", Is("rd.b", 2))
     check("load.l ra.l,#main.bytes; add.l ra.l,#1.l; call main.peek(p=ra.l):rb.b", Is("rb.b", 2))
 
@@ -379,6 +425,7 @@ private fun vmChecks() = Checks().apply {
 
 /** Small subroutines for the tests that check the exact LLVM IR of a lowering. */
 private fun TestProgram.focusedSubs() {
+    val address = if (target.pointerSize == 8) "q" else "l"
     variable("main.buffer", DataType.arrayFor(BaseDataType.UBYTE, target), length = 8u)
     variable("main.long", DataType.LONG)
     variable("main.words", DataType.arrayFor(BaseDataType.UWORD, target), numbers(10, 20, 30, 40), 4u)
@@ -453,7 +500,7 @@ private fun TestProgram.focusedSubs() {
         _main.rename:
         load.p r1.p,#main.s3
         load.w r2.w,#1.w
-        storex.q r1.q,[main.names+r2.w*8]
+        storex.$address r1.$address,[main.names+r2.w*${target.pointerSize}]
         return
         """)
     sub("main.next", returns = listOf(DataType.UBYTE), code = """

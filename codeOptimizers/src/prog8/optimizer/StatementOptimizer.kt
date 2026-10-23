@@ -629,7 +629,7 @@ class StatementOptimizer(private val program: Program,
             // case bodies that all end in a return or goto never reach an end label, which would then be a dangling last statement
             val needsEndLabel = (choiceLabels.isNotEmpty() && (elseIsEmpty || choiceLabels.keys.any { !it.statements.endsWithReturnOrJump() })) ||
                     (span > jumps.size && elseIsEmpty && gapTarget==null)
-            // llvm64 can only dispatch to routines, so no jump table that needs labels inside this subroutine
+            // the llvm targets can only dispatch to routines, so no jump table that needs labels inside this subroutine
             if(options.compTarget.cpu.isLlvm) {
                 val needsGapLabel = span > jumps.size && gapTarget==null && !elseIsEmpty
                 val dispatchTargets = whenStmt.choices.mapNotNull { (it.statements.statements.singleOrNull() as? Jump)?.target as? IdentifierReference }

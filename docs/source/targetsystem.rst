@@ -187,7 +187,11 @@ Without it, ``llvm64`` uses ``arm64-apple-macosx`` and ``llvm32`` uses ``wasm32-
 .. note::
     Code generation for the ``llvm32`` target is not implemented yet: the compiler accepts the target and its
     triple profiles, but stops with an error when it gets to generating the LLVM IR.
-    Its library is still an unchanged copy of the llvm64 one.
+
+The operating system owns the memory of an LLVM program, so anything that places the program or its variables
+at a fixed address is an error on these targets: the ``%address``, ``%memtop`` and ``%varsaddress`` directives,
+``%option romable``, ``%jmptable``, a block with an address, ``extsub`` with an address, and the ``-varsaddress``,
+``-varsgolden`` and ``-varshigh`` options. Declare an external C routine as an ``extsub`` without an address instead.
 
 A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in this order:
 

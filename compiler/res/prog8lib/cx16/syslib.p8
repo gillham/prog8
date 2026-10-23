@@ -1664,7 +1664,7 @@ _continue   iny
 sys {
     ; ------- lowlevel system routines --------
 
-    const ubyte target = 16         ;  compilation target specifier.  255=virtual, 128=C128, 64=C64, 32=PET, 16=CommanderX16, 8=atari800XL, 7=Neo6502
+    const ubyte target = 16         ;  compilation target specifier.  255=virtual, 254=llvm64, 253=llvm32, 128=C128, 64=C64, 32=PET, 16=CommanderX16, 8=atari800XL, 7=Neo6502
 
     const ubyte SIZEOF_BOOL  = sizeof(bool)
     const ubyte SIZEOF_BYTE  = sizeof(byte)

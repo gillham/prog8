@@ -23,7 +23,7 @@ import prog8.intermediate.requireMemory
 import prog8.intermediate.requireSrcA
 import prog8.intermediate.symbolName
 
-// the value stack of PUSH and POP, where a LONG takes 8 bytes because it may hold an address
+// the value stack of PUSH and POP, where a LONG takes the size of its register slot because it may hold an address
 private const val VALUE_STACK_SIZE = 1024
 
 /**
@@ -70,7 +70,7 @@ internal fun FunctionLowering.lowerMemory(ins: IRInstruction) {
         Opcode.PUSH -> push(readWide(ins.requireSrcA()))
         Opcode.POP -> {
             val dest = ins.requireDest()
-            write(dest, pop(if (dest.type == IRDataType.LONG) LlvmType.I64 else typeOf(dest.type), dest.register.toString()))
+            write(dest, pop(if (dest.type == IRDataType.LONG) builder.mapper.intPtr else typeOf(dest.type), dest.register.toString()))
         }
         Opcode.PUSHST -> pushStatus()
         Opcode.POPST -> popStatus()
@@ -111,7 +111,7 @@ private fun FunctionLowering.indexValue(memory: MemoryReference): LlvmValue? = (
 private fun FunctionLowering.memoryAddress(memory: MemoryReference): LlvmValue = when (memory) {
     is MemoryReference.Direct -> baseAddress(memory.base, memory.displacement)
     is MemoryReference.Indexed -> offsetAddress(baseAddress(memory.base, memory.displacement), scaledIndex(memory))
-    is MemoryReference.Indirect -> offsetAddress(pointerValue(memory.pointer), LlvmValue.IntConstant(memory.displacement.toLong(), LlvmType.I64))
+    is MemoryReference.Indirect -> offsetAddress(pointerValue(memory.pointer), LlvmValue.IntConstant(memory.displacement.toLong(), builder.mapper.intPtr))
 }
 
 /** Fixed addresses inside memory-mapped variables use their backing storage, all other fixed addresses stay as they are. */
@@ -121,15 +121,16 @@ private fun FunctionLowering.baseAddress(base: AddressBase, displacement: Int): 
         val address = base.address.value.toLong() + displacement
         builder.symbols.memoryMappedAddress(address) ?: integerConstant(address, LlvmType.Ptr)
     }
-    is AddressBase.FrameSlot -> throw IllegalArgumentException("${sub.label} uses a stack frame slot, which the llvm64 target doesn't have")
+    is AddressBase.FrameSlot -> throw IllegalArgumentException("${sub.label} uses a stack frame slot, which the llvm targets don't have")
 }
 
 // like the VM, which reads an index register as unsigned
 private fun FunctionLowering.scaledIndex(memory: MemoryReference.Indexed): LlvmValue {
-    val index = convert(asInteger(read(memory.index)), LlvmType.I64, "index")
+    val intPtr = builder.mapper.intPtr
+    val index = convert(asInteger(read(memory.index)), intPtr, "index")
     if (memory.scale == 1)
         return index
-    return derive("offset", LlvmType.I64) { LlvmInstruction.BinaryOp(BinaryOperator.MUL, it, index, LlvmValue.IntConstant(memory.scale.toLong(), LlvmType.I64)) }
+    return derive("offset", intPtr) { LlvmInstruction.BinaryOp(BinaryOperator.MUL, it, index, LlvmValue.IntConstant(memory.scale.toLong(), intPtr)) }
 }
 
 private fun FunctionLowering.offsetAddress(address: LlvmValue, offset: LlvmValue): LlvmValue =
@@ -145,7 +146,7 @@ private fun FunctionLowering.postIncrement(ins: IRInstruction, access: (pointer:
     val pointer = convert(derive("ptr", storage) { LlvmInstruction.Load(it, variable, align = alignment(storage)) }, LlvmType.Ptr, "ptr")
     val type = typeOf(checkNotNull(ins.type))
     access(pointer, type)
-    val size = LlvmValue.IntConstant(builder.mapper.byteSize(type).toLong(), LlvmType.I64)
+    val size = LlvmValue.IntConstant(builder.mapper.byteSize(type).toLong(), builder.mapper.intPtr)
     val next = derive("ptr", LlvmType.Ptr) { LlvmInstruction.GetElementPtr(it, LlvmType.I8, pointer, listOf(size), inBounds = false) }
     emit(LlvmInstruction.Store(convert(next, storage, "ptr"), variable, align = alignment(storage)))
 }
@@ -168,18 +169,20 @@ private fun FunctionLowering.pointerVariableType(memory: MemoryReference): LlvmT
 private fun FunctionLowering.facSlot(one: Boolean): LlvmValue = builder.hardwareSlot(CallingConventionSlot(if (one) 7 else 6), float = true)
 
 private fun FunctionLowering.push(value: LlvmValue) {
-    val top = builder.runtimeGlobal(".stack.top", LlvmType.I64)
-    val offset = derive("sp", LlvmType.I64) { LlvmInstruction.Load(it, top) }
+    val intPtr = builder.mapper.intPtr
+    val top = builder.runtimeGlobal(".stack.top", intPtr)
+    val offset = derive("sp", intPtr) { LlvmInstruction.Load(it, top) }
     emit(LlvmInstruction.Store(value, valueStackEntry(offset), align = alignment(value.type)))
-    val size = LlvmValue.IntConstant(builder.mapper.byteSize(value.type).toLong(), LlvmType.I64)
-    emit(LlvmInstruction.Store(derive("sp", LlvmType.I64) { LlvmInstruction.BinaryOp(BinaryOperator.ADD, it, offset, size) }, top))
+    val size = LlvmValue.IntConstant(builder.mapper.byteSize(value.type).toLong(), intPtr)
+    emit(LlvmInstruction.Store(derive("sp", intPtr) { LlvmInstruction.BinaryOp(BinaryOperator.ADD, it, offset, size) }, top))
 }
 
 private fun FunctionLowering.pop(type: LlvmType, base: String): LlvmValue {
-    val top = builder.runtimeGlobal(".stack.top", LlvmType.I64)
-    val offset = derive("sp", LlvmType.I64) { LlvmInstruction.Load(it, top) }
-    val size = LlvmValue.IntConstant(builder.mapper.byteSize(type).toLong(), LlvmType.I64)
-    val newTop = derive("sp", LlvmType.I64) { LlvmInstruction.BinaryOp(BinaryOperator.SUB, it, offset, size) }
+    val intPtr = builder.mapper.intPtr
+    val top = builder.runtimeGlobal(".stack.top", intPtr)
+    val offset = derive("sp", intPtr) { LlvmInstruction.Load(it, top) }
+    val size = LlvmValue.IntConstant(builder.mapper.byteSize(type).toLong(), intPtr)
+    val newTop = derive("sp", intPtr) { LlvmInstruction.BinaryOp(BinaryOperator.SUB, it, offset, size) }
     emit(LlvmInstruction.Store(newTop, top))
     val entry = valueStackEntry(newTop)
     return derive(base, type) { LlvmInstruction.Load(it, entry, align = alignment(type)) }
@@ -239,14 +242,16 @@ internal object PointerArrayAccess {
     private fun elementAddress(array: PointerArray, type: IRDataType, memory: MemoryReference, index: LlvmValue?, temp: String,
                                code: MutableList<LlvmInstruction>): LlvmValue {
         require(memory.symbolName == array.name) { "pointer array ${array.name} must be accessed through its own symbol, not via $memory" }
-        require(irSize(type) == array.irElementSize) { "a $type access doesn't match the ${array.irElementSize}-byte elements of ${array.name}" }
+        require(irSize(type, array.indexType) == array.irElementSize) { "a $type access doesn't match the ${array.irElementSize}-byte elements of ${array.name}" }
         fun derived(suffix: String, type: LlvmType, instruction: (LlvmValue.Local) -> LlvmInstruction) =
             LlvmValue.Local("$temp.$suffix", type).also { code += instruction(it) }
 
+        val indexType = array.indexType
+        fun constant(value: Long) = LlvmValue.IntConstant(value, indexType)
         val element = when (memory) {
             is MemoryReference.Direct -> {
                 require(index == null) { "direct access into ${array.name} has no index register" }
-                i64(elementOffset(array, memory.displacement))
+                constant(elementOffset(array, memory.displacement))
             }
             is MemoryReference.Indexed -> {
                 val register = requireNotNull(index) { "indexed access into ${array.name} needs the index register's value" }
@@ -254,30 +259,32 @@ internal object PointerArrayAccess {
                 require(memory.scale % array.irElementSize == 0) { "index scale ${memory.scale} doesn't address whole elements of ${array.name}" }
                 val factor = (memory.scale / array.irElementSize).toLong()
                 val offset = elementOffset(array, memory.displacement)
-                val widened = if (register.type == LlvmType.I64) register
-                    else derived("index", LlvmType.I64) { LlvmInstruction.Cast(CastOperator.ZEXT, it, register, LlvmType.I64) }
+                val widened = when {
+                    register.type == indexType -> register
+                    checkNotNull(register.type.bitWidth) > checkNotNull(indexType.bitWidth) ->
+                        derived("index", indexType) { LlvmInstruction.Cast(CastOperator.TRUNC, it, register, indexType) }
+                    else -> derived("index", indexType) { LlvmInstruction.Cast(CastOperator.ZEXT, it, register, indexType) }
+                }
                 val scaled = if (factor == 1L) widened
-                    else derived("scaled", LlvmType.I64) { LlvmInstruction.BinaryOp(BinaryOperator.MUL, it, widened, i64(factor)) }
+                    else derived("scaled", indexType) { LlvmInstruction.BinaryOp(BinaryOperator.MUL, it, widened, constant(factor)) }
                 if (offset == 0L) scaled
-                else derived("slot", LlvmType.I64) { LlvmInstruction.BinaryOp(BinaryOperator.ADD, it, scaled, i64(offset)) }
+                else derived("slot", indexType) { LlvmInstruction.BinaryOp(BinaryOperator.ADD, it, scaled, constant(offset)) }
             }
             is MemoryReference.Indirect -> error("an indirect reference has no symbol")
         }
         return derived("elem", LlvmType.Ptr) { LlvmInstruction.GetElementPtr(it, LlvmType.Ptr, array.address, listOf(element)) }
     }
 
-    private fun i64(value: Long) = LlvmValue.IntConstant(value, LlvmType.I64)
-
     private fun elementOffset(array: PointerArray, displacement: Int): Long {
         require(displacement % array.irElementSize == 0) { "byte offset $displacement is not an element boundary of ${array.name}" }
         return (displacement / array.irElementSize).toLong()
     }
 
-    private fun irSize(type: IRDataType): Int? = when (type) {
+    private fun irSize(type: IRDataType, indexType: LlvmType): Int? = when (type) {
         IRDataType.BYTE -> 1
         IRDataType.WORD -> 2
         IRDataType.LONG -> 4
-        IRDataType.POINTER -> 8
+        IRDataType.POINTER -> checkNotNull(indexType.bitWidth) / 8
         IRDataType.QUAD -> 8
         IRDataType.FLOAT -> null
     }

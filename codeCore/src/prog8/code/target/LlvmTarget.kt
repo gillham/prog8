@@ -18,6 +18,7 @@ class LlvmTarget(
     override val name = if(pointerSize == 4) NAME32 else NAME64
     override val supportsBankedCalls = false
     override val supportsStackFrames = false
+    override val hasFixedMemoryAddresses = false
     override val defaultEncoding = Encoding.ISO
     override val libraryPath = null
     override val customLauncher = emptyList<String>()

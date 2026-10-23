@@ -1,6 +1,6 @@
-; Prog8 definitions for floating point handling on the llvm64 target, where a float is a 64-bit double.
+; Prog8 definitions for floating point handling on the llvm32 target, where a float is a 64-bit double.
 ; The square root of a float is the sqrt builtin function, as on the other targets.
-; Not available on llvm64 yet: printing, converting to and from strings (print, tostr, parse, txt.print_f), and rnd/rndseed.
+; Not available on llvm32 yet: printing, converting to and from strings (print, tostr, parse, txt.print_f), and rnd/rndseed.
 
 %option enable_floats, ignore_unused
 

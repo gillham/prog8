@@ -29,7 +29,7 @@ internal class AstChecker(private val program: Program,
     }
 
     private fun checkExternalSubroutine(subroutine: Subroutine) {
-        if(!options.compTarget.cpu.isLlvm) {
+        if(options.compTarget.hasFixedMemoryAddresses) {
             errors.err("address-free extsub (external C routine) is not supported on target ${options.compTarget.name}", subroutine.position)
             return
         }
@@ -493,7 +493,9 @@ internal class AstChecker(private val program: Program,
             errors.err("only enum members can be accessed with '::' syntax", block.position)
 
         val addr = block.address
-        if (addr!=null) {
+        if (addr!=null && !options.compTarget.hasFixedMemoryAddresses)
+            errors.err("specific block addresses are not available on the hosted ${options.compTarget.name} target", block.position)
+        else if (addr!=null) {
             val maxAddr = if(options.compTarget.POINTER_MEM_SIZE > 2u) 0xffffffffu else 65535u
             if (addr > maxAddr)
                 errors.err($$"block address must be valid integer 0..$ffff", block.position)
@@ -633,7 +635,7 @@ internal class AstChecker(private val program: Program,
 
         if(subroutine.isExternal)
             checkExternalSubroutine(subroutine)
-        else if(subroutine.asmAddress!=null && options.compTarget.cpu.isLlvm)
+        else if(subroutine.asmAddress!=null && !options.compTarget.hasFixedMemoryAddresses)
             err("extsub with an address is not supported on target ${options.compTarget.name}, declare the C routine without an address")
 
         super.visit(subroutine)
@@ -1463,6 +1465,8 @@ internal class AstChecker(private val program: Program,
         fun err(msg: String) {
             errors.err(msg, directive.position)
         }
+        if(!options.compTarget.hasFixedMemoryAddresses && directive.directive in setOf("%address", "%memtop", "%varsaddress"))
+            err("the ${directive.directive} directive is not available on the hosted ${options.compTarget.name} target")
         when(directive.directive) {
             "%align" -> {
                 if(directive.parent !is INameScope || directive.parent is Module)
@@ -1621,6 +1625,8 @@ internal class AstChecker(private val program: Program,
             "%jmptable" -> {
                 if(options.compTarget.cpu.is68k)
                     err("%jmptable is not supported on M68K targets (library loading is 6502-only)")
+                else if(!options.compTarget.hasFixedMemoryAddresses)
+                    err("%jmptable is not supported on the hosted ${options.compTarget.name} target (library loading is 6502-only)")
                 if(directive.parent !is Block)
                     err("this directive may only occur in a block")
                 for(arg in directive.args) {

@@ -54,8 +54,8 @@ class IRCodeGen(
 
     fun generate(): IRProgram {
         // The pure "virtual" (VM) target doesn't need symbol prefixing because the VM
-        // doesn't emit assembly and has no risk of symbol clashes.  Neither does the llvm64
-        // target: LLVM IR can quote any name.  Any other target
+        // doesn't emit assembly and has no risk of symbol clashes.  Neither do the llvm
+        // targets: LLVM IR can quote any name.  Any other target
         // (that goes through assembly code generation) MUST prefix symbols to avoid
         // clashes with 64tass reserved names, BASIC tokens, and other toolchain symbols.
         if(options.compTarget.name!=VMTarget.NAME && !options.compTarget.cpu.isLlvm)

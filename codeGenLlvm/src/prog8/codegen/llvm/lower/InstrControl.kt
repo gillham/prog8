@@ -67,7 +67,7 @@ private fun FunctionLowering.compareAndBranch(ins: IRInstruction, condition: Icm
 
 /**
  * LLVM IR can't jump to an address, so JUMPI calls the routine there and returns what that returns.
- * This matches a jump to a subroutine without parameters; llvm64 can't take the address of a label.
+ * This matches a jump to a subroutine without parameters; the llvm targets can't take the address of a label.
  */
 private fun FunctionLowering.jumpIndirect(ins: IRInstruction) {
     val reference = requireNotNull(ins.requireTarget() as? CodeReference.Indirect) { "JUMPI in ${sub.label} needs an indirect target" }

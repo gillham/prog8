@@ -5,6 +5,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
+import prog8.code.target.LlvmTarget
 import prog8.intermediate.IMSyscall
 import prog8.intermediate.IRStSymbolicReference
 import prog8.intermediate.IRVariableInitializer
@@ -344,6 +345,71 @@ class TestLlvmSyscallLowering: FunSpec({
         } finally {
             directory.toFile().deleteRecursively()
         }
+    }
+
+    fun llvm32() = TestProgram(LlvmTarget(4))
+
+    test("on llvm32, the C library routines are declared with the 32-bit size_t and long of wasm32") {
+        val text = LlvmPrinter.print(llvm32().apply { allFileSyscallsSub(); allHandleSyscallsSub() }.module()).lines()
+        for (declaration in listOf("ptr @fopen(ptr, ptr)", "i32 @fread(ptr, i32, i32, ptr)", "i32 @fwrite(ptr, i32, i32, ptr)",
+                "i32 @fseek(ptr, i32, i32)", "i32 @ftell(ptr)", "ptr @getcwd(ptr, i32)", "i32 @mkdir(ptr, i32)"))
+            withClue(declaration) { text.count { it == "declare $declaration" } shouldBe 1 }
+    }
+
+    test("on llvm32, fseek gets the low 32 bits of a quad offset, and the position from ftell is sign extended into the quad") {
+        val lines = llvm32().apply { allHandleSyscallsSub() }.module().function("main.handles").lines()
+        lines shouldHave "  %count.1 = zext i16 %r4.1 to i32"
+        lines shouldHave "  %transferred.1 = call i32 @fread(ptr %r1.2, i32 1, i32 %count.1, ptr %r3.1)"
+        lines shouldHave "  %transferred.2 = trunc i32 %transferred.1 to i16"
+        lines shouldHave "  %offset.1 = trunc i64 %r7.1 to i32"
+        lines shouldHave "  %status.1 = call i32 @fseek(ptr %r3.3, i32 %offset.1, i32 %origin.1)"
+        lines shouldHave "  %position.1 = call i32 @ftell(ptr %r3.4)"
+        lines shouldHave "  %position.2 = sext i32 %position.1 to i64"
+        lines shouldHave "  store i64 %position.2, ptr %r10.slot"
+        val seek = llvm32().apply { longSeekSub() }.module().function("main.seek").lines()
+        seek shouldHave "  %status.1 = call i32 @fseek(ptr %r1.1, i32 %r2.1, i32 %origin.1)"
+    }
+
+    test("on llvm32, the file helpers work with 32-bit positions, sizes and addresses, without truncating them") {
+        val module = llvm32().apply { allFileSyscallsSub() }.module()
+        module.function("main.files").lines() shouldHave "  %cwd.1 = call ptr @getcwd(ptr @.sys.curdir.buf, i32 4096)"
+        val tell = module.function(".file.tell").lines()
+        tell shouldHave "  %position = call i32 @ftell(ptr %file)"
+        tell shouldHave "  %known = select i1 %valid, i32 %position, i32 0"
+        tell shouldHave "  ret i32 %known"
+        val size = module.function(".file.size").lines()
+        size shouldHave "  call i32 @fseek(ptr %file, i32 0, i32 2)"
+        size shouldHave "  ret i32 %known"
+        module.function(".file.seek").lines() shouldHave "  %status = call i32 @fseek(ptr %file, i32 %position, i32 0)"
+        module.function(".file.load").lines() shouldHave "  %count = call i32 @fread(ptr %at, i32 1, i32 4096, ptr %file)"
+        val save = module.function(".file.save").lines()
+        save shouldHave "  %address = ptrtoint ptr %start to i32"
+        save shouldHave "  %lsb = and i32 %address, 255"
+        save shouldHave "  %written = call i32 @fwrite(ptr %start, i32 1, i32 %count, ptr %file)"
+        for (helper in listOf(".file.tell", ".file.size", ".file.seek", ".file.load", ".file.save"))
+            withClue(helper) { module.function(helper).lines().none { "i64" in it } shouldBe true }
+    }
+
+    test("on llvm32, the .sys.argv.at helper indexes argv with i32") {
+        val lines = llvm32().apply { argumentLookupSub() }.programModule().function(".sys.argv.at").lines()
+        lines shouldHave "  %i = zext i16 %index to i32"
+        lines shouldHave "  %inrange = icmp ult i32 %i, %argc"
+        lines shouldHave "  %slot = getelementptr ptr, ptr %argv, i32 %i"
+        lines.none { "zext i32" in it } shouldBe true
+    }
+
+    fun llvm32Syscalls() = listOf(
+        LlvmPrinter.print(llvm32().apply { allFileSyscallsSub(); statusSub(); allHandleSyscallsSub(); allOutputSubs() }.module()),
+        LlvmPrinter.print(llvm32().apply { argumentsOutputSub() }.programModule()))
+
+    test("llvm-as accepts the llvm32 syscalls").config(enabledOrReasonIf = requiresLlvmAs) {
+        for (ir in llvm32Syscalls())
+            runLlvmAs(ir).let { (exitCode, output) -> withClue(output) { exitCode shouldBe 0 } }
+    }
+
+    test("the llvm32 syscalls compile into wasm32 objects").config(enabledOrReasonIf = requiresWasmClang) {
+        for (ir in llvm32Syscalls())
+            compileWasmObject(ir).let { (exitCode, output) -> withClue(output) { exitCode shouldBe 0 } }
     }
 })
 

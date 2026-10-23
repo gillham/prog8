@@ -1,4 +1,4 @@
-; Handle-based file I/O for the llvm64 target, with the C library of the host: any number of files can be open at the same time.
+; Handle-based file I/O for the llvm32 target, with the C library of the host: any number of files can be open at the same time.
 ; A handle is the C library's FILE pointer, and 0 means no file; the routines accept a 0 handle, as described with each of them.
 ; Note: quads are in r99300, as the registers that the IR reserves for syscalls (r99000-r99299) have no quad range.
 

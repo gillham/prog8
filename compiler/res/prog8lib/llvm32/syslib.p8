@@ -1,13 +1,12 @@
 ; Prog8 definitions for the llvm32 target: a hosted 32-bit program, compiled to LLVM IR and linked with the C runtime.
-; This library is still an unchanged copy of the llvm64 one, which assumes 8-byte (uquad) addresses; it has yet to be adapted to 4-byte pointers.
-; Note: pointer (a uquad here) and str variables hold 8-byte addresses, so %ir code loads them as .p and never as .l
+; Note: pointer (a long here) and str variables hold 4-byte addresses; %ir code loads them as .p
 
 %option ignore_unused
 
 sys {
     ; ------- lowlevel system routines --------
 
-    const ubyte target = 254         ;  compilation target specifier.  255=virtual, 254=llvm64, 128=C128, 64=C64, 32=PET, 16=CommanderX16, 8=atari800XL, 7=Neo6502
+    const ubyte target = 253         ;  compilation target specifier.  255=virtual, 254=llvm64, 253=llvm32, 128=C128, 64=C64, 32=PET, 16=CommanderX16, 8=atari800XL, 7=Neo6502
 
     const ubyte SIZEOF_BOOL  = sizeof(bool)
     const ubyte SIZEOF_BYTE  = sizeof(byte)
@@ -157,7 +156,7 @@ sys {
 cx16 {
 
     ; the sixteen virtual 16-bit registers that the Commander X16 has defined in the zeropage
-    ; on llvm64 they are memory-mapped variables at the same addresses as on the VirtualMachine
+    ; on llvm32 they are memory-mapped variables at the same addresses as on the VirtualMachine
     &uword r0  = $ff0000
     &uword r1  = $ff0002
     &uword r2  = $ff0004

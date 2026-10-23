@@ -95,7 +95,7 @@ class IRUnusedCodeRemover(
 
     /**
      * The memory-mapped variables with the prefix that instructions still access: by name, or by an address inside them,
-     * which is how the code accesses them. Targets without memory at fixed addresses, like llvm64, give them storage.
+     * which is how the code accesses them. Targets without memory at fixed addresses, like llvm32 and llvm64, give them storage.
      */
     private fun accessedMemoryMappedVariables(prefix: String): List<IRStMemVar> {
         val memvars = irprog.st.allMemMappedVariables().filter { it.name.startsWith(prefix) }.toList()
