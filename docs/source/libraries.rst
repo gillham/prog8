@@ -492,9 +492,9 @@ modules. Import them the same way as any other library::
     base for everything else: ``exec.OpenLibrary()`` is what opens the optional libraries.
     The ``exec`` module is always available, ``sys.SysBase`` is the ExecBase at 4.w.
     In addition to the library bindings it provides ``exec.NewList(list)`` to initialize
-    a new Exec list header in place: it sets ``Head = &Tail``, ``Tail = 0`` and
-    ``TailPred = &Head``. The portable ``lists`` module's ``init()`` calls this on the
-    Amiga targets.
+    an Exec list header in place. The portable ``lists`` module's ``init()`` calls this
+    on the Amiga targets; see the :ref:`linked-list-iteration` section for the header
+    layout and iteration rules.
 
 ``dos`` (``dos.library``)
     File and directory handling, locking, IOStreams, requesters and the DOS error codes.
@@ -1147,8 +1147,12 @@ lists
 ^^^^^
 .. index:: pair: Libraries; lists
 
-Portable doubly linked lists modeled after Amiga Exec lists (``MinList``/``MinNode``).
-Available on all targets; on ``amiga500`` and ``amiga1200`` the types and routines simply forward to ``exec.library``.
+The ``lists`` module provides doubly linked lists on all targets. On ``amiga500`` and
+``amiga1200`` it is a thin wrapper around ``exec.library`` and uses the actual Exec
+``MinList``/``MinNode`` structures. Other targets use a portable implementation with
+the same field names and sentinel convention for source compatibility; no AmigaOS
+library is involved there. That portable layout is an implementation detail, not an
+Amiga ABI guarantee for other targets.
 
 Three struct types are provided:
 
@@ -1157,6 +1161,11 @@ Three struct types are provided:
 - ``lists.FullNode`` - extended node with ``Type``, ``Pri`` and ``Name`` fields for priority/name operations
 
 On ``amiga500`` and ``amiga1200`` these are aliases: ``Node = exec.MinNode``, ``List = exec.MinList``, ``FullNode = exec.Node``.
+
+At the Exec ABI level, ``List`` and ``MinList`` have the same first three pointer
+fields. ``List`` then adds its type and padding bytes, while ``Node`` adds type,
+priority and name fields after the two link pointers. The minimal variants omit
+those extra fields and are intended for operations that do not need type checking.
 
 A list header must be initialized once with ``init(listptr)`` (sets ``Head = &Tail``, ``Tail = 0``, ``TailPred = &Head``).
 The list can then be manipulated with:
@@ -1167,9 +1176,18 @@ The list can then be manipulated with:
 - ``enqueue(listptr, node)`` - priority-sorted insertion by ``Pri`` (requires ``FullNode`` layout, FIFO for equal priorities)
 - ``find_name(listptr, name) -> pointer`` - linear search by ``Name`` (requires ``FullNode`` layout)
 
+The Amiga Exec layout is sentinel-linked rather than null-terminated. The current
+portable implementation mirrors this behavior for source compatibility. ``Tail`` remains zero,
+but the last node's ``Succ`` points to the address of the ``Tail`` field (``&Tail``)
+rather than to ``0``. ``&Tail`` is not a real node; when treated as one, its apparent
+``Pred`` field overlays the header's ``TailPred`` field. Likewise, the first node's
+``Pred`` points to ``&Head``. An empty list has ``Head == &Tail`` and ``TailPred == &Head``.
+Therefore forward iteration must stop at ``&Tail`` and backward iteration at ``&Head``;
+neither direction should use ``0`` as its loop terminator.
+
 To visit every node, walk the links with a ``while`` loop. Start at ``Head`` and follow
 ``Succ`` until you reach ``&Tail``; or start at ``TailPred`` and follow ``Pred`` back
-to the header:
+to the header::
 
     main {
         struct MyNode {
@@ -1179,7 +1197,7 @@ to the header:
         }
         struct MyList {
             ^^MyNode Head
-            pointer  Tail
+            ^^MyNode Tail
             ^^MyNode TailPred
         }
 
@@ -1201,7 +1219,7 @@ to the header:
         }
     }
 
-Custom nodes work the same way as long as the link pointers are the first fields at
+User-defined node structs work the same way as long as the link pointers are the first fields at
 offset 0; add ``Type``/``Pri``/``Name`` after them if you need ``enqueue`` or
 ``find_name`` (the ``exec.Node``/``FullNode`` layout).
 
@@ -1212,7 +1230,48 @@ from any arena/bump allocator. Just ensure the allocation is
 suitably aligned (even address on 6502, long-aligned on m68k).
 
 Read the :source:`lists source code <compiler/res/prog8lib/lists.p8>` and
-:source:`amiga lists source code <compiler/res/prog8lib/amiga500/lists.p8>` for details.
+:source:`amiga lists source code <compiler/res/prog8lib/shared_amiga_lists.p8>` for details.
+
+
+.. _linked-list-iteration:
+
+Linked-list iteration
+~~~~~~~~~~~~~~~~~~~~~
+
+Prog8 has some convenience syntax to iterate through a linked-list via a ``for`` loop.
+The for loop's ``via .field`` clause selects which pointer field in the node struct to follow
+from one node to the next (usually called 'next' or 'succ'). The ``until`` clause
+gives the sentinel value where iteration stops (when 0, it can be omitted):: 
+
+    ; iteration over an Amiga Exec list.
+    
+    main {
+        ^^MyList mylist = []
+        ^^MyNode n1 = [0, 0, 42]
+        ^^MyNode n2 = [0, 0, 99]
+        lists.init(mylist)
+        lists.add_tail(mylist, n1)
+        lists.add_tail(mylist, n2)
+
+        ; forward iteration
+        for node in mylist.Head via .Succ until &mylist.Tail {
+            txt.print_ub(node.value)
+            txt.nl()
+        }
+
+        ; backward iteration
+        for node in mylist.TailPred via .Pred until &mylist.Head {
+            txt.print_ub(node.value)
+            txt.nl()
+        }
+    }
+
+For simple null-terminated lists, ``until`` may be omitted and then the stop value defaults to ``0``::
+
+    for node in head via .next {
+        ; use node
+    }
+
 
 math
 ^^^^
@@ -1225,7 +1284,7 @@ Not all routines are available on all targets.
 
 
 checksumming
-''''''''''''
+~~~~~~~~~~~~
 .. index:: pair: Libraries; checksumming
 
 ``crc16 (uword data, uword length, uword initvalue, uword xorout) -> uword``
@@ -1249,7 +1308,7 @@ checksumming
     Call the start() routine first, feed it bytes with the update() routine, finalize with calling the end() routine that returns the result value as a long.
 
 interpolation
-'''''''''''''
+~~~~~~~~~~~~~
 .. index:: pair: Libraries; interpolation
 
 ``lerp(v0, v1, t)``
@@ -1279,7 +1338,7 @@ interpolation
     Also destroys cx16.r12 through cx16.r15 (used as multiply/division working registers), and cx16.r1, cx16.r2.
 
 large multiplications
-'''''''''''''''''''''
+~~~~~~~~~~~~~~~~~~~~~
 .. index:: pair: Libraries; large multiplications
 
 ``mul32 (word w1, word w2) -> long``
@@ -1297,7 +1356,7 @@ large multiplications
     Suggestion (if you are on the Commander X16): use ``verafx.muls()`` to get a hardware accelerated 32 bit signed multiplication.
 
 miscellaneous
-'''''''''''''
+~~~~~~~~~~~~~
 .. index:: pair: Libraries; miscellaneous
 
 ``direction (ubyte x1, ubyte y1, ubyte x2, ubyte y2)``
@@ -1327,7 +1386,7 @@ miscellaneous
 
 
 random numbers
-''''''''''''''
+~~~~~~~~~~~~~~
 .. index:: pair: Libraries; random numbers
 
 ``rnd ()``
@@ -1382,7 +1441,7 @@ random numbers
     Returns the 2-Log of the long value v.
 
 trigonometry
-''''''''''''
+~~~~~~~~~~~~
 .. index:: pair: Libraries; trigonometry
 
 .. hint::
@@ -1728,7 +1787,7 @@ strings
 Provides string manipulation routines.
 
 conversion and classification
-'''''''''''''''''''''''''''''
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. index:: pair: Libraries; conversion and classification
 
 ``isdigit (char)``
@@ -1772,7 +1831,7 @@ conversion and classification
 
 
 miscellaneous
-'''''''''''''
+~~~~~~~~~~~~~
 .. index:: pair: Libraries; miscellaneous
 
 ``compare (string1, string2) -> ubyte result``
@@ -1800,7 +1859,7 @@ miscellaneous
 
 
 manipulation
-''''''''''''
+~~~~~~~~~~~~
 .. index:: pair: Libraries; manipulation
 
 ``append (string, suffix) -> ubyte length``
@@ -1876,7 +1935,7 @@ manipulation
 
 
 searching
-'''''''''
+~~~~~~~~~
 .. index:: pair: Libraries; searching
 
 ``contains (string, char) -> bool``
@@ -1935,7 +1994,7 @@ sys (part of syslib)
 .. index:: pair: Libraries; sys
 
 miscellaneous
-'''''''''''''
+~~~~~~~~~~~~~
 .. index:: pair: Libraries; miscellaneous
 
 ``cpu_is_65816()``
@@ -2055,7 +2114,7 @@ miscellaneous
 
 
 processor status flags
-''''''''''''''''''''''
+~~~~~~~~~~~~~~~~~~~~~~
 .. index:: pair: Libraries; processor status flags
 
 ``clear_carry ()``
@@ -2092,7 +2151,7 @@ processor status flags
     Sets the CPU status register Interrupt Disable flag.
 
 processor stack
-'''''''''''''''
+~~~~~~~~~~~~~~~
 .. index:: pair: Libraries; processor stack
 
 Pushing and popping values on the CPU hardware stack can be done via the stack related :ref:`builtinfunctions` (pop, push etc).

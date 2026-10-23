@@ -1034,6 +1034,12 @@ _after:
     }
 
     override fun after(forLoop: ForLoop, parent: Node): Iterable<AstModification> {
+        if (forLoop.linkedVia != null) {
+            // leave the invalid step combination for AstChecker, desugaring would hide it
+            if (forLoop.step != null) return noModifications
+            return desugarLinkedForLoop(forLoop, parent)
+        }
+
         // Desugar reverse array/string iteration
         // - for x in array step -1  -> index loop len-1 downto 0
         // - for c in string step -1 -> similar via index
@@ -1051,6 +1057,60 @@ _after:
         }
         // forward array/string with step 1 is handled by normal codegen, no desugaring
         return noModifications
+    }
+
+    private fun desugarLinkedForLoop(forLoop: ForLoop, parent: Node): Iterable<AstModification> {
+        val pos = forLoop.position
+        val nodeRef = forLoop.loopVar.copy()
+
+        val startExpr = forLoop.iterable
+        val linkField = forLoop.linkedVia ?: error("linked loop desugared without a via field")
+        val sentinelExpr = forLoop.linkedUntil ?: NumericLiteral.optimalInteger(0, pos)
+
+        // Declare the loop variable if it is not already declared.
+        val statements = mutableListOf<Statement>()
+        val names = forLoop.loopVar.nameInSource
+        val scope = forLoop.definingScope
+        val existing = if (names.size == 1) scope.lookup(names.single()) else null
+        if (existing !is VarDecl) {
+            val iterableType = forLoop.iterable.inferType(program).getOrUndef()
+            val effectiveType = forLoop.loopVarType ?: iterableType
+            val decl = VarDecl.builder(effectiveType, pos)
+                .names(names.single())
+                .type(VarDeclType.VAR)
+                .build()
+            statements.add(decl)
+        }
+
+        val initAssign = Assignment(
+            AssignTarget(nodeRef.copy(), null, null, null, false, position = pos),
+            startExpr,
+            AssignmentOrigin.OPTIMIZER,
+            pos
+        )
+        statements.add(initAssign)
+
+        val condition = BinaryExpression(nodeRef.copy(), "!=", sentinelExpr, pos)
+        val fieldAccess = BinaryExpression(nodeRef.copy(), ".", IdentifierReference(listOf(linkField), pos), pos)
+        val tailAssign = Assignment(
+            AssignTarget(nodeRef.copy(), null, null, null, false, position = pos),
+            fieldAccess,
+            AssignmentOrigin.OPTIMIZER,
+            pos
+        )
+        val whileBody = AnonymousScope(
+            mutableListOf<Statement>().apply {
+                addAll(forLoop.body.statements)
+                add(tailAssign)
+            },
+            pos
+        )
+        val whileLoop = WhileLoop(condition, whileBody, pos)
+        statements.add(whileLoop)
+
+        val replacement = AnonymousScope(statements, pos)
+        replacement.linkParents(parent)
+        return listOf(AstReplaceNode(forLoop, replacement, parent))
     }
 
     private fun desugarReverseArrayStringForLoop(forLoop: ForLoop, parent: Node, iterableDt: DataType): Iterable<AstModification> {

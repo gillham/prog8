@@ -34,10 +34,23 @@ class ImplicitForIteratorDecls(
         if (!inferredIterableType.isKnown)
             return emptyList()
         val iterableType = inferredIterableType.getOrUndef()
-        if (!iterableType.isIterable && forLoop.iterable !is RangeExpression)
+
+        val isLinked = forLoop.linkedVia != null
+        if (!iterableType.isIterable && forLoop.iterable !is RangeExpression && !isLinked)
             return emptyList()
 
-        val elementType = iterableType.elementType()
+        val elementType = if (isLinked) {
+            iterableType.takeIf { it.isPointer } ?: return emptyList()
+        } else {
+            iterableType.elementType()
+        }
+
+        if (isLinked) {
+            checkLinkedForLoop(forLoop, elementType, program, errors)
+            if (!errors.noErrors())
+                return emptyList()
+        }
+
         val scope = forLoop.definingScope
         val existing = scope.lookup(names)
 
@@ -111,6 +124,7 @@ class ImplicitForIteratorDecls(
         return listOf(AstInsert.before(forLoop, declaration, container))
     }
 
+
     private fun resolveDt(dt: DataType, scope: INameScope, position: Position): DataType {
         val antlrName = dt.subTypeFromAntlr ?: return dt
         val resolved = StructTypeResolver.resolve(scope, program, antlrName, position, errors) ?: return dt
@@ -120,4 +134,5 @@ class ImplicitForIteratorDecls(
             else -> dt
         }
     }
+
 }

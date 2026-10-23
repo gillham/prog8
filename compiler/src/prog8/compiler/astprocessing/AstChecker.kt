@@ -301,6 +301,21 @@ internal class AstChecker(private val program: Program,
 
     override fun visit(forLoop: ForLoop) {
 
+        if (forLoop.linkedVia != null) {
+            val loopVarDecl = forLoop.loopVar.targetVarDecl()
+            if (loopVarDecl == null || !loopVarDecl.datatype.isPointer) {
+                errors.err("linked-list for loop requires a pointer loop variable", forLoop.position)
+            } else {
+                checkLinkedForLoop(forLoop, loopVarDecl.datatype, program, errors)
+            }
+            super.visit(forLoop)
+            return
+        }
+
+        if (forLoop.linkedUntil != null) {
+            errors.err("'until' can only be used in linked-list for loops", forLoop.position)
+        }
+
         fun checkUnsignedLoopDownto0(range: RangeExpression?) {
             if(range==null)
                 return
@@ -332,7 +347,10 @@ internal class AstChecker(private val program: Program,
         if(forLoop.iterable is IFunctionCall) {
             errors.err("can not loop over function call return value", forLoop.position)
         } else if(!(iterableDt.isIterable) && forLoop.iterable !is RangeExpression) {
-            errors.err("can only loop over an iterable type", forLoop.position)
+            if (iterableDt.isPointer)
+                errors.err("pointer-linked for loop requires an explicit 'via .field'", forLoop.position)
+            else
+                errors.err("can only loop over an iterable type", forLoop.position)
         } else {
             val loopvar = forLoop.loopVar.targetVarDecl()
             if(loopvar==null || loopvar.type== VarDeclType.CONST) {
@@ -436,6 +454,7 @@ internal class AstChecker(private val program: Program,
 
         super.visit(forLoop)
     }
+
 
     override fun visit(jump: Jump) {
         val ident = jump.target as? IdentifierReference

@@ -128,8 +128,9 @@ The ``alias`` statement makes it easier to refer to symbols from other places, a
 you from having to type the fully scoped name every time you need to access that symbol.
 Aliases can be created in any scope except at the module level.
 An alias is created with ``alias <name> = <target>`` and then you can use ``<name>`` as if it were ``<target>``.
-It is possible to alias variables, labels and subroutines, and even whole blocks and words
-The name has to be an unscoped identifier name, the target can be any scoped or unscoped symbol.
+It is possible to alias variables, labels and subroutines, and even whole blocks.
+The name has to be an unscoped identifier name; the target can be any scoped or unscoped symbol,
+except a whole enum (alias its members individually).
 Please consider using aliases sparingly because it may lead to confusing code if you alias
 well-known block names for example.
 
@@ -663,6 +664,8 @@ be able to accept values of the iterable's element type.
 You can also specify a type for the implicitly declared loop variable by writing the type name before the variable name.
 The expression that you loop over can be anything that supports iteration (such as ranges like ``0 to 100``,
 array variables and strings) *except* floating-point arrays (because a floating-point loop variable is not supported).
+Pointer variables to structs with a link field can also be iterated over to walk linked lists; see
+:ref:`linked-list-iteration`.
 For a range used directly by a ``for`` loop, the step may be an integer expression.  It is evaluated once
 at the start of the loop, so changing a variable used by the expression inside the loop does not change the
 step.  The signedness of the step determines how its runtime value is interpreted: an unsigned step is

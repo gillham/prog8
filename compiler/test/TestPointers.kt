@@ -4102,4 +4102,91 @@ main {
             }
         }
     }
+    test("double pointer dereference in while loop (code gen fix)") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+            %zeropage basicsafe
+            main {
+                uword[4] @shared @nosplit table
+
+                sub count() -> ubyte {
+                    ubyte num
+                    ^^pointer temp = &table
+                    while temp^^ != $0000 {
+                        temp++
+                        num++
+                    }
+                    return num
+                }
+
+                &ubyte probe = $02
+                &ubyte poweroff = $f203
+
+                sub start() {
+                    table[0] = &probe
+                    table[1] = &probe
+                    table[2] = $0000
+                    probe = count()
+                    poweroff = 1
+                }
+            }""".trimIndent()
+        val result = compileText(C64Target(), false, src, outputDir)!!
+        val machine = result.simulate()
+        machine.assertMemory(0x02, 0x02)
+    }
+    test("pointer-to-pointer struct field deref still double-derefs on 6502") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+            %zeropage basicsafe
+            main {
+                struct S {
+                    ^^pointer bar
+                }
+
+                &ubyte probe = $02
+                &ubyte poweroff = $f203
+
+                sub start() {
+                    ^^S foo = memory("foo", 4, 0)
+                    foo.bar = $2000
+                    pokew($2000, $3000)
+                    pointer result = foo.bar^^
+                    probe = result as ubyte
+                    poweroff = 1
+                }
+            }""".trimIndent()
+        val result = compileText(C64Target(), false, src, outputDir)!!
+        val machine = result.simulate()
+        machine.assertMemory(0x02, 0x00)  // low byte of $3000
+    }
+    test("chain-1 derefLast write stores through followed pointer on 6502") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+            %zeropage basicsafe
+            main {
+                struct S {
+                    ^^pointer bar
+                }
+
+                &ubyte probe = $02
+                &ubyte poweroff = $f203
+
+                sub start() {
+                    ^^S foo = memory("foo", 4, 0)
+                    foo.bar = $2000
+                    foo.bar^^ = $5678
+                    probe = peekw($2000) as ubyte
+                    poweroff = 1
+                }
+            }""".trimIndent()
+        val result = compileText(C64Target(), false, src, outputDir)!!
+        val machine = result.simulate()
+        machine.assertMemory(0x02, 0x78)  // low byte of $5678
+    }
 })

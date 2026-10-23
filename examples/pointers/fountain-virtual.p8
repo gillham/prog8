@@ -59,8 +59,7 @@ main {
     }
 
     sub update_particles() {
-        ^^Particle pp = particles
-        while pp!=0 {
+        for ^^Particle pp in particles via .next {
             pp.speedy += GRAVITY
             pp.x += pp.speedx
             pp.y += pp.speedy
@@ -76,9 +75,6 @@ main {
             sys.gfx_plot(pp.x as uword, pp.y as uword, pp.brightness)
             if pp.brightness>=7
                 pp.brightness -= 7
-
-            pp = pp.next
         }
     }
 }
-
