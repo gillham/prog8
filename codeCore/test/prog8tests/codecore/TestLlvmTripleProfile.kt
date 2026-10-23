@@ -29,6 +29,7 @@ class TestLlvmTripleProfile: FunSpec({
             "x86_64-unknown-linux-gnu" to Triple("x86_64-unknown-linux-gnu", 64, 8),
             "armv7-unknown-linux-gnueabihf" to Triple("armv7-unknown-linux-gnueabihf", 32, 4),
             "riscv32-unknown-elf" to Triple("riscv32-unknown-unknown-elf", 32, 4),
+            "armv7a-none-eabihf" to Triple("armv7-unknown-none-eabihf", 32, 4),
         )
         for ((name, values) in expected) {
             val profile = LlvmTripleProfile.resolve(name)
@@ -47,6 +48,22 @@ class TestLlvmTripleProfile: FunSpec({
         profile.strictIndirectSignatures shouldBe true
         profile.cMainSymbol shouldBe "__main_argc_argv"
         LlvmTripleProfile.resolve("arm64-apple-macosx").cMainSymbol shouldBe "main"
+    }
+
+    test("the bare metal ARM profile links with the Arm GNU Toolchain and runs on qemu with a timeout") {
+        val profile = LlvmTripleProfile.resolve("armv7a-none-eabihf")
+        profile.outputExtension shouldBe ".elf"
+        profile.runTimeoutSeconds shouldBe 60
+        profile.cMainSymbol shouldBe "main"
+        profile.strictIndirectSignatures shouldBe false
+        profile.runCommand!!.first() shouldBe "qemu-system-arm"
+        val linkCommand = profile.linkCommand!!
+        linkCommand.first() shouldBe (System.getenv("ARM_GNU_TOOLCHAIN") ?: "/Applications/ArmGNUToolchain/15.3.rel2/arm-none-eabi") + "/bin/arm-none-eabi-gcc"
+        ("{object}" in linkCommand && "{file}" in linkCommand) shouldBe true
+        LlvmTripleProfile.resolve("wasm32-wasip1").let {
+            it.linkCommand shouldBe null
+            it.runTimeoutSeconds shouldBe null
+        }
     }
 
     test("the pointer width is the p: entry of the data layout, ignoring other address spaces, and 64 bits without one") {
@@ -69,6 +86,10 @@ class TestLlvmTripleProfile: FunSpec({
         rejected("unknownkey", validProfile("pointer_size = 4")) shouldContain "unknown keys"
         rejected("runcommand", validProfile("run_command = wasmtime")) shouldContain "{file}"
         rejected("mainsymbol", validProfile("c_main_symbol = not a name")) shouldContain "c_main_symbol"
+        rejected("linkobject", validProfile("link_command = gcc -o {file}")) shouldContain "{object} and {file}"
+        rejected("linkfile", validProfile("link_command = gcc {object}")) shouldContain "{object} and {file}"
+        rejected("timeouttext", validProfile("run_timeout_seconds = soon")) shouldContain "non-numeric run_timeout_seconds"
+        rejected("timeoutzero", validProfile("run_timeout_seconds = 0")) shouldContain "positive"
     }
 
     test("clang_args expand environment variables, with an optional :- default, and an unset one without a default is an error") {
@@ -82,9 +103,11 @@ class TestLlvmTripleProfile: FunSpec({
         }.message!! shouldContain "PROG8_NO_SUCH_VARIABLE"
     }
 
-    test("an unset environment variable in clang_args only fails when the clang arguments are used") {
+    test("an unset environment variable in clang_args or link_command only fails when they are used") {
         val profile = LlvmTripleProfile.load(profileFile("envlater", validProfile($$"clang_args = --sysroot=${PROG8_NO_SUCH_VARIABLE}")))
         shouldThrow<IllegalArgumentException> { profile.clangArgs }.message!! shouldContain "PROG8_NO_SUCH_VARIABLE"
+        val linking = LlvmTripleProfile.load(profileFile("linklater", validProfile($$"link_command = ${PROG8_NO_SUCH_VARIABLE:-gcc} {object} -o {file} ${PROG8_NO_SUCH_VARIABLE}")))
+        shouldThrow<IllegalArgumentException> { linking.linkCommand }.message!! shouldContain "PROG8_NO_SUCH_VARIABLE"
     }
 
     test("a triple is looked up as a file path first, then as an embedded profile") {

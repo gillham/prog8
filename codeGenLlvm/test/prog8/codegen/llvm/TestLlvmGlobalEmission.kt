@@ -364,6 +364,11 @@ class TestLlvmGlobalEmission: FunSpec({
         withClue(output) { exitCode shouldBe 0 }
     }
 
+    test("the llvm32 globals and their startup stores link into a bare metal ARM program that runs on qemu").config(enabledOrReasonIf = requiresArm) {
+        val (exitCode, output) = compileAndRunArm(LlvmPrinter.print(globals32(armTarget)))
+        withClue(output) { exitCode shouldBe 0 }
+    }
+
     test("the llvm32 globals compile into a wasm32 object").config(enabledOrReasonIf = requiresWasmClang) {
         val (exitCode, output) = compileWasmObject(LlvmPrinter.print(globals32(target32)))
         withClue(output) { exitCode shouldBe 0 }

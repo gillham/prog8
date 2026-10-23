@@ -1,13 +1,16 @@
 package prog8.codegen.llvm
 
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
+import io.kotest.matchers.longs.shouldBeLessThan
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import prog8.code.target.LlvmTarget
 import prog8.code.target.LlvmTripleProfile
 import prog8.codegen.llvm.model.*
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.Path
@@ -45,6 +48,32 @@ class TestLlvmToolchain: FunSpec({
         built shouldBe false
         messages shouldContain "PROG8_NO_SUCH_VARIABLE"
         executable.exists() shouldBe false
+    }
+
+    test("with a link command, clang compiles an object file that the command links into the executable, and the object file is removed").config(enabled = LlvmToolchain.clang() != null) {
+        val target = LlvmTarget()
+        val copying = LlvmTripleProfile("link", target.targetTriple, target.dataLayout, 8, linkCommandTemplate = listOf("cp", "{object}", "{file}"))
+        val llFile = dir.resolve("linked.ll").also { it.writeText(programExitingWith(0)) }
+        val executable = dir.resolve("linked.elf")
+        LlvmToolchain.compileToExecutable(llFile, executable, copying) shouldBe true
+        executable.exists() shouldBe true
+        dir.resolve("linked.elf.o").exists() shouldBe false
+
+        val failing = LlvmTripleProfile("nolink", target.targetTriple, target.dataLayout, 8, linkCommandTemplate = listOf("false", "{object}", "{file}"))
+        val unlinked = dir.resolve("unlinked.elf")
+        val (built, messages) = capturingStderr { LlvmToolchain.compileToExecutable(llFile, unlinked, failing) }
+        built shouldBe false
+        messages shouldContain "the link command couldn't build '$unlinked'"
+        dir.resolve("unlinked.elf.o").exists() shouldBe false
+    }
+
+    test("a run that takes longer than its timeout is stopped, and reported as an IOException").config(enabled = !System.getProperty("os.name").startsWith("Windows")) {
+        val started = System.nanoTime()
+        shouldThrow<IOException> {
+            LlvmToolchain.runExecutable(dir.resolve("prog.elf"), quiet = true, listOf("sh", "-c", "sleep 30", "{file}"), timeoutSeconds = 1)
+        }.message!! shouldContain "timed out after 1 seconds"
+        (System.nanoTime() - started) / 1_000_000_000 shouldBeLessThan 20L
+        LlvmToolchain.runExecutable(dir.resolve("prog.elf"), quiet = true, listOf("sh", "-c", "exit 4", "{file}"), timeoutSeconds = 10) shouldBe 4
     }
 
     test("the clang that builds executables is the one next to llvm-as, of the same LLVM installation").config(enabledOrReasonIf = requiresLlvmAs) {

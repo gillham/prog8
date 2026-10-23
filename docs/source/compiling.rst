@@ -227,7 +227,8 @@ One or more .p8 module files
     The ``llvm64`` and ``llvm32`` targets have no emulator: there ``-emu`` builds the LLVM IR into an executable
     with clang, and runs it. The program's exit status is printed afterwards.
     When the triple profile has a ``run_command``, that command runs the executable instead (see :ref:`llvm_triples`):
-    the default ``llvm32`` profile builds a ``.wasm`` file and runs it with ``wasmtime``.
+    the default ``llvm32`` profile builds a ``.wasm`` file and runs it with ``wasmtime``, and the ``armv7a-none-eabihf``
+    profile builds a ``.elf`` file and runs it on ``qemu-system-arm``.
 
 ``-newcodegen``
     Use new 6502 code generation backend (*incomplete/experimental*). This generates 6502 assembly code based on IR instead of the AST.

@@ -181,6 +181,13 @@ class TestLlvmQuadLowering: FunSpec({
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
         output shouldBe ""
     }
+
+    test("the llvm32 quad instructions compute what the VM computes, in a bare metal ARM program on qemu").config(enabledOrReasonIf = requiresArm) {
+        val module = TestProgram(armTarget).apply { quadCheckProgram() }.module().withMainCalling("main.check")
+        val (exitCode, output) = compileAndRunArm(LlvmPrinter.print(module))
+        withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+        output shouldBe ""
+    }
 })
 
 

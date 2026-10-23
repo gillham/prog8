@@ -7,6 +7,7 @@ import prog8.code.target.LlvmTripleProfile
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.writeText
@@ -72,6 +73,54 @@ internal fun compileAndRunWasm(ir: String, input: String = "", args: List<String
     }
 }
 
+internal val armProfile: LlvmTripleProfile = LlvmTripleProfile.resolve("armv7a-none-eabihf")
+
+/** The llvm32 target for 32-bit ARM bare metal, run on qemu through semihosting. */
+internal val armTarget: LlvmTarget get() = LlvmTarget(4, armProfile)
+
+internal val requiresArm: (TestCase) -> Enabled = {
+    val linker = try { armProfile.linkCommand?.first()?.let { Path.of(it) } } catch (_: IllegalArgumentException) { null } catch (_: InvalidPathException) { null }
+    when {
+        clang == null -> Enabled.disabled("clang not found next to llvm-as, on the PATH or in ${LlvmToolchain.homebrewLlvmBin}")
+        linker == null || !Files.isExecutable(linker) -> Enabled.disabled("arm-none-eabi-gcc of the Arm GNU Toolchain not found in ARM_GNU_TOOLCHAIN or its default location")
+        LlvmToolchain.find("qemu-system-arm") == null -> Enabled.disabled("qemu-system-arm not found on the PATH")
+        else -> Enabled.enabled
+    }
+}
+
+/**
+ * Builds [ir] into a bare metal ARM program with the clang arguments and link command of the ARM profile, and runs it
+ * on qemu with the command line [args] in the working [directory]; returns the exit code and output of the run, or of the build.
+ * Semihosting gives the program no console input.
+ */
+internal fun compileAndRunArm(ir: String, args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
+    val dir = createTempDirectory("prog8-llvm-arm")
+    try {
+        val source = dir.resolve("program.ll").also { it.writeText(ir) }
+        val objectFile = dir.resolve("program.o")
+        val program = dir.resolve("program.elf")
+        val compiled = execute(checkNotNull(clang).toString(), *armProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
+            source.toString(), "-o", objectFile.toString())
+        if (compiled.first != 0)
+            return compiled
+        val link = checkNotNull(armProfile.linkCommand).map { it.replace("{object}", objectFile.toString()).replace("{file}", program.toString()) }
+        val linked = execute(*link.toTypedArray())
+        if (linked.first != 0)
+            return linked
+        return execute(*armRunCommand(program, args).toTypedArray(), directory = directory)
+    } finally {
+        dir.toFile().deleteRecursively()
+    }
+}
+
+/** The run command of the ARM profile, with the program and [args] as the semihosting command line that newlib splits at unquoted spaces. */
+internal fun armRunCommand(program: Path, args: List<String>): List<String> {
+    val file = program.toAbsolutePath().toString()
+    val commandLine = (listOf(file) + args).joinToString("") { ",arg=" + (if (it.isEmpty() || it.any(Char::isWhitespace)) "\"$it\"" else it).replace(",", ",,") }
+    return checkNotNull(armProfile.runCommand).map { it.replace("{file}", file) }
+        .map { if (it.startsWith("enable=on")) it + commandLine else it }
+}
+
 /** Compiles [ir] into a wasm32-wasip1 object file with clang, without linking; returns clang's exit code and output. */
 internal fun compileWasmObject(ir: String): Pair<Int, String> {
     val dir = createTempDirectory("prog8-llvm-wasm")
@@ -101,11 +150,19 @@ internal fun compileAndRun(ir: String, input: String = "", args: List<String> = 
     }
 }
 
-private fun execute(vararg command: String, stdin: Path? = null): Pair<Int, String> {
+private fun execute(vararg command: String, stdin: Path? = null, directory: Path? = null): Pair<Int, String> {
     val builder = ProcessBuilder(*command).redirectErrorStream(true)
     stdin?.let { builder.redirectInput(it.toFile()) }
+    directory?.let { builder.directory(it.toFile()) }
     val process = builder.start()
-    val output = process.inputStream.bufferedReader().use { it.readText() }
-    check(process.waitFor(60, TimeUnit.SECONDS)) { "${command.first()} did not finish" }
-    return process.exitValue() to output
+    if (stdin == null)
+        process.outputStream.close()
+    // read on another thread, so that a program that hangs, like qemu after a crash, is stopped after the timeout
+    val output = CompletableFuture.supplyAsync { process.inputStream.bufferedReader().use { it.readText() } }
+    if (!process.waitFor(60, TimeUnit.SECONDS)) {
+        process.descendants().forEach { it.destroyForcibly() }
+        process.destroyForcibly().waitFor()
+        error("${command.first()} did not finish within 60 seconds and was stopped")
+    }
+    return process.exitValue() to output.join()
 }

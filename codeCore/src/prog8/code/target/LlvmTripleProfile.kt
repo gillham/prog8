@@ -21,7 +21,9 @@ data class LlvmTripleProfile(
     val outputExtension: String = "",
     val runCommand: List<String>? = null,
     val strictIndirectSignatures: Boolean = false,
-    val cMainSymbol: String = "main"
+    val cMainSymbol: String = "main",
+    private val linkCommandTemplate: List<String>? = null,
+    val runTimeoutSeconds: Int? = null
 ) {
     /** The pointer width in bits of the default address space, which LLVM takes as 64 when the data layout has no `p:` entry. */
     val pointerBits: Int = dataLayout.split('-').firstOrNull { it.startsWith("p:") }
@@ -34,6 +36,10 @@ data class LlvmTripleProfile(
     val clangArgs: List<String>
         get() = expandEnvironment(clangArgsTemplate) { System.getenv(it) }
 
+    /** The command that links clang's object file `{object}` into the executable `{file}`, with environment variables expanded as in [clangArgs]. */
+    val linkCommand: List<String>?
+        get() = linkCommandTemplate?.let { template -> expandEnvironment(template) { System.getenv(it) } }
+
     init {
         require(dataLayout.startsWith("e")) { "the llvm triple profile '$name' must have a little-endian data layout (starting with 'e')" }
         require(dataLayout.split('-').none { it.startsWith("p:") && it.split(':').getOrNull(1)?.toIntOrNull() == null }) {
@@ -41,12 +47,17 @@ data class LlvmTripleProfile(
         }
         require(cLongSize == 4 || cLongSize == 8) { "the llvm triple profile '$name' has c_long_size $cLongSize, it must be 4 or 8" }
         require(runCommand == null || runCommand.any { "{file}" in it }) { "the run_command of llvm triple profile '$name' must contain {file}" }
+        require(linkCommandTemplate == null || (linkCommandTemplate.any { "{object}" in it } && linkCommandTemplate.any { "{file}" in it })) {
+            "the link_command of llvm triple profile '$name' must contain {object} and {file}"
+        }
+        require(runTimeoutSeconds == null || runTimeoutSeconds > 0) { "the run_timeout_seconds of llvm triple profile '$name' must be a positive number" }
         require(cMainSymbol.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "the c_main_symbol of llvm triple profile '$name' must be a C identifier" }
     }
 
     companion object {
         const val RESOURCE_DIR = "/prog8lib/llvm-triples"
-        private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol")
+        private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
+            "link_command", "run_timeout_seconds")
         private val environmentVariable = Regex($$"""\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?}""")
 
         fun load(path: Path): LlvmTripleProfile = path.inputStream().use { parse(path.toString(), it) }
@@ -67,7 +78,7 @@ data class LlvmTripleProfile(
         internal fun expandEnvironment(args: List<String>, env: (String) -> String?): List<String> = args.map { arg ->
             environmentVariable.replace(arg) {
                 val variable = it.groupValues[1]
-                env(variable) ?: it.groups[3]?.value ?: throw IllegalArgumentException("environment variable $variable used in the llvm clang_args is not set")
+                env(variable) ?: it.groups[3]?.value ?: throw IllegalArgumentException("environment variable $variable used in the llvm triple profile is not set")
             }
         }
 
@@ -81,6 +92,9 @@ data class LlvmTripleProfile(
             fun words(key: String) = props.getProperty(key)?.trim()?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
             val cLongSize = required("c_long_size").toIntOrNull()
                 ?: throw IllegalArgumentException("llvm triple profile '$name' has a non-numeric c_long_size")
+            val runTimeout = props.getProperty("run_timeout_seconds")?.trim()?.let {
+                it.toIntOrNull() ?: throw IllegalArgumentException("llvm triple profile '$name' has a non-numeric run_timeout_seconds")
+            }
             return LlvmTripleProfile(
                 name,
                 required("triple"),
@@ -90,7 +104,9 @@ data class LlvmTripleProfile(
                 props.getProperty("output_extension", "").trim(),
                 words("run_command")?.takeIf { it.isNotEmpty() },
                 props.getProperty("strict_indirect_signatures", "false").trim().toBoolean(),
-                props.getProperty("c_main_symbol", "main").trim()
+                props.getProperty("c_main_symbol", "main").trim(),
+                words("link_command")?.takeIf { it.isNotEmpty() },
+                runTimeout
             )
         }
     }

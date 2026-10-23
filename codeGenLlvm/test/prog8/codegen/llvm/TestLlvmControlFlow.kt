@@ -197,6 +197,12 @@ class TestLlvmControlFlow: FunSpec({
         val (exitCode, output) = compileAndRunWasm(LlvmPrinter.print(module))
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
     }
+
+    test("the llvm32 control flow runs correctly as a bare metal ARM program on qemu").config(enabledOrReasonIf = requiresArm) {
+        val module = TestProgram(armTarget).apply { allSubs(); checkSub() }.module().withMainCalling("main.check")
+        val (exitCode, output) = compileAndRunArm(LlvmPrinter.print(module))
+        withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+    }
 })
 
 

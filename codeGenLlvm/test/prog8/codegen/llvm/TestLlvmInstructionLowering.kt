@@ -207,6 +207,12 @@ class TestLlvmInstructionLowering: FunSpec({
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
     }
 
+    test("the llvm32 instructions compute what the VM computes, in a bare metal ARM program on qemu").config(enabledOrReasonIf = requiresArm) {
+        val module = TestProgram(armTarget).apply { checkProgram() }.module().withMainCalling("main.check")
+        val (exitCode, output) = compileAndRunArm(LlvmPrinter.print(module))
+        withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+    }
+
     test("with strict indirect signatures, CALLI and JUMPI call the address as void (), and take a result from calling convention slot 10") {
         val lines = focused32.function("main.indirect").lines()
         lines shouldHave "  store i64 0, ptr @.slot.s10"

@@ -454,6 +454,35 @@ class TestLlvmSyscallLowering: FunSpec({
         }
     }
 
+    // semihosting has no console input, and newlib on it has no mkdir, chdir, rmdir and getcwd, so only those syscalls are left out;
+    // and newlib loses the position in the file when a seek fails
+    test("the llvm32 console output, command line and file handle syscalls work in a bare metal ARM program on qemu").config(enabledOrReasonIf = requiresArm) {
+        fun arm() = TestProgram(armTarget)
+        val greeting = arm().apply { allOutputSubs(); greetingSub() }.module().withMainCalling("main.greeting")
+        compileAndRunArm(LlvmPrinter.print(greeting)).let { (exitCode, output) ->
+            withClue(output) { exitCode shouldBe 0 }
+            output shouldBe "A\nhi\nhello, world!\nhi\n"
+        }
+        val arguments = arm().apply { argumentsOutputSub() }.programModule()
+        compileAndRunArm(LlvmPrinter.print(arguments), args = listOf("first", "second arg")).let { (exitCode, output) ->
+            withClue(output) { exitCode shouldBe 3 }
+            val lines = output.lines()
+            lines.take(4) shouldBe listOf("first", "second arg", "", "")
+            withClue("argument 0 is the program: ${lines[4]}") { lines[4].endsWith("program.elf") shouldBe true }
+        }
+        val directory = createTempDirectory("prog8-arm-files").toRealPath()
+        try {
+            val handles = arm().apply { handleSyscallChecks(directory, failedSeekKeepsPosition = false) }.module().withMainCalling("main.check")
+            compileAndRunArm(LlvmPrinter.print(handles), directory = directory).let { (exitCode, output) ->
+                withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            }
+            directory.resolve("out.bin").readBytes().toList() shouldBe (1..8).map { it.toByte() }
+            directory.resolve("copy.bin").readBytes().toList() shouldBe (1..5).map { it.toByte() }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
     test("the llvm32 syscalls compile into wasm32 objects").config(enabledOrReasonIf = requiresWasmClang) {
         for (ir in llvm32Syscalls())
             compileWasmObject(ir).let { (exitCode, output) -> withClue(output) { exitCode shouldBe 0 } }
@@ -713,8 +742,11 @@ private fun TestProgram.fileSyscallChecks(directory: Path) {
     }.subroutine())
 }
 
-/** main.check for the file handle syscalls on files in the [directory]; main.files keeps the handles of two open files. */
-private fun TestProgram.handleSyscallChecks(directory: Path) {
+/**
+ * main.check for the file handle syscalls on files in the [directory]; main.files keeps the handles of two open files.
+ * Without [failedSeekKeepsPosition], as with newlib, only the status of a failed seek is checked.
+ */
+private fun TestProgram.handleSyscallChecks(directory: Path, failedSeekKeepsPosition: Boolean = true) {
     string("main.missing", directory.resolve("missing.bin").toString())
     string("main.out", directory.resolve("out.bin").toString())
     string("main.copy", directory.resolve("copy.bin").toString())
@@ -751,9 +783,9 @@ private fun TestProgram.handleSyscallChecks(directory: Path) {
             Is("rb.q", 3), Is("rc.b", 0), Is("rf.w", 1), Is("rg.b", 4))
         // seeking before the start fails and keeps the position; past 4 GB works, with nothing to read there, where the C long has 64 bits
         check("loadm.p ra.p,[main.files]; load.q rb.q,#-1.q; load.b rc.b,#0.b; syscall 77 (ra.p, rb.q, rc.b): rd.b; syscall 78 (ra.p): re.q",
-            Is("rd.b", 0), Is("re.q", 4))
+            *if (failedSeekKeepsPosition) arrayOf(Is("rd.b", 0), Is("re.q", 4)) else arrayOf(Is("rd.b", 0)))
         val past4GB = if (target.profile.cLongSize == 8) arrayOf(Is("rd.b", 1), Is("re.q", 4294967297), Is("rh.w", 0))
-            else arrayOf(Is("rd.b", 0), Is("re.q", 4), Is("rh.w", 1))
+            else if (failedSeekKeepsPosition) arrayOf(Is("rd.b", 0), Is("re.q", 4), Is("rh.w", 1)) else arrayOf(Is("rd.b", 0))
         check("loadm.p ra.p,[main.files]; load.q rb.q,#4294967297.q; load.b rc.b,#0.b; syscall 77 (ra.p, rb.q, rc.b): rd.b; syscall 78 (ra.p): re.q; " +
             "load.p rf.p,#main.dst; load.w rg.w,#1.w; syscall 75 (ra.p, rf.p, rg.w): rh.w", *past4GB)
         check("loadm.p ra.p,[main.files]; loadm.p rb.p,[main.files+8]; syscall 74 (ra.p): rc.b; syscall 74 (rb.p): rd.b", Is("rc.b", 1), Is("rd.b", 1))

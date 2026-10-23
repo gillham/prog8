@@ -41,8 +41,8 @@ internal object LlvmToolchain {
     }
 
     /**
-     * Builds the executable [outputFile] from [llFile] with clang, passing the clang arguments of [profile] first;
-     * clang's messages and any failure are reported on System.err.
+     * Builds the executable [outputFile] from [llFile] with clang, passing the clang arguments of [profile] first; with a
+     * link command in [profile], clang only compiles an object file that the command links. Messages and any failure are reported on System.err.
      */
     fun compileToExecutable(llFile: Path, outputFile: Path, profile: LlvmTripleProfile? = null, optLevel: String = "-O2"): Boolean {
         val clang = clang()
@@ -51,48 +51,74 @@ internal object LlvmToolchain {
                 "Install LLVM, for example with 'brew install llvm', or put clang on the PATH.")
             return false
         }
-        val profileArgs = try {
-            profile?.clangArgs.orEmpty()
+        val (profileArgs, linkCommand) = try {
+            profile?.clangArgs.orEmpty() to profile?.linkCommand
         } catch (x: IllegalArgumentException) {
             System.err.println("Can't build '$outputFile': ${x.message}")
             return false
         }
-        val command = listOf(clang.toString()) + profileArgs + listOf(optLevel, "-Wno-override-module", llFile.toString(), "-o", outputFile.toString())
+        val compileCommand = listOf(clang.toString()) + profileArgs + listOf(optLevel, "-Wno-override-module")
+        if (linkCommand == null)
+            return runTool(compileCommand + listOf(llFile.toString(), "-o", outputFile.toString()), "clang", outputFile) ||
+                failed("clang couldn't build '$outputFile' from '$llFile'")
+        val objectFile = outputFile.resolveSibling("${outputFile.fileName}.o")
+        try {
+            if (!runTool(compileCommand + listOf("-c", llFile.toString(), "-o", objectFile.toString()), "clang", outputFile))
+                return failed("clang couldn't compile '$llFile'")
+            val link = linkCommand.map { it.replace("{object}", objectFile.toString()).replace("{file}", outputFile.toString()) }
+            return runTool(link, link.first(), outputFile) || failed("the link command couldn't build '$outputFile' from '$objectFile'")
+        } finally {
+            Files.deleteIfExists(objectFile)
+        }
+    }
+
+    private fun failed(message: String): Boolean {
+        System.err.println(message)
+        return false
+    }
+
+    /** Runs a build step, printing its output; false when it couldn't start, didn't finish in 5 minutes or failed. */
+    private fun runTool(command: List<String>, tool: String, outputFile: Path): Boolean {
         val process = try {
             ProcessBuilder(command).redirectErrorStream(true).start()
         } catch (x: IOException) {
-            System.err.println("Can't build '$outputFile': $clang could not be started: ${x.message}")
+            System.err.println("Can't build '$outputFile': $tool could not be started: ${x.message}")
             return false
         }
-        // read on another thread, so that the timeout also stops a clang that hangs with its output still open
+        // read on another thread, so that the timeout also stops a tool that hangs with its output still open
         val output = CompletableFuture.supplyAsync { process.inputStream.bufferedReader().use { it.readText() } }
         if (!process.waitFor(5, TimeUnit.MINUTES)) {
             process.destroyForcibly()
-            System.err.println("clang did not finish building '$outputFile' within 5 minutes")
+            System.err.println("$tool did not finish building '$outputFile' within 5 minutes")
             return false
         }
         val messages = output.join()
         if (messages.isNotEmpty())
             System.err.print(messages)
-        if (process.exitValue() != 0) {
-            System.err.println("clang couldn't build '$outputFile' from '$llFile'")
-            return false
-        }
-        return true
+        return process.exitValue() == 0
     }
 
     /**
      * Runs [executable] on the console of this process until it exits, and returns its exit code; with a [runCommand],
-     * that command runs it instead, with `{file}` replaced by its path. Throws an IOException when it can't be started.
+     * that command runs it instead, with `{file}` replaced by its path. Throws an IOException when it can't be started,
+     * or when it is still running after [timeoutSeconds]; it is stopped then.
      */
-    fun runExecutable(executable: Path, quiet: Boolean, runCommand: List<String>? = null): Int {
+    fun runExecutable(executable: Path, quiet: Boolean, runCommand: List<String>? = null, timeoutSeconds: Int? = null): Int {
         if (!quiet)
             println("Running $executable...")
         System.out.flush()
         // absolute, because a name without a directory would be looked up on the PATH
         val file = executable.toAbsolutePath().toString()
         val command = runCommand?.map { it.replace("{file}", file) } ?: listOf(file)
-        return ProcessBuilder(command).inheritIO().start().waitFor()
+        val process = ProcessBuilder(command).inheritIO().start()
+        if (timeoutSeconds == null)
+            return process.waitFor()
+        if (!process.waitFor(timeoutSeconds.toLong(), TimeUnit.SECONDS)) {
+            process.descendants().forEach { it.destroyForcibly() }
+            process.destroyForcibly().waitFor()
+            throw IOException("it timed out after $timeoutSeconds seconds and was stopped")
+        }
+        return process.exitValue()
     }
 
     /**
@@ -128,7 +154,7 @@ class LlvmProgramRunner : ILlvmProgramRunner {
     override fun buildAndRun(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile?): Int? {
         val executable = executableOf(programFile, quiet, profile) ?: return null
         return try {
-            LlvmToolchain.runExecutable(executable, quiet, profile?.runCommand)
+            LlvmToolchain.runExecutable(executable, quiet, profile?.runCommand, profile?.runTimeoutSeconds)
         } catch (x: IOException) {
             System.err.println("Can't run '$executable': ${x.message}")
             null

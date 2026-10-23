@@ -29,6 +29,7 @@ import prog8.code.target.C128Target
 import prog8.code.target.C64Target
 import prog8.code.target.Cx16Target
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmTripleProfile
 import prog8.code.target.PETTarget
 import prog8.code.target.Qemu68kTarget
 import prog8.code.target.VMTarget
@@ -45,6 +46,7 @@ import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.Path
 import kotlin.io.path.createDirectories
@@ -216,6 +218,46 @@ class TestLlvmCompiler: FunSpec({
         wasm.exists() shouldBe false
         val matching = compiledLlFile(compileText(LlvmTarget(4), false, strlenProgram("long"), dir))
         buildAndRunWasm(matching).first shouldBe 5
+    }
+
+    test("the llvm32 programs without 64-bit addresses compute the right results as bare metal ARM programs on qemu").config(enabledOrReasonIf = requiresArm) {
+        val dir = outputDir.resolve("arm").createDirectories()
+        for ((name, source) in programs.filterKeys { it !in programsWith64BitAddresses && it !in notRunOnArm }) {
+            for (optimize in listOf(false, true)) {
+                val llFile = compiledLlFile(compileText(armTarget(), optimize, source, dir))
+                val (exitCode, output) = buildAndRunArm(llFile)
+                withClue("$name optimize=$optimize: exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            }
+        }
+    }
+
+    for ((name, program) in outputPrograms.filter { it.key !in notRunOnArm && it.value.input.isEmpty() }) {
+        test("$name: gives the expected exit code and console output as an llvm32 bare metal ARM program on qemu, which leaves no files behind").config(enabledOrReasonIf = requiresArm) {
+            for (optimize in listOf(false, true)) {
+                withClue("optimize=$optimize") {
+                    val workingDirectory = outputDir.resolve("arm-run")
+                    workingDirectory.toFile().deleteRecursively()
+                    workingDirectory.createDirectories()
+                    val llFile = compiledLlFile(compileText(armTarget(), optimize, program.source, outputDir.resolve("arm").createDirectories()))
+                    val (exitCode, output) = buildAndRunArm(llFile, program.args, workingDirectory)
+                    withClue(output) { exitCode shouldBe program.exitCode }
+                    output shouldBe program.output
+                    withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
+                }
+            }
+        }
+    }
+
+    test("launchEmulator links an llvm32 program for bare metal ARM into a .elf file next to the .ll file and runs it on qemu").config(enabledOrReasonIf = requiresArm) {
+        val dir = outputDir.resolve("arm-launched").createDirectories()
+        val llFile = compiledLlFile(compileText(armTarget(), false, nativeHello.source, dir))
+        val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + ".elf")
+        val printed = printedOnStdout { armTarget().launchEmulator(1, llFile, quiet = false) }
+        printed shouldContain "Building $elf from $llFile with clang..."
+        printed shouldContain "Running $elf..."
+        printed shouldContain "Program exited with status 42"
+        elf.exists() shouldBe true
+        llFile.resolveSibling("${elf.fileName}.o").exists() shouldBe false
     }
 
     test("launchEmulator builds a native executable next to the .ll file and runs it").config(enabledOrReasonIf = requiresNativeLlvm) {
@@ -770,14 +812,60 @@ private fun buildAndRunWasm(llFile: Path, input: String = "", args: List<String>
     return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent)
 }
 
+private val armProfile = LlvmTripleProfile.resolve("armv7a-none-eabihf")
+
+private fun armTarget() = LlvmTarget(4, armProfile)
+
+private val requiresArm: (TestCase) -> Enabled = {
+    val linker = try { armProfile.linkCommand?.first()?.let { Path(it) } } catch (_: IllegalArgumentException) { null } catch (_: InvalidPathException) { null }
+    fun onPath(tool: String) = System.getenv("PATH").orEmpty().split(File.pathSeparator)
+        .any { try { Files.isExecutable(Path(it).resolve(tool)) } catch (_: InvalidPathException) { false } }
+    when {
+        llvmBin == null -> Enabled.disabled("llvm-as and clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        linker == null || !Files.isExecutable(linker) -> Enabled.disabled("arm-none-eabi-gcc of the Arm GNU Toolchain not found in ARM_GNU_TOOLCHAIN or its default location")
+        !onPath("qemu-system-arm") -> Enabled.disabled("qemu-system-arm not found on the PATH")
+        else -> Enabled.enabled
+    }
+}
+
+/**
+ * Builds the .ll file into a .elf file with clang and the link command of the bare metal ARM profile, and runs it on qemu
+ * with the command line [args], in the working [directory] (default: next to the .ll file). Semihosting gives it no console input.
+ */
+private fun buildAndRunArm(llFile: Path, args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
+    val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + armProfile.outputExtension)
+    val objectFile = elf.resolveSibling("${elf.fileName}.o")
+    val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *armProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
+        llFile.toString(), "-o", objectFile.toString())
+    if (compiled.first != 0)
+        return compiled
+    val link = checkNotNull(armProfile.linkCommand).map { it.replace("{object}", objectFile.toString()).replace("{file}", elf.toString()) }
+    val linked = execute(*link.toTypedArray())
+    Files.deleteIfExists(objectFile)
+    if (linked.first != 0)
+        return linked
+    // newlib splits the semihosting command line at spaces that aren't quoted, and drops empty arguments that aren't
+    val file = elf.toAbsolutePath().toString()
+    val commandLine = (listOf(file) + args).joinToString("") { ",arg=" + (if (it.isEmpty() || it.any(Char::isWhitespace)) "\"$it\"" else it).replace(",", ",,") }
+    val command = checkNotNull(armProfile.runCommand).map { it.replace("{file}", file) }.map { if (it.startsWith("enable=on")) it + commandLine else it }
+    return execute(*command.toTypedArray(), directory = directory ?: llFile.parent)
+}
+
 private fun execute(vararg command: String, stdin: Path? = null, directory: Path? = null): Pair<Int, String> {
     val builder = ProcessBuilder(*command).redirectErrorStream(true)
     stdin?.let { builder.redirectInput(it.toFile()) }
     directory?.let { builder.directory(it.toFile()) }
     val process = builder.start()
-    val output = process.inputStream.bufferedReader().use { it.readText() }
-    check(process.waitFor(60, TimeUnit.SECONDS)) { "${command.first()} did not finish" }
-    return process.exitValue() to output
+    if (stdin == null)
+        process.outputStream.close()
+    // read on another thread, so that a program that hangs, like qemu after a crash, is stopped after the timeout
+    val output = CompletableFuture.supplyAsync { process.inputStream.bufferedReader().use { it.readText() } }
+    if (!process.waitFor(60, TimeUnit.SECONDS)) {
+        process.descendants().forEach { it.destroyForcibly() }
+        process.destroyForcibly().waitFor()
+        error("${command.first()} did not finish within 60 seconds and was stopped")
+    }
+    return process.exitValue() to output.join()
 }
 
 /** Other specs may print on System.out at the same time, so only check that the captured text contains something. */
@@ -821,6 +909,15 @@ private val programsWith64BitAddresses = setOf(
 // and extsubs declared with the 64-bit size_t of LP64 hosts don't link against wasi-libc
 private val notRunUnderWasmtime = setOf(
     "diskio directories, renaming and deleting",
+    "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
+)
+
+// programs that don't run as they are on bare metal ARM: newlib on semihosting has no mkdir, chdir, rmdir and getcwd,
+// its rename fails, and it loses the position in a file when a seek fails; extsubs declared with the 64-bit size_t of LP64 hosts get wrong results
+private val notRunOnArm = setOf(
+    "diskio directories, renaming and deleting",
+    "diskio writing, reading lines, seeking in and deleting a text file",
+    "fileio copying between two open files, seeking and the end of the file",
     "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
 )
 

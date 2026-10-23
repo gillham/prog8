@@ -190,6 +190,23 @@ system interface. Building it needs clang with ``wasm-ld`` (from lld) and the wa
 ``wasmtime``, which gives it access to the current directory only. WASI programs start in the directory ``/``
 of that sandbox, so the current directory has no host path there.
 
+With ``-triple armv7a-none-eabihf``, an ``llvm32`` program becomes a bare metal program for a 32-bit ARM Cortex-A15
+with hardware floating point, which reaches the host through *semihosting*. Building it needs clang and the
+`Arm GNU Toolchain <https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads>`_ for ``arm-none-eabi``
+(on macOS: ``brew install --cask gcc-arm-embedded``), whose directory is given by the ``ARM_GNU_TOOLCHAIN`` environment variable
+(default: ``/Applications/ArmGNUToolchain/15.3.rel2/arm-none-eabi``); clang compiles the program, and the toolchain's
+``arm-none-eabi-gcc`` links it with newlib into a ``.elf`` file. ``-emu`` runs that on qemu's Versatile Express machine
+(``qemu-system-arm``), which prints the program's output, gives its exit status back, and lets it read and write
+files on the host, relative to the current directory. ``-emu`` stops a run after 60 seconds, because qemu keeps running
+when the program crashes. Newlib on semihosting has limits:
+
+- there is no console input: reading a character or a line gives the end of the input
+- it has no ``mkdir``, ``chdir``, ``rmdir`` and ``getcwd``, so a program that uses the diskio routines to create,
+  change to or remove a directory, or to get the current directory, fails to link ("undefined reference")
+- renaming a file fails
+- after a seek that fails, the position in the file is unknown, rather than left as it was
+- ``-emu`` gives the program no command line arguments
+
 The operating system owns the memory of an LLVM program, so anything that places the program or its variables
 at a fixed address is an error on these targets: the ``%address``, ``%memtop`` and ``%varsaddress`` directives,
 ``%option romable``, ``%jmptable``, a block with an address, ``extsub`` with an address, and the ``-varsaddress``,
@@ -203,8 +220,8 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
 
 1. the given file path, when that file exists
 2. ``~/.prog8/llvm/<name>.properties``
-3. a profile built into the compiler: ``wasm32-wasip1``, ``arm64-apple-macosx``, ``x86_64-unknown-linux-gnu``,
-   ``armv7-unknown-linux-gnueabihf`` and ``riscv32-unknown-elf``
+3. a profile built into the compiler: ``wasm32-wasip1``, ``armv7a-none-eabihf``, ``arm64-apple-macosx``,
+   ``x86_64-unknown-linux-gnu``, ``armv7-unknown-linux-gnueabihf`` and ``riscv32-unknown-elf``
 
 So you can add a platform, or change the settings of a built-in one, without rebuilding the compiler.
 These are the keys of a profile; an unknown key is an error:
@@ -223,9 +240,17 @@ These are the keys of a profile; an unknown key is an error:
     is not set; they only have to be set when clang is actually run.
 ``output_extension``
     The file name extension of the built executable, such as ``.wasm``. Without it, the executable is named as usual on the host.
+``link_command``
+    A command that links the executable, for platforms that clang can't link for itself, such as bare metal ones
+    with the C library of a GCC toolchain. clang then only compiles the program into an object file, which the command
+    gets as ``{object}``, and it writes the executable to ``{file}``. Environment variables work as in ``clang_args``.
+    Without it, clang builds the executable in one go.
 ``run_command``
     The command that ``-emu`` uses to run the executable, with ``{file}`` in place of its path, for example ``wasmtime {file}``.
     Without it, the executable is run directly.
+``run_timeout_seconds``
+    The number of seconds after which ``-emu`` stops the run, for runners that can hang, such as an emulator after
+    the program crashed. Without it, ``-emu`` waits until the program exits.
 ``strict_indirect_signatures``
     ``true`` for platforms that check the signature of a function called through a pointer, such as WebAssembly,
     which traps on any other. See below.
