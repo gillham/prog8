@@ -754,6 +754,12 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
         var actualResultReg2 = -1
         var actualResultFpReg2 = -1
         val valueDt = cast.value.type
+        // POINTER is untyped in the IR: this is the integer type that holds an address on this target
+        val addressIntDt = codeGen.irType(codeGen.options.compTarget.pointerType)
+        fun narrowPointer(opcode: Opcode, resultDt: IRDataType) {
+            actualResultReg2 = codeGen.registers.next(resultDt)
+            addInstr(result, IRInstructions.binary(opcode, addressIntDt, actualResultReg2, tr.resultReg), null)
+        }
         when(cast.type.base) {
             BaseDataType.BOOL -> {
                 when {
@@ -804,6 +810,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                         actualResultReg2 = codeGen.registers.next(IRDataType.BYTE)
                         addInstr(result, IRInstructions.binary(Opcode.FTOUB, IRDataType.FLOAT, actualResultReg2, tr.resultFpReg), null)
                     }
+                    BaseDataType.POINTER -> narrowPointer(Opcode.LSIGB, IRDataType.BYTE)
                     else -> throw AssemblyError("weird cast value type ${cast.position}")
                 }
             }
@@ -828,6 +835,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                         actualResultReg2 = codeGen.registers.next(IRDataType.BYTE)
                         addInstr(result, IRInstructions.binary(Opcode.FTOSB, IRDataType.FLOAT, actualResultReg2, tr.resultFpReg), null)
                     }
+                    BaseDataType.POINTER -> narrowPointer(Opcode.LSIGB, IRDataType.BYTE)
                     else -> throw AssemblyError("weird cast value type ${cast.position}")
                 }
             }
@@ -890,6 +898,9 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     BaseDataType.FLOAT -> {
                         actualResultReg2 = codeGen.registers.next(IRDataType.WORD)
                         addInstr(result, IRInstructions.binary(Opcode.FTOSW, IRDataType.FLOAT, actualResultReg2, tr.resultFpReg), null)
+                    }
+                    BaseDataType.POINTER -> {
+                        actualResultReg2 = tr.resultReg
                     }
                     else -> throw AssemblyError("weird cast value type ${cast.position}")
                 }
@@ -980,24 +991,28 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                 }
             }
             BaseDataType.POINTER -> {
-                val pointerIrDt = codeGen.irType(cast.type)
+                fun widen(byteOp: Opcode, longOp: Opcode, quadOp: Opcode, sourceDt: IRDataType) {
+                    val widened = codeGen.registers.next(addressIntDt)
+                    val op = when(addressIntDt) {
+                        IRDataType.QUAD -> quadOp
+                        IRDataType.LONG -> longOp
+                        else -> byteOp
+                    }
+                    // a POINTER register, so the address can also be used as any of the other address integer types
+                    actualResultReg2 = codeGen.registers.next(IRDataType.POINTER)
+                    result += IRCodeChunk(null, null).also {
+                        it += IRInstructions.binary(op, sourceDt, widened, tr.resultReg)
+                        it += IRInstructions.move(IRDataType.POINTER, actualResultReg2, widened)
+                    }
+                }
                 when(valueDt.base) {
-                    BaseDataType.BOOL, BaseDataType.UBYTE -> {
-                        actualResultReg2 = codeGen.registers.next(pointerIrDt)
-                        val op = if(pointerIrDt==IRDataType.LONG) Opcode.EXTL else Opcode.EXT
-                        addInstr(result, IRInstructions.binary(op, IRDataType.BYTE, actualResultReg2, tr.resultReg), null)
-                    }
-                    BaseDataType.BYTE -> {
-                        actualResultReg2 = codeGen.registers.next(pointerIrDt)
-                        val op = if(pointerIrDt==IRDataType.LONG) Opcode.EXTLS else Opcode.EXTS
-                        addInstr(result, IRInstructions.binary(op, IRDataType.BYTE, actualResultReg2, tr.resultReg), null)
-                    }
-                    BaseDataType.WORD -> {
-                        actualResultReg2 = if(pointerIrDt==IRDataType.LONG) {
-                            val r = codeGen.registers.next(IRDataType.LONG)
-                            addInstr(result, IRInstructions.binary(Opcode.EXT, IRDataType.WORD, r, tr.resultReg), null)
-                            r
-                        } else tr.resultReg
+                    BaseDataType.BOOL, BaseDataType.UBYTE -> widen(Opcode.EXT, Opcode.EXTL, Opcode.EXTQ, IRDataType.BYTE)
+                    BaseDataType.BYTE -> widen(Opcode.EXTS, Opcode.EXTLS, Opcode.EXTQS, IRDataType.BYTE)
+                    BaseDataType.WORD, BaseDataType.UWORD -> {
+                        if(addressIntDt==IRDataType.WORD)
+                            actualResultReg2 = tr.resultReg
+                        else
+                            widen(Opcode.EXT, Opcode.EXT, Opcode.EXTQ, IRDataType.WORD)
                     }
                     BaseDataType.QUAD, BaseDataType.UQUAD -> {
                         // a 64-bit pointer holds all bits of the quad, a narrower pointer only the low long
@@ -1966,8 +1981,14 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                     addToResult(result, leftTr, leftTr.resultReg, -1)
                     val rightTr = translateExpression(binExpr.right)
                     addToResult(result, rightTr, rightTr.resultReg, -1)
-                    addInstr(result, IRInstructions.binary(Opcode.ADDR, vmDt, leftTr.resultReg, rightTr.resultReg), null)
-                    ExpressionCodeResult(result, vmDt, leftTr.resultReg, -1)
+                    if(binExpr.type.isPointer && !binExpr.left.type.isPointer) {
+                        // integer + pointer: sum into the pointer's register, the integer register may have another width than the address
+                        addInstr(result, IRInstructions.binary(Opcode.ADDR, vmDt, rightTr.resultReg, leftTr.resultReg), null)
+                        ExpressionCodeResult(result, IRDataType.POINTER, rightTr.resultReg, -1)
+                    } else {
+                        addInstr(result, IRInstructions.binary(Opcode.ADDR, vmDt, leftTr.resultReg, rightTr.resultReg), null)
+                        ExpressionCodeResult(result, vmDt, leftTr.resultReg, -1)
+                    }
                 }
             }
         }
