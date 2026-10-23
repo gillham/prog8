@@ -38,7 +38,7 @@ internal class AssemblyProgramLlvm(
     }
 
     private fun validate(file: Path, options: CompilationOptions): Boolean {
-        val command = validation(file)
+        val command = validation(file, (options.compTarget as? LlvmTarget)?.targetTriple)
         if (command == null) {
             if (!options.quiet)
                 println("LLVM IR written to '$file', but not checked: neither llvm-as nor clang was found")
@@ -63,10 +63,12 @@ internal class AssemblyProgramLlvm(
 
     private fun outputFile(options: CompilationOptions): Path = OutputFiles.of(options, name).programFile
 
-    private fun validation(file: Path): List<String>? {
+    /** llvm-as only parses the IR; clang compiles it, for [triple] rather than for this host, which may not support that. */
+    private fun validation(file: Path, triple: String?): List<String>? {
         LlvmToolchain.find("llvm-as")?.let { return listOf(it.toString(), "-disable-output", file.toString()) }
         val nullDevice = if (System.getProperty("os.name").orEmpty().startsWith("Windows")) "NUL" else "/dev/null"
-        LlvmToolchain.find("clang")?.let { return listOf(it.toString(), "-Wno-override-module", "-x", "ir", "-c", "-o", nullDevice, file.toString()) }
+        val targetArgs = triple?.let { listOf("--target=$it") }.orEmpty()
+        LlvmToolchain.find("clang")?.let { return listOf(it.toString()) + targetArgs + listOf("-Wno-override-module", "-x", "ir", "-c", "-o", nullDevice, file.toString()) }
         return null
     }
 }

@@ -69,7 +69,8 @@ private fun FunctionLowering.directCall(ins: IRInstruction) {
 
 /**
  * CALLI calls the code at an address without arguments. The word it may return goes into calling convention slot 10,
- * where the IR code of the call() builtin picks up its result.
+ * where the IR code of the call() builtin picks up its result. With strict indirect signatures the callee is called as
+ * `void ()`: a subroutine that returns a value is reached through its indirect entry, which leaves the result in that slot.
  */
 private fun FunctionLowering.indirectCall(ins: IRInstruction) {
     val site = ins.requireCallSite()
@@ -77,8 +78,14 @@ private fun FunctionLowering.indirectCall(ins: IRInstruction) {
     require(site.arguments.isEmpty() && site.results.isEmpty()) { "CALLI in ${sub.label} can't pass arguments or results" }
     val address = pointerValue(reference.pointer)
     forgetFlags()
+    val slot = builder.hardwareSlot(CallingConventionSlot(10), float = false)
+    if (builder.strictIndirectSignatures) {
+        emit(LlvmInstruction.Store(LlvmValue.IntConstant(0, LlvmType.I64), slot))
+        emit(LlvmInstruction.Call(null, address, emptyList(), LlvmType.Void))
+        return
+    }
     val result = derive("calli", LlvmType.I16) { LlvmInstruction.Call(it, address, emptyList(), LlvmType.I16) }
-    emit(LlvmInstruction.Store(convert(result, LlvmType.I64), builder.hardwareSlot(CallingConventionSlot(10), float = false)))
+    emit(LlvmInstruction.Store(convert(result, LlvmType.I64), slot))
 }
 
 /** Arguments name the parameter variable they are passed in; the LLVM function takes them in the subroutine's parameter order. */

@@ -132,11 +132,66 @@ class TestLlvmCompiler: FunSpec({
                 withClue("$name optimize=$optimize") {
                     val lines = compiledLlFile(compileText(LlvmTarget(4), optimize, source, dir)).readLines()
                     lines shouldContain "target triple = \"wasm32-unknown-wasip1\""
-                    lines shouldContain "define i32 @main(i32 %argc, ptr %argv) {"
+                    lines shouldContain "define i32 @__main_argc_argv(i32 %argc, ptr %argv) {"
                     lines.none { it.startsWith("declare void @llvm.mem") && "i64" in it } shouldBe true
                 }
             }
         }
+    }
+
+    test("the llvm32 programs without 64-bit addresses compute the right results as wasm32 programs under wasmtime").config(enabledOrReasonIf = requiresWasm) {
+        val dir = outputDir.resolve("wasm").createDirectories()
+        for ((name, source) in programs.filterKeys { it !in programsWith64BitAddresses && it !in notRunUnderWasmtime }) {
+            for (optimize in listOf(false, true)) {
+                val llFile = compiledLlFile(compileText(LlvmTarget(4), optimize, source, dir))
+                val (exitCode, output) = buildAndRunWasm(llFile)
+                withClue("$name optimize=$optimize: exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            }
+        }
+    }
+
+    for ((name, program) in outputPrograms.filterKeys { it !in notRunUnderWasmtime }) {
+        test("$name: gives the expected exit code and console output as an llvm32 wasm32 program under wasmtime, which leaves no files behind").config(enabledOrReasonIf = requiresWasm) {
+            for (optimize in listOf(false, true)) {
+                withClue("optimize=$optimize") {
+                    val workingDirectory = outputDir.resolve("wasm-run")
+                    workingDirectory.toFile().deleteRecursively()
+                    workingDirectory.createDirectories()
+                    val llFile = compiledLlFile(compileText(LlvmTarget(4), optimize, program.source, outputDir.resolve("wasm").createDirectories()))
+                    val (exitCode, output) = buildAndRunWasm(llFile, program.input, program.args, workingDirectory)
+                    withClue(output) { exitCode shouldBe program.exitCode }
+                    output shouldBe program.output
+                    withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
+                }
+            }
+        }
+    }
+
+    test("on llvm32, call() and goto reach subroutines through void () entries under wasmtime, also those that return a value").config(enabledOrReasonIf = requiresWasm) {
+        val dir = outputDir.resolve("wasm-indirect").createDirectories()
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val llFile = compiledLlFile(compileText(LlvmTarget(4), optimize, indirectCalls32.source, dir))
+                val lines = llFile.readLines()
+                lines.any { it.startsWith("define internal void @.indirect.main.answer()") } shouldBe true
+                lines.none { it.trim().startsWith("%calli") } shouldBe true
+                val (exitCode, output) = buildAndRunWasm(llFile)
+                withClue(output) { exitCode shouldBe indirectCalls32.exitCode }
+                output shouldBe indirectCalls32.output
+            }
+        }
+    }
+
+    test("launchEmulator builds an llvm32 program into a .wasm file next to the .ll file and runs it with wasmtime").config(enabledOrReasonIf = requiresWasm) {
+        val dir = outputDir.resolve("wasm-launched").createDirectories()
+        val llFile = compiledLlFile(compileText(LlvmTarget(4), false, nativeHello.source, dir))
+        val wasm = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + ".wasm")
+        withClue("a compile without -o only writes the LLVM IR") { wasm.exists() shouldBe false }
+        val printed = printedOnStdout { LlvmTarget(4).launchEmulator(1, llFile, quiet = false) }
+        printed shouldContain "Building $wasm from $llFile with clang..."
+        printed shouldContain "Running $wasm..."
+        printed shouldContain "Program exited with status 42"
+        wasm.exists() shouldBe true
     }
 
     test("launchEmulator builds a native executable next to the .ll file and runs it").config(enabledOrReasonIf = requiresNativeLlvm) {
@@ -661,6 +716,36 @@ private fun buildAndRun(llFile: Path, input: String = "", args: List<String> = e
     return execute(executable.toString(), *args.toTypedArray(), stdin = stdin, directory = directory)
 }
 
+private val requiresWasm: (TestCase) -> Enabled = {
+    val sysroot = System.getenv("WASI_SYSROOT") ?: "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot"
+    fun onPath(tool: String) = System.getenv("PATH").orEmpty().split(File.pathSeparator)
+        .any { try { Files.isExecutable(Path(it).resolve(tool)) } catch (_: InvalidPathException) { false } }
+    when {
+        llvmBin == null -> Enabled.disabled("llvm-as and clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        !Files.isDirectory(Path(sysroot)) -> Enabled.disabled("no WASI sysroot in WASI_SYSROOT or $sysroot")
+        !onPath("wasm-ld") -> Enabled.disabled("wasm-ld (from lld) not found on the PATH")
+        !onPath("wasmtime") -> Enabled.disabled("wasmtime not found on the PATH")
+        else -> Enabled.enabled
+    }
+}
+
+/**
+ * Builds the .ll file into a .wasm file with clang and the clang arguments of the llvm32 target's profile, and runs it
+ * with the profile's run command, in the working [directory] (default: next to the .ll file). Linking fails on any wasm-ld
+ * warning, because a function signature mismatch only warns, and traps when called.
+ */
+private fun buildAndRunWasm(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
+    val profile = LlvmTarget(4).profile
+    val wasm = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + profile.outputExtension)
+    val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *profile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module",
+        "-Wl,--fatal-warnings", llFile.toString(), "-o", wasm.toString())
+    if (compiled.first != 0)
+        return compiled
+    val stdin = wasm.resolveSibling("${wasm.fileName}.stdin").also { it.writeText(input) }
+    val command = checkNotNull(profile.runCommand).map { it.replace("{file}", wasm.toAbsolutePath().toString()) } + args
+    return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent)
+}
+
 private fun execute(vararg command: String, stdin: Path? = null, directory: Path? = null): Pair<Int, String> {
     val builder = ProcessBuilder(*command).redirectErrorStream(true)
     stdin?.let { builder.redirectInput(it.toFile()) }
@@ -705,6 +790,15 @@ private val programsWith64BitAddresses = setOf(
     "inlined subroutines compute with pointer arguments as their integer parameters, and with integer arguments as their pointer parameters",
     "uquad constants folded with signed operands as at runtime, and typed pointers compared with negative numbers",
     "the untyped pointer is a uquad in variables, constants, parameters, return values, struct fields and arrays"
+)
+
+// programs that don't run as they are under wasmtime: wasm32 data lies above 64 KiB, where lsw(pointer) is wrongly folded to
+// the pointer itself on 4-byte pointer targets (see todo.rst); WASI's working directory is "/" rather than a host path;
+// and extsubs declared with the 64-bit size_t of LP64 hosts don't link against wasi-libc
+private val notRunUnderWasmtime = setOf(
+    "lsb, msb, lsw and msw of quads and addresses, and signed offsets to addresses",
+    "diskio directories, renaming and deleting",
+    "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
 )
 
 // the 64-bit programs that don't use the constants of the llvm64 library, so they also run on the virtual machine
@@ -3356,6 +3450,43 @@ other {
     }
 }""", "MO\ndone\n", exitCode = 6)
 )
+
+// call() takes the result that a subroutine's indirect entry leaves; jump() returns what the routine it goes to returns
+private val indirectCalls32 = OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    uword @shared counter = 0
+
+    sub start() {
+        long @shared target = &bump
+        long @shared target2 = &answer
+        void call(target)
+        void call(target)
+        txt.print_uw(counter)
+        txt.nl()
+        txt.print_uw(call(target2))
+        txt.nl()
+        txt.print_uw(jump(target2))
+        txt.nl()
+        sys.exit(lsb(counter))
+    }
+
+    sub bump() {
+        counter++
+    }
+
+    sub answer() -> uword {
+        counter++
+        return 42
+    }
+
+    sub jump(long address) -> uword {
+        goto address
+        return 0
+    }
+}""", "2\n42\n42\n", exitCode = 4)
 
 private val nativeHello = OutputProgram("""
 %import textio

@@ -42,8 +42,10 @@ class TestLlvmTripleProfile: FunSpec({
     test("the wasm32 profile builds a .wasm file with clang for WASI and runs it with a WASI runtime") {
         val profile = LlvmTripleProfile.resolve("wasm32-wasip1")
         profile.outputExtension shouldBe ".wasm"
-        profile.runCommand shouldBe listOf("wasmtime", "{file}")
+        profile.runCommand shouldBe listOf("wasmtime", "--dir=.", "{file}")
         profile.strictIndirectSignatures shouldBe true
+        profile.cMainSymbol shouldBe "__main_argc_argv"
+        LlvmTripleProfile.resolve("arm64-apple-macosx").cMainSymbol shouldBe "main"
     }
 
     test("the pointer width is the p: entry of the data layout, ignoring other address spaces, and 64 bits without one") {
@@ -65,12 +67,15 @@ class TestLlvmTripleProfile: FunSpec({
         rejected("nolong", "triple = t\ndatalayout = $wasmLayout") shouldContain "missing 'c_long_size'"
         rejected("unknownkey", validProfile("pointer_size = 4")) shouldContain "unknown keys"
         rejected("runcommand", validProfile("run_command = wasmtime")) shouldContain "{file}"
+        rejected("mainsymbol", validProfile("c_main_symbol = not a name")) shouldContain "c_main_symbol"
     }
 
-    test("clang_args expand environment variables, and an unset one is an error") {
+    test("clang_args expand environment variables, with an optional :- default, and an unset one without a default is an error") {
         val env = mapOf("SYSROOT" to "/opt/sysroot")
         LlvmTripleProfile.expandEnvironment(listOf("--target=wasm32", $$"--sysroot=${SYSROOT}/x"), env::get) shouldBe
             listOf("--target=wasm32", "--sysroot=/opt/sysroot/x")
+        LlvmTripleProfile.expandEnvironment(listOf($$"--sysroot=${SYSROOT:-/default}", $$"${UNSET:-/default}/y", $$"${UNSET:-}"), env::get) shouldBe
+            listOf("--sysroot=/opt/sysroot", "/default/y", "")
         shouldThrow<IllegalArgumentException> {
             LlvmTripleProfile.expandEnvironment(listOf($$"${PROG8_NO_SUCH_VARIABLE}"), env::get)
         }.message!! shouldContain "PROG8_NO_SUCH_VARIABLE"

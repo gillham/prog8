@@ -22,7 +22,7 @@ Currently these machines can be selected as a compilation target (via the ``-tar
 - 'qemu68k': Qemu M68k simulator (experimental)
 - 'virtual': a builtin virtual machine (32-bit pointers, 16 MB memory)
 - 'llvm64' (or 'llvm'): a hosted 64-bit program, compiled to LLVM IR (see :ref:`llvm_triples`)
-- 'llvm32': a hosted 32-bit program, compiled to LLVM IR, such as WebAssembly with WASI (*code generation not implemented yet*)
+- 'llvm32': a hosted 32-bit program, compiled to LLVM IR, such as WebAssembly with WASI
 - custom targets via a separate configuration file (see :ref:`customizable_target`)
 
 This chapter explains some relevant system details of the c64 and cx16 machines.
@@ -184,9 +184,11 @@ executable for a particular platform, identified by its LLVM *target triple*. Th
 pointer size (8 or 4 bytes); the ``-triple`` compiler option selects the platform, by naming a *triple profile*.
 Without it, ``llvm64`` uses ``arm64-apple-macosx`` and ``llvm32`` uses ``wasm32-wasip1``.
 
-.. note::
-    Code generation for the ``llvm32`` target is not implemented yet: the compiler accepts the target and its
-    triple profiles, but stops with an error when it gets to generating the LLVM IR.
+With the default ``wasm32-wasip1`` profile, an ``llvm32`` program becomes a WebAssembly program for the WASI
+system interface. Building it needs clang with ``wasm-ld`` (from lld) and the wasi-libc sysroot, given by the
+``WASI_SYSROOT`` environment variable (default: the one of Homebrew's ``wasi-libc``); ``-emu`` runs it with
+``wasmtime``, which gives it access to the current directory only. WASI programs start in the directory ``/``
+of that sandbox, so the current directory has no host path there.
 
 The operating system owns the memory of an LLVM program, so anything that places the program or its variables
 at a fixed address is an error on these targets: the ``%address``, ``%memtop`` and ``%varsaddress`` directives,
@@ -213,24 +215,42 @@ These are the keys of a profile; an unknown key is an error:
     The size in bytes of the C ``long`` type on that platform: 4 or 8.
 ``clang_args``
     Extra arguments for clang when it builds the executable, separated by spaces, such as ``--target`` and ``--sysroot``.
-    Environment variables can be used as ``${NAME}``; they only have to be set when clang is actually run.
+    Environment variables can be used as ``${NAME}``, or as ``${NAME:-default}`` to use the default when the variable
+    is not set; they only have to be set when clang is actually run.
 ``output_extension``
     The file name extension of the built executable, such as ``.wasm``. Without it, the executable is named as usual on the host.
 ``run_command``
     The command that ``-emu`` uses to run the executable, with ``{file}`` in place of its path, for example ``wasmtime {file}``.
     Without it, the executable is run directly.
 ``strict_indirect_signatures``
-    ``true`` for platforms that check the signature of a function called through a pointer, such as WebAssembly.
+    ``true`` for platforms that check the signature of a function called through a pointer, such as WebAssembly,
+    which traps on any other. See below.
+``c_main_symbol``
+    The name that the C runtime of the platform calls the program's C ``main`` function by. The default is ``main``;
+    wasi-libc calls it ``__main_argc_argv``.
 
 For example, the built-in ``wasm32-wasip1`` profile::
 
     triple = wasm32-unknown-wasip1
     datalayout = e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20
     c_long_size = 4
-    clang_args = --target=wasm32-wasip1 --sysroot=${WASI_SYSROOT}
+    clang_args = --target=wasm32-wasip1 --sysroot=${WASI_SYSROOT:-/opt/homebrew/opt/wasi-libc/share/wasi-sysroot}
     output_extension = .wasm
-    run_command = wasmtime {file}
+    run_command = wasmtime --dir=. {file}
     strict_indirect_signatures = true
+    c_main_symbol = __main_argc_argv
+
+**Indirect calls with strict signatures.** ``call(address)``, ``goto address`` and the other ways to run a routine
+through its address call it without arguments. With ``strict_indirect_signatures``, they call it as a function
+without a result, and a subroutine without parameters that returns a value is reached through a small entry
+function that passes its result on, so ``call()`` and ``goto`` still give that value. Calling a subroutine with
+parameters through its address traps, as does an address that isn't a subroutine.
+
+**External C routines must have the exact C types.** An ``extsub`` without an address is declared with the widths
+of its Prog8 types. On WebAssembly a mismatch with the C library's own type, such as ``uquad`` for the 32-bit
+``size_t`` of wasm32, makes wasm-ld warn "function signature mismatch" and the call trap at runtime. On wasm32
+the C ``int``, ``long`` and ``size_t`` types are all ``long`` in Prog8. A file seek to an offset that a 32-bit
+C ``long`` can't hold fails.
 
 
 Memory Model
@@ -247,12 +267,12 @@ The size of a pointer (memory address) depends on the target's CPU architecture:
 - **m68k targets** (amiga500, amiga1200, qemu68k): **4 bytes** (32-bit address space, 16 MB)
 - **virtual target**: **4 bytes** (32-bit address space, 16 MB)
 - **llvm64 target**: **8 bytes** (the 64-bit address space of the host)
-- **llvm32 target**: **4 bytes** (*code generation not implemented yet*)
+- **llvm32 target**: **4 bytes** (32-bit platforms such as wasm32)
 
 The ``pointer`` type keyword automatically takes the correct size for the target,
 making it the natural choice for variables that hold a memory address in portable code.
 On 6502 targets it is equivalent to ``uword``; on m68k and virtual targets it is equivalent to ``long``;
-on the llvm64 target it is equivalent to ``uquad``.
+on the llvm64 target it is equivalent to ``uquad``, and on the llvm32 target to ``long``.
 Alternatively, you can use ``uword``, ``long`` or ``uquad`` directly if you know the target in advance.
 
 Generic 6502 Physical address space layout

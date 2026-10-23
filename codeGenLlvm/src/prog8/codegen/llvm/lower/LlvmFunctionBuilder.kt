@@ -1,6 +1,7 @@
 package prog8.codegen.llvm.lower
 
 import prog8.code.core.Position
+import prog8.code.target.LlvmTarget
 import prog8.codegen.llvm.LlvmPrinter
 import prog8.codegen.llvm.model.BinaryOperator
 import prog8.codegen.llvm.model.CastOperator
@@ -20,12 +21,21 @@ private const val PROGRAM_START = "main.start"
 // the leading dot keeps it apart from any Prog8 symbol
 private const val GLOBAL_INITS = ".init.globals"
 
+/** The `void ()` function that indirect calls reach subroutine [label] through under strict indirect signatures. */
+internal fun indirectEntryName(label: String) = ".indirect.$label"
+
+/** A subroutine without parameters that returns one value: called indirectly as `void ()`, it needs an entry with that signature. */
+internal fun needsIndirectEntry(sub: IRSubroutine) = sub.parameters.isEmpty() && sub.returns.size == 1
+
 /**
  * Translates the subroutines of an IR program into LLVM functions, with one LLVM block per IR chunk.
  * IR virtual registers live in entry-block stack slots, which LLVM's mem2reg pass turns into SSA values.
  */
 internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmDataSymbols) {
     val mapper = LlvmTypeMapper(program.st, program.options.compTarget)
+    private val profile = (program.options.compTarget as? LlvmTarget)?.profile
+    /** Whether an indirect call must use the callee's exact signature, as WebAssembly's call_indirect traps on any other. */
+    val strictIndirectSignatures: Boolean = profile?.strictIndirectSignatures == true
     private val subroutines = program.allSubs().associateBy { it.label }
     private val asmSubroutines = program.allAsmSubs().associateBy { it.label }
     private val externalFunctions = linkedMapOf<String, LlvmFunction>()
@@ -55,6 +65,7 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
         }
         if (program.globalInits.isNotEmpty())
             module.functions += function(IRSubroutine(GLOBAL_INITS, emptyList(), emptyList(), Position.DUMMY).also { it += program.globalInits })
+        symbols.indirectEntries.forEach { indirectEntry(it) }
         reportReachableConflict()
         module.functions += helperFunctions.values
         module.functions += externalFunctions.values
@@ -62,7 +73,7 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
         module.globals += runtimeGlobals.values
     }
 
-    /** Like [build], and adds the program's C entry point `main` as the last function. */
+    /** Like [build], and adds the program's C entry point as the last function. */
     fun buildProgram(module: LlvmModule) {
         // first, as build() emits the runtime globals that main stores the command line arguments in
         val main = entryPoint()
@@ -71,8 +82,8 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     }
 
     /**
-     * The program's C entry point `main`: stores the command line arguments, initializes the global variables that need code
-     * for that, runs main.start, and returns 0.
+     * The program's C entry point `main`, or the name the C runtime of the triple calls it by: stores the command line arguments,
+     * initializes the global variables that need code for that, runs main.start, and returns 0.
      */
     private fun entryPoint(): LlvmFunction {
         val start = requireNotNull(subroutine(PROGRAM_START)) { "the program has no $PROGRAM_START subroutine to begin with" }
@@ -86,7 +97,31 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
         val ignoredResult = if (startType == LlvmType.Void) null else LlvmValue.Local("ignored", startType)
         code += LlvmInstruction.Call(ignoredResult, PROGRAM_START, emptyList(), startType)
         code += LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I32))
-        return LlvmFunction("main", LlvmType.I32, listOf(argc, argv), mutableListOf(LlvmBlock("entry", code)))
+        return LlvmFunction(profile?.cMainSymbol ?: "main", LlvmType.I32, listOf(argc, argv), mutableListOf(LlvmBlock("entry", code)))
+    }
+
+    /**
+     * What an indirect call to [label] calls: the subroutine itself, or under strict indirect signatures, for a subroutine
+     * that returns a value, an entry that calls it and leaves the result in calling convention slot 10 as CALLI does.
+     */
+    fun indirectEntry(label: String): LlvmValue.Global {
+        val sub = subroutine(label)
+        if (!strictIndirectSignatures || sub == null || !needsIndirectEntry(sub))
+            return LlvmValue.Global(functionName(label))
+        return helperFunction(indirectEntryName(label)) {
+            val type = returnType(sub)
+            val result = LlvmValue.Local("result", type)
+            val code = mutableListOf<LlvmInstruction>(LlvmInstruction.Call(result, label, emptyList(), type))
+            val wide = LlvmValue.Local("wide", LlvmType.I64)
+            when {
+                type == LlvmType.I64 -> code += LlvmInstruction.Store(result, hardwareSlot(CallingConventionSlot(10), float = false))
+                type.isInteger -> code += listOf(LlvmInstruction.Cast(CastOperator.ZEXT, wide, result, LlvmType.I64), LlvmInstruction.Store(wide, hardwareSlot(CallingConventionSlot(10), float = false)))
+                type == LlvmType.Ptr -> code += listOf(LlvmInstruction.Cast(CastOperator.PTRTOINT, wide, result, LlvmType.I64), LlvmInstruction.Store(wide, hardwareSlot(CallingConventionSlot(10), float = false)))
+                else -> code += LlvmInstruction.Store(result, hardwareSlot(CallingConventionSlot(10), float = true))
+            }
+            code += LlvmInstruction.Ret(null)
+            LlvmFunction(indirectEntryName(label), LlvmType.Void, emptyList(), mutableListOf(LlvmBlock("entry", code)), linkage = LlvmLinkage.INTERNAL)
+        }
     }
 
     /** The argc of the C main, which stays 0 in a module without that entry point. */
@@ -381,7 +416,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
 
     fun symbolAddress(name: String, offset: Int = 0): LlvmValue {
         val base = builder.symbols.addresses[name]
-            ?: LlvmValue.Global(builder.functionName(name)).takeIf { builder.subroutine(name) != null || builder.asmSubroutine(name) != null }
+            ?: builder.indirectEntry(name).takeIf { builder.subroutine(name) != null || builder.asmSubroutine(name) != null }
             ?: throw IllegalArgumentException("${sub.label} takes the address of unknown symbol $name")
         return if (offset == 0) base else LlvmValue.ConstantGep(LlvmType.I8, base, listOf(LlvmValue.IntConstant(offset.toLong(), builder.mapper.intPtr)))
     }

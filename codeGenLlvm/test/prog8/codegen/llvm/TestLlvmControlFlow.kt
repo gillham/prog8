@@ -6,6 +6,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import prog8.code.core.*
+import prog8.code.target.LlvmTarget
 import prog8.intermediate.*
 
 
@@ -188,6 +189,12 @@ class TestLlvmControlFlow: FunSpec({
     test("the control flow runs correctly as a native arm64 macOS program").config(enabledOrReasonIf = requiresNativeArm64Mac) {
         val module = TestProgram().apply { allSubs(); checkSub() }.module().withMainCalling("main.check")
         val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
+        withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+    }
+
+    test("the llvm32 control flow runs correctly as a wasm32 program under wasmtime").config(enabledOrReasonIf = requiresWasm) {
+        val module = TestProgram(LlvmTarget(4)).apply { allSubs(); checkSub() }.module().withMainCalling("main.check").withMainNamed(wasiMain)
+        val (exitCode, output) = compileAndRunWasm(LlvmPrinter.print(module))
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
     }
 })

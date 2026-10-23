@@ -2,6 +2,8 @@ package prog8.codegen.llvm
 
 import io.kotest.core.test.Enabled
 import io.kotest.core.test.TestCase
+import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmTripleProfile
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -30,6 +32,43 @@ internal val requiresWasmClang: (TestCase) -> Enabled = {
         clang == null -> Enabled.disabled("clang not found next to llvm-as, on the PATH or in ${LlvmToolchain.homebrewLlvmBin}")
         wasiSysroot == null -> Enabled.disabled("no WASI sysroot in WASI_SYSROOT or /opt/homebrew/opt/wasi-libc/share/wasi-sysroot")
         else -> Enabled.enabled
+    }
+}
+
+private val wasmtime: Path? = LlvmToolchain.find("wasmtime")
+
+internal val requiresWasm: (TestCase) -> Enabled = {
+    when {
+        clang == null -> Enabled.disabled("clang not found next to llvm-as, on the PATH or in ${LlvmToolchain.homebrewLlvmBin}")
+        wasiSysroot == null -> Enabled.disabled("no WASI sysroot in WASI_SYSROOT or /opt/homebrew/opt/wasi-libc/share/wasi-sysroot")
+        LlvmToolchain.find("wasm-ld") == null -> Enabled.disabled("wasm-ld (from lld) not found on the PATH")
+        wasmtime == null -> Enabled.disabled("wasmtime not found on the PATH")
+        else -> Enabled.enabled
+    }
+}
+
+/** The name wasi-libc's startup code calls the C main by. */
+internal val wasiMain: String = LlvmTripleProfile.resolve(LlvmTarget.DEFAULT_TRIPLE_32).cMainSymbol
+
+/**
+ * Builds [ir] into a wasm32-wasip1 program and runs it with wasmtime, giving it [input] on stdin, the command line [args]
+ * and access to [directories]; returns the exit code and output of the run, or of clang if that failed.
+ * Linking fails on any wasm-ld warning, because a function signature mismatch only warns, and traps when called.
+ */
+internal fun compileAndRunWasm(ir: String, input: String = "", args: List<String> = emptyList(), directories: List<Path> = emptyList()): Pair<Int, String> {
+    val dir = createTempDirectory("prog8-llvm-wasm")
+    try {
+        val source = dir.resolve("program.ll").also { it.writeText(ir) }
+        val program = dir.resolve("program.wasm")
+        val stdin = dir.resolve("stdin.txt").also { it.writeText(input) }
+        val compiled = execute(checkNotNull(clang).toString(), "--target=wasm32-wasip1", "--sysroot=${checkNotNull(wasiSysroot)}", "-O2",
+            "-Wno-override-module", "-Wl,--fatal-warnings", source.toString(), "-o", program.toString())
+        if (compiled.first != 0)
+            return compiled
+        val preopens = directories.map { "--dir=$it" }
+        return execute(checkNotNull(wasmtime).toString(), *preopens.toTypedArray(), program.toString(), *args.toTypedArray(), stdin = stdin)
+    } finally {
+        dir.toFile().deleteRecursively()
     }
 }
 

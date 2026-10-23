@@ -224,9 +224,10 @@ One or more .p8 module files
     The compiled program and the symbol and breakpoint lists
     (for the machine code monitor) are immediately loaded into the emulator (if it supports them)
 
-    The ``llvm64`` target has no emulator: there ``-emu`` builds the LLVM IR into an executable for the host
+    The ``llvm64`` and ``llvm32`` targets have no emulator: there ``-emu`` builds the LLVM IR into an executable
     with clang, and runs it. The program's exit status is printed afterwards.
-    When the triple profile has a ``run_command``, that command runs the executable instead (see :ref:`llvm_triples`).
+    When the triple profile has a ``run_command``, that command runs the executable instead (see :ref:`llvm_triples`):
+    the default ``llvm32`` profile builds a ``.wasm`` file and runs it with ``wasmtime``.
 
 ``-newcodegen``
     Use new 6502 code generation backend (*incomplete/experimental*). This generates 6502 assembly code based on IR instead of the AST.
@@ -313,7 +314,7 @@ One or more .p8 module files
     ``c64`` = Commodore 64, ``c128`` = Commodore 128, ``cx16`` = Commander X16, ``pet32`` - Commodore PET model 4032,
     ``qemu68k`` = Qemu M68k (experimental), ``amiga500`` = Amiga 500 (experimental), ``amiga1200`` = Amiga 1200 (experimental),
     ``virtual`` = builtin virtual machine, ``llvm64`` (or ``llvm``) and ``llvm32`` = hosted programs compiled to LLVM IR
-    (code generation for ``llvm32`` is not implemented yet).
+    (by default for 64-bit macOS on arm64 and for 32-bit WebAssembly with WASI).
     You can also specify a file name as target, prog8 will then try to read the target
     machine's configuration and properties from that configuration file instead of using one of the built-in targets.
     See :ref:`customizable_target` for details about this.

@@ -359,6 +359,11 @@ class TestLlvmGlobalEmission: FunSpec({
         withClue(output) { exitCode shouldBe 0 }
     }
 
+    test("the llvm32 globals and their startup stores link into a wasm32 program that runs under wasmtime").config(enabledOrReasonIf = requiresWasm) {
+        val (exitCode, output) = compileAndRunWasm(LlvmPrinter.print(globals32(target32).withMainNamed(wasiMain)))
+        withClue(output) { exitCode shouldBe 0 }
+    }
+
     test("the llvm32 globals compile into a wasm32 object").config(enabledOrReasonIf = requiresWasmClang) {
         val (exitCode, output) = compileWasmObject(LlvmPrinter.print(globals32(target32)))
         withClue(output) { exitCode shouldBe 0 }

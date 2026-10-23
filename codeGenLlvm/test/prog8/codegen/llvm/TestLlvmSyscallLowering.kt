@@ -356,13 +356,16 @@ class TestLlvmSyscallLowering: FunSpec({
             withClue(declaration) { text.count { it == "declare $declaration" } shouldBe 1 }
     }
 
-    test("on llvm32, fseek gets the low 32 bits of a quad offset, and the position from ftell is sign extended into the quad") {
+    test("on llvm32, fseek fails for a quad offset that a 32-bit long can't hold, and the position from ftell is sign extended into the quad") {
         val lines = llvm32().apply { allHandleSyscallsSub() }.module().function("main.handles").lines()
         lines shouldHave "  %count.1 = zext i16 %r4.1 to i32"
         lines shouldHave "  %transferred.1 = call i32 @fread(ptr %r1.2, i32 1, i32 %count.1, ptr %r3.1)"
         lines shouldHave "  %transferred.2 = trunc i32 %transferred.1 to i16"
         lines shouldHave "  %offset.1 = trunc i64 %r7.1 to i32"
-        lines shouldHave "  %status.1 = call i32 @fseek(ptr %r3.3, i32 %offset.1, i32 %origin.1)"
+        lines shouldHave "  %offset.2 = sext i32 %offset.1 to i64"
+        lines shouldHave "  %fits.1 = icmp eq i64 %offset.2, %r7.1"
+        lines shouldHave "  %origin.2 = select i1 %fits.1, i32 %origin.1, i32 -1"
+        lines shouldHave "  %status.1 = call i32 @fseek(ptr %r3.3, i32 %offset.1, i32 %origin.2)"
         lines shouldHave "  %position.1 = call i32 @ftell(ptr %r3.4)"
         lines shouldHave "  %position.2 = sext i32 %position.1 to i64"
         lines shouldHave "  store i64 %position.2, ptr %r10.slot"
@@ -405,6 +408,50 @@ class TestLlvmSyscallLowering: FunSpec({
     test("llvm-as accepts the llvm32 syscalls").config(enabledOrReasonIf = requiresLlvmAs) {
         for (ir in llvm32Syscalls())
             runLlvmAs(ir).let { (exitCode, output) -> withClue(output) { exitCode shouldBe 0 } }
+    }
+
+    test("the llvm32 console syscalls read stdin and write stdout in a wasm32 program under wasmtime").config(enabledOrReasonIf = requiresWasm) {
+        val echo = llvm32().apply { readCharSub(); echoSub() }.module().withMainCalling("main.echo").withMainNamed(wasiMain)
+        compileAndRunWasm(LlvmPrinter.print(echo), input = "hi\n").let { (exitCode, output) ->
+            withClue(output) { exitCode shouldBe 0 }
+            output shouldBe "hi\n"
+        }
+        val greeting = llvm32().apply { allOutputSubs(); greetingSub() }.module().withMainCalling("main.greeting").withMainNamed(wasiMain)
+        compileAndRunWasm(LlvmPrinter.print(greeting)).let { (exitCode, output) ->
+            withClue(output) { exitCode shouldBe 0 }
+            output shouldBe "A\nhi\nhello, world!\nhi\n"
+        }
+    }
+
+    test("an llvm32 program gets its command line arguments under wasmtime, through the C main that wasi-libc calls").config(enabledOrReasonIf = requiresWasm) {
+        val module = llvm32().apply { argumentsOutputSub() }.programModule()
+        module.functions.last().name shouldBe wasiMain
+        val (exitCode, output) = compileAndRunWasm(LlvmPrinter.print(module), args = listOf("first", "second arg"))
+        withClue(output) { exitCode shouldBe 3 }
+        val lines = output.lines()
+        lines.take(4) shouldBe listOf("first", "second arg", "", "")
+        withClue("argument 0 is the program: ${lines[4]}") { lines[4].endsWith("program.wasm") shouldBe true }
+        lines.drop(5) shouldBe listOf("")
+    }
+
+    test("the llvm32 file and file handle syscalls work in a wasm32 program under wasmtime, with access to the directory").config(enabledOrReasonIf = requiresWasm) {
+        val directory = createTempDirectory("prog8-wasm-files").toRealPath()
+        try {
+            val files = llvm32().apply { fileSyscallChecks(directory) }.module().withMainCalling("main.check").withMainNamed(wasiMain)
+            compileAndRunWasm(LlvmPrinter.print(files), directories = listOf(directory)).let { (exitCode, output) ->
+                withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            }
+            directory.listDirectoryEntries().map { it.name }.sorted() shouldBe listOf("data.bin", "data.prg", "one.bin")
+            directory.listDirectoryEntries().forEach { it.toFile().delete() }
+            val handles = llvm32().apply { handleSyscallChecks(directory) }.module().withMainCalling("main.check").withMainNamed(wasiMain)
+            compileAndRunWasm(LlvmPrinter.print(handles), directories = listOf(directory)).let { (exitCode, output) ->
+                withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            }
+            directory.resolve("out.bin").readBytes().toList() shouldBe (1..8).map { it.toByte() }
+            directory.resolve("copy.bin").readBytes().toList() shouldBe (1..5).map { it.toByte() }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
     }
 
     test("the llvm32 syscalls compile into wasm32 objects").config(enabledOrReasonIf = requiresWasmClang) {
@@ -702,12 +749,13 @@ private fun TestProgram.handleSyscallChecks(directory: Path) {
         check("loadm.p ra.p,[main.files]; syscall 78 (ra.p): rb.q; syscall 80 (ra.p): rc.b; load.p rd.p,#main.dst; load.w re.w,#1.w; " +
             "syscall 75 (ra.p, rd.p, re.w): rf.w; loadm.b rg.b,[main.dst]",
             Is("rb.q", 3), Is("rc.b", 0), Is("rf.w", 1), Is("rg.b", 4))
-        // seeking before the start fails and keeps the position; past 4 GB works, with nothing to read there
+        // seeking before the start fails and keeps the position; past 4 GB works, with nothing to read there, where the C long has 64 bits
         check("loadm.p ra.p,[main.files]; load.q rb.q,#-1.q; load.b rc.b,#0.b; syscall 77 (ra.p, rb.q, rc.b): rd.b; syscall 78 (ra.p): re.q",
             Is("rd.b", 0), Is("re.q", 4))
+        val past4GB = if (target.profile.cLongSize == 8) arrayOf(Is("rd.b", 1), Is("re.q", 4294967297), Is("rh.w", 0))
+            else arrayOf(Is("rd.b", 0), Is("re.q", 4), Is("rh.w", 1))
         check("loadm.p ra.p,[main.files]; load.q rb.q,#4294967297.q; load.b rc.b,#0.b; syscall 77 (ra.p, rb.q, rc.b): rd.b; syscall 78 (ra.p): re.q; " +
-            "load.p rf.p,#main.dst; load.w rg.w,#1.w; syscall 75 (ra.p, rf.p, rg.w): rh.w",
-            Is("rd.b", 1), Is("re.q", 4294967297), Is("rh.w", 0))
+            "load.p rf.p,#main.dst; load.w rg.w,#1.w; syscall 75 (ra.p, rf.p, rg.w): rh.w", *past4GB)
         check("loadm.p ra.p,[main.files]; loadm.p rb.p,[main.files+8]; syscall 74 (ra.p): rc.b; syscall 74 (rb.p): rd.b", Is("rc.b", 1), Is("rd.b", 1))
     }.subroutine())
 }

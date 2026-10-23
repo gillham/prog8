@@ -120,6 +120,12 @@ class TestLlvmMemoryLowering: FunSpec({
         withClue(output) { exitCode shouldBe 0 }
     }
 
+    test("an llvm32 str[] array links into a wasm32 program that prints its elements under wasmtime").config(enabledOrReasonIf = requiresWasm) {
+        val (exitCode, output) = compileAndRunWasm(LlvmPrinter.print(stringsProgram(LlvmTarget(4)).withMainNamed(wasiMain)))
+        withClue(output) { exitCode shouldBe 0 }
+        output shouldBe "bb\ncc\nzz\n"
+    }
+
     test("an llvm32 str[] array compiles into a wasm32 object").config(enabledOrReasonIf = requiresWasmClang) {
         val (exitCode, output) = compileWasmObject(LlvmPrinter.print(stringsProgram(LlvmTarget(4))))
         withClue(output) { exitCode shouldBe 0 }

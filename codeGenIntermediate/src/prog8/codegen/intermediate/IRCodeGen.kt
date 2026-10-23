@@ -2029,6 +2029,9 @@ class IRCodeGen(
                 is PtLabel -> {
                     irBlock += IRCodeChunk(child.name, null)
                 }
+                is PtBreakpoint -> {
+                    irBlock += IRCodeChunk(null, null).also { it += IRInstructions.simple(Opcode.BREAKPOINT) }
+                }
                 is PtJmpTable -> {
                     irBlock += IRCodeChunk(null, null).also {
                         for(addr in child.children) {

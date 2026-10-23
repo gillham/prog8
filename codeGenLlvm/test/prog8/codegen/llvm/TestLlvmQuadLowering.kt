@@ -174,6 +174,13 @@ class TestLlvmQuadLowering: FunSpec({
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
         output shouldBe ""
     }
+
+    test("the llvm32 quad instructions compute what the VM computes, in a wasm32 program under wasmtime").config(enabledOrReasonIf = requiresWasm) {
+        val module = TestProgram(LlvmTarget(4)).apply { quadCheckProgram() }.module().withMainCalling("main.check").withMainNamed(wasiMain)
+        val (exitCode, output) = compileAndRunWasm(LlvmPrinter.print(module))
+        withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+        output shouldBe ""
+    }
 })
 
 

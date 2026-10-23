@@ -7,6 +7,7 @@ import prog8.codegen.llvm.model.IcmpCondition
 import prog8.codegen.llvm.model.LlvmInstruction
 import prog8.codegen.llvm.model.LlvmType
 import prog8.codegen.llvm.model.LlvmValue
+import prog8.intermediate.CallingConventionSlot
 import prog8.intermediate.CodeReference
 import prog8.intermediate.IRInstruction
 import prog8.intermediate.Opcode
@@ -68,6 +69,8 @@ private fun FunctionLowering.compareAndBranch(ins: IRInstruction, condition: Icm
 /**
  * LLVM IR can't jump to an address, so JUMPI calls the routine there and returns what that returns.
  * This matches a jump to a subroutine without parameters; the llvm targets can't take the address of a label.
+ * With strict indirect signatures the routine is called as `void ()`, and a function that returns a value returns
+ * what the indirect entry of a value-returning routine left in calling convention slot 10.
  */
 private fun FunctionLowering.jumpIndirect(ins: IRInstruction) {
     val reference = requireNotNull(ins.requireTarget() as? CodeReference.Indirect) { "JUMPI in ${sub.label} needs an indirect target" }
@@ -76,6 +79,13 @@ private fun FunctionLowering.jumpIndirect(ins: IRInstruction) {
     if (returnType == LlvmType.Void) {
         emit(LlvmInstruction.Call(null, address, emptyList(), LlvmType.Void))
         emit(LlvmInstruction.Ret(null))
+    } else if (builder.strictIndirectSignatures) {
+        val float = returnType == LlvmType.Double
+        val slot = builder.hardwareSlot(CallingConventionSlot(10), float)
+        emit(LlvmInstruction.Store(LlvmValue.ZeroInitializer(if (float) LlvmType.Double else LlvmType.I64), slot))
+        emit(LlvmInstruction.Call(null, address, emptyList(), LlvmType.Void))
+        val result = derive("jumpi", if (float) LlvmType.Double else LlvmType.I64) { LlvmInstruction.Load(it, slot) }
+        emit(LlvmInstruction.Ret(convert(result, returnType)))
     } else
         emit(LlvmInstruction.Ret(derive("jumpi", returnType) { LlvmInstruction.Call(it, address, emptyList(), returnType) }))
 }

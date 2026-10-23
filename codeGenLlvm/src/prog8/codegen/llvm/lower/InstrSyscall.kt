@@ -356,9 +356,17 @@ private fun FunctionLowering.seekHandle(site: CallSite, number: Int) {
     val (file, offset, origin) = arguments(site, number, 3)
     val cLong = builder.mapper.cLong
     val quadOffset = read(offset)
-    // a C long of 32 bits can only take the low 32 bits of the quad offset
-    val longOffset = if (checkNotNull(quadOffset.type.bitWidth) > checkNotNull(cLong.bitWidth)) convert(quadOffset, cLong, "offset") else widen(quadOffset, cLong, signed = true, "offset")
-    val args = listOf(pointerValue(file), longOffset, convert(read(origin), LlvmType.I32, "origin"))
+    val narrowed = checkNotNull(quadOffset.type.bitWidth) > checkNotNull(cLong.bitWidth)
+    val longOffset = if (narrowed) convert(quadOffset, cLong, "offset") else widen(quadOffset, cLong, signed = true, "offset")
+    var whence = convert(read(origin), LlvmType.I32, "origin")
+    if (narrowed) {
+        // an offset that doesn't fit in the C long fails the seek, with an origin that fseek rejects, instead of going to its low bits
+        val restored = widen(longOffset, quadOffset.type, signed = true, "offset")
+        val fits = derive("fits", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, restored, quadOffset) }
+        val checked = whence
+        whence = derive("origin", LlvmType.I32) { LlvmInstruction.Select(it, fits, checked, i32(-1)) }
+    }
+    val args = listOf(pointerValue(file), longOffset, whence)
     val status = derive("status", LlvmType.I32) { LlvmInstruction.Call(it, builder.libc(Libc.FSEEK), args, LlvmType.I32) }
     result(site, succeeded(status))
 }

@@ -3,6 +3,7 @@ package prog8.codegen.llvm.lower
 import prog8.code.INTERNED_STRINGS_MODULENAME
 import prog8.code.StMemorySlabBlockName
 import prog8.code.core.BaseDataType
+import prog8.code.target.LlvmTarget
 import prog8.codegen.llvm.model.CastOperator
 import prog8.codegen.llvm.model.LlvmBlock
 import prog8.codegen.llvm.model.LlvmFunction
@@ -39,6 +40,10 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
     private val st = program.st
     private val target = program.options.compTarget
     private val mapper = LlvmTypeMapper(st, target)
+    private val subroutinesWithIndirectEntry: Set<String> =
+        if ((target as? LlvmTarget)?.profile?.strictIndirectSignatures == true) program.allSubs().filter { needsIndirectEntry(it) }.map { it.label }.toSet()
+        else emptySet()
+    private val indirectEntries = linkedSetOf<String>()
 
     private val internedStringNames: Map<String, String> by lazy {
         st.allVariables().filter { it.name.startsWith("$INTERNED_STRINGS_MODULENAME.") }
@@ -96,7 +101,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         module.globals += globals.map { withStartupAddresses(it, startupStores) }
         if (startupStores.isNotEmpty())
             addStartupInitializer(module, startupStores)
-        return LlvmDataSymbols(addresses, memoryMappedClusters, pointerArrays)
+        return LlvmDataSymbols(addresses, memoryMappedClusters, pointerArrays, indirectEntries)
     }
 
     /**
@@ -303,8 +308,12 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         is IRStSymbolicReference.Numeric -> scalarConstant(base, ref.value, ref.quadBits)
         is IRStSymbolicReference.BoolValue -> LlvmValue.IntConstant(if (ref.value) 1L else 0L, mapper.map(base))
         // names missing from the symbol table are subroutines and labels, whose functions are emitted by a later step
-        is IRStSymbolicReference.Symbol -> addressAs(mapper.map(base), addresses[ref.name] ?: LlvmValue.Global(ref.name), user)
+        is IRStSymbolicReference.Symbol -> addressAs(mapper.map(base), addresses[ref.name] ?: subroutineAddress(ref.name), user)
     }
+
+    private fun subroutineAddress(name: String): LlvmValue =
+        if (name in subroutinesWithIndirectEntry) LlvmValue.Global(indirectEntryName(name)).also { indirectEntries += name }
+        else LlvmValue.Global(name)
 
     /** The Double [value] of a quad is only approximate, so its exact [quadBits] are used when it has those. */
     private fun scalarConstant(base: BaseDataType, value: Double, quadBits: Long?): LlvmValue = when (base) {
@@ -325,11 +334,15 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
     }
 }
 
-/** Where the data symbols of an IR program live in the LLVM module: [addresses] maps IR symbol names to constant pointers. */
+/**
+ * Where the data symbols of an IR program live in the LLVM module: [addresses] maps IR symbol names to constant pointers.
+ * [indirectEntries] are the subroutines whose indirect call entry the data references.
+ */
 internal class LlvmDataSymbols(
     val addresses: Map<String, LlvmValue>,
     private val memoryMapped: List<MemoryMappedCluster>,
-    val pointerArrays: Map<String, PointerArray>
+    val pointerArrays: Map<String, PointerArray>,
+    val indirectEntries: Set<String> = emptySet()
 ) {
     /** The backing storage of absolute [address] when a memory-mapped variable covers it (the IR accesses those by address), else null. */
     fun memoryMappedAddress(address: Long): LlvmValue? =

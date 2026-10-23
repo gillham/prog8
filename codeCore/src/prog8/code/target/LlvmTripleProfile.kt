@@ -20,13 +20,17 @@ data class LlvmTripleProfile(
     private val clangArgsTemplate: List<String> = emptyList(),
     val outputExtension: String = "",
     val runCommand: List<String>? = null,
-    val strictIndirectSignatures: Boolean = false
+    val strictIndirectSignatures: Boolean = false,
+    val cMainSymbol: String = "main"
 ) {
     /** The pointer width in bits of the default address space, which LLVM takes as 64 when the data layout has no `p:` entry. */
     val pointerBits: Int = dataLayout.split('-').firstOrNull { it.startsWith("p:") }
         ?.split(':')?.getOrNull(1)?.toIntOrNull() ?: 64
 
-    /** The clang arguments with `${NAME}` environment variables expanded, done on use so that only a clang build needs them set. */
+    /**
+     * The clang arguments with `${NAME}` (or `${NAME:-default}`) environment variables expanded,
+     * done on use so that only a clang build needs them set.
+     */
     val clangArgs: List<String>
         get() = expandEnvironment(clangArgsTemplate) { System.getenv(it) }
 
@@ -37,12 +41,13 @@ data class LlvmTripleProfile(
         }
         require(cLongSize == 4 || cLongSize == 8) { "the llvm triple profile '$name' has c_long_size $cLongSize, it must be 4 or 8" }
         require(runCommand == null || runCommand.any { "{file}" in it }) { "the run_command of llvm triple profile '$name' must contain {file}" }
+        require(cMainSymbol.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "the c_main_symbol of llvm triple profile '$name' must be a C identifier" }
     }
 
     companion object {
         const val RESOURCE_DIR = "/prog8lib/llvm-triples"
-        private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures")
-        private val environmentVariable = Regex($$"""\$\{([A-Za-z_][A-Za-z0-9_]*)}""")
+        private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol")
+        private val environmentVariable = Regex($$"""\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?}""")
 
         fun load(path: Path): LlvmTripleProfile = path.inputStream().use { parse(path.toString(), it) }
 
@@ -62,7 +67,7 @@ data class LlvmTripleProfile(
         internal fun expandEnvironment(args: List<String>, env: (String) -> String?): List<String> = args.map { arg ->
             environmentVariable.replace(arg) {
                 val variable = it.groupValues[1]
-                env(variable) ?: throw IllegalArgumentException("environment variable $variable used in the llvm clang_args is not set")
+                env(variable) ?: it.groups[3]?.value ?: throw IllegalArgumentException("environment variable $variable used in the llvm clang_args is not set")
             }
         }
 
@@ -84,7 +89,8 @@ data class LlvmTripleProfile(
                 words("clang_args").orEmpty(),
                 props.getProperty("output_extension", "").trim(),
                 words("run_command")?.takeIf { it.isNotEmpty() },
-                props.getProperty("strict_indirect_signatures", "false").trim().toBoolean()
+                props.getProperty("strict_indirect_signatures", "false").trim().toBoolean(),
+                props.getProperty("c_main_symbol", "main").trim()
             )
         }
     }

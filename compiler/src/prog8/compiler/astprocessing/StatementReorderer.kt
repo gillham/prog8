@@ -289,7 +289,8 @@ internal class StatementReorderer(
                 val operator = (assignment.value as? BinaryExpression)?.operator
                 if(operator!=null && operator in "+-*") {
                     val allAssignments = gatherAllConsecutiveOptimiazableAddSubOrMuls(assignment, operator)
-                    if(allAssignments.size>1) {
+                    // an unknown type is reported later by the AstChecker
+                    if(allAssignments.size>1 && assignment.value.inferType(program).isKnown) {
                         val total: Double = when(operator) {
                             "+", "-" -> allAssignments.sumOf { (it.value as BinaryExpression).right.constValue(program)!!.number }
                             "*" -> allAssignments.fold(1.0) { acc, element -> (element.value as BinaryExpression).right.constValue(program)!!.number * acc }

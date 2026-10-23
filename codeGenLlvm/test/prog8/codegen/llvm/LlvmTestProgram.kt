@@ -61,6 +61,15 @@ internal fun LlvmModule.withMainCalling(check: String): LlvmModule {
     return this
 }
 
+/** Renames the C `main` of a hand-built module to [symbol], with argc and argv parameters, as wasi-libc's startup code calls it. */
+internal fun LlvmModule.withMainNamed(symbol: String): LlvmModule {
+    val index = functions.indexOfFirst { it.name == "main" }
+    val main = functions[index]
+    val parameters = main.parameters.ifEmpty { listOf(LlvmValue.Local("argc", LlvmType.I32), LlvmValue.Local("argv", LlvmType.Ptr)) }
+    functions[index] = main.copy(name = symbol, parameters = parameters)
+    return this
+}
+
 internal fun LlvmModule.function(name: String): LlvmFunction = functions.single { it.name == name }
 
 internal fun LlvmFunction.text(): String = LlvmPrinter.print(LlvmModule("f", functions = mutableListOf(this))).substringAfter("source_filename = \"f\"\n\n")

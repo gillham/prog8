@@ -201,6 +201,22 @@ class TestLlvmInstructionLowering: FunSpec({
         }
     }
 
+    test("the llvm32 instructions compute what the VM computes, in a wasm32 program under wasmtime").config(enabledOrReasonIf = requiresWasm) {
+        val module = TestProgram(LlvmTarget(4)).apply { checkProgram() }.module().withMainCalling("main.check").withMainNamed(wasiMain)
+        val (exitCode, output) = compileAndRunWasm(LlvmPrinter.print(module))
+        withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+    }
+
+    test("with strict indirect signatures, CALLI and JUMPI call the address as void (), and take a result from calling convention slot 10") {
+        val lines = focused32.function("main.indirect").lines()
+        lines shouldHave "  store i64 0, ptr @.slot.s10"
+        lines shouldHave "  call void %r1.3()"
+        lines shouldHave "  %jumpi.1 = load i64, ptr @.slot.s10"
+        lines shouldHave "  %cast.1 = trunc i64 %jumpi.1 to i8"
+        lines shouldHave "  ret i8 %cast.1"
+        lines.none { "call i16" in it || "call i8" in it } shouldBe true
+    }
+
     test("the llvm32 lowering of every kind of instruction compiles into a wasm32 object").config(enabledOrReasonIf = requiresWasmClang) {
         val (exitCode, output) = compileWasmObject(LlvmPrinter.print(TestProgram(LlvmTarget(4)).apply { checkProgram() }.module().withMainCalling("main.check")))
         withClue(output) { exitCode shouldBe 0 }
