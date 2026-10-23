@@ -4,6 +4,7 @@ import prog8.code.assembly.IAssemblyProgram
 import prog8.code.core.CompilationOptions
 import prog8.code.core.IErrorReporter
 import prog8.code.core.OutputFiles
+import prog8.code.target.LlvmTarget
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.writeText
@@ -29,7 +30,7 @@ internal class AssemblyProgramLlvm(
             return false
         if (programFile == file)
             return true
-        if (!LlvmToolchain.compileToExecutable(file, programFile))
+        if (!LlvmToolchain.compileToExecutable(file, programFile, (options.compTarget as? LlvmTarget)?.profile))
             return false
         if (!options.quiet)
             println("Native executable written to '$programFile'")

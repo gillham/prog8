@@ -99,6 +99,7 @@ private class CompilerCli : CliktCommand(name = "prog8c") {
     val dontIncludeSourcelines by option("-nosourcelines", "--nosourcelines", help = "do not include original Prog8 source lines in generated asm code").flag()
     val sourceDirs by option("-srcdirs", "--srcdirs", help = "extra paths to search for imported modules").multiple()
     val compilationTarget by option("-target", "--target", help = "target output of the compiler (one of ${CompilationTargets.joinToString(",")} or a custom target properties file)")
+    val llvmTripleArg by option("-triple", "--triple", help = "triple profile of the ${LlvmTarget.NAME32}/${LlvmTarget.NAME64} targets: a name such as ${LlvmTarget.DEFAULT_TRIPLE_32}, or a profile properties file")
     val showTimings by option("-timings", "--timings", help = "show internal compiler timings").flag()
     val varsGolden by option("-varsgolden", "--varsgolden", help = "put uninitialized variables and memory slabs in golden ram").flag()
     val varsHighBank by option("-varshigh", "--varshigh", help = "put uninitialized variables and memory slabs in high memory area").int()
@@ -189,6 +190,23 @@ private fun compileMain(args: Array<String>): Boolean {
                 presenter.printErrorLine("Invalid compilation target: $compilationTarget")
                 return false
             }
+        }
+    }
+
+    // a profile file goes in as an absolute path, so the daemon and a .p8ir file find it from any directory
+    val llvmTriple = llvmTripleArg?.let { triple ->
+        val file = expandTilde(Path(triple))
+        if(file.isRegularFile()) file.toAbsolutePath().normalize().toString() else triple
+    }
+    if(llvmTriple!=null) {
+        try {
+            getCompilationTargetByName(compilationTarget ?: "", llvmTriple)
+        } catch (x: IllegalArgumentException) {
+            presenter.printErrorLine("Invalid -triple: ${x.message}")
+            return false
+        } catch (x: IOException) {
+            presenter.printErrorLine("Can't read the llvm triple profile '$llvmTriple': ${x.message}")
+            return false
         }
     }
 
@@ -283,7 +301,8 @@ private fun compileMain(args: Array<String>): Boolean {
                     outputFile = outputFile?.let { pathFrom(it) },
                     errors = ErrorReporter(txtcolors),
                     assemble = true,
-                    generateDocumentation = generateDocumentation
+                    generateDocumentation = generateDocumentation,
+                    llvmTriple = llvmTriple
                 )
                 val compilationResult = compileProgram(compilerArgs)
 
@@ -373,7 +392,8 @@ private fun compileMain(args: Array<String>): Boolean {
                 cwd = Path.of(System.getProperty("user.dir")),
                 errors = ErrorReporter(txtcolors),
                 assemble = true,
-                generateDocumentation = generateDocumentation
+                generateDocumentation = generateDocumentation,
+                llvmTriple = llvmTriple
             )
             val response = compileViaDaemon(compilerArgs, plainText)
             if (response == null || !response.ok)
@@ -385,7 +405,7 @@ private fun compileMain(args: Array<String>): Boolean {
                 } else {
                     val programFile = Path.of(response.outputFiles.first())
 
-                    val target = getCompilationTargetByName(compilationTarget!!)
+                    val target = getCompilationTargetByName(compilationTarget!!, llvmTriple)
                     if (startEmulator1) {
                         if (target is VMTarget) {
                             if(!launchVirtualMachine(target, programFile, quietAll, vmTrace, presenter))
@@ -441,7 +461,8 @@ private fun compileMain(args: Array<String>): Boolean {
                     outputFile = outputFile?.let { pathFrom(it) },
                     errors = ErrorReporter(txtcolors),
                     assemble = true,
-                    generateDocumentation = generateDocumentation
+                    generateDocumentation = generateDocumentation,
+                    llvmTriple = llvmTriple
                 )
                 val result = compileProgram(compilerArgs)
 
@@ -812,7 +833,7 @@ private fun printCompileStart(args: CompilerArguments) {
     val programPath = args.filepath.toAbsolutePath().normalize()
     val display = args.cwd.toAbsolutePath().relativize(programPath)
     println("Compiling program $display")
-    println("Compiler target: ${getCompilationTargetByName(args.compilationTarget).name}")
+    println("Compiler target: ${getCompilationTargetByName(args.compilationTarget, args.llvmTriple).name}")
 }
 
 private fun startDaemonProcess(): Boolean {
@@ -903,7 +924,8 @@ private fun communicateWithDaemon(channel: SocketChannel, compilerArgs: Compiler
             outputDir = compilerArgs.outputDir.toString(),
             outputFile = compilerArgs.outputFile?.toString(),
             cwd = compilerArgs.cwd.toString(),
-            generateDocumentation = compilerArgs.generateDocumentation
+            generateDocumentation = compilerArgs.generateDocumentation,
+            llvmTriple = compilerArgs.llvmTriple
         )
 
         val requestJson = DaemonProtocol.encodeRequest(request)

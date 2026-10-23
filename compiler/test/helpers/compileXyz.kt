@@ -2,6 +2,7 @@ package prog8tests.helpers
 
 import prog8.code.core.ICompilationTarget
 import prog8.code.core.IErrorReporter
+import prog8.code.target.LlvmTarget
 import prog8.compiler.CompilationResult
 import prog8.compiler.CompilerArguments
 import prog8.compiler.compileProgram
@@ -52,7 +53,8 @@ internal fun compileFile(
         outputDir = outputDir,
         outputFile = outputFile,
         errors = errors ?: ErrorReporterForTests(),
-        assemble = assemble
+        assemble = assemble,
+        llvmTriple = (platform as? LlvmTarget)?.profile?.name
     )
     return compileProgram(args)
 }

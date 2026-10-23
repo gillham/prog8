@@ -5,6 +5,7 @@ import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmTripleProfile
 import prog8.codegen.llvm.model.*
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
@@ -23,6 +24,27 @@ class TestLlvmToolchain: FunSpec({
         LlvmToolchain.irFileFor(Path.of("x.LL")) shouldBe Path.of("x.LL")
         LlvmToolchain.irFileFor(Path.of("x")) shouldBe Path.of("x.ll")
         LlvmToolchain.irFileFor(Path.of("dir", "x.bin")) shouldBe Path.of("dir", "x.ll")
+    }
+
+    test("the executable of a .ll file has the output extension of the triple profile, or else the native executable name") {
+        LlvmToolchain.executableFor(Path.of("dir", "x.ll"), ".wasm") shouldBe Path.of("dir", "x.wasm")
+        val native = LlvmToolchain.executableFor(Path.of("dir", "x.ll"))
+        native shouldBe Path.of("dir", if (System.getProperty("os.name").startsWith("Windows")) "x.exe" else "x")
+    }
+
+    test("a run command runs the executable, given as {file}, and its exit code is returned").config(enabled = !System.getProperty("os.name").startsWith("Windows")) {
+        val runCommand = listOf("sh", "-c", $$"test \"$0\" = \"$${dir.resolve("prog.wasm")}\" && exit 6", "{file}")
+        LlvmToolchain.runExecutable(dir.resolve("prog.wasm"), quiet = true, runCommand) shouldBe 6
+    }
+
+    test("compileToExecutable reports an unset environment variable in the clang arguments of the profile").config(enabled = LlvmToolchain.clang() != null) {
+        val profile = LlvmTripleProfile("test", "wasm32-unknown-wasip1", "e-p:32:32", 4, clangArgsTemplate = listOf($$"--sysroot=${PROG8_NO_SUCH_VARIABLE}"))
+        val llFile = dir.resolve("env.ll").also { it.writeText(programExitingWith(0)) }
+        val executable = dir.resolve("env.wasm")
+        val (built, messages) = capturingStderr { LlvmToolchain.compileToExecutable(llFile, executable, profile) }
+        built shouldBe false
+        messages shouldContain "PROG8_NO_SUCH_VARIABLE"
+        executable.exists() shouldBe false
     }
 
     test("the clang that builds executables is the one next to llvm-as, of the same LLVM installation").config(enabledOrReasonIf = requiresLlvmAs) {

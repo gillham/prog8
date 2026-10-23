@@ -27,7 +27,7 @@ fun outputStemOf(name: Path): String {
  * otherwise [defaultName] plus the extension for [CompilationOptions.output], in [CompilationOptions.outputDir].
  * RAW and LIBRARY both use ".bin"; AMIGAHUNK has no extension.
  * On the virtual target the artifact is the IR file, so ".p8ir" is always enforced on -o.
- * On the llvm64 target it is the LLVM IR text file by default or for an -o name ending in ".ll";
+ * On the llvm targets it is the LLVM IR text file by default or for an -o name ending in ".ll";
  * any other -o name is the native executable, whose LLVM IR goes in "<stem>.ll" next to it.
  */
 fun CompilationOptions.programFile(defaultName: String): Path {
@@ -39,7 +39,7 @@ fun CompilationOptions.programFile(defaultName: String): Path {
         return if (ir.extension=="p8ir") ir else ir.resolveSibling("${ir.name}.p8ir")
     }
     outputFile?.let { return it }
-    // on the llvm64 target the artifact is the LLVM IR text file
+    // on the llvm targets the artifact is the LLVM IR text file
     if(compTarget is LlvmTarget)
         return outputDir.resolve("$defaultName.ll")
     val filename = when(output) {

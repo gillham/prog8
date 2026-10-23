@@ -2,6 +2,7 @@ package prog8.intermediate
 
 import prog8.code.core.*
 import prog8.code.source.ImportFileSystem
+import prog8.code.target.LlvmTarget
 import java.nio.file.Path
 import javax.xml.stream.XMLOutputFactory
 import javax.xml.stream.XMLStreamWriter
@@ -288,6 +289,7 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
         xml.writeStartElement("OPTIONS")
         xml.writeCharacters("\n")
         emitLine("compTarget=${irProgram.options.compTarget.name}")
+        (irProgram.options.compTarget as? LlvmTarget)?.let { emitLine("llvmTriple=${it.profile.name}") }
         emitLine("output=${irProgram.options.output}")
         emitLine("launcher=${irProgram.options.launcher}")
         emitLine("zeropage=${irProgram.options.zeropage}")

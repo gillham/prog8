@@ -84,7 +84,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
     }
 
     fun emit(module: LlvmModule): LlvmDataSymbols {
-        require(target.POINTER_MEM_SIZE == 8u && target.FLOAT_MEM_SIZE == 8u) { "the LLVM backend needs the llvm64 target's 8-byte pointers and floats" }
+        require(target.POINTER_MEM_SIZE == 8u && target.FLOAT_MEM_SIZE == 8u) { "the LLVM backend needs 8-byte pointers and floats, as on the llvm64 target" }
         val globals = buildList {
             st.allVariables().mapTo(this) { variableGlobal(it) }
             st.allStructInstances().mapTo(this) { structInstanceGlobal(it) }

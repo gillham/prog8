@@ -72,7 +72,8 @@ class CompilerArguments(val filepath: Path,
                         val cwd: Path = Path("").absolute(),
                         val errors: IErrorReporter = ErrorReporter(ErrorReporter.AnsiColors),
                         val assemble: Boolean = true,
-                        val generateDocumentation: Boolean = false)
+                        val generateDocumentation: Boolean = false,
+                        val llvmTriple: String? = null)
 
 
 fun compileProgram(args: CompilerArguments): CompilationResult? {
@@ -88,7 +89,7 @@ fun compileProgram(args: CompilerArguments): CompilationResult? {
     val compTarget = if(targetConfigFile.isRegularFile()) {
         ConfigFileTarget.fromConfigFile(targetConfigFile)
     } else {
-        getCompilationTargetByName(args.compilationTarget)
+        getCompilationTargetByName(args.compilationTarget, args.llvmTriple)
     }
 
     if(args.varsGolden) {

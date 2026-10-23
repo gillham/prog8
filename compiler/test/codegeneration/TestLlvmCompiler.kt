@@ -105,9 +105,29 @@ class TestLlvmCompiler: FunSpec({
     }
 
     test("llvm is another name for the llvm64 target, whose program file is the LLVM IR text") {
-        getCompilationTargetByName("llvm").name shouldBe LlvmTarget.NAME
-        getCompilationTargetByName("LLVM64").name shouldBe LlvmTarget.NAME
+        getCompilationTargetByName("llvm").name shouldBe LlvmTarget.NAME64
+        getCompilationTargetByName("LLVM64").name shouldBe LlvmTarget.NAME64
         compiledLlFile(compileText(LlvmTarget(), false, programs.getValue("arithmetic expressions"), outputDir)).toString() shouldEndWith ".ll"
+    }
+
+    test("a -triple profile sets the triple and data layout of the LLVM module, and is kept in the .p8ir file") {
+        val dir = outputDir.resolve("x86_64").createDirectories()
+        val target = getCompilationTargetByName("llvm64", "x86_64-unknown-linux-gnu")
+        val result = compileText(target, false, programs.getValue("arithmetic expressions"), dir, assemble = false).shouldNotBeNull()
+        val lines = compiledLlFile(result).readLines()
+        lines.any { it == "target triple = \"x86_64-unknown-linux-gnu\"" } shouldBe true
+        lines.any { it == "target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128\"" } shouldBe true
+
+        val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        val irTarget = IRFileReader().read(irFile).options.compTarget as LlvmTarget
+        irTarget.name shouldBe LlvmTarget.NAME64
+        irTarget.profile.name shouldBe "x86_64-unknown-linux-gnu"
+    }
+
+    test("the llvm32 target stops at code generation, which isn't implemented yet") {
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(LlvmTarget(4), false, nativeHello.source, outputDir.resolve("llvm32").createDirectories(), errors = errors) shouldBe null
+        errors.errors.any { "code generation for the llvm32 target is not implemented yet" in it } shouldBe true
     }
 
     test("launchEmulator builds a native executable next to the .ll file and runs it").config(enabledOrReasonIf = requiresNativeLlvm) {
@@ -205,7 +225,7 @@ main {
     }
 
     test("an unknown target name is rejected") {
-        shouldThrow<IllegalArgumentException> { getCompilationTargetByName("llvm32") }
+        shouldThrow<IllegalArgumentException> { getCompilationTargetByName("llvm16") }
     }
 
     test("a byte pointer or str parameter needs a cast to become another typed pointer, and call() an untyped address, on llvm64 as on the virtual machine") {

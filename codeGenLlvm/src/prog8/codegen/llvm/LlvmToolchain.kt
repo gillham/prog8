@@ -2,6 +2,7 @@ package prog8.codegen.llvm
 
 import prog8.code.core.outputStemOf
 import prog8.code.target.ILlvmProgramRunner
+import prog8.code.target.LlvmTripleProfile
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -39,15 +40,24 @@ internal object LlvmToolchain {
         return besideLlvmAs ?: find("clang")
     }
 
-    /** Builds the native executable [outputFile] from [llFile] with clang; clang's messages and any failure are reported on System.err. */
-    fun compileToExecutable(llFile: Path, outputFile: Path, optLevel: String = "-O2"): Boolean {
+    /**
+     * Builds the executable [outputFile] from [llFile] with clang, passing the clang arguments of [profile] first;
+     * clang's messages and any failure are reported on System.err.
+     */
+    fun compileToExecutable(llFile: Path, outputFile: Path, profile: LlvmTripleProfile? = null, optLevel: String = "-O2"): Boolean {
         val clang = clang()
         if (clang == null) {
             System.err.println("Can't build '$outputFile': clang was not found on the PATH or in $homebrewLlvmBin. " +
                 "Install LLVM, for example with 'brew install llvm', or put clang on the PATH.")
             return false
         }
-        val command = listOf(clang.toString(), optLevel, "-Wno-override-module", llFile.toString(), "-o", outputFile.toString())
+        val profileArgs = try {
+            profile?.clangArgs.orEmpty()
+        } catch (x: IllegalArgumentException) {
+            System.err.println("Can't build '$outputFile': ${x.message}")
+            return false
+        }
+        val command = listOf(clang.toString()) + profileArgs + listOf(optLevel, "-Wno-override-module", llFile.toString(), "-o", outputFile.toString())
         val process = try {
             ProcessBuilder(command).redirectErrorStream(true).start()
         } catch (x: IOException) {
@@ -72,15 +82,17 @@ internal object LlvmToolchain {
     }
 
     /**
-     * Runs [executable] on the console of this process until it exits, and returns its exit code.
-     * Throws an IOException when it can't be started.
+     * Runs [executable] on the console of this process until it exits, and returns its exit code; with a [runCommand],
+     * that command runs it instead, with `{file}` replaced by its path. Throws an IOException when it can't be started.
      */
-    fun runExecutable(executable: Path, quiet: Boolean): Int {
+    fun runExecutable(executable: Path, quiet: Boolean, runCommand: List<String>? = null): Int {
         if (!quiet)
             println("Running $executable...")
         System.out.flush()
         // absolute, because a name without a directory would be looked up on the PATH
-        return ProcessBuilder(executable.toAbsolutePath().toString()).inheritIO().start().waitFor()
+        val file = executable.toAbsolutePath().toString()
+        val command = runCommand?.map { it.replace("{file}", file) } ?: listOf(file)
+        return ProcessBuilder(command).inheritIO().start().waitFor()
     }
 
     /**
@@ -90,7 +102,9 @@ internal object LlvmToolchain {
     fun irFileFor(programFile: Path): Path =
         if (programFile.extension.equals("ll", ignoreCase = true)) programFile else programFile.resolveSibling("${outputStemOf(programFile)}.ll")
 
-    fun executableFor(llFile: Path): Path = llFile.resolveSibling(executableName(llFile.nameWithoutExtension))
+    /** The executable built from [llFile]: named with [extension] when given, else the native executable name of this host. */
+    fun executableFor(llFile: Path, extension: String = ""): Path =
+        llFile.resolveSibling(if (extension.isEmpty()) executableName(llFile.nameWithoutExtension) else llFile.nameWithoutExtension + extension)
 
     private fun executableName(name: String): String =
         if (orNull { System.getProperty("os.name") }.orEmpty().startsWith("Windows")) "$name.exe" else name
@@ -106,12 +120,15 @@ internal object LlvmToolchain {
 }
 
 
-/** Runs llvm64 program files on this host. The llvm64 target loads this class by name, with its no-argument constructor. */
+/**
+ * Runs llvm program files, natively or with the run command of their triple profile.
+ * The llvm targets load this class by name, with its no-argument constructor.
+ */
 class LlvmProgramRunner : ILlvmProgramRunner {
-    override fun buildAndRun(programFile: Path, quiet: Boolean): Int? {
-        val executable = executableOf(programFile, quiet) ?: return null
+    override fun buildAndRun(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile?): Int? {
+        val executable = executableOf(programFile, quiet, profile) ?: return null
         return try {
-            LlvmToolchain.runExecutable(executable, quiet)
+            LlvmToolchain.runExecutable(executable, quiet, profile?.runCommand)
         } catch (x: IOException) {
             System.err.println("Can't run '$executable': ${x.message}")
             null
@@ -119,7 +136,7 @@ class LlvmProgramRunner : ILlvmProgramRunner {
     }
 
     /** An executable named with -o runs as it is; a missing one, or the one of a .ll file, is built from the LLVM IR first. */
-    private fun executableOf(programFile: Path, quiet: Boolean): Path? {
+    private fun executableOf(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile?): Path? {
         val irFile = LlvmToolchain.irFileFor(programFile)
         if (programFile != irFile && programFile.exists())
             return programFile
@@ -127,9 +144,9 @@ class LlvmProgramRunner : ILlvmProgramRunner {
             System.err.println("No program file found: $programFile")
             return null
         }
-        val executable = if (programFile == irFile) LlvmToolchain.executableFor(irFile) else programFile
+        val executable = if (programFile == irFile) LlvmToolchain.executableFor(irFile, profile?.outputExtension.orEmpty()) else programFile
         if (!quiet)
             println("Building $executable from $irFile with clang...")
-        return if (LlvmToolchain.compileToExecutable(irFile, executable)) executable else null
+        return if (LlvmToolchain.compileToExecutable(irFile, executable, profile)) executable else null
     }
 }

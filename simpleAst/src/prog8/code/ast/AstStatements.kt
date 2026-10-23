@@ -111,7 +111,7 @@ class PtSubSignature(val returns: List<DataType>, position: Position): PtNode(po
             CpuType.CPU6502 -> returnsWhatWhere6502()
             CpuType.CPU65C02 -> returnsWhatWhere6502()
             CpuType.M68000, CpuType.M68020 -> returnsWhatWhereM68k()
-            CpuType.VIRTUAL, CpuType.LLVM64 -> returnsWhatWhereM68k()
+            CpuType.VIRTUAL, CpuType.LLVM32, CpuType.LLVM64 -> returnsWhatWhereM68k()
         }
     }
 

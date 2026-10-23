@@ -139,6 +139,8 @@ class IRFileReader {
         require(reader.nextEvent().isEndElement)
 
         var target: ICompilationTarget = VMTarget()
+        var targetName: String? = null
+        var llvmTriple: String? = null
         var outputType = OutputType.PRG
         var launcher = CbmPrgLauncherType.NONE
         var zeropage = ZeropageType.FULL
@@ -156,7 +158,8 @@ class IRFileReader {
             text.lineSequence().forEach { line ->
                 val (name, value) = line.split('=', limit=2)
                 when(name) {
-                    "compTarget" -> target = getCompilationTargetByName(value)
+                    "compTarget" -> targetName = value
+                    "llvmTriple" -> llvmTriple = value
                     "output" -> outputType = OutputType.valueOf(value)
                     "launcher" -> launcher = CbmPrgLauncherType.valueOf(value)
                     "zeropage" -> zeropage = ZeropageType.valueOf(value)
@@ -177,6 +180,13 @@ class IRFileReader {
                     "noSysInit" -> noSysInit = value.toBoolean()
                     else -> throw IRParseException("illegal OPTION $name")
                 }
+            }
+        }
+        targetName?.let {
+            target = try {
+                getCompilationTargetByName(it, llvmTriple)
+            } catch (x: IllegalArgumentException) {
+                throw IRParseException("invalid compilation target in OPTIONS: ${x.message}")
             }
         }
 

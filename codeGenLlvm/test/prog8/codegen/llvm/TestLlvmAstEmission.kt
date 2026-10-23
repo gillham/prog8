@@ -8,6 +8,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import prog8.code.core.CpuType
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmTripleProfile
 import prog8.codegen.llvm.model.*
 import java.nio.file.Path
 
@@ -274,7 +275,7 @@ class TestLlvmAstEmission: FunSpec({
         target.name shouldBe "llvm64"
         target.targetTriple shouldBe "arm64-apple-macosx"
         target.dataLayout shouldBe "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
-        LlvmTarget(targetTriple = "x86_64-unknown-linux-gnu").targetTriple shouldBe "x86_64-unknown-linux-gnu"
+        LlvmTarget(8, LlvmTripleProfile.resolve("x86_64-unknown-linux-gnu")).targetTriple shouldBe "x86_64-unknown-linux-gnu"
         target.cpu shouldBe CpuType.LLVM64
         target.cpu.isLlvm shouldBe true
         target.cpu.statusBitsOnMultiByteOps shouldBe false

@@ -19,13 +19,17 @@ import prog8.intermediate.IRProgram
 import prog8.intermediate.dumpVariables
 
 /**
- * The code generator of the llvm64 target: lowers the IR program to an LLVM module, which it saves as LLVM IR text.
+ * The code generator of the llvm targets: lowers the IR program to an LLVM module, which it saves as LLVM IR text.
  * IR that has no LLVM translation is reported as a compilation error.
  */
 class LlvmCodeGenerator(private val retainSSA: Boolean) : ICodeGeneratorBackend {
 
     override fun generate(program: PtProgram, symbolTable: SymbolTable, options: CompilationOptions, errors: IErrorReporter): IAssemblyProgram? {
-        val target = requireNotNull(options.compTarget as? LlvmTarget) { "the LLVM code generator needs the ${LlvmTarget.NAME} target" }
+        val target = requireNotNull(options.compTarget as? LlvmTarget) { "the LLVM code generator needs the ${LlvmTarget.NAME32} or ${LlvmTarget.NAME64} target" }
+        if (target.pointerSize != 8) {
+            errors.err("code generation for the ${target.name} target is not implemented yet", Position.DUMMY)
+            return null
+        }
         val irCodeGen = IRCodeGen(program, symbolTable, options, errors, retainSSA)
         val irProgram = irCodeGen.generate()
         irProgram.verifyRegisterTypes(irCodeGen.registerTypes().entries.associate { (number, type) -> Calls.registerFor(number.value, type) to type })

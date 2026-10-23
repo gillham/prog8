@@ -102,18 +102,29 @@ val CompilationTargets = listOf(
     Amiga500Target.NAME,
     Amiga1200Target.NAME,
     VMTarget.NAME,
-    LlvmTarget.NAME
+    LlvmTarget.NAME32,
+    LlvmTarget.NAME64
 )
 
-fun getCompilationTargetByName(name: String) = when(name.lowercase()) {
-    C64Target.NAME -> C64Target()
-    C128Target.NAME -> C128Target()
-    Cx16Target.NAME -> Cx16Target()
-    PETTarget.NAME -> PETTarget()
-    Qemu68kTarget.NAME -> Qemu68kTarget()
-    Amiga500Target.NAME -> Amiga500Target()
-    Amiga1200Target.NAME -> Amiga1200Target()
-    VMTarget.NAME -> VMTarget()
-    LlvmTarget.NAME, LlvmTarget.ALIAS -> LlvmTarget()
-    else -> throw IllegalArgumentException("invalid compilation target")
+/** Only the llvm targets take a [triple]: the name or path of their triple profile, see [LlvmTripleProfile.resolve]. */
+fun getCompilationTargetByName(name: String, triple: String? = null): ICompilationTarget {
+    val lowercaseName = name.lowercase()
+    if(triple != null && lowercaseName !in setOf(LlvmTarget.NAME32, LlvmTarget.NAME64, LlvmTarget.ALIAS))
+        throw IllegalArgumentException("a triple can only be given for the ${LlvmTarget.NAME32} and ${LlvmTarget.NAME64} targets")
+    return when(lowercaseName) {
+        C64Target.NAME -> C64Target()
+        C128Target.NAME -> C128Target()
+        Cx16Target.NAME -> Cx16Target()
+        PETTarget.NAME -> PETTarget()
+        Qemu68kTarget.NAME -> Qemu68kTarget()
+        Amiga500Target.NAME -> Amiga500Target()
+        Amiga1200Target.NAME -> Amiga1200Target()
+        VMTarget.NAME -> VMTarget()
+        LlvmTarget.NAME64, LlvmTarget.ALIAS -> llvmTarget(8, triple)
+        LlvmTarget.NAME32 -> llvmTarget(4, triple)
+        else -> throw IllegalArgumentException("invalid compilation target")
+    }
 }
+
+private fun llvmTarget(pointerSize: Int, triple: String?): LlvmTarget =
+    if(triple == null) LlvmTarget(pointerSize) else LlvmTarget(pointerSize, LlvmTripleProfile.resolve(triple))

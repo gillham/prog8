@@ -21,6 +21,8 @@ Currently these machines can be selected as a compilation target (via the ``-tar
 - 'amiga1200': Amiga 1200 (experimental, 68020 CPU with optional FPU)
 - 'qemu68k': Qemu M68k simulator (experimental)
 - 'virtual': a builtin virtual machine (32-bit pointers, 16 MB memory)
+- 'llvm64' (or 'llvm'): a hosted 64-bit program, compiled to LLVM IR (see :ref:`llvm_triples`)
+- 'llvm32': a hosted 32-bit program, compiled to LLVM IR, such as WebAssembly with WASI (*code generation not implemented yet*)
 - custom targets via a separate configuration file (see :ref:`customizable_target`)
 
 This chapter explains some relevant system details of the c64 and cx16 machines.
@@ -172,6 +174,61 @@ are rejected as well; those are only used in ``asmsub``. The ``-varsgolden``, ``
 decided by the linker script instead.
 
 
+.. _llvm_triples:
+
+LLVM targets and triple profiles
+================================
+
+The ``llvm64`` and ``llvm32`` targets compile the program to LLVM IR, which clang then builds into an
+executable for a particular platform, identified by its LLVM *target triple*. The target name fixes the
+pointer size (8 or 4 bytes); the ``-triple`` compiler option selects the platform, by naming a *triple profile*.
+Without it, ``llvm64`` uses ``arm64-apple-macosx`` and ``llvm32`` uses ``wasm32-wasip1``.
+
+.. note::
+    Code generation for the ``llvm32`` target is not implemented yet: the compiler accepts the target and its
+    triple profiles, but stops with an error when it gets to generating the LLVM IR.
+    Its library is still an unchanged copy of the llvm64 one.
+
+A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in this order:
+
+1. the given file path, when that file exists
+2. ``~/.prog8/llvm/<name>.properties``
+3. a profile built into the compiler: ``wasm32-wasip1``, ``arm64-apple-macosx``, ``x86_64-unknown-linux-gnu``,
+   ``armv7-unknown-linux-gnueabihf`` and ``riscv32-unknown-elf``
+
+So you can add a platform, or change the settings of a built-in one, without rebuilding the compiler.
+These are the keys of a profile; an unknown key is an error:
+
+``triple`` (required)
+    The LLVM target triple written into the module, for example ``wasm32-unknown-wasip1``.
+``datalayout`` (required)
+    The LLVM data layout string of that triple, as printed by ``clang --target=<triple> -S -emit-llvm -x c /dev/null -o -``.
+    It must be little-endian (start with ``e``), and its pointer width (the ``p:`` entry, 64 bits when there is none)
+    must match the target: 32 bits for ``llvm32``, 64 bits for ``llvm64``.
+``c_long_size`` (required)
+    The size in bytes of the C ``long`` type on that platform: 4 or 8.
+``clang_args``
+    Extra arguments for clang when it builds the executable, separated by spaces, such as ``--target`` and ``--sysroot``.
+    Environment variables can be used as ``${NAME}``; they only have to be set when clang is actually run.
+``output_extension``
+    The file name extension of the built executable, such as ``.wasm``. Without it, the executable is named as usual on the host.
+``run_command``
+    The command that ``-emu`` uses to run the executable, with ``{file}`` in place of its path, for example ``wasmtime {file}``.
+    Without it, the executable is run directly.
+``strict_indirect_signatures``
+    ``true`` for platforms that check the signature of a function called through a pointer, such as WebAssembly.
+
+For example, the built-in ``wasm32-wasip1`` profile::
+
+    triple = wasm32-unknown-wasip1
+    datalayout = e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20
+    c_long_size = 4
+    clang_args = --target=wasm32-wasip1 --sysroot=${WASI_SYSROOT}
+    output_extension = .wasm
+    run_command = wasmtime {file}
+    strict_indirect_signatures = true
+
+
 Memory Model
 ============
 .. index:: single: Targets; Memory model
@@ -186,6 +243,7 @@ The size of a pointer (memory address) depends on the target's CPU architecture:
 - **m68k targets** (amiga500, amiga1200, qemu68k): **4 bytes** (32-bit address space, 16 MB)
 - **virtual target**: **4 bytes** (32-bit address space, 16 MB)
 - **llvm64 target**: **8 bytes** (the 64-bit address space of the host)
+- **llvm32 target**: **4 bytes** (*code generation not implemented yet*)
 
 The ``pointer`` type keyword automatically takes the correct size for the target,
 making it the natural choice for variables that hold a memory address in portable code.
