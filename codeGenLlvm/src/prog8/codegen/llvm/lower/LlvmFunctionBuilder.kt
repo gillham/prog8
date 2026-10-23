@@ -59,7 +59,8 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
                 when (child) {
                     is IRSubroutine -> module.functions += function(child)
                     is IRAsmSubroutine -> declaration(child).let { if (!child.isExternal || externalRoutines.getValue(it.name).first === child) module.functions += it }
-                    is IRCodeChunkBase -> require(child.isEmpty()) { "block ${block.label} has code outside of a subroutine, which isn't supported" }
+                    // the frontend warns that a block-level %breakpoint has no effect here
+                    is IRCodeChunkBase -> require(child.isEmpty() || child.isOnlyBreakpoints()) { "block ${block.label} has code outside of a subroutine, which isn't supported" }
                 }
             }
         }
@@ -634,6 +635,9 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
 
 /** Thrown when a branch reads status flags set in another block; the function is then lowered again, with flag slots. */
 internal class FlagsFromOtherBlock : RuntimeException(null, null, false, false)
+
+private fun IRCodeChunkBase.isOnlyBreakpoints(): Boolean =
+    this is IRCodeChunk && instructions.all { it.opcode == Opcode.BREAKPOINT }
 
 /** A subroutine that the llvm targets have no translation for; [position] is where it is in the source. */
 internal class LlvmLoweringException(message: String, val position: Position, cause: Throwable) : IllegalArgumentException(message, cause)

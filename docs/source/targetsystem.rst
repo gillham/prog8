@@ -194,6 +194,10 @@ The operating system owns the memory of an LLVM program, so anything that places
 at a fixed address is an error on these targets: the ``%address``, ``%memtop`` and ``%varsaddress`` directives,
 ``%option romable``, ``%jmptable``, a block with an address, ``extsub`` with an address, and the ``-varsaddress``,
 ``-varsgolden`` and ``-varshigh`` options. Declare an external C routine as an ``extsub`` without an address instead.
+The ``%output``, ``%zpreserved`` and ``%zpallowed`` directives and ``%zeropage full``, ``kernalsafe`` and
+``floatsafe`` have no effect there and give a warning; ``%zeropage basicsafe`` and ``dontuse`` are accepted silently.
+A ``%breakpoint`` inside a subroutine stops the program with ``llvm.debugtrap``; one at block level has no effect
+and gives a warning.
 
 A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in this order:
 

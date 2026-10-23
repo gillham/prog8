@@ -140,15 +140,21 @@ main {
         }
     }
 
-    test("a block level breakpoint on the llvm targets is a normal error") {
+    test("a block level breakpoint on the llvm targets compiles with a warning that it has no effect") {
         val src = """
 main {
     %breakpoint
     sub start() {
     }
 }"""
-        val errors = ErrorReporterForTests()
-        compileText(LlvmTarget(8), false, src, outputDir, errors, writeAssembly = true) shouldBe null
-        errors.errors.single() shouldContain "code outside of a subroutine"
+        for (target in listOf(LlvmTarget(8), LlvmTarget(4))) {
+            withClue(target.name) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                val result = compileText(target, false, src, outputDir, errors, writeAssembly = true)!!
+                errors.warnings.single() shouldContain "a block-level %breakpoint has no effect on the ${target.name} target"
+                val ll = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".ll").toFile().readText()
+                ll.lines().count { "llvm.debugtrap" in it } shouldBe 0
+            }
+        }
     }
 })

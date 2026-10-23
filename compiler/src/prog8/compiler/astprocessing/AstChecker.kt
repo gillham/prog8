@@ -1467,6 +1467,16 @@ internal class AstChecker(private val program: Program,
         }
         if(!options.compTarget.hasFixedMemoryAddresses && directive.directive in setOf("%address", "%memtop", "%varsaddress"))
             err("the ${directive.directive} directive is not available on the hosted ${options.compTarget.name} target")
+        if(!options.compTarget.hasFixedMemoryAddresses) {
+            val noEffect = when(directive.directive) {
+                "%output", "%zpreserved", "%zpallowed" -> true
+                // basicsafe and dontuse only restrict zeropage use, which a hosted target trivially satisfies
+                "%zeropage" -> directive.args.singleOrNull()?.string in setOf("full", "kernalsafe", "floatsafe")
+                else -> false
+            }
+            if(noEffect)
+                errors.warn("the ${directive.directive} directive has no effect on the hosted ${options.compTarget.name} target", directive.position)
+        }
         when(directive.directive) {
             "%align" -> {
                 if(directive.parent !is INameScope || directive.parent is Module)
@@ -1572,6 +1582,8 @@ internal class AstChecker(private val program: Program,
                     err("this directive can't be used here")
                 if(directive.args.isNotEmpty())
                     err("invalid breakpoint directive, expected no arguments")
+                if(directive.parent is Block && options.compTarget.cpu.isLlvm)
+                    errors.warn("a block-level %breakpoint has no effect on the ${options.compTarget.name} target", directive.position)
             }
             "%asminclude" -> {
                 if(directive.parent !is INameScope || directive.parent is Module)

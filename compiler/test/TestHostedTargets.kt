@@ -121,4 +121,41 @@ main {
         errors.errors.single() shouldContain "address-free extsub (external C routine) is not supported on target cx16"
         compileText(Cx16Target(), false, withAddress, outputDir, writeAssembly = false) shouldNotBe null
     }
+
+
+    val noEffectPrograms = mapOf(
+        "%output" to program("%output raw\n%launcher none"),
+        "%zeropage full" to program("%zeropage full"),
+        "%zeropage kernalsafe" to program("%zeropage kernalsafe"),
+        "%zeropage floatsafe" to program("%zeropage floatsafe"),
+        "%zpreserved" to program("%zpreserved 10,20"),
+        "%zpallowed" to program("%zpallowed 10,20"),
+    )
+
+    for ((what, src) in noEffectPrograms) {
+        test("$what gives a no-effect warning on the hosted targets, and none on cx16") {
+            for (target in hostedTargets) {
+                withClue(target.name) {
+                    val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                    compileText(target, false, src, outputDir, errors = errors, writeAssembly = false) shouldNotBe null
+                    errors.warnings.single() shouldContain "has no effect on the hosted ${target.name} target"
+                }
+            }
+            val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+            compileText(Cx16Target(), false, src, outputDir, errors = errors, writeAssembly = false) shouldNotBe null
+            errors.warnings.none { "has no effect" in it } shouldBe true
+        }
+    }
+
+    test("%zeropage basicsafe and dontuse are silent on the hosted targets") {
+        for (mode in listOf("basicsafe", "dontuse")) {
+            for (target in hostedTargets) {
+                withClue("${target.name} $mode") {
+                    val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                    compileText(target, false, program("%zeropage $mode"), outputDir, errors = errors, writeAssembly = false) shouldNotBe null
+                    errors.warnings.none { "has no effect" in it } shouldBe true
+                }
+            }
+        }
+    }
 })
