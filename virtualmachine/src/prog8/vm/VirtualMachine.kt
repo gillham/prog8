@@ -294,7 +294,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
             Opcode.STOREHFACONE-> InsSTOREHFACONE(ins)
             Opcode.JUMP -> InsJUMP(ins)
             Opcode.JUMPI -> InsJUMPI(ins)
-            Opcode.CALLI -> throw IllegalArgumentException("VM cannot run code from memory bytes")
+            Opcode.CALLI -> InsCALLI(ins)
             Opcode.CALL -> InsCALL(ins)
             Opcode.CALLFAR, Opcode.CALLFARVB -> throw IllegalArgumentException("VM cannot run code from another ram/rombank")
             Opcode.SYSCALL -> InsSYSCALL(ins)
@@ -876,6 +876,31 @@ class VirtualMachine(private val irProgram: IRProgram) {
         pcIndex = 0
     }
 
+    /** The routine's return value, if any, is passed back in calling convention slot 10 (D0), as call() expects. */
+    private fun InsCALLI(i: IRInstruction) {
+        val site = i.requireCallSite()
+        val pointer = (i.codeTarget as CodeReference.Indirect).pointer
+        val artificialAddress: UInt = registers.getUL(pointer.registerNumber)
+        if(!artificialLabelAddresses.contains(artificialAddress))
+            throw IllegalArgumentException("vm program can't call system memory address (${i.opcode} ${artificialAddress.toHex()})")
+        hardwareRegisterD[0] = 0u
+        callStack.add(CallSiteContext(pcChunk, pcIndex+1, site))
+        pcChunk = artificialLabelAddresses.getValue(artificialAddress)
+        pcIndex = 0
+    }
+
+    private fun isIndirectCall(context: CallSiteContext) =
+        context.returnChunk.instructions[context.returnIndex-1].opcode == Opcode.CALLI
+
+    private fun returnToIndirectCall(context: CallSiteContext, type: IRDataType, intValue: ULong, floatValue: Double) {
+        if(type == IRDataType.FLOAT)
+            hardwareRegisterFP[0] = floatValue
+        else
+            hardwareRegisterD[0] = intValue
+        pcChunk = context.returnChunk
+        pcIndex = context.returnIndex
+    }
+
     private class SyscallParamValue(var dt: IRDataType?, var value: Comparable<*>?)
     private val syscallParams = Array(100) { SyscallParamValue(null, null) }
 
@@ -915,6 +940,14 @@ class VirtualMachine(private val irProgram: IRProgram) {
             exit(0)
         else {
             val context = callStack.removeLast()
+            if(isIndirectCall(context)) {
+                when (i.type!!) {
+                    IRDataType.QUAD -> returnToIndirectCall(context, IRDataType.QUAD, i.requireImmediateQuad().toULong(), 0.0)
+                    IRDataType.FLOAT -> returnToIndirectCall(context, IRDataType.FLOAT, 0u, i.requireImmediateFloat())
+                    else -> returnToIndirectCall(context, i.type!!, i.requireImmediateInt().toUInt().toULong(), 0.0)
+                }
+                return
+            }
             val returns = context.callSite.results
             when (i.type!!) {
                 IRDataType.QUAD -> {
@@ -987,8 +1020,18 @@ class VirtualMachine(private val irProgram: IRProgram) {
             exit(0)
         else {
             val context = callStack.removeLast()
-            val returns = context.callSite.results
             val src = i.requireSrcA().registerNumber
+            if(isIndirectCall(context)) {
+                when (i.type!!) {
+                    IRDataType.BYTE -> returnToIndirectCall(context, IRDataType.BYTE, registers.getUB(src).toULong(), 0.0)
+                    IRDataType.WORD -> returnToIndirectCall(context, IRDataType.WORD, registers.getUW(src).toULong(), 0.0)
+                    IRDataType.LONG, IRDataType.POINTER -> returnToIndirectCall(context, i.type!!, registers.getUL(src).toULong(), 0.0)
+                    IRDataType.QUAD -> returnToIndirectCall(context, IRDataType.QUAD, registers.getUQ(src), 0.0)
+                    IRDataType.FLOAT -> returnToIndirectCall(context, IRDataType.FLOAT, 0u, registers.getFloat(src))
+                }
+                return
+            }
+            val returns = context.callSite.results
             when (i.type!!) {
                 IRDataType.QUAD -> {
                     if(returns.isNotEmpty()) {
