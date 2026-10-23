@@ -1023,6 +1023,9 @@ to another piece of code that eventually returns).
 
 If you jump to an address variable or expression (uword), it is doing an 'indirect' jump: the jump will be done
 to the address that's currently in the variable, or the result of the expression.
+The address variable can be a ``uword``, or the target's address integer type: ``long`` on targets with 4-byte
+pointers, and ``uquad`` (or ``long``) on llvm64. Such an indirect jump also counts as the
+end of a subroutine that returns a value, even when the address variable is declared inside that subroutine.
 
 
 Assignments

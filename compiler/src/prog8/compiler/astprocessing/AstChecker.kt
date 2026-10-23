@@ -553,7 +553,8 @@ internal class AstChecker(private val program: Program,
             }
             override fun visit(jump: Jump) {
                 val jumpTarget = (jump.target as? IdentifierReference)?.targetStatement()
-                if(jumpTarget!=null) {
+                // an address variable is a computed jump, which never stays inside this subroutine
+                if(jumpTarget!=null && jumpTarget !is VarDecl) {
                     val sub = jump.definingSubroutine
                     val targetSub = jumpTarget as? Subroutine ?: jumpTarget.definingSubroutine
                     if(sub !== targetSub)
@@ -1791,7 +1792,8 @@ internal class AstChecker(private val program: Program,
             }
             override fun visit(jump: Jump) {
                 val jumpTarget = (jump.target as? IdentifierReference)?.targetStatement()
-                if(jumpTarget!=null) {
+                // an address variable is a computed jump, which never stays inside this subroutine
+                if(jumpTarget!=null && jumpTarget !is VarDecl) {
                     val sub = jump.definingSubroutine
                     val targetSub = jumpTarget as? Subroutine ?: jumpTarget.definingSubroutine
                     if(sub !== targetSub)

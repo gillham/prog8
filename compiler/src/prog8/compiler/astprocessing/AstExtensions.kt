@@ -275,17 +275,22 @@ internal fun Subroutine.hasRtsInAsm(checkOnlyLastInstruction: Boolean): Boolean 
     }
 }
 
+/** Whether a variable of type [dt] can hold the address that a goto or call through it jumps to. */
+internal fun isCodeAddressVarType(dt: DataType, target: ICompilationTarget): Boolean =
+    dt.isUnsignedWord || dt == target.pointerType || (target.POINTER_MEM_SIZE > 2u && dt.isLong)
+
+internal fun codeAddressVarTypeError(target: ICompilationTarget): String =
+    "wrong address variable datatype, expected ${target.pointerType}"
+
 internal fun IdentifierReference.checkFunctionOrLabelExists(program: Program, statement: Statement, errors: IErrorReporter): Statement? {
     when (val targetStatement = targetStatement(program.builtinFunctions)) {
         is Label, is Subroutine, is BuiltinFunctionPlaceholder -> return targetStatement
         is VarDecl -> {
             if(statement is Jump) {
-                val isAddressType = targetStatement.datatype.isUnsignedWord ||
-                    (program.target.POINTER_MEM_SIZE > 2u && targetStatement.datatype.isLong)
-                if (isAddressType)
+                if (isCodeAddressVarType(targetStatement.datatype, program.target))
                     return targetStatement
                 else
-                    errors.err("wrong address variable datatype, expected ${if(program.target.POINTER_MEM_SIZE > 2u) "long" else "uword"}", this.position)
+                    errors.err(codeAddressVarTypeError(program.target), this.position)
             }
             else
                 errors.err("cannot call that: ${this.nameInSource.joinToString(".")}", this.position)

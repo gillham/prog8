@@ -11,9 +11,8 @@ Future Things and Ideas
 - implement the signed divmod byte and word routines on 6502 old codegen (virtual, m68k and IR-based codegens already have them working)
 - the c64 sprite multiplexer still needs adjustments to make it smooth, it lacks a proper raster event scheduler.
 - support typed pointer arrays as struct fields, curretly requires untyped pointers arrays.
-- ``goto <variable>`` is not counted as an exit of a subroutine that returns a value, so such a subroutine still needs an unreachable ``return`` to avoid the "must have at least one 'return'" error.
-- llvm64: ``goto`` through a ``uquad`` address variable is rejected with "wrong address variable datatype, expected long" (``AstIdentifiersChecker.kt:271``); it should accept the target's ``pointerType``, so 64-bit computed jumps can be written.
 - on targets with 4-byte pointers the frontend inserts implicit ``as uword`` casts on full addresses (e.g. ``peekl(ptr as uword)`` for a ``^^pointer`` dereference in ``strings.split``); this only works because the IR codegen passes pointer-to-uword casts through without truncating. The frontend should cast to the target's ``pointerType`` instead, after which such casts could truncate properly.
+- virtual target: ``call(address)`` aborts the VM with an uncaught ``IllegalArgumentException: VM cannot run code from memory bytes`` (``VirtualMachine.kt:297``, CALLI is not implemented), although ``goto`` through an address variable does work. Either implement CALLI like the indirect JUMPI, or reject ``call()`` on the virtual target with a normal compile error.
 - evaluated the feature suggestions in ideas/c16-banked-data.md (cx16 banked data): evaluated Sep 2026, the plan is not worth implementing as written. Banked data already works via ``-varshigh <bank>`` / ``%varsaddress`` + ``cx16.rambank()``, and the ``cx16.fetch``/``cx16.stash`` kernal primitives turn out to be neither IRQ-safe nor reentrant, and ~5x slower than a bank switch. Cheapest useful follow-up is documentation plus small ``asmsub`` wrappers in ``syslib.p8``; see the Recommendation section in that file.
 
 Won't do's or deferred

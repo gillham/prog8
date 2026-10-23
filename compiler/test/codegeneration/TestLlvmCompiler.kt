@@ -813,7 +813,8 @@ private val programsWith64BitAddresses = setOf(
     "a uquad address dereferenced with ^^ reads and writes the byte at that address",
     "inlined subroutines compute with pointer arguments as their integer parameters, and with integer arguments as their pointer parameters",
     "uquad constants folded with signed operands as at runtime, and typed pointers compared with negative numbers",
-    "the untyped pointer is a uquad in variables, constants, parameters, return values, struct fields and arrays"
+    "the untyped pointer is a uquad in variables, constants, parameters, return values, struct fields and arrays",
+    "a goto through a uquad address variable ends a subroutine that returns a value"
 )
 
 // programs that don't run as they are under wasmtime: WASI's working directory is "/" rather than a host path;
@@ -2427,6 +2428,37 @@ main {
         return 0
     }
 }""",
+    "a goto through a uquad address variable ends a subroutine that returns a value" to """
+main {
+    uquad @shared global
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        if viaLocal() != 42
+            return 1
+        if viaGlobal() != 42
+            return 2
+        return 0
+    }
+
+    sub answer() -> uword {
+        return 42
+    }
+
+    sub viaLocal() -> uword {
+        uquad @shared address = &answer
+        goto address
+    }
+
+    sub viaGlobal() -> uword {
+        global = &answer
+        goto global
+    }
+}""",
+
     "64-bit addresses" to $$"""
 main {
     ubyte[8] @shared buffer = [1, 2, 3, 4, 5, 6, 7, 8]
