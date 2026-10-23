@@ -369,6 +369,11 @@ class TestLlvmGlobalEmission: FunSpec({
         withClue(output) { exitCode shouldBe 0 }
     }
 
+    test("the llvm32 globals and their startup stores link into a bare metal RISC-V program that runs on qemu").config(enabledOrReasonIf = requiresRiscv) {
+        val (exitCode, output) = compileAndRunRiscv(LlvmPrinter.print(globals32(riscvTarget)))
+        withClue(output) { exitCode shouldBe 0 }
+    }
+
     test("the llvm32 globals compile into a wasm32 object").config(enabledOrReasonIf = requiresWasmClang) {
         val (exitCode, output) = compileWasmObject(LlvmPrinter.print(globals32(target32)))
         withClue(output) { exitCode shouldBe 0 }

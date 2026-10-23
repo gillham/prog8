@@ -207,6 +207,17 @@ when the program crashes. Newlib on semihosting has limits:
 - after a seek that fails, the position in the file is unknown, rather than left as it was
 - ``-emu`` gives the program no command line arguments
 
+With ``-triple riscv32-unknown-elf``, an ``llvm32`` program becomes a bare metal program for 32-bit RISC-V (RV32IMAFDC)
+with hardware floating point, which also reaches the host through semihosting. Building it needs clang and the
+`xPack GNU RISC-V Embedded GCC <https://xpack-dev-tools.github.io/riscv-none-elf-gcc-xpack/>`_, whose ``riscv-none-elf-gcc``
+is taken from the ``RISCV_NONE_ELF_GCC`` environment variable, or else from the ``PATH``. clang compiles the program,
+and ``riscv-none-elf-gcc`` links it with newlib and a small piece of boot code that comes with the profile
+(``startup_source``) into a ``.elf`` file. The boot code sets up the stack and switches on the floating point unit,
+which newlib's startup code expects a loader to have done, and lets the program's exit status reach qemu.
+``-emu`` runs the program on qemu's virt machine (``qemu-system-riscv32``), with the same 60 second limit as on ARM.
+Newlib on semihosting has the same limits as on ARM, except that a seek that fails leaves the position in the file
+as it was; and the program's command line only has its name, ``program``.
+
 The operating system owns the memory of an LLVM program, so anything that places the program or its variables
 at a fixed address is an error on these targets: the ``%address``, ``%memtop`` and ``%varsaddress`` directives,
 ``%option romable``, ``%jmptable``, a block with an address, ``extsub`` with an address, and the ``-varsaddress``,
@@ -245,6 +256,10 @@ These are the keys of a profile; an unknown key is an error:
     with the C library of a GCC toolchain. clang then only compiles the program into an object file, which the command
     gets as ``{object}``, and it writes the executable to ``{file}``. Environment variables work as in ``clang_args``.
     Without it, clang builds the executable in one go.
+``startup_source``
+    A source file, such as boot code in assembly, that the link command builds along with the program, as ``{startup}``.
+    It is looked up next to the profile file; for a profile built into the compiler, it comes with the compiler.
+    A profile with it must have ``{startup}`` in its ``link_command``, and one without it must not.
 ``run_command``
     The command that ``-emu`` uses to run the executable, with ``{file}`` in place of its path, for example ``wasmtime {file}``.
     Without it, the executable is run directly.

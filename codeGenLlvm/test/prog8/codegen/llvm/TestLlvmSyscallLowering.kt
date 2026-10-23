@@ -483,6 +483,33 @@ class TestLlvmSyscallLowering: FunSpec({
         }
     }
 
+    // as on ARM, without console input and the directory syscalls; the boot code gives the program only its name as the command line,
+    // and unlike on ARM, newlib keeps the position in the file when a seek fails
+    test("the llvm32 console output, command line and file handle syscalls work in a bare metal RISC-V program on qemu").config(enabledOrReasonIf = requiresRiscv) {
+        fun riscv() = TestProgram(riscvTarget)
+        val greeting = riscv().apply { allOutputSubs(); greetingSub() }.module().withMainCalling("main.greeting")
+        compileAndRunRiscv(LlvmPrinter.print(greeting)).let { (exitCode, output) ->
+            withClue(output) { exitCode shouldBe 0 }
+            output shouldBe "A\nhi\nhello, world!\nhi\n"
+        }
+        val arguments = riscv().apply { argumentsOutputSub() }.programModule()
+        compileAndRunRiscv(LlvmPrinter.print(arguments)).let { (exitCode, output) ->
+            withClue(output) { exitCode shouldBe 1 }
+            output shouldBe "\n\n\n\nprogram\n"
+        }
+        val directory = createTempDirectory("prog8-riscv-files").toRealPath()
+        try {
+            val handles = riscv().apply { handleSyscallChecks(directory) }.module().withMainCalling("main.check")
+            compileAndRunRiscv(LlvmPrinter.print(handles), directory = directory).let { (exitCode, output) ->
+                withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            }
+            directory.resolve("out.bin").readBytes().toList() shouldBe (1..8).map { it.toByte() }
+            directory.resolve("copy.bin").readBytes().toList() shouldBe (1..5).map { it.toByte() }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
     test("the llvm32 syscalls compile into wasm32 objects").config(enabledOrReasonIf = requiresWasmClang) {
         for (ir in llvm32Syscalls())
             compileWasmObject(ir).let { (exitCode, output) -> withClue(output) { exitCode shouldBe 0 } }

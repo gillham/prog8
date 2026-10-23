@@ -260,6 +260,47 @@ class TestLlvmCompiler: FunSpec({
         llFile.resolveSibling("${elf.fileName}.o").exists() shouldBe false
     }
 
+    test("the llvm32 programs without 64-bit addresses compute the right results as bare metal RISC-V programs on qemu").config(enabledOrReasonIf = requiresRiscv) {
+        val dir = outputDir.resolve("riscv").createDirectories()
+        for ((name, source) in programs.filterKeys { it !in programsWith64BitAddresses && it !in notRunOnRiscv }) {
+            for (optimize in listOf(false, true)) {
+                val llFile = compiledLlFile(compileText(riscvTarget(), optimize, source, dir))
+                val (exitCode, output) = buildAndRunRiscv(llFile)
+                withClue("$name optimize=$optimize: exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            }
+        }
+    }
+
+    for ((name, program) in outputPrograms.filter { it.key !in notRunOnRiscv && it.value.input.isEmpty() && it.value.args.isEmpty() }) {
+        test("$name: gives the expected exit code and console output as an llvm32 bare metal RISC-V program on qemu, which leaves no files behind").config(enabledOrReasonIf = requiresRiscv) {
+            for (optimize in listOf(false, true)) {
+                withClue("optimize=$optimize") {
+                    val workingDirectory = outputDir.resolve("riscv-run")
+                    workingDirectory.toFile().deleteRecursively()
+                    workingDirectory.createDirectories()
+                    val llFile = compiledLlFile(compileText(riscvTarget(), optimize, program.source, outputDir.resolve("riscv").createDirectories()))
+                    val (exitCode, output) = buildAndRunRiscv(llFile, workingDirectory)
+                    withClue(output) { exitCode shouldBe program.exitCode }
+                    output shouldBe program.output
+                    withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
+                }
+            }
+        }
+    }
+
+    test("launchEmulator links an llvm32 program for bare metal RISC-V with its boot code into a .elf file and runs it on qemu, leaving no build files behind")
+        .config(enabledOrReasonIf = requiresRiscvOnThePath) {
+        val dir = outputDir.resolve("riscv-launched").createDirectories()
+        val llFile = compiledLlFile(compileText(riscvTarget(), false, nativeHello.source, dir))
+        val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + ".elf")
+        val printed = printedOnStdout { riscvTarget().launchEmulator(1, llFile, quiet = false) }
+        printed shouldContain "Running $elf..."
+        printed shouldContain "Program exited with status 42"
+        elf.exists() shouldBe true
+        llFile.resolveSibling("${elf.fileName}.o").exists() shouldBe false
+        llFile.resolveSibling("${elf.fileName}.riscv32-qemu-virt-boot.S").exists() shouldBe false
+    }
+
     test("launchEmulator builds a native executable next to the .ll file and runs it").config(enabledOrReasonIf = requiresNativeLlvm) {
         val dir = outputDir.resolve("launched").createDirectories()
         val llFile = compiledLlFile(compileText(LlvmTarget(), false, nativeHello.source, dir))
@@ -851,6 +892,59 @@ private fun buildAndRunArm(llFile: Path, args: List<String> = emptyList(), direc
     return execute(*command.toTypedArray(), directory = directory ?: llFile.parent)
 }
 
+private val riscvProfile = LlvmTripleProfile.resolve("riscv32-unknown-elf")
+
+private fun riscvTarget() = LlvmTarget(4, riscvProfile)
+
+// riscv-none-elf-gcc from RISCV_NONE_ELF_GCC, the PATH, or the default install location of the xPack toolchain
+private val riscvGcc: Path? = System.getenv("RISCV_NONE_ELF_GCC")?.let { try { Path(it) } catch (_: InvalidPathException) { null } }
+    ?: System.getenv("PATH").orEmpty().split(File.pathSeparator)
+        .mapNotNull { try { Path(it).resolve("riscv-none-elf-gcc") } catch (_: InvalidPathException) { null } }.firstOrNull { Files.isExecutable(it) }
+    ?: Path(System.getProperty("user.home"), "Library/xPacks/@xpack-dev-tools/riscv-none-elf-gcc").toFile().listFiles().orEmpty()
+        .sortedDescending().map { it.toPath().resolve(".content/bin/riscv-none-elf-gcc") }.firstOrNull { Files.isExecutable(it) }
+
+private val requiresRiscv: (TestCase) -> Enabled = {
+    fun onPath(tool: String) = System.getenv("PATH").orEmpty().split(File.pathSeparator)
+        .any { try { Files.isExecutable(Path(it).resolve(tool)) } catch (_: InvalidPathException) { false } }
+    when {
+        llvmBin == null -> Enabled.disabled("llvm-as and clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        riscvGcc == null -> Enabled.disabled("riscv-none-elf-gcc not found in RISCV_NONE_ELF_GCC, on the PATH or in ~/Library/xPacks")
+        !onPath("qemu-system-riscv32") -> Enabled.disabled("qemu-system-riscv32 not found on the PATH")
+        else -> Enabled.enabled
+    }
+}
+
+// launchEmulator links with the profile's own link command, which finds riscv-none-elf-gcc only through RISCV_NONE_ELF_GCC or the PATH
+private val requiresRiscvOnThePath: (TestCase) -> Enabled = {
+    val linker = riscvProfile.linkCommand?.first()
+    val found = linker != null && System.getenv("PATH").orEmpty().split(File.pathSeparator)
+        .any { try { Files.isExecutable(Path(it).resolve(linker)) } catch (_: InvalidPathException) { false } } || System.getenv("RISCV_NONE_ELF_GCC") != null
+    if (!found) Enabled.disabled("riscv-none-elf-gcc is not in RISCV_NONE_ELF_GCC or on the PATH") else requiresRiscv(it)
+}
+
+/**
+ * Builds the .ll file into a .elf file with clang and the link command and boot code of the bare metal RISC-V profile, and runs it on qemu
+ * in the working [directory] (default: next to the .ll file). Semihosting gives it no console input, and the boot code only its name as the command line.
+ */
+private fun buildAndRunRiscv(llFile: Path, directory: Path? = null): Pair<Int, String> {
+    val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + riscvProfile.outputExtension)
+    val objectFile = elf.resolveSibling("${elf.fileName}.o")
+    val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *riscvProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
+        llFile.toString(), "-o", objectFile.toString())
+    if (compiled.first != 0)
+        return compiled
+    val startup = checkNotNull(riscvProfile.writeStartupSource(elf))
+    val link = listOf(checkNotNull(riscvGcc).toString()) + checkNotNull(riscvProfile.linkCommand).drop(1)
+        .map { it.replace("{startup}", startup.toString()).replace("{object}", objectFile.toString()).replace("{file}", elf.toString()) }
+    val linked = execute(*link.toTypedArray())
+    Files.deleteIfExists(objectFile)
+    Files.deleteIfExists(startup)
+    if (linked.first != 0)
+        return linked
+    val command = checkNotNull(riscvProfile.runCommand).map { it.replace("{file}", elf.toAbsolutePath().toString()) }
+    return execute(*command.toTypedArray(), directory = directory ?: llFile.parent)
+}
+
 private fun execute(vararg command: String, stdin: Path? = null, directory: Path? = null): Pair<Int, String> {
     val builder = ProcessBuilder(*command).redirectErrorStream(true)
     stdin?.let { builder.redirectInput(it.toFile()) }
@@ -918,6 +1012,12 @@ private val notRunOnArm = setOf(
     "diskio directories, renaming and deleting",
     "diskio writing, reading lines, seeking in and deleting a text file",
     "fileio copying between two open files, seeking and the end of the file",
+    "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
+)
+
+// the same on bare metal RISC-V, except that its newlib keeps the position in a file when a seek fails
+private val notRunOnRiscv = setOf(
+    "diskio directories, renaming and deleting",
     "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
 )
 

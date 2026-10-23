@@ -132,6 +132,12 @@ class TestLlvmMemoryLowering: FunSpec({
         output shouldBe "bb\ncc\nzz\n"
     }
 
+    test("an llvm32 str[] array links into a bare metal RISC-V program that prints its elements on qemu").config(enabledOrReasonIf = requiresRiscv) {
+        val (exitCode, output) = compileAndRunRiscv(LlvmPrinter.print(stringsProgram(riscvTarget)))
+        withClue(output) { exitCode shouldBe 0 }
+        output shouldBe "bb\ncc\nzz\n"
+    }
+
     test("an llvm32 str[] array compiles into a wasm32 object").config(enabledOrReasonIf = requiresWasmClang) {
         val (exitCode, output) = compileWasmObject(LlvmPrinter.print(stringsProgram(LlvmTarget(4))))
         withClue(output) { exitCode shouldBe 0 }

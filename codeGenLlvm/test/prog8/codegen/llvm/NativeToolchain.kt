@@ -121,6 +121,54 @@ internal fun armRunCommand(program: Path, args: List<String>): List<String> {
         .map { if (it.startsWith("enable=on")) it + commandLine else it }
 }
 
+internal val riscvProfile: LlvmTripleProfile = LlvmTripleProfile.resolve("riscv32-unknown-elf")
+
+/** The llvm32 target for 32-bit RISC-V bare metal, run on qemu through semihosting. */
+internal val riscvTarget: LlvmTarget get() = LlvmTarget(4, riscvProfile)
+
+/** riscv-none-elf-gcc from RISCV_NONE_ELF_GCC, the PATH, or the default install location of the xPack toolchain. */
+internal val riscvGcc: Path? = System.getenv("RISCV_NONE_ELF_GCC")?.let { try { Path.of(it) } catch (_: InvalidPathException) { null } }
+    ?: LlvmToolchain.find("riscv-none-elf-gcc")
+    ?: Path.of(System.getProperty("user.home"), "Library/xPacks/@xpack-dev-tools/riscv-none-elf-gcc").toFile().listFiles().orEmpty()
+        .sortedDescending().map { it.toPath().resolve(".content/bin/riscv-none-elf-gcc") }.firstOrNull { Files.isExecutable(it) }
+
+internal val requiresRiscv: (TestCase) -> Enabled = {
+    when {
+        clang == null -> Enabled.disabled("clang not found next to llvm-as, on the PATH or in ${LlvmToolchain.homebrewLlvmBin}")
+        riscvGcc == null || !Files.isExecutable(riscvGcc) -> Enabled.disabled("riscv-none-elf-gcc not found in RISCV_NONE_ELF_GCC, on the PATH or in ~/Library/xPacks")
+        LlvmToolchain.find("qemu-system-riscv32") == null -> Enabled.disabled("qemu-system-riscv32 not found on the PATH")
+        else -> Enabled.enabled
+    }
+}
+
+/**
+ * Builds [ir] into a bare metal RISC-V program with the clang arguments, link command and boot code of the RISC-V profile,
+ * and runs it on qemu in the working [directory]; returns the exit code and output of the run, or of the build.
+ * Semihosting gives the program no console input, and the boot code only its name as the command line.
+ */
+internal fun compileAndRunRiscv(ir: String, directory: Path? = null): Pair<Int, String> {
+    val dir = createTempDirectory("prog8-llvm-riscv")
+    try {
+        val source = dir.resolve("program.ll").also { it.writeText(ir) }
+        val objectFile = dir.resolve("program.o")
+        val program = dir.resolve("program.elf")
+        val compiled = execute(checkNotNull(clang).toString(), *riscvProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
+            source.toString(), "-o", objectFile.toString())
+        if (compiled.first != 0)
+            return compiled
+        val startup = checkNotNull(riscvProfile.writeStartupSource(program))
+        val link = listOf(checkNotNull(riscvGcc).toString()) + checkNotNull(riscvProfile.linkCommand).drop(1)
+            .map { it.replace("{startup}", startup.toString()).replace("{object}", objectFile.toString()).replace("{file}", program.toString()) }
+        val linked = execute(*link.toTypedArray())
+        if (linked.first != 0)
+            return linked
+        val command = checkNotNull(riscvProfile.runCommand).map { it.replace("{file}", program.toAbsolutePath().toString()) }
+        return execute(*command.toTypedArray(), directory = directory)
+    } finally {
+        dir.toFile().deleteRecursively()
+    }
+}
+
 /** Compiles [ir] into a wasm32-wasip1 object file with clang, without linking; returns clang's exit code and output. */
 internal fun compileWasmObject(ir: String): Pair<Int, String> {
     val dir = createTempDirectory("prog8-llvm-wasm")

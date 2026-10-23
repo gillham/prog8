@@ -228,7 +228,7 @@ One or more .p8 module files
     with clang, and runs it. The program's exit status is printed afterwards.
     When the triple profile has a ``run_command``, that command runs the executable instead (see :ref:`llvm_triples`):
     the default ``llvm32`` profile builds a ``.wasm`` file and runs it with ``wasmtime``, and the ``armv7a-none-eabihf``
-    profile builds a ``.elf`` file and runs it on ``qemu-system-arm``.
+    and ``riscv32-unknown-elf`` profiles build a ``.elf`` file and run it on ``qemu-system-arm`` and ``qemu-system-riscv32``.
 
 ``-newcodegen``
     Use new 6502 code generation backend (*incomplete/experimental*). This generates 6502 assembly code based on IR instead of the AST.

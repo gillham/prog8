@@ -188,6 +188,13 @@ class TestLlvmQuadLowering: FunSpec({
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
         output shouldBe ""
     }
+
+    test("the llvm32 quad instructions compute what the VM computes, in a bare metal RISC-V program on qemu").config(enabledOrReasonIf = requiresRiscv) {
+        val module = TestProgram(riscvTarget).apply { quadCheckProgram() }.module().withMainCalling("main.check")
+        val (exitCode, output) = compileAndRunRiscv(LlvmPrinter.print(module))
+        withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+        output shouldBe ""
+    }
 })
 
 

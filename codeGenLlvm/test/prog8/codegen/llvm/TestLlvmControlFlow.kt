@@ -203,6 +203,12 @@ class TestLlvmControlFlow: FunSpec({
         val (exitCode, output) = compileAndRunArm(LlvmPrinter.print(module))
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
     }
+
+    test("the llvm32 control flow runs correctly as a bare metal RISC-V program on qemu").config(enabledOrReasonIf = requiresRiscv) {
+        val module = TestProgram(riscvTarget).apply { allSubs(); checkSub() }.module().withMainCalling("main.check")
+        val (exitCode, output) = compileAndRunRiscv(LlvmPrinter.print(module))
+        withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+    }
 })
 
 

@@ -1650,7 +1650,7 @@ When a subroutine is used, the compiler will pass a unique **call-site ID** in r
 The compiler will write the assigned IDs for all call-sites into a ``.bankedcalls`` output file during compilation.
 See :ref:`banking` for more information.
 
-**C library functions (llvm64 only):** on the llvm64 target, an ``extsub`` without an address and without register
+**C library functions (llvm targets only):** on the llvm32 and llvm64 targets, an ``extsub`` without an address and without register
 assignments declares a C function that is linked in from the C library::
 
     extsub putchar(ubyte char) -> ubyte
@@ -1664,9 +1664,17 @@ booleans, (unsigned) bytes, words, longs and quads, floats, and strings or point
 The compiler does not know the C prototype. It declares the function with the sizes of the Prog8 types as you wrote them,
 and doesn't extend arguments or return values for you. A byte or word argument or return value that the C function
 declares as an ``int`` should be written as a ``long``, because that is also 32 bits. Your declaration must match the C function.
+On llvm32 the C ``long`` and ``size_t`` types are 32 bits as well, so they are also written as a ``long``, and a pointer has 4 bytes.
+On llvm64 they are 64 bits, so they are written as a ``uquad`` or ``quad``.
+On WebAssembly, with the built-in profile, a declaration that doesn't match the C function fails the build; on the other targets it silently gives wrong values.
 
-Other targets report an error for this form, and so does an ``extsub`` with an address on llvm64.
-A C function can't be declared with a different signature than the llvm64 runtime library uses for the same name: ``putchar``, ``getchar``,
+Which C library you get depends on the triple profile (see :ref:`llvm_triples`): the host's own C library on llvm64,
+wasi-libc on ``wasm32-wasip1``, and newlib on the bare-metal ARM and RISC-V profiles, where some functions such as
+``mkdir`` and ``rename`` don't work. To link another library, use your own triple profile that adds the ``-L`` and ``-l``
+options to its ``clang_args``, or to its ``link_command`` if it has one. The library must be built for that triple.
+
+Other targets report an error for this form, and so does an ``extsub`` with an address on the llvm targets.
+A C function can't be declared with a different signature than the llvm runtime library uses for the same name: ``putchar``, ``getchar``,
 ``exit`` and the file functions (``fopen``, ``fclose``, ...). Declaring ``putchar`` for a program that imports ``textio`` for example is a compile error.
 Two declarations of the same C function in different blocks are fine if they have the same types.
 

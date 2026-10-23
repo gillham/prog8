@@ -42,7 +42,8 @@ internal object LlvmToolchain {
 
     /**
      * Builds the executable [outputFile] from [llFile] with clang, passing the clang arguments of [profile] first; with a
-     * link command in [profile], clang only compiles an object file that the command links. Messages and any failure are reported on System.err.
+     * link command in [profile], clang only compiles an object file that the command links, along with the profile's startup source if it has one.
+     * Messages and any failure are reported on System.err.
      */
     fun compileToExecutable(llFile: Path, outputFile: Path, profile: LlvmTripleProfile? = null, optLevel: String = "-O2"): Boolean {
         val clang = clang()
@@ -62,13 +63,22 @@ internal object LlvmToolchain {
             return runTool(compileCommand + listOf(llFile.toString(), "-o", outputFile.toString()), "clang", outputFile) ||
                 failed("clang couldn't build '$outputFile' from '$llFile'")
         val objectFile = outputFile.resolveSibling("${outputFile.fileName}.o")
+        var startupFile: Path? = null
         try {
             if (!runTool(compileCommand + listOf("-c", llFile.toString(), "-o", objectFile.toString()), "clang", outputFile))
                 return failed("clang couldn't compile '$llFile'")
-            val link = linkCommand.map { it.replace("{object}", objectFile.toString()).replace("{file}", outputFile.toString()) }
+            startupFile = try {
+                profile?.writeStartupSource(outputFile)
+            } catch (x: IOException) {
+                return failed("Can't build '$outputFile': the startup source of the llvm triple profile couldn't be written: ${x.message}")
+            }
+            val link = linkCommand.map {
+                it.replace("{object}", objectFile.toString()).replace("{file}", outputFile.toString()).replace("{startup}", startupFile.toString())
+            }
             return runTool(link, link.first(), outputFile) || failed("the link command couldn't build '$outputFile' from '$objectFile'")
         } finally {
             Files.deleteIfExists(objectFile)
+            startupFile?.let { Files.deleteIfExists(it) }
         }
     }
 

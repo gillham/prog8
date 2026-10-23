@@ -15,6 +15,7 @@ import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.exists
+import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
 
@@ -65,6 +66,22 @@ class TestLlvmToolchain: FunSpec({
         built shouldBe false
         messages shouldContain "the link command couldn't build '$unlinked'"
         dir.resolve("unlinked.elf.o").exists() shouldBe false
+    }
+
+    test("the startup source of a profile is written next to the executable for the link command as {startup}, and removed afterwards")
+        .config(enabled = LlvmToolchain.clang() != null && !System.getProperty("os.name").startsWith("Windows")) {
+        val target = LlvmTarget()
+        val sources = dir.resolve("startup").also { Files.createDirectories(it) }
+        sources.resolve("boot.S").writeText("BOOT CODE")
+        val joining = LlvmTripleProfile("startup", target.targetTriple, target.dataLayout, 8,
+            linkCommandTemplate = listOf("sh", "-c", $$"cat \"$1\" \"$2\" > \"$3\"", "sh", "{startup}", "{object}", "{file}"),
+            startupSource = "boot.S", directory = sources)
+        val llFile = dir.resolve("started.ll").also { it.writeText(programExitingWith(0)) }
+        val executable = dir.resolve("started.elf")
+        LlvmToolchain.compileToExecutable(llFile, executable, joining) shouldBe true
+        executable.readText().startsWith("BOOT CODE") shouldBe true
+        dir.resolve("started.elf.boot.S").exists() shouldBe false
+        dir.resolve("started.elf.o").exists() shouldBe false
     }
 
     test("a run that takes longer than its timeout is stopped, and reported as an IOException").config(enabled = !System.getProperty("os.name").startsWith("Windows")) {

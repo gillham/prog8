@@ -10,6 +10,8 @@ import prog8.code.target.LlvmTarget
 import prog8.code.target.LlvmTripleProfile
 import prog8.code.target.getCompilationTargetByName
 import java.nio.file.Path
+import kotlin.io.path.createDirectories
+import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
 class TestLlvmTripleProfile: FunSpec({
@@ -64,6 +66,41 @@ class TestLlvmTripleProfile: FunSpec({
             it.linkCommand shouldBe null
             it.runTimeoutSeconds shouldBe null
         }
+    }
+
+    test("the bare metal RISC-V profile links riscv-none-elf-gcc's newlib with its embedded boot code and runs on qemu with a timeout") {
+        val profile = LlvmTripleProfile.resolve("riscv32-unknown-elf")
+        profile.outputExtension shouldBe ".elf"
+        profile.runTimeoutSeconds shouldBe 60
+        profile.runCommand!!.first() shouldBe "qemu-system-riscv32"
+        profile.startupSource shouldBe "riscv32-qemu-virt-boot.S"
+        val linkCommand = profile.linkCommand!!
+        linkCommand.first() shouldBe (System.getenv("RISCV_NONE_ELF_GCC") ?: "riscv-none-elf-gcc")
+        ("{startup}" in linkCommand && "{object}" in linkCommand && "{file}" in linkCommand) shouldBe true
+        val startup = profile.writeStartupSource(directory.resolve("program.elf"))!!
+        startup.fileName.toString() shouldBe "program.elf.riscv32-qemu-virt-boot.S"
+        startup.readText() shouldContain "_boot:"
+        LlvmTripleProfile.resolve("armv7a-none-eabihf").let {
+            it.startupSource shouldBe null
+            it.writeStartupSource(directory.resolve("program.elf")) shouldBe null
+        }
+    }
+
+    test("a profile file's startup_source is read from the profile's directory, and needs {startup} in the link command") {
+        val sources = directory.resolve("withstartup").createDirectories()
+        sources.resolve("boot.S").writeText("; boot code")
+        val profileFile = sources.resolve("withstartup.properties").also {
+            it.writeText(validProfile("link_command = gcc {startup} {object} -o {file}\nstartup_source = boot.S"))
+        }
+        val startup = LlvmTripleProfile.load(profileFile).writeStartupSource(directory.resolve("startup-test.elf"))!!
+        startup.readText() shouldBe "; boot code"
+
+        fun rejected(name: String, properties: String): String =
+            shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(sources.resolve("$name.properties").also { it.writeText(properties) }) }.message!!
+        rejected("nostartup", validProfile("link_command = gcc {startup} {object} -o {file}")) shouldContain "startup_source and {startup}"
+        rejected("noplaceholder", validProfile("link_command = gcc {object} -o {file}\nstartup_source = boot.S")) shouldContain "startup_source and {startup}"
+        rejected("nolink", validProfile("startup_source = boot.S")) shouldContain "startup_source and {startup}"
+        rejected("missing", validProfile("link_command = gcc {startup} {object} -o {file}\nstartup_source = missing.S")) shouldContain "was not found"
     }
 
     test("the pointer width is the p: entry of the data layout, ignoring other address spaces, and 64 bits without one") {
