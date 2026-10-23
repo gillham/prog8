@@ -548,15 +548,25 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
 
     override fun after(functionCallExpr: FunctionCallExpression, parent: Node): Iterable<AstModification> {
         val name = functionCallExpr.target.nameInSource
+        if(name==listOf("msw") || name==listOf("lsw")) {
+            val arg = functionCallExpr.args[0]
+            // TypecastsAdder narrows a pointer argument to the first parameter type, uword
+            val address = if(arg is TypecastExpression && arg.implicit && arg.type.isUnsignedWord) arg.expression else arg
+            if(address.inferType(program).isPointer && options.compTarget.POINTER_MEM_SIZE==4u) {
+                // the address can exceed 16 bits, so take the word from it as the long it is
+                val cast = TypecastExpression(address, options.compTarget.pointerType, true, address.position)
+                return listOf(AstReplaceNode(arg, cast, functionCallExpr))
+            }
+        }
         if(name==listOf("msw")) {
             val valueDt = functionCallExpr.args[0].inferType(program)
-            if(valueDt.isWords || valueDt.isBytes || (valueDt.isPointer && options.compTarget.POINTER_MEM_SIZE<=4u)) {
+            if(valueDt.isWords || valueDt.isBytes || (valueDt.isPointer && options.compTarget.POINTER_MEM_SIZE<=2u)) {
                 val zero = NumericLiteral(BaseDataType.UWORD, 0.0, functionCallExpr.position)
                 return listOf(AstReplaceNode(functionCallExpr, zero, parent))
             }
         } else if(name==listOf("lsw")) {
             val valueDt = functionCallExpr.args[0].inferType(program)
-            if(valueDt.isWords || (valueDt.isPointer && options.compTarget.POINTER_MEM_SIZE<=4u))
+            if(valueDt.isWords || (valueDt.isPointer && options.compTarget.POINTER_MEM_SIZE<=2u))
                 return listOf(AstReplaceNode(functionCallExpr, functionCallExpr.args[0], parent))
             if(valueDt.isBytes) {
                 val cast = TypecastExpression(functionCallExpr.args[0], DataType.UWORD, true, functionCallExpr.position)

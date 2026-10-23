@@ -11,7 +11,12 @@ Future Things and Ideas
 - implement the signed divmod byte and word routines on 6502 old codegen (virtual, m68k and IR-based codegens already have them working)
 - the c64 sprite multiplexer still needs adjustments to make it smooth, it lacks a proper raster event scheduler.
 - support typed pointer arrays as struct fields, curretly requires untyped pointers arrays.
-- fix the ``msw``/``lsw`` folding of pointers on targets with 4-byte pointers (m68k, virtual, llvm32): ``VariousCleanups.kt`` folds ``msw(ptr)`` to 0 and ``lsw(ptr)`` to the pointer itself, and drops a ``uword`` cast of a pointer (lines ~213, ~553, ~559). That is wrong for addresses above 64 KiB, such as m68k heap memory or wasm32 linear memory.
+- ``goto <variable>`` is not counted as an exit of a subroutine that returns a value, so such a subroutine still needs an unreachable ``return`` to avoid the "must have at least one 'return'" error.
+- llvm64: ``goto`` through a ``uquad`` address variable is rejected with "wrong address variable datatype, expected long" (``AstIdentifiersChecker.kt:271``); it should accept the target's ``pointerType``, so 64-bit computed jumps can be written.
+- llvm targets: a block-level ``%breakpoint`` gives the error "block main has code outside of a subroutine"; it should be ignored with a warning that block-level breakpoints have no effect there.
+- llvm targets: ``%output``, ``%zeropage full``, ``%zpreserved`` and ``%zpallowed`` are silently accepted; they should give a warning that they have no effect (``%zeropage basicsafe`` stays silent, as programs and tests use it everywhere).
+- compiler crash on all targets: a constant cast to a pointer type in a variable initializer, such as ``^^ubyte @shared p = $12345 as ^^ubyte``, fails with "numeric literal typecast should have been resolved at the compiler Ast level, not at simplified Ast" (without the cast it compiles).
+- virtual target: the VM refuses to load a program whose data extends past 64 KiB ("immediate value out of range for word"), because ``conv.str_l`` (``virtual/conv.p8:183``) and ``floats.tostr`` (``virtual/floats.p8:51``) return their buffer address with ``load.w``/``returnr.w``; they should use pointer-width loads.
 - evaluated the feature suggestions in ideas/c16-banked-data.md (cx16 banked data): evaluated Sep 2026, the plan is not worth implementing as written. Banked data already works via ``-varshigh <bank>`` / ``%varsaddress`` + ``cx16.rambank()``, and the ``cx16.fetch``/``cx16.stash`` kernal primitives turn out to be neither IRQ-safe nor reentrant, and ~5x slower than a bank switch. Cheapest useful follow-up is documentation plus small ``asmsub`` wrappers in ``syslib.p8``; see the Recommendation section in that file.
 
 Won't do's or deferred

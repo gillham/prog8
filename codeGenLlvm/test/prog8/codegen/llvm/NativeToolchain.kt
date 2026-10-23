@@ -53,7 +53,7 @@ internal val wasiMain: String = LlvmTripleProfile.resolve(LlvmTarget.DEFAULT_TRI
 /**
  * Builds [ir] into a wasm32-wasip1 program and runs it with wasmtime, giving it [input] on stdin, the command line [args]
  * and access to [directories]; returns the exit code and output of the run, or of clang if that failed.
- * Linking fails on any wasm-ld warning, because a function signature mismatch only warns, and traps when called.
+ * Uses the clang arguments of the llvm32 target's profile, which make wasm-ld warnings fatal.
  */
 internal fun compileAndRunWasm(ir: String, input: String = "", args: List<String> = emptyList(), directories: List<Path> = emptyList()): Pair<Int, String> {
     val dir = createTempDirectory("prog8-llvm-wasm")
@@ -61,8 +61,8 @@ internal fun compileAndRunWasm(ir: String, input: String = "", args: List<String
         val source = dir.resolve("program.ll").also { it.writeText(ir) }
         val program = dir.resolve("program.wasm")
         val stdin = dir.resolve("stdin.txt").also { it.writeText(input) }
-        val compiled = execute(checkNotNull(clang).toString(), "--target=wasm32-wasip1", "--sysroot=${checkNotNull(wasiSysroot)}", "-O2",
-            "-Wno-override-module", "-Wl,--fatal-warnings", source.toString(), "-o", program.toString())
+        val clangArgs = LlvmTripleProfile.resolve(LlvmTarget.DEFAULT_TRIPLE_32).clangArgs
+        val compiled = execute(checkNotNull(clang).toString(), *clangArgs.toTypedArray(), "-O2", "-Wno-override-module", source.toString(), "-o", program.toString())
         if (compiled.first != 0)
             return compiled
         val preopens = directories.map { "--dir=$it" }

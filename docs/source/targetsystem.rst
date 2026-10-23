@@ -234,7 +234,7 @@ For example, the built-in ``wasm32-wasip1`` profile::
     triple = wasm32-unknown-wasip1
     datalayout = e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20
     c_long_size = 4
-    clang_args = --target=wasm32-wasip1 --sysroot=${WASI_SYSROOT:-/opt/homebrew/opt/wasi-libc/share/wasi-sysroot}
+    clang_args = --target=wasm32-wasip1 --sysroot=${WASI_SYSROOT:-/opt/homebrew/opt/wasi-libc/share/wasi-sysroot} -Wl,--fatal-warnings
     output_extension = .wasm
     run_command = wasmtime --dir=. {file}
     strict_indirect_signatures = true
@@ -248,8 +248,9 @@ parameters through its address traps, as does an address that isn't a subroutine
 
 **External C routines must have the exact C types.** An ``extsub`` without an address is declared with the widths
 of its Prog8 types. On WebAssembly a mismatch with the C library's own type, such as ``uquad`` for the 32-bit
-``size_t`` of wasm32, makes wasm-ld warn "function signature mismatch" and the call trap at runtime. On wasm32
-the C ``int``, ``long`` and ``size_t`` types are all ``long`` in Prog8. A file seek to an offset that a 32-bit
+``size_t`` of wasm32, makes wasm-ld warn "function signature mismatch", and the call would then trap at runtime.
+The built-in ``wasm32-wasip1`` profile passes ``-Wl,--fatal-warnings``, so such a mismatch fails the build instead.
+On wasm32 the C ``int``, ``long`` and ``size_t`` types are all ``long`` in Prog8. A file seek to an offset that a 32-bit
 C ``long`` can't hold fails.
 
 

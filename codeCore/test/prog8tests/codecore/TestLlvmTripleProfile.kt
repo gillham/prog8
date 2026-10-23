@@ -42,6 +42,7 @@ class TestLlvmTripleProfile: FunSpec({
     test("the wasm32 profile builds a .wasm file with clang for WASI and runs it with a WASI runtime") {
         val profile = LlvmTripleProfile.resolve("wasm32-wasip1")
         profile.outputExtension shouldBe ".wasm"
+        ("-Wl,--fatal-warnings" in profile.clangArgs) shouldBe true
         profile.runCommand shouldBe listOf("wasmtime", "--dir=.", "{file}")
         profile.strictIndirectSignatures shouldBe true
         profile.cMainSymbol shouldBe "__main_argc_argv"

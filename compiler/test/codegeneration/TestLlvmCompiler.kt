@@ -1,5 +1,6 @@
 package prog8tests.codegeneration
 
+import io.kotest.assertions.throwables.shouldNotThrowAny
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
@@ -9,6 +10,7 @@ import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldNotBeEmpty
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldEndWith
@@ -192,6 +194,28 @@ class TestLlvmCompiler: FunSpec({
         printed shouldContain "Running $wasm..."
         printed shouldContain "Program exited with status 42"
         wasm.exists() shouldBe true
+    }
+
+    test("an llvm32 extsub whose signature doesn't match the C function fails to link, the matching one runs").config(enabledOrReasonIf = requiresWasm) {
+        fun strlenProgram(returnType: String) = """
+            %zeropage basicsafe
+            main {
+                extsub strlen(str s) -> $returnType
+                sub start() {
+                    sys.exit(lsb(strlen("hello")))
+                }
+            }"""
+        val dir = outputDir.resolve("wasm-signatures").createDirectories()
+        // size_t is 32 bits on wasm32, so a uquad result is the wrong signature
+        val mismatched = compiledLlFile(compileText(LlvmTarget(4), false, strlenProgram("uquad"), dir))
+        val (status, output) = buildAndRunWasm(mismatched)
+        status shouldNotBe 0
+        output shouldContain "signature mismatch"
+        val wasm = mismatched.resolveSibling(mismatched.fileName.toString().removeSuffix(".ll") + ".wasm")
+        shouldNotThrowAny { LlvmTarget(4).launchEmulator(1, mismatched, quiet = true) }
+        wasm.exists() shouldBe false
+        val matching = compiledLlFile(compileText(LlvmTarget(4), false, strlenProgram("long"), dir))
+        buildAndRunWasm(matching).first shouldBe 5
     }
 
     test("launchEmulator builds a native executable next to the .ll file and runs it").config(enabledOrReasonIf = requiresNativeLlvm) {
@@ -731,14 +755,14 @@ private val requiresWasm: (TestCase) -> Enabled = {
 
 /**
  * Builds the .ll file into a .wasm file with clang and the clang arguments of the llvm32 target's profile, and runs it
- * with the profile's run command, in the working [directory] (default: next to the .ll file). Linking fails on any wasm-ld
- * warning, because a function signature mismatch only warns, and traps when called.
+ * with the profile's run command, in the working [directory] (default: next to the .ll file). The profile makes wasm-ld
+ * warnings fatal, because a function signature mismatch only warns, and traps when called.
  */
 private fun buildAndRunWasm(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val profile = LlvmTarget(4).profile
     val wasm = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + profile.outputExtension)
     val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *profile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module",
-        "-Wl,--fatal-warnings", llFile.toString(), "-o", wasm.toString())
+        llFile.toString(), "-o", wasm.toString())
     if (compiled.first != 0)
         return compiled
     val stdin = wasm.resolveSibling("${wasm.fileName}.stdin").also { it.writeText(input) }
@@ -792,11 +816,9 @@ private val programsWith64BitAddresses = setOf(
     "the untyped pointer is a uquad in variables, constants, parameters, return values, struct fields and arrays"
 )
 
-// programs that don't run as they are under wasmtime: wasm32 data lies above 64 KiB, where lsw(pointer) is wrongly folded to
-// the pointer itself on 4-byte pointer targets (see todo.rst); WASI's working directory is "/" rather than a host path;
+// programs that don't run as they are under wasmtime: WASI's working directory is "/" rather than a host path;
 // and extsubs declared with the 64-bit size_t of LP64 hosts don't link against wasi-libc
 private val notRunUnderWasmtime = setOf(
-    "lsb, msb, lsw and msw of quads and addresses, and signed offsets to addresses",
     "diskio directories, renaming and deleting",
     "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
 )

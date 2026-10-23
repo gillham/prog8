@@ -461,7 +461,7 @@ private class BuiltinFunctionsFacade(functions: Map<String, FSignature>): IBuilt
         val quadEvaluators = if(program.target.cpu.isLlvm || program.target.cpu.isVirtual) setOf("sizeof", "len", "offsetof", "lsb", "lsw", "msb", "msw") else setOf("sizeof", "len", "offsetof")
         if(funcName !in quadEvaluators && args.any { it.inferType(program).isQuad })
             return null
-        if(funcName=="msw" && args[0].inferType(program).let { !it.isLong && !it.isQuad && !(program.target.POINTER_MEM_SIZE>4u && (it.isPointer || it.isIterable)) })
+        if(funcName=="msw" && args[0].inferType(program).let { !it.isLong && !it.isQuad && !(program.target.POINTER_MEM_SIZE>2u && (it.isPointer || it.isIterable)) })
             return listOf(NumericLiteral.optimalInteger(0, position))
 
         val func = BuiltinFunctions[funcName]
