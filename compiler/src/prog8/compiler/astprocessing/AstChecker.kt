@@ -2073,6 +2073,8 @@ internal class AstChecker(private val program: Program,
                     errors.err(unsupportedConstantAddressMessage(cv), typecast.position)
                 else if(!(irtype.isUnsignedWord || irtype.isLong || (irtype.isQuad && options.compTarget.POINTER_MEM_SIZE>4u)))
                     errors.err("can only cast uword or long to pointer", typecast.position)
+                else if(options.compTarget.POINTER_MEM_SIZE<=2u && cv.number !in 0.0..65535.0)
+                    errors.err("address out of range", typecast.position)
             } else
                 errors.err("invalid type cast", typecast.position)
         }
@@ -2947,6 +2949,8 @@ internal class AstChecker(private val program: Program,
             targetDt.isPointer -> {
                 if(isUnsupportedConstantAddress(value))
                     return err(unsupportedConstantAddressMessage(value))
+                if(options.compTarget.POINTER_MEM_SIZE<=2u && value.number !in 0.0..65535.0)
+                    return err("address out of range")
                 return (value.type==BaseDataType.UWORD && options.compTarget.POINTER_MEM_SIZE==2u)
                     || (value.type==BaseDataType.LONG && options.compTarget.POINTER_MEM_SIZE==4u)
             }

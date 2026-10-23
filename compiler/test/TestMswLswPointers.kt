@@ -87,7 +87,7 @@ main {
     }
 
     test("msw of a pointer folds to 0 and lsw to the pointer itself with 2-byte pointers") {
-        val result = compileText(Cx16Target(), false, src, outputDir, writeAssembly = false)!!
+        val result = compileText(Cx16Target(), false, src.replace($$"$12345", $$"$1234"), outputDir, writeAssembly = false)!!
         (assignedValue(result, "hi") as NumericLiteral).number shouldBe 0.0
         assignedValue(result, "lo") shouldBe instanceOf<IdentifierReference>()
         (assignedValue(result, "arrayhi") as NumericLiteral).number shouldBe 0.0

@@ -48,8 +48,8 @@ sub tostr(float value) -> str {
         load.l r99200.l,#floats.tostr.buffer
         loadm.f fr99000.f,[floats.tostr.value]
         syscall 34 (r99200.l, fr99000.f)
-        load.w r99000.w,#floats.tostr.buffer
-        returnr.w r99000.w
+        load.p r99000.p,#floats.tostr.buffer
+        returnr.p r99000.p
     }}
 }
 

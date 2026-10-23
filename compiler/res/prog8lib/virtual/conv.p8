@@ -180,8 +180,8 @@ sub  str_l  (long value) -> str {
         loadm.l r99200.l,[conv.str_l.value]
         load.l r99201.l,#conv.string_out
         syscall 60 (r99200.l, r99201.l)
-        load.w r99000.w,#conv.string_out
-        returnr.w r99000.w
+        load.p r99000.p,#conv.string_out
+        returnr.p r99000.p
     }}
 }
 

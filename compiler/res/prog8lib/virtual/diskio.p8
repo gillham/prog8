@@ -157,8 +157,8 @@ diskio {
         ;    you can call this multiple times to append more data
         repeat num_bytes {
             %ir {{
-                loadm.w r99000.w,[diskio.f_write.bufferpointer]
-                loadi.b r99100.b,[r99000.w]
+                loadm.p r99000.p,[diskio.f_write.bufferpointer]
+                loadi.b r99100.b,[r99000.p]
                 syscall 55 (r99100.b): r99101.b
                 storem.b r99101.b,[$ff0000]
             }}
@@ -207,8 +207,8 @@ diskio {
     sub curdir() -> str {
         ; return current directory name or 0 if error
         %ir {{
-            syscall 48 (): r99000.w
-            returnr.w r99000.w
+            syscall 48 (): r99000.p
+            returnr.p r99000.p
         }}
     }
 
