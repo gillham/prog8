@@ -1931,4 +1931,65 @@ main {
         }
     }
 
+    test("passing the address of a word array where pointers to pointers are expected warns on targets with wider pointers") {
+        val text = """
+            %option no_sysinit
+            main {
+                sub start() {
+                    uword[4] @nosplit wparts
+                    pointer[4] @nosplit pparts
+                    ubyte[8] bparts
+                    void fill(&wparts)
+                    void fill(&pparts)
+                    void fill(&bparts)
+                }
+
+                sub fill(^^pointer parts) -> ubyte {
+                    return 0
+                }
+            }
+            """
+        for(target in listOf(VMTarget(), LlvmTarget(4), LlvmTarget(8), Cx16Target())) {
+            val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+            compileText(target, false, text, outputDir, writeAssembly = false, errors = errors) shouldNotBe null
+            val warnings = errors.warnings.filter { "gets pointers of" in it }
+            withClue(target.name) {
+                if(target.POINTER_MEM_SIZE > 2u) {
+                    warnings.size shouldBe 1
+                    warnings[0] shouldContain ":8:31: argument 1 is the address of a uword array, but it gets pointers of ${target.POINTER_MEM_SIZE} bytes each here"
+                } else
+                    warnings.size shouldBe 0
+            }
+        }
+    }
+
+    test("passing the address of a split word array where a word pointer is expected warns") {
+        val text = """
+            %option no_sysinit
+            main {
+                sub start() {
+                    uword[4] wsplit
+                    uword[4] @nosplit wlinear
+                    pointer[4] psplit
+                    void fill(&wsplit)
+                    void fill(&wlinear)
+                    void fill(&psplit)
+                }
+
+                sub fill(^^pointer parts) -> ubyte {
+                    return 0
+                }
+            }
+            """
+        for(target in listOf(Cx16Target(), C64Target())) {
+            val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+            compileText(target, false, text, outputDir, writeAssembly = false, errors = errors) shouldNotBe null
+            val warnings = errors.warnings.filter { "split word array" in it }
+            withClue(target.name) {
+                warnings.size shouldBe 2
+                warnings[0] shouldContain ":8:31: argument 1 is the address of a split word array, but the ^^uword parameter reads its elements as consecutive words"
+                warnings[1] shouldContain ":10:31: argument 1 is the address of a split word array"
+            }
+        }
+    }
 })

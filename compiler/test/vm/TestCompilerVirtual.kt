@@ -19,6 +19,8 @@ import prog8.code.target.Cx16Target
 import prog8.code.target.Qemu68kTarget
 import prog8.code.target.VMTarget
 import prog8.intermediate.*
+import prog8.vm.ProgramExitException
+import prog8.vm.VirtualMachine
 import prog8.vm.VmRunner
 import prog8.vm.VmVariableAllocator
 import prog8tests.helpers.ErrorReporterForTests
@@ -2760,4 +2762,54 @@ main {
         }
     }
 
+    test("strings.split stops at the end of the string, also after trailing whitespace") {
+        val src = """
+%import strings
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    ubyte[5] @shared counts
+    ubyte @shared lastPartStart
+    ubyte @shared lastPartEnd
+
+    sub start() {
+        pointer[4] parts
+        str s1 = "  aa bb  cc"
+        str s2 = "  aa bb  cc  "
+        str s3 = "   "
+        str s4 = "one"
+        str s5 = "a b c d e f"
+        counts[0] = strings.split(s1, &parts, len(parts))
+        lastPartStart = @(parts[2])
+        lastPartEnd = @(parts[2] + 2)
+        counts[1] = strings.split(s2, &parts, len(parts))
+        counts[2] = strings.split(s3, &parts, len(parts))
+        counts[3] = strings.split(s4, &parts, len(parts))
+        counts[4] = strings.split(s5, &parts, len(parts))
+    }
+}"""
+        val outputDir = tempdir().toPath()
+        for(optimize in listOf(false, true)) {
+            val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+            val irSource = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir").readText()
+            val irProgram = IRFileReader().read(irSource)
+            val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+            val vm = VirtualMachine(irProgram)
+            // a bounded number of steps, so a split that runs past the end of the string fails instead of hanging
+            val exited = try {
+                repeat(10_000) { vm.step(1000) }
+                false
+            } catch (_: ProgramExitException) {
+                true
+            }
+            val counts = List(5) { vm.memory.getUB(allocations["main.counts"]!! + it.toUInt()).toInt() }
+            withClue("optimize=$optimize") {
+                exited shouldBe true
+                counts shouldBe listOf(3, 3, 0, 1, 4)
+                vm.memory.getUB(allocations["main.lastPartStart"]!!) shouldBe 'c'.code.toUByte()
+                vm.memory.getUB(allocations["main.lastPartEnd"]!!) shouldBe 0u
+            }
+        }
+    }
 })

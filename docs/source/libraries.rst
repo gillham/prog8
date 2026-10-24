@@ -1928,7 +1928,9 @@ manipulation
 
 ``split (string, parts, max_parts) -> ubyte``
     Splits string into parts separated by white space (destructive).
-    Pointers to each part are stored in the given parts array (sequential uwords, for instance in a @nosplit uword array), up to the given maximum number of parts.
+    Pointers to each part are stored in the given parts array, up to the given maximum number of parts. Use a ``pointer[]`` array:
+    on targets with pointers wider than 2 bytes (virtual, llvm32, llvm64) a uword array can't hold them. On the 6502 targets
+    the array must be @nosplit (a ``pointer[]`` or ``uword[]`` array is split by default there).
     Returns the number of parts stored.
     Leading and trailing whitespace has been stripped from each part.
 

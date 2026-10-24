@@ -1276,6 +1276,9 @@ jump p8_label_gen_2
                     val ins = chunk.instructions[t]
                     if(VirtualRegister.int(gk.destReg) in ins.definitions) { barrier = true; break }
                     if(writesMem(ins, gk.bufKey) || writesMem(ins, gk.idxKey)) { barrier = true; break }
+                    // a call, or a write through a pointer, can change buf or the index variable too
+                    if(ins.opcode in OpcodesWithSideEffects) { barrier = true; break }
+                    if(ins.memory != null && ins.memory !is MemoryReference.Direct && ins.memoryEffect in setOf(MemoryEffect.WRITE, MemoryEffect.READ_WRITE, MemoryEffect.UNKNOWN)) { barrier = true; break }
                 }
                 if(!barrier) { found = gk; break }
             }

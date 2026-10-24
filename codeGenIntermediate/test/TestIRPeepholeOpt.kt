@@ -753,4 +753,38 @@ class TestIRPeepholeOpt: FunSpec({
         // LOAD r1 must be kept because r1 is live-out; whether LOADR is forwarded to LOAD r2 is secondary.
         all.count { it.opcode == Opcode.LOAD && it.dest?.register == VirtualRegister.int(1) } shouldBe 1
     }
+
+    fun bufferPlusIndex(firstReg: Int) = listOf(
+        IRInstructions.loadMemory(Opcode.LOADM, IRDataType.POINTER, firstReg, IRMemory.direct("main.buf")),
+        IRInstructions.loadMemory(Opcode.LOADM, IRDataType.BYTE, firstReg+1, IRMemory.direct("main.index")),
+        IRInstructions.binary(Opcode.EXTL, IRDataType.BYTE, firstReg+2, firstReg+1),
+        IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, firstReg, firstReg+2)
+    )
+
+    fun addressComputations(between: List<IRInstruction>): Int {
+        val irProg = makeIRProgram(bufferPlusIndex(1) + listOf(
+            IRInstructions.loadMemory(Opcode.LOADI, IRDataType.BYTE, 4, IRMemory.indirect(1)),
+            IRInstructions.storeMemory(Opcode.STOREM, IRDataType.BYTE, 4, IRMemory.direct("main.first"))
+        ) + between + bufferPlusIndex(5) + listOf(
+            IRInstructions.loadMemory(Opcode.LOADI, IRDataType.BYTE, 8, IRMemory.indirect(5)),
+            IRInstructions.returnRegister(IRDataType.BYTE, 8)
+        ))
+        IRPeepholeOptimizer(irProg, false).optimize(true, ErrorReporterForTests())
+        return irProg.chunks().flatMap { it.instructions }.count { it.opcode == Opcode.ADDR }
+    }
+
+    test("a repeated buffer plus index address computation is reused") {
+        addressComputations(emptyList()) shouldBe 1
+    }
+
+    test("a buffer plus index address computation is not reused across a call, which can change the index") {
+        addressComputations(listOf(IRInstructions.syscall(0))) shouldBe 2
+    }
+
+    test("a buffer plus index address computation is not reused across a write through a pointer") {
+        addressComputations(listOf(
+            IRInstructions.loadMemory(Opcode.LOADM, IRDataType.POINTER, 9, IRMemory.direct("main.ptr")),
+            IRInstructions.storeZero(Opcode.STOREZI, IRDataType.BYTE, IRMemory.indirect(9))
+        )) shouldBe 2
+    }
 })

@@ -2,9 +2,9 @@ strings {
     ; the string functions shared across compiler targets
     %option merge, no_symbol_prefixing, ignore_unused
 
-    sub split(str s, ^^uword parts, ubyte maxparts) -> ubyte {
+    sub split(str s, ^^pointer parts, ubyte maxparts) -> ubyte {
         ; -- split string into parts (splits on whitespace and other non-printable characters).
-        ;    Pointers to each part are stored in the given array.
+        ;    Pointers to each part are stored in the given pointer[] array (@nosplit on the 6502 targets).
         ;    Returns number of parts found (up to the given maximum). Modifies the string in place!
 
         if s==0 or s[0]==0
@@ -18,17 +18,17 @@ strings {
 
         while numparts < maxparts {
             skipwhitespace()
-            if s[index]!=0 {
-                parts^^ = s+index
-                numparts++
-                parts++
-                skipchars()
-                if s[index]==0
-                    break
-                if numparts < maxparts
-                    s[index] = 0
-                index++
-            }
+            if s[index]==0
+                break
+            parts^^ = s+index
+            numparts++
+            parts++
+            skipchars()
+            if s[index]==0
+                break
+            if numparts < maxparts
+                s[index] = 0
+            index++
         }
         if numparts>0 {
             parts--

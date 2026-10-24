@@ -436,7 +436,7 @@ strings  {
     rstrip  (str s)
     rtrim  (str s)
     slice  (str source, ubyte start, ubyte slen, str target)
-    split  (str s, ^^uword parts, ubyte maxparts) -> ubyte
+    split  (str s, ^^long parts, ubyte maxparts) -> ubyte
     startswith  (str st, str prefix) -> bool
     strip  (str s)
     trim  (str s)

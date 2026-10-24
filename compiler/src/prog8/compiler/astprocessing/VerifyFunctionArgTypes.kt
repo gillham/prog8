@@ -62,6 +62,8 @@ internal class VerifyFunctionArgTypes(val program: Program, val options: Compila
         val error = checkTypes(functionCallExpr as IFunctionCall, program)
         if(error!=null)
             errors.err(error.first, error.second)
+        else
+            warnArrayArgsForPointers(functionCallExpr)
 
         super.visit(functionCallExpr)
     }
@@ -70,8 +72,34 @@ internal class VerifyFunctionArgTypes(val program: Program, val options: Compila
         val error = checkTypes(functionCallStatement as IFunctionCall, program)
         if(error!=null)
             errors.err(error.first, error.second)
+        else
+            warnArrayArgsForPointers(functionCallStatement)
 
         super.visit(functionCallStatement)
+    }
+
+    // the untyped address of an array passes for any typed pointer, also when its elements can't be read through that pointer
+    private fun warnArrayArgsForPointers(call: IFunctionCall) {
+        val target = program.target
+        val sub = call.target.targetSubroutine() ?: return
+        call.args.zip(sub.parameters).forEachIndexed { index, (arg, param) ->
+            val pointee = param.type.sub
+            if(!param.type.isPointer || pointee==null || pointee.isByteOrBool)
+                return@forEachIndexed
+            val array = when(arg) {
+                is AddressOf -> if(!arg.typed && arg.arrayIndex==null && arg.dereference==null) arg.identifier else null
+                is IdentifierReference -> arg
+                else -> null
+            } ?: return@forEachIndexed
+            val arrayDt = array.inferType(program).getOrUndef()
+            val elementDt = arrayDt.sub
+            if(!arrayDt.isArray || elementDt==null || elementDt.isByteOrBool)
+                return@forEachIndexed
+            if(arrayDt.isSplitWordArray(target))
+                errors.warn("argument ${index + 1} is the address of a split word array, but the ^^${DataType.forDt(pointee)} parameter reads its elements as consecutive words: use a @nosplit array", arg.position)
+            else if(target.POINTER_MEM_SIZE > 2u && pointee == target.pointerBaseType && target.memorySize(elementDt) < target.POINTER_MEM_SIZE.toInt())
+                errors.warn("argument ${index + 1} is the address of a ${DataType.forDt(elementDt)} array, but it gets pointers of ${target.POINTER_MEM_SIZE} bytes each here: use a pointer[] array", arg.position)
+        }
     }
 
     override fun visit(decl: VarDecl) {
