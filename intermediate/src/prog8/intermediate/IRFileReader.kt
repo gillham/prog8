@@ -141,6 +141,8 @@ class IRFileReader {
         var target: ICompilationTarget = VMTarget()
         var targetName: String? = null
         var llvmTriple: String? = null
+        val llvmCompileArgs = mutableListOf<String>()
+        val llvmLinkArgs = mutableListOf<String>()
         var outputType = OutputType.PRG
         var launcher = CbmPrgLauncherType.NONE
         var zeropage = ZeropageType.FULL
@@ -160,6 +162,8 @@ class IRFileReader {
                 when(name) {
                     "compTarget" -> targetName = value
                     "llvmTriple" -> llvmTriple = value
+                    "llvmCompileArg" -> llvmCompileArgs.add(unescapeOptionValue(value))
+                    "llvmLinkArg" -> llvmLinkArgs.add(unescapeOptionValue(value))
                     "output" -> outputType = OutputType.valueOf(value)
                     "launcher" -> launcher = CbmPrgLauncherType.valueOf(value)
                     "zeropage" -> zeropage = ZeropageType.valueOf(value)
@@ -184,7 +188,7 @@ class IRFileReader {
         }
         targetName?.let {
             target = try {
-                getCompilationTargetByName(it, llvmTriple)
+                getCompilationTargetByName(it, llvmTriple, llvmCompileArgs, llvmLinkArgs)
             } catch (x: IllegalArgumentException) {
                 throw IRParseException("invalid compilation target in OPTIONS: ${x.message}")
             }

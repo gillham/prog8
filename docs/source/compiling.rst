@@ -326,6 +326,14 @@ One or more .p8 module files
     The default is ``arm64-apple-macosx`` for ``llvm64`` and ``wasm32-wasip1`` for ``llvm32``.
     It is an error with the other targets. See :ref:`llvm_triples` for the lookup order and the profile keys.
 
+``-Xcompile <argument>``, ``-Xlink <argument>``
+    Pass one extra argument to the clang compile step, or to the link step, when the ``llvm64`` and ``llvm32`` targets
+    build an executable. Repeat the option for more arguments; each value is passed as is, also when it starts with ``-``
+    or contains spaces, for example ``-Xlink "-L/opt/my libs" -Xlink -lmylib`` or ``-Xcompile -mcpu=cortex-a7``.
+    The ``-Xcompile`` arguments come after the profile's ``clang_args``. The ``-Xlink`` arguments go at the end of the
+    profile's ``link_command`` when it has one, otherwise at the end of the clang command that links, so libraries
+    come after the program's object file. They are kept in the ``.p8ir`` file, and are an error with the other targets.
+
 ``-timings``
     Show a more detailed breakdown of the time taken in various compiler phases, for performance analysis of the compiler itself.
 

@@ -39,7 +39,10 @@ class TestDaemonProtocol : FunSpec({
             sourceDirs = listOf("/src1", "/src2"),
             outputDir = "/out",
             outputFile = "/out/custom.pgz",
-            cwd = "/home/user/project"
+            cwd = "/home/user/project",
+            llvmTriple = "riscv32-unknown-elf",
+            llvmCompileArgs = listOf("-g", "-mcpu=cortex-a15"),
+            llvmLinkArgs = listOf("-L/a b", "-lfoo", "x=\"y\"")
         )
 
         val encoded = DaemonProtocol.encodeRequest(request)
@@ -74,6 +77,9 @@ class TestDaemonProtocol : FunSpec({
         decoded.outputDir shouldBe request.outputDir
         decoded.outputFile shouldBe request.outputFile
         decoded.cwd shouldBe request.cwd
+        decoded.llvmTriple shouldBe request.llvmTriple
+        decoded.llvmCompileArgs shouldBe request.llvmCompileArgs
+        decoded.llvmLinkArgs shouldBe request.llvmLinkArgs
     }
 
     test("DaemonRequest roundtrip with null optional fields") {

@@ -54,7 +54,9 @@ internal fun compileFile(
         outputFile = outputFile,
         errors = errors ?: ErrorReporterForTests(),
         assemble = assemble,
-        llvmTriple = (platform as? LlvmTarget)?.profile?.name
+        llvmTriple = (platform as? LlvmTarget)?.profile?.name,
+        llvmCompileArgs = (platform as? LlvmTarget)?.extraCompileArgs.orEmpty(),
+        llvmLinkArgs = (platform as? LlvmTarget)?.extraLinkArgs.orEmpty()
     )
     return compileProgram(args)
 }

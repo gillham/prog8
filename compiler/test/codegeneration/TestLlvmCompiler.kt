@@ -128,6 +128,54 @@ class TestLlvmCompiler: FunSpec({
         irTarget.profile.name shouldBe "x86_64-unknown-linux-gnu"
     }
 
+    test("the -Xcompile and -Xlink arguments are kept in the .p8ir file unchanged and in order") {
+        val dir = outputDir.resolve("extra-args").createDirectories()
+        val compileArgs = listOf("-g", "-mllvm", "-x=1")
+        val linkArgs = listOf("-L/a b", "-lfoo", "back\\slash", "two\nlines", " spaced ")
+        val target = getCompilationTargetByName("llvm32", "riscv32-unknown-elf", compileArgs, linkArgs)
+        val result = compileText(target, false, programs.getValue("arithmetic expressions"), dir, assemble = false).shouldNotBeNull()
+        val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        val irTarget = IRFileReader().read(irFile).options.compTarget as LlvmTarget
+        irTarget.profile.name shouldBe "riscv32-unknown-elf"
+        irTarget.extraCompileArgs shouldBe compileArgs
+        irTarget.extraLinkArgs shouldBe linkArgs
+    }
+
+    test("-Xcompile and -Xlink arguments are only accepted for the llvm targets") {
+        shouldThrow<IllegalArgumentException> { getCompilationTargetByName("cx16", extraLinkArgs = listOf("-lfoo")) }
+        shouldThrow<IllegalArgumentException> { getCompilationTargetByName("virtual", extraCompileArgs = listOf("-g")) }
+        (getCompilationTargetByName("llvm", extraLinkArgs = listOf("-lfoo")) as LlvmTarget).extraLinkArgs shouldBe listOf("-lfoo")
+    }
+
+    test("-Xlink links an extra static library into a native executable").config(enabledOrReasonIf = requiresNativeLlvmAndAr) {
+        val ar = checkNotNull(llvmBin).resolve("llvm-ar")
+        linksExtraLibrary(outputDir, LlvmTarget(), "native-library", ar) { source, objectFile ->
+            listOf(checkNotNull(llvmBin).resolve("clang").toString(), "-c", source.toString(), "-o", objectFile.toString())
+        }
+    }
+
+    test("-Xlink links an extra static library into an llvm32 wasm32 program").config(enabledOrReasonIf = requiresWasmAndAr) {
+        val ar = checkNotNull(llvmBin).resolve("llvm-ar")
+        val sysroot = System.getenv("WASI_SYSROOT") ?: "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot"
+        linksExtraLibrary(outputDir, LlvmTarget(4), "wasm-library", ar) { source, objectFile ->
+            listOf(checkNotNull(llvmBin).resolve("clang").toString(), "--target=wasm32-wasip1", "--sysroot=$sysroot", "-c", source.toString(), "-o", objectFile.toString())
+        }
+    }
+
+    test("-Xlink links an extra static library into an llvm32 bare metal ARM program").config(enabledOrReasonIf = requiresArm) {
+        val gcc = checkNotNull(armProfile.linkCommand).first()
+        linksExtraLibrary(outputDir, armTarget(), "arm-library", Path(gcc.removeSuffix("gcc") + "ar")) { source, objectFile ->
+            listOf(gcc, "-mcpu=cortex-a15", "-mfloat-abi=hard", "-mfpu=neon-vfpv4", "-c", source.toString(), "-o", objectFile.toString())
+        }
+    }
+
+    test("-Xlink links an extra static library into an llvm32 bare metal RISC-V program").config(enabledOrReasonIf = requiresRiscvOnThePath) {
+        val gcc = checkNotNull(riscvGcc).toString()
+        linksExtraLibrary(outputDir, riscvTarget(), "riscv-library", Path(gcc.removeSuffix("gcc") + "ar")) { source, objectFile ->
+            listOf(gcc, "-march=rv32imafdc_zicsr", "-mabi=ilp32d", "-c", source.toString(), "-o", objectFile.toString())
+        }
+    }
+
     test("the programs without 64-bit addresses compile for the llvm32 target, with 4-byte pointers, which llvm-as accepts when installed") {
         val dir = outputDir.resolve("llvm32").createDirectories()
         val sources = programs.filterKeys { it !in programsWith64BitAddresses } + outputPrograms.mapValues { it.value.source }
@@ -789,6 +837,30 @@ other {
 })
 
 
+/**
+ * Builds a static library with p8test_answer() returning 42 in a directory with a space in its name, links it into a program
+ * for [target] with -Xlink, and checks that launchEmulator builds and runs the program, which exits with that answer.
+ */
+private fun linksExtraLibrary(outputDir: Path, target: LlvmTarget, dirName: String, ar: Path, compileLibrary: (Path, Path) -> List<String>) {
+    val dir = outputDir.resolve(dirName).createDirectories()
+    val libraryDir = dir.resolve("lib dir").createDirectories()
+    val source = libraryDir.resolve("p8test.c").also { it.writeText("int p8test_answer(void) { return 42; }\n") }
+    val objectFile = libraryDir.resolve("p8test.o")
+    withClue("compiling the library") { execute(*compileLibrary(source, objectFile).toTypedArray()).first shouldBe 0 }
+    withClue("archiving the library") { execute(ar.toString(), "rcs", libraryDir.resolve("libp8test.a").toString(), objectFile.toString()).first shouldBe 0 }
+    val linking = LlvmTarget(target.pointerSize, target.profile, extraLinkArgs = listOf("-L$libraryDir", "-lp8test"))
+    val program = """
+        %zeropage basicsafe
+        main {
+            extsub p8test_answer() -> long
+            sub start() {
+                sys.exit(p8test_answer() as ubyte)
+            }
+        }"""
+    val llFile = compiledLlFile(compileText(linking, false, program, dir))
+    printedOnStdout { linking.launchEmulator(1, llFile, quiet = false) } shouldContain "Program exited with status 42"
+}
+
 private fun compiledLlFile(result: CompilationResult?): Path {
     val compiled = result.shouldNotBeNull()
     val file = OutputFiles.of(compiled.compilationOptions, compiled.compilerAst.name).programFile
@@ -808,6 +880,10 @@ private val requiresNativeLlvm: (TestCase) -> Enabled = {
         llvmBin == null -> Enabled.disabled("llvm-as and clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         else -> Enabled.enabled
     }
+}
+
+private val requiresNativeLlvmAndAr: (TestCase) -> Enabled = {
+    if (llvmBin?.resolve("llvm-ar")?.let { Files.isExecutable(it) } != true) Enabled.disabled("llvm-ar not found next to llvm-as") else requiresNativeLlvm(it)
 }
 
 /**
@@ -851,6 +927,10 @@ private fun buildAndRunWasm(llFile: Path, input: String = "", args: List<String>
     val stdin = wasm.resolveSibling("${wasm.fileName}.stdin").also { it.writeText(input) }
     val command = checkNotNull(profile.runCommand).map { it.replace("{file}", wasm.toAbsolutePath().toString()) } + args
     return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent)
+}
+
+private val requiresWasmAndAr: (TestCase) -> Enabled = {
+    if (llvmBin?.resolve("llvm-ar")?.let { Files.isExecutable(it) } != true) Enabled.disabled("llvm-ar not found next to llvm-as") else requiresWasm(it)
 }
 
 private val armProfile = LlvmTripleProfile.resolve("armv7a-none-eabihf")

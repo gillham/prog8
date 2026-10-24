@@ -33,7 +33,9 @@ internal data class DaemonRequest(
     val outputFile: String? = null,
     val cwd: String,
     val generateDocumentation: Boolean = false,
-    val llvmTriple: String? = null
+    val llvmTriple: String? = null,
+    val llvmCompileArgs: List<String> = emptyList(),
+    val llvmLinkArgs: List<String> = emptyList()
 )
 
 internal data class DaemonResponse(
@@ -84,6 +86,8 @@ internal object DaemonProtocol {
         append(prop("cwd", req.cwd))
         append(prop("generateDocumentation", req.generateDocumentation))
         append(propOpt("llvmTriple", req.llvmTriple))
+        append(prop("llvmCompileArgs", req.llvmCompileArgs))
+        append(prop("llvmLinkArgs", req.llvmLinkArgs))
         append("null")  // placeholder, gets overwritten by trimEnd
         setLength(length - 5)
         append('}')
@@ -152,7 +156,9 @@ internal object DaemonProtocol {
             outputFile = map["outputFile"] as? String,
             cwd = map["cwd"] as String,
             generateDocumentation = map["generateDocumentation"] as? Boolean ?: false,
-            llvmTriple = map["llvmTriple"] as? String
+            llvmTriple = map["llvmTriple"] as? String,
+            llvmCompileArgs = (map["llvmCompileArgs"] as? List<*>)?.map { it as String } ?: emptyList(),
+            llvmLinkArgs = (map["llvmLinkArgs"] as? List<*>)?.map { it as String } ?: emptyList()
         )
     }
 

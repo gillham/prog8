@@ -273,6 +273,11 @@ These are the keys of a profile; an unknown key is an error:
     The name that the C runtime of the platform calls the program's C ``main`` function by. The default is ``main``;
     wasi-libc calls it ``__main_argc_argv``.
 
+The ``-Xcompile`` and ``-Xlink`` options add arguments to a single build without a profile of your own:
+``-Xcompile`` arguments come after ``clang_args``, ``-Xlink`` arguments at the end of the ``link_command``, or at the
+end of the linking clang command when the profile has none. The ``.ll`` check with clang, when llvm-as isn't installed,
+doesn't get them.
+
 For example, the built-in ``wasm32-wasip1`` profile::
 
     triple = wasm32-unknown-wasip1

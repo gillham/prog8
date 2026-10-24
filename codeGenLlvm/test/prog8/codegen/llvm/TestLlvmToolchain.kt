@@ -84,6 +84,26 @@ class TestLlvmToolchain: FunSpec({
         dir.resolve("started.elf.o").exists() shouldBe false
     }
 
+    test("the -Xcompile arguments go last on the clang command, and the -Xlink arguments last on the command that links") {
+        val compile = LlvmToolchain.compileCommand("clang", listOf("--target=t"), "-O2", listOf("-g", "-O3"))
+        compile shouldBe listOf("clang", "--target=t", "-O2", "-Wno-override-module", "-g", "-O3")
+        LlvmToolchain.clangLinkCommand(compile, Path.of("p.ll"), Path.of("p"), listOf("-L/a b", "-lfoo")) shouldBe
+            compile + listOf("p.ll", "-o", "p", "-L/a b", "-lfoo")
+        LlvmToolchain.linkCommandFor(listOf("gcc", "{startup}", "{object}", "-lm", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), Path.of("boot.S"), listOf("-L/a b", "-lfoo")) shouldBe
+            listOf("gcc", "boot.S", "p.o", "-lm", "-o", "p.elf", "-L/a b", "-lfoo")
+    }
+
+    test("the -Xlink arguments reach the link command of the profile unchanged, after its own arguments")
+        .config(enabled = LlvmToolchain.clang() != null && !System.getProperty("os.name").startsWith("Windows")) {
+        val target = LlvmTarget()
+        val recording = LlvmTripleProfile("record", target.targetTriple, target.dataLayout, 8,
+            linkCommandTemplate = listOf("sh", "-c", $$"printf '%s\\n' \"$@\" > \"$0\"", "{file}", "{object}"))
+        val llFile = dir.resolve("recorded.ll").also { it.writeText(programExitingWith(0)) }
+        val executable = dir.resolve("recorded.elf")
+        LlvmToolchain.compileToExecutable(llFile, executable, recording, extraLinkArgs = listOf("-L/a b", "-lfoo")) shouldBe true
+        executable.readText().lines() shouldBe listOf(dir.resolve("recorded.elf.o").toString(), "-L/a b", "-lfoo", "")
+    }
+
     test("a run that takes longer than its timeout is stopped, and reported as an IOException").config(enabled = !System.getProperty("os.name").startsWith("Windows")) {
         val started = System.nanoTime()
         shouldThrow<IOException> {
@@ -104,6 +124,19 @@ class TestLlvmToolchain: FunSpec({
         LlvmToolchain.compileToExecutable(llFile, executable) shouldBe true
         Files.isExecutable(executable) shouldBe true
         LlvmToolchain.runExecutable(executable, quiet = true) shouldBe 7
+    }
+
+    test("without a link command, clang gets the -Xcompile and -Xlink arguments of a native build").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+        val llFile = dir.resolve("extra.ll").also { it.writeText(programExitingWith(3)) }
+        val executable = dir.resolve("extra")
+        LlvmToolchain.compileToExecutable(llFile, executable, extraCompileArgs = listOf("-O0"), extraLinkArgs = listOf("-lm")) shouldBe true
+        LlvmToolchain.runExecutable(executable, quiet = true) shouldBe 3
+        val (compiled, compileMessages) = capturingStderr { LlvmToolchain.compileToExecutable(llFile, dir.resolve("badflag"), extraCompileArgs = listOf("-fprog8-no-such-flag")) }
+        compiled shouldBe false
+        compileMessages shouldContain "-fprog8-no-such-flag"
+        val (linked, linkMessages) = capturingStderr { LlvmToolchain.compileToExecutable(llFile, dir.resolve("badlib"), extraLinkArgs = listOf("-lprog8_no_such_library")) }
+        linked shouldBe false
+        linkMessages shouldContain "prog8_no_such_library"
     }
 
     test("compileToExecutable fails on IR that clang rejects, and says which file it couldn't build").config(enabledOrReasonIf = requiresNativeArm64Mac) {

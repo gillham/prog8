@@ -6,11 +6,14 @@ import java.nio.file.Path
 
 /**
  * Hosted 32 or 64-bit target that emits LLVM IR. The [profile] of the chosen triple supplies the triple and data layout
- * of the module header, and its pointer width must match [pointerSize].
+ * of the module header, and its pointer width must match [pointerSize]. [extraCompileArgs] and [extraLinkArgs] come from
+ * -Xcompile and -Xlink, and go after the profile's own arguments of those build steps.
  */
 class LlvmTarget(
     val pointerSize: Int = 8,
-    val profile: LlvmTripleProfile = LlvmTripleProfile.resolve(defaultTriple(pointerSize))
+    val profile: LlvmTripleProfile = LlvmTripleProfile.resolve(defaultTriple(pointerSize)),
+    val extraCompileArgs: List<String> = emptyList(),
+    val extraLinkArgs: List<String> = emptyList()
 ): ICompilationTarget,
     IStringEncoding by Encoder(false),
     IMemSizer by NormalMemSizer(8u, pointerSize.toUInt()) {
@@ -84,7 +87,7 @@ class LlvmTarget(
         }
         // the LLVM code generator module depends on this one, so its runner can only be loaded via reflection
         val runner = Class.forName("prog8.codegen.llvm.LlvmProgramRunner").getDeclaredConstructor().newInstance() as ILlvmProgramRunner
-        val status = runner.buildAndRun(programFile, quiet, profile) ?: return
+        val status = runner.buildAndRun(programFile, quiet, profile, extraCompileArgs, extraLinkArgs) ?: return
         if (!quiet)
             println("\nProgram exited with status $status")
     }
@@ -102,7 +105,8 @@ class LlvmTarget(
  * Returns its exit status, or null when it didn't run; the reason has been printed then.
  */
 interface ILlvmProgramRunner {
-    fun buildAndRun(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile? = null): Int?
+    fun buildAndRun(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile? = null,
+                    extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList()): Int?
 }
 
 private class LlvmZeropage(options: CompilationOptions): Zeropage(options) {

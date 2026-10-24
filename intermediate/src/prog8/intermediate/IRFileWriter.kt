@@ -289,7 +289,11 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
         xml.writeStartElement("OPTIONS")
         xml.writeCharacters("\n")
         emitLine("compTarget=${irProgram.options.compTarget.name}")
-        (irProgram.options.compTarget as? LlvmTarget)?.let { emitLine("llvmTriple=${it.profile.name}") }
+        (irProgram.options.compTarget as? LlvmTarget)?.let { target ->
+            emitLine("llvmTriple=${target.profile.name}")
+            target.extraCompileArgs.forEach { emitLine("llvmCompileArg=${escapeOptionValue(it)}") }
+            target.extraLinkArgs.forEach { emitLine("llvmLinkArg=${escapeOptionValue(it)}") }
+        }
         emitLine("output=${irProgram.options.output}")
         emitLine("launcher=${irProgram.options.launcher}")
         emitLine("zeropage=${irProgram.options.zeropage}")
@@ -582,4 +586,27 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
         xml.writeEndElement()
         xml.writeCharacters("\n")
     }
+}
+
+
+/** Keeps an option value on its own line: backslashes and line breaks are escaped. */
+internal fun escapeOptionValue(value: String): String =
+    value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
+
+internal fun unescapeOptionValue(value: String): String {
+    val result = StringBuilder()
+    var index = 0
+    while(index < value.length) {
+        val char = value[index++]
+        if(char != '\\' || index == value.length) {
+            result.append(char)
+            continue
+        }
+        when(val escaped = value[index++]) {
+            'n' -> result.append('\n')
+            'r' -> result.append('\r')
+            else -> result.append(escaped)
+        }
+    }
+    return result.toString()
 }

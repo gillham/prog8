@@ -230,7 +230,9 @@ internal class CompilerDaemon(private val socketPath: Path) {
             cwd = clientCwd,
             errors = errors,
             generateDocumentation = generateDocumentation,
-            llvmTriple = llvmTriple
+            llvmTriple = llvmTriple,
+            llvmCompileArgs = llvmCompileArgs,
+            llvmLinkArgs = llvmLinkArgs
         )
     }
 }
