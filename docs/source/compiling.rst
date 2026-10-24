@@ -322,8 +322,8 @@ One or more .p8 module files
 
 ``-triple <name|file>``
     Selects the platform of the ``llvm64`` and ``llvm32`` targets: the name or file of a triple profile, which gives the
-    LLVM target triple, its data layout, and how clang builds and ``-emu`` runs the executable.
-    The default is ``arm64-apple-macosx`` for ``llvm64`` and ``wasm32-wasip1`` for ``llvm32``.
+    LLVM target triple, its data layout, and how clang builds and ``-emu`` runs the executable; or any triple that clang
+    knows, which clang then supplies the data layout for. The default is ``arm64-apple-macosx`` for ``llvm64`` and ``wasm32-wasip1`` for ``llvm32``.
     It is an error with the other targets. See :ref:`llvm_triples` for the lookup order and the profile keys.
 
 ``-Xcompile <argument>``, ``-Xlink <argument>``

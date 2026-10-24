@@ -2,11 +2,10 @@ package prog8.codegen.llvm
 
 import prog8.code.core.outputStemOf
 import prog8.code.target.ILlvmProgramRunner
+import prog8.code.target.LlvmToolLocator
 import prog8.code.target.LlvmTripleProfile
-import java.io.File
 import java.io.IOException
 import java.nio.file.Files
-import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
@@ -15,30 +14,13 @@ import kotlin.io.path.extension
 import kotlin.io.path.nameWithoutExtension
 
 internal object LlvmToolchain {
-    /** Homebrew installs LLVM keg-only, so its tools are not on the PATH by default. */
-    val homebrewLlvmBin: Path = Path.of("/opt/homebrew/opt/llvm/bin")
+    val homebrewLlvmBin: Path get() = LlvmToolLocator.homebrewLlvmBin
 
-    fun searchDirs(): List<Path> {
-        val pathEntries = orNull { System.getenv("PATH") }.orEmpty().split(File.pathSeparator).filter { it.isNotBlank() }
-        // not `+`: a Path is also an Iterable of its name elements
-        return pathEntries.mapNotNull { orNull { Path.of(it) } }.plusElement(homebrewLlvmBin)
-    }
+    fun searchDirs(): List<Path> = LlvmToolLocator.searchDirs()
 
-    fun find(tool: String): Path? {
-        val isWindows = orNull { System.getProperty("os.name") }.orEmpty().startsWith("Windows")
-        val fileName = if (isWindows) "$tool.exe" else tool
-        return searchDirs().firstNotNullOfOrNull { dir ->
-            orNull { dir.resolve(fileName).takeIf { Files.isRegularFile(it) && Files.isExecutable(it) } }
-        }
-    }
+    fun find(tool: String): Path? = LlvmToolLocator.find(tool)
 
-    /** The clang of the same LLVM installation as llvm-as, which accepts the same IR, rather than an older one earlier on the PATH. */
-    fun clang(): Path? {
-        val besideLlvmAs = find("llvm-as")?.let { llvmAs ->
-            orNull { llvmAs.resolveSibling(executableName("clang")).takeIf { Files.isRegularFile(it) && Files.isExecutable(it) } }
-        }
-        return besideLlvmAs ?: find("clang")
-    }
+    fun clang(): Path? = LlvmToolLocator.clang()
 
     /**
      * Builds the executable [outputFile] from [llFile] with clang, passing the clang arguments of [profile] first; with a
@@ -151,19 +133,7 @@ internal object LlvmToolchain {
 
     /** The executable built from [llFile]: named with [extension] when given, else the native executable name of this host. */
     fun executableFor(llFile: Path, extension: String = ""): Path =
-        llFile.resolveSibling(if (extension.isEmpty()) executableName(llFile.nameWithoutExtension) else llFile.nameWithoutExtension + extension)
-
-    private fun executableName(name: String): String =
-        if (orNull { System.getProperty("os.name") }.orEmpty().startsWith("Windows")) "$name.exe" else name
-
-    private inline fun <T> orNull(action: () -> T): T? =
-        try {
-            action()
-        } catch (_: InvalidPathException) {
-            null
-        } catch (_: SecurityException) {
-            null
-        }
+        llFile.resolveSibling(if (extension.isEmpty()) LlvmToolLocator.executableName(llFile.nameWithoutExtension) else llFile.nameWithoutExtension + extension)
 }
 
 

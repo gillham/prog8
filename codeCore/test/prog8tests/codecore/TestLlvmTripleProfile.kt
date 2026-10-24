@@ -1,12 +1,14 @@
 package prog8tests.codecore
 
 import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import prog8.code.core.CpuType
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmToolLocator
 import prog8.code.target.LlvmTripleProfile
 import prog8.code.target.getCompilationTargetByName
 import java.nio.file.Path
@@ -23,17 +25,22 @@ class TestLlvmTripleProfile: FunSpec({
 
     val wasmLayout = "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20"
     fun validProfile(extra: String = "") = "triple = test-triple\ndatalayout = $wasmLayout\nc_long_size = 4\n$extra"
+    val hasClang = LlvmToolLocator.clang() != null
+
+    val embedded = mapOf(
+        "wasm32-wasip1" to Triple("wasm32-unknown-wasip1", 32, 4),
+        "arm64-apple-macosx" to Triple("arm64-apple-macosx", 64, 8),
+        "x86_64-apple-macosx" to Triple("x86_64-apple-macosx", 64, 8),
+        "x86_64-unknown-linux-gnu" to Triple("x86_64-unknown-linux-gnu", 64, 8),
+        "aarch64-unknown-linux-gnu" to Triple("aarch64-unknown-linux-gnu", 64, 8),
+        "riscv64-unknown-linux-gnu" to Triple("riscv64-unknown-linux-gnu", 64, 8),
+        "armv7-unknown-linux-gnueabihf" to Triple("armv7-unknown-linux-gnueabihf", 32, 4),
+        "riscv32-unknown-elf" to Triple("riscv32-unknown-unknown-elf", 32, 4),
+        "armv7a-none-eabihf" to Triple("armv7-unknown-none-eabihf", 32, 4),
+    )
 
     test("every embedded profile loads, with the pointer width of its data layout") {
-        val expected = mapOf(
-            "wasm32-wasip1" to Triple("wasm32-unknown-wasip1", 32, 4),
-            "arm64-apple-macosx" to Triple("arm64-apple-macosx", 64, 8),
-            "x86_64-unknown-linux-gnu" to Triple("x86_64-unknown-linux-gnu", 64, 8),
-            "armv7-unknown-linux-gnueabihf" to Triple("armv7-unknown-linux-gnueabihf", 32, 4),
-            "riscv32-unknown-elf" to Triple("riscv32-unknown-unknown-elf", 32, 4),
-            "armv7a-none-eabihf" to Triple("armv7-unknown-none-eabihf", 32, 4),
-        )
-        for ((name, values) in expected) {
+        for ((name, values) in embedded) {
             val profile = LlvmTripleProfile.resolve(name)
             profile.name shouldBe name
             profile.triple shouldBe values.first
@@ -118,8 +125,8 @@ class TestLlvmTripleProfile: FunSpec({
         rejected("longsize", "triple = t\ndatalayout = $wasmLayout\nc_long_size = 2") shouldContain "c_long_size 2"
         rejected("longtext", "triple = t\ndatalayout = $wasmLayout\nc_long_size = four") shouldContain "non-numeric c_long_size"
         rejected("notriple", "datalayout = $wasmLayout\nc_long_size = 4") shouldContain "missing 'triple'"
-        rejected("nolayout", "triple = t\nc_long_size = 4") shouldContain "missing 'datalayout'"
-        rejected("nolong", "triple = t\ndatalayout = $wasmLayout") shouldContain "missing 'c_long_size'"
+        rejected("nolayout", "triple = t\nc_long_size = 4") shouldContain "leaves out its datalayout or c_long_size"
+        rejected("nolong", "triple = t\ndatalayout = $wasmLayout") shouldContain "leaves out its datalayout or c_long_size"
         rejected("unknownkey", validProfile("pointer_size = 4")) shouldContain "unknown keys"
         rejected("runcommand", validProfile("run_command = wasmtime")) shouldContain "{file}"
         rejected("mainsymbol", validProfile("c_main_symbol = not a name")) shouldContain "c_main_symbol"
@@ -152,6 +159,42 @@ class TestLlvmTripleProfile: FunSpec({
         LlvmTripleProfile.resolve(file.toString()).triple shouldBe "test-triple"
         LlvmTripleProfile.resolve("wasm32-wasip1").triple shouldBe "wasm32-unknown-wasip1"
         shouldThrow<IllegalArgumentException> { LlvmTripleProfile.resolve("prog8-no-such-triple") }.message!! shouldContain "unknown llvm triple"
+    }
+
+    test("the data layout and C long size of every embedded profile are what clang reports for it").config(enabled = hasClang) {
+        for (name in embedded.keys) {
+            val profile = LlvmTripleProfile.resolve(name)
+            val reported = LlvmTripleProfile.askClang(profile.triple, profile.clangArgs)
+            withClue(name) {
+                profile.dataLayout shouldBe reported.dataLayout
+                profile.cLongSize shouldBe reported.cLongSize
+            }
+        }
+    }
+
+    test("a triple without a profile gets its normalized name, data layout and C long size from clang").config(enabled = hasClang) {
+        val musl = LlvmTripleProfile.resolve("aarch64-linux-musl")
+        musl.name shouldBe "aarch64-linux-musl"
+        musl.triple shouldBe "aarch64-unknown-linux-musl"
+        musl.pointerBits shouldBe 64
+        musl.cLongSize shouldBe 8
+        musl.clangArgs shouldBe listOf("--target=aarch64-linux-musl")
+        LlvmTripleProfile.resolve("x86_64-pc-windows-msvc").cLongSize shouldBe 4
+        LlvmTripleProfile.resolve("i686-unknown-linux-gnu").pointerBits shouldBe 32
+        shouldThrow<IllegalArgumentException> { LlvmTripleProfile.resolve("aarch64_be-linux-gnu") }.message!! shouldContain "little-endian"
+        shouldThrow<IllegalArgumentException> { LlvmTripleProfile.resolve("prog8-no-such-triple") }.message!! shouldContain "clang rejects it"
+    }
+
+    test("a profile file can leave out its data layout and C long size, which clang then supplies for its triple and clang_args").config(enabled = hasClang) {
+        val profile = LlvmTripleProfile.load(profileFile("partial", "triple = riscv32-unknown-elf\nclang_args = -march=rv32imac -mabi=ilp32\nrun_command = qemu {file}"))
+        profile.triple shouldBe "riscv32-unknown-elf"
+        profile.dataLayout shouldBe "e-m:e-p:32:32-i64:64-n32-S128"
+        profile.cLongSize shouldBe 4
+        profile.runCommand shouldBe listOf("qemu", "{file}")
+        LlvmTripleProfile.load(profileFile("partiallong", "triple = x86_64-pc-windows-msvc\ndatalayout = $wasmLayout")).let {
+            it.dataLayout shouldBe wasmLayout
+            it.cLongSize shouldBe 4
+        }
     }
 
     test("the llvm32 target defaults to wasm32 with 4-byte pointers, the llvm64 target to arm64 macOS with 8-byte pointers") {

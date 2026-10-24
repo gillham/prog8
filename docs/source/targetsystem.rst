@@ -231,20 +231,28 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
 
 1. the given file path, when that file exists
 2. ``~/.prog8/llvm/<name>.properties``
-3. a profile built into the compiler: ``wasm32-wasip1``, ``armv7a-none-eabihf``, ``arm64-apple-macosx``,
-   ``x86_64-unknown-linux-gnu``, ``armv7-unknown-linux-gnueabihf`` and ``riscv32-unknown-elf``
+3. a profile built into the compiler: ``wasm32-wasip1``, ``armv7a-none-eabihf``, ``riscv32-unknown-elf``,
+   ``arm64-apple-macosx``, ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``,
+   ``riscv64-unknown-linux-gnu`` and ``armv7-unknown-linux-gnueabihf``
+4. any other triple that clang knows, such as ``aarch64-linux-musl`` or ``i686-unknown-linux-gnu``: the compiler asks
+   clang for its normalized name, data layout and C ``long`` size, and builds with ``--target=<name>``.
+   Run, link and startup settings need a profile file.
 
 So you can add a platform, or change the settings of a built-in one, without rebuilding the compiler.
+The Linux profiles and a triple from clang build on a host of that platform; cross compiling needs a sysroot and
+a linker for it, given with ``-Xcompile`` and ``-Xlink`` or in a profile file. ``x86_64-apple-macosx`` builds on any
+Mac, and runs on Apple Silicon under Rosetta 2. On 64-bit Windows a C ``long`` has 4 bytes; that triple is not tested.
 These are the keys of a profile; an unknown key is an error:
 
 ``triple`` (required)
     The LLVM target triple written into the module, for example ``wasm32-unknown-wasip1``.
-``datalayout`` (required)
+``datalayout``
     The LLVM data layout string of that triple, as printed by ``clang --target=<triple> -S -emit-llvm -x c /dev/null -o -``.
     It must be little-endian (start with ``e``), and its pointer width (the ``p:`` entry, 64 bits when there is none)
     must match the target: 32 bits for ``llvm32``, 64 bits for ``llvm64``.
-``c_long_size`` (required)
-    The size in bytes of the C ``long`` type on that platform: 4 or 8.
+    Without it, clang supplies it for ``triple`` and ``clang_args``, which then must not need an unset environment variable.
+``c_long_size``
+    The size in bytes of the C ``long`` type on that platform: 4 or 8. Without it, clang supplies it like ``datalayout``.
 ``clang_args``
     Extra arguments for clang when it builds the executable, separated by spaces, such as ``--target`` and ``--sysroot``.
     Environment variables can be used as ``${NAME}``, or as ``${NAME:-default}`` to use the default when the variable
