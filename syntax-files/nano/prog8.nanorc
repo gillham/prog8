@@ -14,6 +14,7 @@ color teal "\["
 
 # Struct definitions and pointers
 color crimson "struct[[:blank:]]+[[:alpha:]][[:alnum:]_]*"
+color crimson "union[[:blank:]]+[[:alpha:]][[:alnum:]_]*"
 color crimson "enum[[:blank:]]+[[:alpha:]][[:alnum:]_]*"
 color crimson "\^\^[[:blank:]]*[[:alpha:]][[:alnum:]_.]*"
 
@@ -27,13 +28,13 @@ color brightyellow "[[:alpha:]][[:alnum:]_]*[[:blank:]]*\("
 color lightgreen "\<(true|if_cs|if_eq|if_mi|if_vs|if_z|if_neg)\>"
 color lightred "\<(false|if_cc|if_ne|if_pl|if_vc|if_nz|if_pos)\>"
 color red "\<if(\>|_)"
-color red "\<(sub|(inline[[:space:]]+)?asmsub|extsub|else|then|void|not|and|or|xor|for|in|(down)?to|return|while|repeat|break|continue|step|via|goto|when|as|const|do|until|unroll|struct|clobbers|on|private|public|alias|swap|call|sizeof|defer)\>"
+color red "\<(sub|(inline[[:space:]]+)?asmsub|extsub|else|then|void|not|and|or|xor|for|in|(down)?to|return|while|repeat|break|continue|step|via|goto|when|as|const|do|until|unroll|struct|union|clobbers|on|private|public|alias|swap|call|sizeof|defer)\>"
 
 # Labels
 color sky "^[[:alpha:]][[:alnum:]_]*:"
 
 # Data Types
-color crimson "\<(u?byte|u?word|str|bool|float|long|pointer)\>"
+color crimson "\<(u?byte|u?word|str|bool|float|long|u?quad|pointer)\>"
 
 # Brackets
 color yellow "[()]"
@@ -55,13 +56,13 @@ color brightcyan "'([^\\]|\\([^ux]|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}))'"
 
 # %asm handling
 color normal start="%[Aa][Ss][Mm]" end="}}"
-color magenta "%[Aa][Sm][Mm]"
+color magenta "%[Aa][Ss][Mm]"
 
 # Directives
 color magenta "^[[:space:]]*%[[:alpha:]]+"
 
 # Built-in functions
-color white "\<(abs|call|callfar|callfar2|clamp|cmp|divmod|len|lsb|lsw|lmh|memory|mkword|mklong|mklong2|min|max|msb|msw|offsetof|peek|peekw|peekp|peekl|peekf|peekbool|poke|pokew|pokep|pokel|pokef|pokebool|pokebowl|pokemon|pop|popw|popl|popq|popf|popp|psg|psg2|push|pushw|pushl|pushq|pushf|pushp|rsave|rrestore|rol|rol2|ror|ror2|set_carry|set_irqd|clear_carry|clear_irqd|setlsb|setmsb|sgn|sizeof|sqrt)\>"
+color white "\<(abs|call|callfar|callfar2|clamp|cmp|divmod|len|lsb|lsw|lmh|memory|mkword|mklong|mklong2|min|max|msb|msw|offsetof|peek|peekw|peekp|peekl|peekf|peekbool|peekq|poke|pokew|pokep|pokel|pokef|pokebool|pokebowl|pokeq|pokemon|pop|popw|popl|popq|popf|popp|push|pushw|pushl|pushq|pushf|pushp|rsave|rrestore|rol|rol2|ror|ror2|setlsb|setmsb|sgn|sizeof|sqrt)\>"
 
 # Strings
 color brightblue ""([^"]|\\")*""

@@ -92,35 +92,32 @@
       <item>bool</item>
       <item>byte</item>
       <item>const</item>
+      <item>enum</item>
       <item>float</item>
       <item>long</item>
       <item>pointer</item>
+      <item>quad</item>
       <item>str</item>
       <item>struct</item>
       <item>ubyte</item>
+      <item>union</item>
+      <item>uquad</item>
       <item>uword</item>
       <item>void</item>
       <item>word</item>
     </list>
     <list name="builtinfuncs">
       <item>abs</item>
-      <item>bmx</item>
       <item>call</item>
       <item>callfar</item>
       <item>callfar2</item>
-      <item>cbm</item>
       <item>clamp</item>
       <item>cmp</item>
-      <item>conv</item>
-      <item>cx16</item>
-      <item>diskio</item>
       <item>divmod</item>
-      <item>floats</item>
       <item>len</item>
       <item>lmh</item>
       <item>lsb</item>
       <item>lsw</item>
-      <item>math</item>
       <item>max</item>
       <item>memory</item>
       <item>min</item>
@@ -136,6 +133,7 @@
       <item>peekl</item>
       <item>peekw</item>
       <item>peekp</item>
+      <item>peekq</item>
       <item>poke</item>
       <item>pokebool</item>
       <item>pokebowl</item>
@@ -144,14 +142,13 @@
       <item>pokemon</item>
       <item>pokew</item>
       <item>pokep</item>
+      <item>pokeq</item>
       <item>pop</item>
       <item>popf</item>
       <item>popl</item>
       <item>popq</item>
       <item>popw</item>
       <item>popp</item>
-      <item>psg</item>
-      <item>psg2</item>
       <item>push</item>
       <item>pushf</item>
       <item>pushl</item>
@@ -164,19 +161,11 @@
       <item>ror2</item>
       <item>rrestore</item>
       <item>rsave</item>
-      <item>set_carry</item>
-      <item>set_irqd</item>
-      <item>clear_carry</item>
-      <item>clear_irqd</item>
       <item>setlsb</item>
       <item>setmsb</item>
       <item>sgn</item>
       <item>sizeof</item>
       <item>sqrt</item>
-      <item>strings</item>
-      <item>sys</item>
-      <item>txt</item>
-      <item>verafx</item>
     </list>
     <list name="operators">
       <item>&amp;</item>
@@ -192,6 +181,7 @@
         <DetectSpaces attribute="Normal Text"/>
         <DetectChar char=";" attribute="Comment" context="LineComment"/>
         <StringDetect String="/*" attribute="Comment" context="BlockComment" beginRegion="CommentBlock"/>
+        <RegExpr String="\b(?:default|petscii|sc|atascii|iso|iso5|iso16|cp437|kata|c64os):(?=[&quot;'])" attribute="Encoding"/>
         <keyword String="directives" attribute="Directive"/>
         <keyword String="attributes" attribute="Attribute"/>
         <keyword String="keywords" attribute="Keyword"/>

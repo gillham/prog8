@@ -35,11 +35,12 @@ syn match prog8Directive "\(^\|\s\)%\(zpreserved\|zpallowed\|address\|encoding\|
 syn match prog8Directive "\(^\|\s\)%\(align\|asmbinary\|asminclude\|assert\|breakpoint\)\>"
 syn match prog8Directive "\(^\|\s\)%\(asm\|ir\)\>"
 
-syn match prog8Type "\<\%(u\?byte\|u\?word\|float\|str\|bool\|long\|pointer\|\^\^\)\>"
+syn match prog8Type "\<\%(u\?byte\|u\?word\|float\|str\|bool\|long\|u\?quad\|pointer\|\^\^\)\>"
 syn region prog8ArrayType matchgroup=prog8Type
-            \ start="\<\%(u\?byte\|u\?word\|float\|str\|bool\|pointer\)\[" end="\]"
+            \ start="\<\%(u\?byte\|u\?word\|float\|str\|bool\|long\|u\?quad\|pointer\)\[" end="\]"
             \ transparent
-syn keyword prog8StorageClass const enum struct
+syn keyword prog8StorageClass const enum struct union
+syn match prog8Encoding "\<\(default\|petscii\|sc\|atascii\|iso\|iso5\|iso16\|cp437\|kata\|c64os\):\ze[\"']"
 syn match prog8StorageClass "\(^\|\s\)\(@zp\|@bank\|@shared\|@nosplit\|@nozp\|@requirezp\|@align64\|@alignword\|@alignpage\|@dirty\)\>"
 
 syn region prog8Block start="{" end="}" transparent
@@ -96,6 +97,7 @@ hi def link prog8Directive PreProc
 
 hi def link prog8Type Type
 hi def link prog8StorageClass StorageClass
+hi def link prog8Encoding Special
 hi def link prog8Structure Structure
 
 

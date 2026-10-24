@@ -11,8 +11,8 @@ syn keyword prog8BuiltInFunc abs sgn sqrt
 syn keyword prog8BuiltInFunc len 
 
 " Miscellaneous functions
-syn keyword prog8BuiltInFunc cmp divmod lsb msb lmh lsw msw mkword mklong mklong2 min max peek peekw peekp peekl peekf peekbool poke pokew pokep pokel pokef pokebool pokebowl pokemon push pushw pushl pushq pushf pushp pop popw popl popq popf popp rsave rrestore
-syn keyword prog8BuiltInFunc rol rol2 ror ror2 sizeof offsetof setlsb setmsb set_carry set_irqd clear_carry clear_irqd
+syn keyword prog8BuiltInFunc cmp divmod lsb msb lmh lsw msw mkword mklong mklong2 min max peek peekw peekp peekl peekf peekbool peekq poke pokew pokep pokel pokef pokebool pokebowl pokemon pokeq push pushw pushl pushq pushf pushp pop popw popl popq popf popp rsave rrestore
+syn keyword prog8BuiltInFunc rol rol2 ror ror2 sizeof offsetof setlsb setmsb
 syn keyword prog8BuiltInFunc memory call callfar callfar2 clamp
 
 
