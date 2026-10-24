@@ -68,19 +68,21 @@ class TestLlvmToolchain: FunSpec({
         dir.resolve("unlinked.elf.o").exists() shouldBe false
     }
 
-    test("the startup source of a profile is written next to the executable for the link command as {startup}, and removed afterwards")
+    test("the startup sources of a profile are written next to the executable for the link command as {startup}, and removed afterwards")
         .config(enabled = LlvmToolchain.clang() != null && !System.getProperty("os.name").startsWith("Windows")) {
         val target = LlvmTarget()
         val sources = dir.resolve("startup").also { Files.createDirectories(it) }
         sources.resolve("boot.S").writeText("BOOT CODE")
+        sources.resolve("console.c").writeText(" CONSOLE CODE")
         val joining = LlvmTripleProfile("startup", target.targetTriple, target.dataLayout, 8,
-            linkCommandTemplate = listOf("sh", "-c", $$"cat \"$1\" \"$2\" > \"$3\"", "sh", "{startup}", "{object}", "{file}"),
-            startupSource = "boot.S", directory = sources)
+            linkCommandTemplate = listOf("sh", "-c", $$"cat \"$1\" \"$2\" \"$3\" > \"$4\"", "sh", "{startup}", "{object}", "{file}"),
+            startupSources = listOf("boot.S", "console.c"), directory = sources)
         val llFile = dir.resolve("started.ll").also { it.writeText(programExitingWith(0)) }
         val executable = dir.resolve("started.elf")
         LlvmToolchain.compileToExecutable(llFile, executable, joining) shouldBe true
-        executable.readText().startsWith("BOOT CODE") shouldBe true
+        executable.readText().startsWith("BOOT CODE CONSOLE CODE") shouldBe true
         dir.resolve("started.elf.boot.S").exists() shouldBe false
+        dir.resolve("started.elf.console.c").exists() shouldBe false
         dir.resolve("started.elf.o").exists() shouldBe false
     }
 
@@ -89,16 +91,16 @@ class TestLlvmToolchain: FunSpec({
         compile shouldBe listOf("clang", "--target=t", "-O2", "-Wno-override-module", "-g", "-O3")
         LlvmToolchain.clangLinkCommand(compile, Path.of("p.ll"), Path.of("p"), listOf("-L/a b", "-lfoo")) shouldBe
             compile + listOf("p.ll", "-o", "p", "-L/a b", "-lfoo")
-        LlvmToolchain.linkCommandFor(listOf("gcc", "{startup}", "{object}", "-lm", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), Path.of("boot.S"), listOf("-L/a b", "-lfoo")) shouldBe
-            listOf("gcc", "boot.S", "p.o", "-lm", "-o", "p.elf", "-L/a b", "-lfoo")
+        LlvmToolchain.linkCommandFor(listOf("gcc", "{startup}", "{object}", "-lm", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), listOf(Path.of("boot.S"), Path.of("console.c")), listOf("-L/a b", "-lfoo")) shouldBe
+            listOf("gcc", "boot.S", "console.c", "p.o", "-lm", "-o", "p.elf", "-L/a b", "-lfoo")
     }
 
     test("the %link libraries go after the -Xlink arguments, or in the place of a {libs} word of the link command") {
-        LlvmToolchain.linkCommandFor(listOf("gcc", "{object}", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), null, listOf("-L/a"), listOf("-lfoo", "/b/x.a")) shouldBe
+        LlvmToolchain.linkCommandFor(listOf("gcc", "{object}", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), emptyList(), listOf("-L/a"), listOf("-lfoo", "/b/x.a")) shouldBe
             listOf("gcc", "p.o", "-o", "p.elf", "-L/a", "-lfoo", "/b/x.a")
-        LlvmToolchain.linkCommandFor(listOf("gcc", "{object}", "{libs}", "-lc", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), null, listOf("-L/a"), listOf("-lfoo", "/b/x.a")) shouldBe
+        LlvmToolchain.linkCommandFor(listOf("gcc", "{object}", "{libs}", "-lc", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), emptyList(), listOf("-L/a"), listOf("-lfoo", "/b/x.a")) shouldBe
             listOf("gcc", "p.o", "-lfoo", "/b/x.a", "-lc", "-o", "p.elf", "-L/a")
-        LlvmToolchain.linkCommandFor(listOf("gcc", "{object}", "{libs}", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), null, emptyList()) shouldBe
+        LlvmToolchain.linkCommandFor(listOf("gcc", "{object}", "{libs}", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), emptyList(), emptyList()) shouldBe
             listOf("gcc", "p.o", "-o", "p.elf")
     }
 

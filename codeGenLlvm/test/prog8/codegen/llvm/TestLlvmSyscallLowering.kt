@@ -454,10 +454,15 @@ class TestLlvmSyscallLowering: FunSpec({
         }
     }
 
-    // semihosting has no console input, and newlib on it has no mkdir, chdir, rmdir and getcwd, so only those syscalls are left out;
+    // newlib on semihosting has no mkdir, chdir, rmdir and getcwd, so only those syscalls are left out;
     // and newlib loses the position in the file when a seek fails
-    test("the llvm32 console output, command line and file handle syscalls work in a bare metal ARM program on qemu").config(enabledOrReasonIf = requiresArm) {
+    test("the llvm32 console, command line and file handle syscalls work in a bare metal ARM program on qemu").config(enabledOrReasonIf = requiresArm) {
         fun arm() = TestProgram(armTarget)
+        val echo = arm().apply { readCharSub(); echoSub() }.module().withMainCalling("main.echo")
+        compileAndRunArm(LlvmPrinter.print(echo), input = "hi\nthere\n").let { (exitCode, output) ->
+            withClue(output) { exitCode shouldBe 0 }
+            output shouldBe "hi\nthere\n"
+        }
         val greeting = arm().apply { allOutputSubs(); greetingSub() }.module().withMainCalling("main.greeting")
         compileAndRunArm(LlvmPrinter.print(greeting)).let { (exitCode, output) ->
             withClue(output) { exitCode shouldBe 0 }
@@ -483,9 +488,14 @@ class TestLlvmSyscallLowering: FunSpec({
         }
     }
 
-    // as on ARM, without console input and the directory syscalls; unlike on ARM, newlib keeps the position in the file when a seek fails
-    test("the llvm32 console output, command line and file handle syscalls work in a bare metal RISC-V program on qemu").config(enabledOrReasonIf = requiresRiscv) {
+    // as on ARM, without the directory syscalls; unlike on ARM, newlib keeps the position in the file when a seek fails
+    test("the llvm32 console, command line and file handle syscalls work in a bare metal RISC-V program on qemu").config(enabledOrReasonIf = requiresRiscv) {
         fun riscv() = TestProgram(riscvTarget)
+        val echo = riscv().apply { readCharSub(); echoSub() }.module().withMainCalling("main.echo")
+        compileAndRunRiscv(LlvmPrinter.print(echo), input = "hi\nthere\n").let { (exitCode, output) ->
+            withClue(output) { exitCode shouldBe 0 }
+            output shouldBe "hi\nthere\n"
+        }
         val greeting = riscv().apply { allOutputSubs(); greetingSub() }.module().withMainCalling("main.greeting")
         compileAndRunRiscv(LlvmPrinter.print(greeting)).let { (exitCode, output) ->
             withClue(output) { exitCode shouldBe 0 }

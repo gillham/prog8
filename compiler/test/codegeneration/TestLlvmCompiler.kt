@@ -351,7 +351,7 @@ class TestLlvmCompiler: FunSpec({
         }
     }
 
-    for ((name, program) in outputPrograms.filter { it.key !in notRunOnArm && it.value.input.isEmpty() }) {
+    for ((name, program) in outputPrograms.filterKeys { it !in notRunOnArm }) {
         test("$name: gives the expected exit code and console output as an llvm32 bare metal ARM program on qemu, which leaves no files behind").config(enabledOrReasonIf = requiresArm) {
             for (optimize in listOf(false, true)) {
                 withClue("optimize=$optimize") {
@@ -359,7 +359,7 @@ class TestLlvmCompiler: FunSpec({
                     workingDirectory.toFile().deleteRecursively()
                     workingDirectory.createDirectories()
                     val llFile = compiledLlFile(compileText(armTarget(), optimize, program.source, outputDir.resolve("arm").createDirectories()))
-                    val (exitCode, output) = buildAndRunArm(llFile, program.args, workingDirectory)
+                    val (exitCode, output) = buildAndRunArm(llFile, program.input, program.args, workingDirectory)
                     withClue(output) { exitCode shouldBe program.exitCode }
                     output shouldBe program.output
                     withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
@@ -378,6 +378,7 @@ class TestLlvmCompiler: FunSpec({
         printed shouldContain "Program exited with status 42"
         elf.exists() shouldBe true
         llFile.resolveSibling("${elf.fileName}.o").exists() shouldBe false
+        llFile.resolveSibling("${elf.fileName}.qemu-semihosting-console.c").exists() shouldBe false
     }
 
     test("the llvm32 programs without 64-bit addresses compute the right results as bare metal RISC-V programs on qemu").config(enabledOrReasonIf = requiresRiscv) {
@@ -391,7 +392,7 @@ class TestLlvmCompiler: FunSpec({
         }
     }
 
-    for ((name, program) in outputPrograms.filter { it.key !in notRunOnRiscv && it.value.input.isEmpty() }) {
+    for ((name, program) in outputPrograms.filterKeys { it !in notRunOnRiscv }) {
         test("$name: gives the expected exit code and console output as an llvm32 bare metal RISC-V program on qemu, which leaves no files behind").config(enabledOrReasonIf = requiresRiscv) {
             for (optimize in listOf(false, true)) {
                 withClue("optimize=$optimize") {
@@ -399,7 +400,7 @@ class TestLlvmCompiler: FunSpec({
                     workingDirectory.toFile().deleteRecursively()
                     workingDirectory.createDirectories()
                     val llFile = compiledLlFile(compileText(riscvTarget(), optimize, program.source, outputDir.resolve("riscv").createDirectories()))
-                    val (exitCode, output) = buildAndRunRiscv(llFile, program.args, workingDirectory)
+                    val (exitCode, output) = buildAndRunRiscv(llFile, program.input, program.args, workingDirectory)
                     withClue(output) { exitCode shouldBe program.exitCode }
                     output shouldBe program.output
                     withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
@@ -419,6 +420,7 @@ class TestLlvmCompiler: FunSpec({
         elf.exists() shouldBe true
         llFile.resolveSibling("${elf.fileName}.o").exists() shouldBe false
         llFile.resolveSibling("${elf.fileName}.riscv32-qemu-virt-boot.S").exists() shouldBe false
+        llFile.resolveSibling("${elf.fileName}.qemu-semihosting-console.c").exists() shouldBe false
     }
 
     test("launchEmulator builds a native executable next to the .ll file and runs it").config(enabledOrReasonIf = requiresNativeLlvm) {
@@ -1106,23 +1108,17 @@ private val requiresArm: (TestCase) -> Enabled = {
 }
 
 /**
- * Builds the .ll file into a .elf file with clang and the link command of the bare metal ARM profile, and runs it on qemu
- * with the command line [args], in the working [directory] (default: next to the .ll file). Semihosting gives it no console input.
+ * Builds the .ll file into a .elf file with clang and the link command and console code of the bare metal ARM profile, and runs it on qemu
+ * with [input] and a Ctrl-D, which ends it, on stdin, the command line [args] and the working [directory] (default: next to the .ll file).
  */
-private fun buildAndRunArm(llFile: Path, args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
+private fun buildAndRunArm(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + armProfile.outputExtension)
     val objectFile = elf.resolveSibling("${elf.fileName}.o")
     val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *armProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
         llFile.toString(), "-o", objectFile.toString())
     if (compiled.first != 0)
         return compiled
-    val link = checkNotNull(armProfile.linkCommand).map { it.replace("{object}", objectFile.toString()).replace("{file}", elf.toString()) }
-    val linked = execute(*link.toTypedArray())
-    Files.deleteIfExists(objectFile)
-    if (linked.first != 0)
-        return linked
-    val command = LlvmTripleProfile.runCommandFor(armProfile.runCommand, elf.toAbsolutePath().toString(), args)
-    return execute(*command.toTypedArray(), directory = directory ?: llFile.parent)
+    return linkAndRunOnQemu(armProfile, checkNotNull(armProfile.linkCommand), objectFile, elf, input, args, directory ?: llFile.parent)
 }
 
 private val riscvProfile = LlvmTripleProfile.resolve("riscv32-unknown-elf")
@@ -1155,27 +1151,34 @@ private val requiresRiscvOnThePath: (TestCase) -> Enabled = {
     if (!found) Enabled.disabled("riscv-none-elf-gcc is not in RISCV_NONE_ELF_GCC or on the PATH") else requiresRiscv(it)
 }
 
-/**
- * Builds the .ll file into a .elf file with clang and the link command and boot code of the bare metal RISC-V profile, and runs it on qemu
- * with the command line [args], in the working [directory] (default: next to the .ll file). Semihosting gives it no console input.
- */
-private fun buildAndRunRiscv(llFile: Path, args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
+/** Builds the .ll file with the link command, boot and console code of the bare metal RISC-V profile, and runs it as [buildAndRunArm] does. */
+private fun buildAndRunRiscv(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + riscvProfile.outputExtension)
     val objectFile = elf.resolveSibling("${elf.fileName}.o")
     val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *riscvProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
         llFile.toString(), "-o", objectFile.toString())
     if (compiled.first != 0)
         return compiled
-    val startup = checkNotNull(riscvProfile.writeStartupSource(elf))
-    val link = listOf(checkNotNull(riscvGcc).toString()) + checkNotNull(riscvProfile.linkCommand).drop(1)
-        .map { it.replace("{startup}", startup.toString()).replace("{object}", objectFile.toString()).replace("{file}", elf.toString()) }
+    val linkCommand = listOf(checkNotNull(riscvGcc).toString()) + checkNotNull(riscvProfile.linkCommand).drop(1)
+    return linkAndRunOnQemu(riscvProfile, linkCommand, objectFile, elf, input, args, directory ?: llFile.parent)
+}
+
+/** Links [objectFile] and the startup sources of [profile] into [elf] with [linkCommand], and runs it on qemu with [input] and a Ctrl-D on stdin. */
+private fun linkAndRunOnQemu(profile: LlvmTripleProfile, linkCommand: List<String>, objectFile: Path, elf: Path, input: String, args: List<String>,
+                             directory: Path): Pair<Int, String> {
+    val startup = profile.writeStartupSources(elf)
+    val link = linkCommand.flatMap { word ->
+        if (word == "{startup}") startup.map { it.toString() }
+        else listOf(word.replace("{object}", objectFile.toString()).replace("{file}", elf.toString()))
+    }
     val linked = execute(*link.toTypedArray())
     Files.deleteIfExists(objectFile)
-    Files.deleteIfExists(startup)
+    startup.forEach { Files.deleteIfExists(it) }
     if (linked.first != 0)
         return linked
-    val command = LlvmTripleProfile.runCommandFor(riscvProfile.runCommand, elf.toAbsolutePath().toString(), args)
-    return execute(*command.toTypedArray(), directory = directory ?: llFile.parent)
+    val stdin = elf.resolveSibling("${elf.fileName}.stdin").also { it.writeText(input + "\u0004") }
+    val command = LlvmTripleProfile.runCommandFor(profile.runCommand, elf.toAbsolutePath().toString(), args)
+    return execute(*command.toTypedArray(), stdin = stdin, directory = directory).also { Files.deleteIfExists(stdin) }
 }
 
 private val emscriptenProfile = LlvmTripleProfile.resolve("wasm32-unknown-emscripten")

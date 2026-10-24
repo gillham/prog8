@@ -30,7 +30,7 @@ data class LlvmTripleProfile(
     val cMainSymbol: String = "main",
     private val linkCommandTemplate: List<String>? = null,
     val runTimeoutSeconds: Int? = null,
-    val startupSource: String? = null,
+    val startupSources: List<String> = emptyList(),
     private val directory: Path? = null
 ) {
     /** The pointer width in bits of the default address space, which LLVM takes as 64 when the data layout has no `p:` entry. */
@@ -49,14 +49,13 @@ data class LlvmTripleProfile(
         get() = linkCommandTemplate?.let { template -> expandEnvironment(template) { System.getenv(it) } }
 
     /**
-     * Writes the [startupSource] file that the link command builds along as `{startup}` next to [outputFile], and returns it;
-     * null without one. It is read from the profile's directory, or from the compiler's resources for an embedded profile.
+     * Writes the [startupSources] files that the link command builds along as `{startup}` next to [outputFile], and returns them.
+     * They are read from the profile's directory, or from the compiler's resources for an embedded profile.
      */
-    fun writeStartupSource(outputFile: Path): Path? {
-        val source = startupSource ?: return null
+    fun writeStartupSources(outputFile: Path): List<Path> = startupSources.map { source ->
         val file = outputFile.resolveSibling("${outputFile.fileName}.${Path(source).fileName}")
         startupSourceStream(source).use { Files.copy(it, file, StandardCopyOption.REPLACE_EXISTING) }
-        return file
+        file
     }
 
     private fun startupSourceStream(source: String): InputStream =
@@ -74,13 +73,14 @@ data class LlvmTripleProfile(
         require(linkCommandTemplate == null || (linkCommandTemplate.any { "{object}" in it } && linkCommandTemplate.any { "{file}" in it })) {
             "the link_command of llvm triple profile '$name' must contain {object} and {file}"
         }
-        require((startupSource != null) == (linkCommandTemplate?.any { "{startup}" in it } == true)) {
+        require(startupSources.isNotEmpty() == (linkCommandTemplate?.any { "{startup}" in it } == true)) {
             "llvm triple profile '$name' needs both a startup_source and {startup} in its link_command, or neither"
         }
-        require(startupSource == null || (if (directory != null) directory.resolve(startupSource).isRegularFile()
-            else LlvmTripleProfile::class.java.getResource("$RESOURCE_DIR/$startupSource") != null)) {
-            "the startup_source '$startupSource' of llvm triple profile '$name' was not found"
-        }
+        for (source in startupSources)
+            require(if (directory != null) directory.resolve(source).isRegularFile()
+                else LlvmTripleProfile::class.java.getResource("$RESOURCE_DIR/$source") != null) {
+                "the startup_source '$source' of llvm triple profile '$name' was not found"
+            }
         require(runTimeoutSeconds == null || runTimeoutSeconds > 0) { "the run_timeout_seconds of llvm triple profile '$name' must be a positive number" }
         require(cMainSymbol.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "the c_main_symbol of llvm triple profile '$name' must be a C identifier" }
     }
@@ -230,7 +230,7 @@ data class LlvmTripleProfile(
                 props.getProperty("c_main_symbol", "main").trim(),
                 words("link_command")?.takeIf { it.isNotEmpty() },
                 runTimeout,
-                props.getProperty("startup_source")?.trim()?.takeIf { it.isNotEmpty() },
+                words("startup_source").orEmpty(),
                 directory
             )
         }

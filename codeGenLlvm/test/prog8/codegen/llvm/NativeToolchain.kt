@@ -89,11 +89,11 @@ internal val requiresArm: (TestCase) -> Enabled = {
 }
 
 /**
- * Builds [ir] into a bare metal ARM program with the clang arguments and link command of the ARM profile, and runs it
- * on qemu with the command line [args] in the working [directory]; returns the exit code and output of the run, or of the build.
- * Semihosting gives the program no console input.
+ * Builds [ir] into a bare metal ARM program with the clang arguments, link command and console code of the ARM profile, and runs it
+ * on qemu with [input] and a Ctrl-D, which ends it, on stdin, the command line [args] and the working [directory];
+ * returns the exit code and output of the run, or of the build.
  */
-internal fun compileAndRunArm(ir: String, args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
+internal fun compileAndRunArm(ir: String, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val dir = createTempDirectory("prog8-llvm-arm")
     try {
         val source = dir.resolve("program.ll").also { it.writeText(ir) }
@@ -103,16 +103,20 @@ internal fun compileAndRunArm(ir: String, args: List<String> = emptyList(), dire
             source.toString(), "-o", objectFile.toString())
         if (compiled.first != 0)
             return compiled
-        val link = checkNotNull(armProfile.linkCommand).map { it.replace("{object}", objectFile.toString()).replace("{file}", program.toString()) }
+        val link = LlvmToolchain.linkCommandFor(checkNotNull(armProfile.linkCommand), objectFile, program, armProfile.writeStartupSources(program), emptyList())
         val linked = execute(*link.toTypedArray())
         if (linked.first != 0)
             return linked
+        val stdin = dir.resolve("stdin.txt").also { it.writeText(input + END_OF_CONSOLE_INPUT) }
         val command = LlvmTripleProfile.runCommandFor(armProfile.runCommand, program.toAbsolutePath().toString(), args)
-        return execute(*command.toTypedArray(), directory = directory)
+        return execute(*command.toTypedArray(), stdin = stdin, directory = directory)
     } finally {
         dir.toFile().deleteRecursively()
     }
 }
+
+/** The Ctrl-D that ends the console input of a program on qemu's semihosting, which otherwise waits for more. */
+internal const val END_OF_CONSOLE_INPUT = "\u0004"
 
 internal val riscvProfile: LlvmTripleProfile = LlvmTripleProfile.resolve("riscv32-unknown-elf")
 
@@ -135,11 +139,10 @@ internal val requiresRiscv: (TestCase) -> Enabled = {
 }
 
 /**
- * Builds [ir] into a bare metal RISC-V program with the clang arguments, link command and boot code of the RISC-V profile,
- * and runs it on qemu with the command line [args] in the working [directory]; returns the exit code and output of the run, or of the build.
- * Semihosting gives the program no console input.
+ * Builds [ir] into a bare metal RISC-V program with the clang arguments, link command, boot and console code of the RISC-V profile,
+ * and runs it on qemu as [compileAndRunArm] does.
  */
-internal fun compileAndRunRiscv(ir: String, args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
+internal fun compileAndRunRiscv(ir: String, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val dir = createTempDirectory("prog8-llvm-riscv")
     try {
         val source = dir.resolve("program.ll").also { it.writeText(ir) }
@@ -149,14 +152,14 @@ internal fun compileAndRunRiscv(ir: String, args: List<String> = emptyList(), di
             source.toString(), "-o", objectFile.toString())
         if (compiled.first != 0)
             return compiled
-        val startup = checkNotNull(riscvProfile.writeStartupSource(program))
-        val link = listOf(checkNotNull(riscvGcc).toString()) + checkNotNull(riscvProfile.linkCommand).drop(1)
-            .map { it.replace("{startup}", startup.toString()).replace("{object}", objectFile.toString()).replace("{file}", program.toString()) }
+        val link = LlvmToolchain.linkCommandFor(listOf(checkNotNull(riscvGcc).toString()) + checkNotNull(riscvProfile.linkCommand).drop(1),
+            objectFile, program, riscvProfile.writeStartupSources(program), emptyList())
         val linked = execute(*link.toTypedArray())
         if (linked.first != 0)
             return linked
+        val stdin = dir.resolve("stdin.txt").also { it.writeText(input + END_OF_CONSOLE_INPUT) }
         val command = LlvmTripleProfile.runCommandFor(riscvProfile.runCommand, program.toAbsolutePath().toString(), args)
-        return execute(*command.toTypedArray(), directory = directory)
+        return execute(*command.toTypedArray(), stdin = stdin, directory = directory)
     } finally {
         dir.toFile().deleteRecursively()
     }

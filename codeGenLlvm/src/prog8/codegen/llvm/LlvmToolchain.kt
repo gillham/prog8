@@ -24,7 +24,7 @@ internal object LlvmToolchain {
 
     /**
      * Builds the executable [outputFile] from [llFile] with clang, passing the clang arguments of [profile] first; with a
-     * link command in [profile], clang only compiles an object file that the command links, along with the profile's startup source if it has one.
+     * link command in [profile], clang only compiles an object file that the command links, along with the profile's startup sources if it has any.
      * [extraCompileArgs] go last on the clang command, [extraLinkArgs] and then [linkLibraries] last on the command that links, so libraries
      * come after the object file; a link command can place the [linkLibraries] elsewhere with a `{libs}` word.
      * Messages and any failure are reported on System.err.
@@ -49,20 +49,20 @@ internal object LlvmToolchain {
             return runTool(clangLinkCommand(compileCommand, llFile, outputFile, extraLinkArgs + linkLibraries), "clang", outputFile) ||
                 failed("clang couldn't build '$outputFile' from '$llFile'")
         val objectFile = outputFile.resolveSibling("${outputFile.fileName}.o")
-        var startupFile: Path? = null
+        var startupFiles = emptyList<Path>()
         try {
             if (!runTool(compileCommand + listOf("-c", llFile.toString(), "-o", objectFile.toString()), "clang", outputFile))
                 return failed("clang couldn't compile '$llFile'")
-            startupFile = try {
-                profile?.writeStartupSource(outputFile)
+            startupFiles = try {
+                profile?.writeStartupSources(outputFile).orEmpty()
             } catch (x: IOException) {
-                return failed("Can't build '$outputFile': the startup source of the llvm triple profile couldn't be written: ${x.message}")
+                return failed("Can't build '$outputFile': a startup source of the llvm triple profile couldn't be written: ${x.message}")
             }
-            val link = linkCommandFor(linkCommand, objectFile, outputFile, startupFile, extraLinkArgs, linkLibraries)
+            val link = linkCommandFor(linkCommand, objectFile, outputFile, startupFiles, extraLinkArgs, linkLibraries)
             return runTool(link, link.first(), outputFile) || failed("the link command couldn't build '$outputFile' from '$objectFile'")
         } finally {
             Files.deleteIfExists(objectFile)
-            startupFile?.let { Files.deleteIfExists(it) }
+            startupFiles.forEach { Files.deleteIfExists(it) }
         }
     }
 
@@ -72,16 +72,21 @@ internal object LlvmToolchain {
     internal fun clangLinkCommand(compileCommand: List<String>, llFile: Path, outputFile: Path, extraLinkArgs: List<String>): List<String> =
         compileCommand + listOf(llFile.toString(), "-o", outputFile.toString()) + extraLinkArgs
 
-    internal fun linkCommandFor(template: List<String>, objectFile: Path, outputFile: Path, startupFile: Path?, extraLinkArgs: List<String>,
+    internal fun linkCommandFor(template: List<String>, objectFile: Path, outputFile: Path, startupFiles: List<Path>, extraLinkArgs: List<String>,
                                 linkLibraries: List<String> = emptyList()): List<String> {
         val command = template.flatMap {
-            if (it == LIBS) linkLibraries
-            else listOf(it.replace("{object}", objectFile.toString()).replace("{file}", outputFile.toString()).replace("{startup}", startupFile.toString()))
+            when (it) {
+                LIBS -> linkLibraries
+                STARTUP -> startupFiles.map(Path::toString)
+                else -> listOf(it.replace("{object}", objectFile.toString()).replace("{file}", outputFile.toString())
+                    .replace(STARTUP, startupFiles.joinToString(" ")))
+            }
         } + extraLinkArgs
         return if (LIBS in template) command else command + linkLibraries
     }
 
     private const val LIBS = "{libs}"
+    private const val STARTUP = "{startup}"
 
     private fun failed(message: String): Boolean {
         System.err.println(message)

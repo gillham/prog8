@@ -206,9 +206,14 @@ with hardware floating point, which reaches the host through *semihosting*. Buil
 ``arm-none-eabi-gcc`` links it with newlib into a ``.elf`` file. ``-emu`` runs that on qemu's Versatile Express machine
 (``qemu-system-arm``), which prints the program's output, gives its exit status back, and lets it read and write
 files on the host, relative to the current directory. ``-emu`` stops a run after 60 seconds, because qemu keeps running
-when the program crashes. Newlib on semihosting has limits:
+when the program crashes.
 
-- there is no console input: reading a character or a line gives the end of the input
+Newlib can't get console input from qemu by itself, so a small piece of console code that comes with the profile
+(``startup_source``) reads it, a line at a time. qemu never reports the end of the input, so a Ctrl-D (character 4)
+ends it, whether it is typed or piped in; without one, a program that reads all of its input waits for more until
+the 60 second limit stops it. On a terminal, which qemu switches to raw mode, the console code echoes the typing
+and handles backspace, and Enter ends the line. Ctrl-C stops qemu. Newlib on semihosting has limits:
+
 - it has no ``mkdir``, ``chdir``, ``rmdir`` and ``getcwd``, so a program that uses the diskio routines to create,
   change to or remove a directory, or to get the current directory, fails to link ("undefined reference")
 - renaming a file fails
@@ -219,12 +224,12 @@ With ``-triple riscv32-unknown-elf``, an ``llvm32`` program becomes a bare metal
 with hardware floating point, which also reaches the host through semihosting. Building it needs clang and the
 `xPack GNU RISC-V Embedded GCC <https://xpack-dev-tools.github.io/riscv-none-elf-gcc-xpack/>`_, whose ``riscv-none-elf-gcc``
 is taken from the ``RISCV_NONE_ELF_GCC`` environment variable, or else from the ``PATH``. clang compiles the program,
-and ``riscv-none-elf-gcc`` links it with newlib and a small piece of boot code that comes with the profile
+and ``riscv-none-elf-gcc`` links it with newlib, the console code and a small piece of boot code that come with the profile
 (``startup_source``) into a ``.elf`` file. The boot code sets up the stack and switches on the floating point unit,
 which newlib's startup code expects a loader to have done, passes on the semihosting command line, split as on ARM,
 and lets the program's exit status reach qemu.
 ``-emu`` runs the program on qemu's virt machine (``qemu-system-riscv32``), with the same 60 second limit as on ARM.
-Newlib on semihosting has the same limits as on ARM, except that a seek that fails leaves the position in the file
+Console input and newlib on semihosting work as on ARM, except that a seek that fails leaves the position in the file
 as it was. The boot code passes on at most 60 arguments, and 1 KiB of command line.
 
 The operating system owns the memory of an LLVM program, so anything that places the program or its variables
@@ -275,8 +280,9 @@ These are the keys of a profile; an unknown key is an error:
     The libraries of the program's ``%link`` directives go at the end of the command, or in the place of a ``{libs}`` word.
     Without it, clang builds the executable in one go.
 ``startup_source``
-    A source file, such as boot code in assembly, that the link command builds along with the program, as ``{startup}``.
-    It is looked up next to the profile file; for a profile built into the compiler, it comes with the compiler.
+    Source files separated by spaces, such as boot code in assembly, that the link command builds along with the program;
+    a word ``{startup}`` becomes their paths. They are looked up next to the profile file; for a profile built into the
+    compiler, they come with the compiler.
     A profile with it must have ``{startup}`` in its ``link_command``, and one without it must not.
 ``run_command``
     The command that ``-emu`` uses to run the executable, with ``{file}`` in place of its path, for example ``wasmtime {file}``.
