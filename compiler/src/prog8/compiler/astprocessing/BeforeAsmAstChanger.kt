@@ -156,7 +156,7 @@ internal class BeforeAsmAstChanger(val program: Program, private val options: Co
         }
 
         if(expr.operator=="+" || expr.operator=="-") {
-            if(options.compTarget.name != VMTarget.NAME && expr.left.inferType(program).isPointer) {
+            if(options.compTarget.POINTER_MEM_SIZE==2u && expr.left.inferType(program).isPointer) {
                 val cast = expr.right as? TypecastExpression
                 if(cast!=null && cast.type.isWord && cast.expression.inferType(program).isBytes) {
                     val structsize = expr.left.inferType(program).getOrUndef().size(program.target)

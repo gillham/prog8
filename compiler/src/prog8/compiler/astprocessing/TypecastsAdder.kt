@@ -793,8 +793,8 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
             val argIdt = it.second.inferType(program)
             if (argIdt.isKnown && !targetDt.isStructInstance) {
                 val argDt = argIdt.getOrUndef()
-                if (argDt.isPointer && argDt !in it.first && options.compTarget.POINTER_MEM_SIZE>4u && possibleTargetDt != options.compTarget.pointerType && options.compTarget.pointerType in it.first) {
-                    // of the integer types only the uquad holds a whole 8-byte address, the first one would truncate it
+                if (argDt.isPointer && argDt !in it.first && options.compTarget.POINTER_MEM_SIZE>2u && possibleTargetDt != options.compTarget.pointerType && options.compTarget.pointerType in it.first) {
+                    // the first integer type, uword, would truncate a wider address: use the integer type that holds a whole one
                     modifications += AstReplaceNode(it.second, TypecastExpression(it.second, options.compTarget.pointerType, true, it.second.position), parent)
                 } else if (argDt !in it.first) {
                     val identifier = it.second as? IdentifierReference

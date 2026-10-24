@@ -866,9 +866,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                         actualResultReg2 = codeGen.registers.next(IRDataType.WORD)
                         addInstr(result, IRInstructions.binary(Opcode.FTOUW, IRDataType.FLOAT, actualResultReg2, tr.resultFpReg), null)
                     }
-                    BaseDataType.POINTER -> {
-                        actualResultReg2 = tr.resultReg
-                    }
+                    BaseDataType.POINTER -> if(addressIntDt==IRDataType.WORD) actualResultReg2 = tr.resultReg else narrowPointer(Opcode.LSIGW, IRDataType.WORD)
                     else -> throw AssemblyError("weird cast value type ${cast.position}")
                 }
             }
@@ -899,9 +897,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                         actualResultReg2 = codeGen.registers.next(IRDataType.WORD)
                         addInstr(result, IRInstructions.binary(Opcode.FTOSW, IRDataType.FLOAT, actualResultReg2, tr.resultFpReg), null)
                     }
-                    BaseDataType.POINTER -> {
-                        actualResultReg2 = tr.resultReg
-                    }
+                    BaseDataType.POINTER -> if(addressIntDt==IRDataType.WORD) actualResultReg2 = tr.resultReg else narrowPointer(Opcode.LSIGW, IRDataType.WORD)
                     else -> throw AssemblyError("weird cast value type ${cast.position}")
                 }
             }
@@ -929,9 +925,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                         actualResultReg2 = codeGen.registers.next(IRDataType.LONG)
                         addInstr(result, IRInstructions.binary(Opcode.FTOSL, IRDataType.FLOAT, actualResultReg2, tr.resultFpReg), null)
                     }
-                    BaseDataType.POINTER -> {
-                        actualResultReg2 = tr.resultReg
-                    }
+                    BaseDataType.POINTER -> if(addressIntDt==IRDataType.QUAD) narrowPointer(Opcode.LSIGL, IRDataType.LONG) else actualResultReg2 = tr.resultReg
                     BaseDataType.QUAD, BaseDataType.UQUAD -> {
                         actualResultReg2 = codeGen.registers.next(IRDataType.LONG)
                         addInstr(result, IRInstructions.binary(Opcode.LSIGL, IRDataType.QUAD, actualResultReg2, tr.resultReg), null)
