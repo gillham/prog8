@@ -195,7 +195,7 @@ Building it needs clang and `Emscripten <https://emscripten.org/>`_, whose ``emc
 variable, or else from the ``PATH``; clang compiles the program, and ``emcc`` links it into a single ``.js`` file with the
 WebAssembly code inside. ``-emu`` runs that with ``node``. Unlike WASI, the program works with the host's own file system,
 relative to the current directory, including creating, changing to and removing directories and renaming files;
-it reads console input and gives back its exit status, and run as ``node program.js <arguments>`` it gets those arguments.
+it reads console input and gives back its exit status.
 Emscripten's own clang and LLVM version don't matter, because ``emcc`` only links the object file.
 
 With ``-triple armv7a-none-eabihf``, an ``llvm32`` program becomes a bare metal program for a 32-bit ARM Cortex-A15
@@ -213,7 +213,7 @@ when the program crashes. Newlib on semihosting has limits:
   change to or remove a directory, or to get the current directory, fails to link ("undefined reference")
 - renaming a file fails
 - after a seek that fails, the position in the file is unknown, rather than left as it was
-- ``-emu`` gives the program no command line arguments
+- a program argument can't contain a double quote, which the semihosting command line uses to keep spaces in an argument
 
 With ``-triple riscv32-unknown-elf``, an ``llvm32`` program becomes a bare metal program for 32-bit RISC-V (RV32IMAFDC)
 with hardware floating point, which also reaches the host through semihosting. Building it needs clang and the
@@ -221,10 +221,11 @@ with hardware floating point, which also reaches the host through semihosting. B
 is taken from the ``RISCV_NONE_ELF_GCC`` environment variable, or else from the ``PATH``. clang compiles the program,
 and ``riscv-none-elf-gcc`` links it with newlib and a small piece of boot code that comes with the profile
 (``startup_source``) into a ``.elf`` file. The boot code sets up the stack and switches on the floating point unit,
-which newlib's startup code expects a loader to have done, and lets the program's exit status reach qemu.
+which newlib's startup code expects a loader to have done, passes on the semihosting command line, split as on ARM,
+and lets the program's exit status reach qemu.
 ``-emu`` runs the program on qemu's virt machine (``qemu-system-riscv32``), with the same 60 second limit as on ARM.
 Newlib on semihosting has the same limits as on ARM, except that a seek that fails leaves the position in the file
-as it was; and the program's command line only has its name, ``program``.
+as it was. The boot code passes on at most 60 arguments, and 1 KiB of command line.
 
 The operating system owns the memory of an LLVM program, so anything that places the program or its variables
 at a fixed address is an error on these targets: the ``%address``, ``%memtop`` and ``%varsaddress`` directives,
@@ -278,7 +279,9 @@ These are the keys of a profile; an unknown key is an error:
     A profile with it must have ``{startup}`` in its ``link_command``, and one without it must not.
 ``run_command``
     The command that ``-emu`` uses to run the executable, with ``{file}`` in place of its path, for example ``wasmtime {file}``.
-    Without it, the executable is run directly.
+    Without it, the executable is run directly. The program arguments given after ``--`` go at the end of the command,
+    or in place of a word ``{args}``; ``{semihosting_args}`` inside a word becomes the ``,arg=`` entries of qemu's
+    ``-semihosting-config`` for the executable and its arguments, as in ``enable=on,target=native{semihosting_args}``.
 ``run_timeout_seconds``
     The number of seconds after which ``-emu`` stops the run, for runners that can hang, such as an emulator after
     the program crashed. Without it, ``-emu`` waits until the program exits.

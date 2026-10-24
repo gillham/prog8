@@ -80,14 +80,18 @@ class LlvmTarget(
         return Double.fromBits(bytes.foldIndexed(0L) { index, bits, byte -> bits or (byte.toLong() shl (8 * index)) })
     }
 
-    override fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean) {
+    override fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean) =
+        launchEmulator(selectedEmulator, programFile, quiet, emptyList())
+
+    /** As [launchEmulator], giving the program the command line arguments [programArgs]. */
+    fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean, programArgs: List<String>) {
         if (selectedEmulator != 1) {
             System.err.println("The $name target has no alternative emulator; -emu builds the program into an executable for this host and runs it.")
             return
         }
         // the LLVM code generator module depends on this one, so its runner can only be loaded via reflection
         val runner = Class.forName("prog8.codegen.llvm.LlvmProgramRunner").getDeclaredConstructor().newInstance() as ILlvmProgramRunner
-        val status = runner.buildAndRun(programFile, quiet, profile, extraCompileArgs, extraLinkArgs) ?: return
+        val status = runner.buildAndRun(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, programArgs) ?: return
         if (!quiet)
             println("\nProgram exited with status $status")
     }
@@ -101,12 +105,12 @@ class LlvmTarget(
 
 
 /**
- * Builds the executable of an llvm program file when needed, and runs it, with the run command of [profile] when it has one.
- * Returns its exit status, or null when it didn't run; the reason has been printed then.
+ * Builds the executable of an llvm program file when needed, and runs it with the command line arguments [programArgs],
+ * with the run command of [profile] when it has one. Returns its exit status, or null when it didn't run; the reason has been printed then.
  */
 interface ILlvmProgramRunner {
     fun buildAndRun(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile? = null,
-                    extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList()): Int?
+                    extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList(), programArgs: List<String> = emptyList()): Int?
 }
 
 private class LlvmZeropage(options: CompilationOptions): Zeropage(options) {

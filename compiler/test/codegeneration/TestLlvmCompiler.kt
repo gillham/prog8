@@ -391,7 +391,7 @@ class TestLlvmCompiler: FunSpec({
         }
     }
 
-    for ((name, program) in outputPrograms.filter { it.key !in notRunOnRiscv && it.value.input.isEmpty() && it.value.args.isEmpty() }) {
+    for ((name, program) in outputPrograms.filter { it.key !in notRunOnRiscv && it.value.input.isEmpty() }) {
         test("$name: gives the expected exit code and console output as an llvm32 bare metal RISC-V program on qemu, which leaves no files behind").config(enabledOrReasonIf = requiresRiscv) {
             for (optimize in listOf(false, true)) {
                 withClue("optimize=$optimize") {
@@ -399,7 +399,7 @@ class TestLlvmCompiler: FunSpec({
                     workingDirectory.toFile().deleteRecursively()
                     workingDirectory.createDirectories()
                     val llFile = compiledLlFile(compileText(riscvTarget(), optimize, program.source, outputDir.resolve("riscv").createDirectories()))
-                    val (exitCode, output) = buildAndRunRiscv(llFile, workingDirectory)
+                    val (exitCode, output) = buildAndRunRiscv(llFile, program.args, workingDirectory)
                     withClue(output) { exitCode shouldBe program.exitCode }
                     output shouldBe program.output
                     withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
@@ -435,6 +435,27 @@ class TestLlvmCompiler: FunSpec({
 
         val selfChecking = compiledLlFile(compileText(LlvmTarget(), true, programs.getValue("64-bit quad and uquad integers"), dir))
         printedOnStdout { LlvmTarget().launchEmulator(1, selfChecking, quiet = false) } shouldContain "Program exited with status 0"
+    }
+
+    test("launchEmulator gives the program its arguments natively").config(enabledOrReasonIf = requiresNativeLlvm) {
+        launchesWithArguments(LlvmTarget(), outputDir.resolve("arguments-native"))
+    }
+
+    test("launchEmulator gives the program its arguments after the file in the run command, under wasmtime").config(enabledOrReasonIf = requiresWasm) {
+        launchesWithArguments(LlvmTarget(4), outputDir.resolve("arguments-wasm"))
+    }
+
+    test("launchEmulator gives the program its arguments under node").config(enabledOrReasonIf = requiresEmscriptenOnThePath) {
+        launchesWithArguments(emscriptenTarget(), outputDir.resolve("arguments-emscripten"))
+    }
+
+    test("launchEmulator gives the program its arguments through the semihosting command line on bare metal ARM").config(enabledOrReasonIf = requiresArm) {
+        launchesWithArguments(armTarget(), outputDir.resolve("arguments-arm"))
+    }
+
+    test("launchEmulator gives the program its arguments through the semihosting command line, which the boot code splits, on bare metal RISC-V")
+        .config(enabledOrReasonIf = requiresRiscvOnThePath) {
+        launchesWithArguments(riscvTarget(), outputDir.resolve("arguments-riscv"))
     }
 
     test("-o without .ll builds a native executable with the LLVM IR next to it").config(enabledOrReasonIf = requiresNativeLlvm) {
@@ -997,7 +1018,7 @@ private fun buildAndRunWasm(llFile: Path, input: String = "", args: List<String>
     if (compiled.first != 0)
         return compiled
     val stdin = wasm.resolveSibling("${wasm.fileName}.stdin").also { it.writeText(input) }
-    val command = checkNotNull(profile.runCommand).map { it.replace("{file}", wasm.toAbsolutePath().toString()) } + args
+    val command = LlvmTripleProfile.runCommandFor(profile.runCommand, wasm.toAbsolutePath().toString(), args)
     return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent)
 }
 
@@ -1037,10 +1058,7 @@ private fun buildAndRunArm(llFile: Path, args: List<String> = emptyList(), direc
     Files.deleteIfExists(objectFile)
     if (linked.first != 0)
         return linked
-    // newlib splits the semihosting command line at spaces that aren't quoted, and drops empty arguments that aren't
-    val file = elf.toAbsolutePath().toString()
-    val commandLine = (listOf(file) + args).joinToString("") { ",arg=" + (if (it.isEmpty() || it.any(Char::isWhitespace)) "\"$it\"" else it).replace(",", ",,") }
-    val command = checkNotNull(armProfile.runCommand).map { it.replace("{file}", file) }.map { if (it.startsWith("enable=on")) it + commandLine else it }
+    val command = LlvmTripleProfile.runCommandFor(armProfile.runCommand, elf.toAbsolutePath().toString(), args)
     return execute(*command.toTypedArray(), directory = directory ?: llFile.parent)
 }
 
@@ -1076,9 +1094,9 @@ private val requiresRiscvOnThePath: (TestCase) -> Enabled = {
 
 /**
  * Builds the .ll file into a .elf file with clang and the link command and boot code of the bare metal RISC-V profile, and runs it on qemu
- * in the working [directory] (default: next to the .ll file). Semihosting gives it no console input, and the boot code only its name as the command line.
+ * with the command line [args], in the working [directory] (default: next to the .ll file). Semihosting gives it no console input.
  */
-private fun buildAndRunRiscv(llFile: Path, directory: Path? = null): Pair<Int, String> {
+private fun buildAndRunRiscv(llFile: Path, args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + riscvProfile.outputExtension)
     val objectFile = elf.resolveSibling("${elf.fileName}.o")
     val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *riscvProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
@@ -1093,7 +1111,7 @@ private fun buildAndRunRiscv(llFile: Path, directory: Path? = null): Pair<Int, S
     Files.deleteIfExists(startup)
     if (linked.first != 0)
         return linked
-    val command = checkNotNull(riscvProfile.runCommand).map { it.replace("{file}", elf.toAbsolutePath().toString()) }
+    val command = LlvmTripleProfile.runCommandFor(riscvProfile.runCommand, elf.toAbsolutePath().toString(), args)
     return execute(*command.toTypedArray(), directory = directory ?: llFile.parent)
 }
 
@@ -1141,8 +1159,26 @@ private fun buildAndRunEmscripten(llFile: Path, input: String = "", args: List<S
     if (linked.first != 0)
         return linked
     val stdin = js.resolveSibling("${js.fileName}.stdin").also { it.writeText(input) }
-    val command = checkNotNull(emscriptenProfile.runCommand).map { it.replace("{file}", js.toAbsolutePath().toString()) } + args
+    val command = LlvmTripleProfile.runCommandFor(emscriptenProfile.runCommand, js.toAbsolutePath().toString(), args)
     return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent)
+}
+
+/** The program exits with 20 times its argument count, plus the length of its first argument, plus 1 if the second is "-v"; WASI only allows a status below 126. */
+private fun launchesWithArguments(target: LlvmTarget, directory: Path) {
+    val source = """
+        %import strings
+        %zeropage basicsafe
+        main {
+            sub start() {
+                ubyte status = lsb(sys.argc()) * 20 + strings.length(sys.argv(1))
+                if strings.compare(sys.argv(2), "-v") == 0
+                    status++
+                sys.exit(status)
+            }
+        }"""
+    val llFile = compiledLlFile(compileText(target, false, source, directory.createDirectories()))
+    printedOnStdout { target.launchEmulator(1, llFile, quiet = false, listOf("a, b c", "-v", "")) } shouldContain "Program exited with status ${4 * 20 + 6 + 1}"
+    printedOnStdout { target.launchEmulator(1, llFile, quiet = false) } shouldContain "Program exited with status 20"
 }
 
 private fun execute(vararg command: String, stdin: Path? = null, directory: Path? = null): Pair<Int, String> {

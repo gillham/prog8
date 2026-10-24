@@ -155,6 +155,22 @@ class TestLlvmTripleProfile: FunSpec({
         shouldThrow<IllegalArgumentException> { linking.linkCommand }.message!! shouldContain "PROG8_NO_SUCH_VARIABLE"
     }
 
+    test("the run command gets the program arguments at {args}, as qemu semihosting arg= entries at {semihosting_args}, or else at the end") {
+        LlvmTripleProfile.runCommandFor(null, "/p/x", listOf("a", "b c")) shouldBe listOf("/p/x", "a", "b c")
+        LlvmTripleProfile.runCommandFor(listOf("wasmtime", "--dir=.", "{file}"), "/p/x.wasm", listOf("-v", "")) shouldBe
+            listOf("wasmtime", "--dir=.", "/p/x.wasm", "-v", "")
+        LlvmTripleProfile.runCommandFor(listOf("run", "{file}", "{args}", "--end"), "/p/x", listOf("a")) shouldBe listOf("run", "/p/x", "a", "--end")
+        LlvmTripleProfile.runCommandFor(listOf("run", "{file}", "{args}"), "/p/x", emptyList()) shouldBe listOf("run", "/p/x")
+        LlvmTripleProfile.runCommandFor(listOf("qemu", "-semihosting-config", "enable=on{semihosting_args}", "-kernel", "{file}"), "/p,q/x.elf",
+            listOf("plain", "two words", "", "a,b")) shouldBe
+            listOf("qemu", "-semihosting-config", "enable=on,arg=/p,,q/x.elf,arg=plain,arg=\"two words\",arg=\"\",arg=a,,b", "-kernel", "/p,q/x.elf")
+        shouldThrow<IllegalArgumentException> {
+            LlvmTripleProfile.runCommandFor(listOf("qemu", "enable=on{semihosting_args}"), "/p/x.elf", listOf("say \"hi\""))
+        }.message!! shouldContain "double quote"
+        LlvmTripleProfile.resolve("armv7a-none-eabihf").runCommand!!.any { "{semihosting_args}" in it } shouldBe true
+        LlvmTripleProfile.resolve("riscv32-unknown-elf").runCommand!!.any { "{semihosting_args}" in it } shouldBe true
+    }
+
     test("a triple is looked up as a file path first, then as an embedded profile") {
         val file = profileFile("wasm32-wasip1", validProfile())
         LlvmTripleProfile.resolve(file.toString()).triple shouldBe "test-triple"

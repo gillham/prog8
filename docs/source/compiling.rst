@@ -229,6 +229,9 @@ One or more .p8 module files
     When the triple profile has a ``run_command``, that command runs the executable instead (see :ref:`llvm_triples`):
     the default ``llvm32`` profile builds a ``.wasm`` file and runs it with ``wasmtime``, and the ``armv7a-none-eabihf``
     and ``riscv32-unknown-elf`` profiles build a ``.elf`` file and run it on ``qemu-system-arm`` and ``qemu-system-riscv32``.
+    Everything after a standalone ``--`` on the command line is passed on to the program as its arguments, which it reads
+    with ``sys.argc()`` and ``sys.argv()``, for example ``prog8c -target llvm32 -emu program.p8 -- -v "two words"``.
+    Other targets report an error for such arguments.
 
 ``-newcodegen``
     Use new 6502 code generation backend (*incomplete/experimental*). This generates 6502 assembly code based on IR instead of the AST.

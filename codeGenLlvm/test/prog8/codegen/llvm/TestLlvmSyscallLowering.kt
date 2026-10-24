@@ -483,8 +483,7 @@ class TestLlvmSyscallLowering: FunSpec({
         }
     }
 
-    // as on ARM, without console input and the directory syscalls; the boot code gives the program only its name as the command line,
-    // and unlike on ARM, newlib keeps the position in the file when a seek fails
+    // as on ARM, without console input and the directory syscalls; unlike on ARM, newlib keeps the position in the file when a seek fails
     test("the llvm32 console output, command line and file handle syscalls work in a bare metal RISC-V program on qemu").config(enabledOrReasonIf = requiresRiscv) {
         fun riscv() = TestProgram(riscvTarget)
         val greeting = riscv().apply { allOutputSubs(); greetingSub() }.module().withMainCalling("main.greeting")
@@ -493,9 +492,11 @@ class TestLlvmSyscallLowering: FunSpec({
             output shouldBe "A\nhi\nhello, world!\nhi\n"
         }
         val arguments = riscv().apply { argumentsOutputSub() }.programModule()
-        compileAndRunRiscv(LlvmPrinter.print(arguments)).let { (exitCode, output) ->
-            withClue(output) { exitCode shouldBe 1 }
-            output shouldBe "\n\n\n\nprogram\n"
+        compileAndRunRiscv(LlvmPrinter.print(arguments), args = listOf("first", "second arg")).let { (exitCode, output) ->
+            withClue(output) { exitCode shouldBe 3 }
+            val lines = output.lines()
+            lines.take(4) shouldBe listOf("first", "second arg", "", "")
+            withClue("argument 0 is the program: ${lines[4]}") { lines[4].endsWith("program.elf") shouldBe true }
         }
         val directory = createTempDirectory("prog8-riscv-files").toRealPath()
         try {

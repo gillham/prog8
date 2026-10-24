@@ -91,6 +91,31 @@ data class LlvmTripleProfile(
             "link_command", "run_timeout_seconds", "startup_source")
         private val environmentVariable = Regex($$"""\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?}""")
         private val tripleName = Regex("[A-Za-z0-9_][A-Za-z0-9_.-]*")
+        private const val ARGS = "{args}"
+        private const val SEMIHOSTING_ARGS = "{semihosting_args}"
+
+        /**
+         * The command that runs [file] with the program arguments [args]: [runCommand] with `{file}` replaced, or else the file itself.
+         * A word `{args}` becomes the arguments, and `{semihosting_args}` in a word becomes the `arg=` entries of qemu's
+         * `-semihosting-config` for the file and the arguments; without either, the arguments go at the end.
+         */
+        fun runCommandFor(runCommand: List<String>?, file: String, args: List<String>): List<String> {
+            val command = runCommand ?: return listOf(file) + args
+            val placed = command.any { it == ARGS || SEMIHOSTING_ARGS in it }
+            return command.flatMap { word ->
+                when {
+                    word == ARGS -> args
+                    SEMIHOSTING_ARGS in word -> listOf(word.replace("{file}", file).replace(SEMIHOSTING_ARGS, semihostingArgs(listOf(file) + args)))
+                    else -> listOf(word.replace("{file}", file))
+                }
+            } + if (placed) emptyList() else args
+        }
+
+        // the C library splits the semihosting command line at spaces outside double quotes, which it removes
+        private fun semihostingArgs(args: List<String>): String = args.joinToString("") {
+            require('"' !in it) { "the program argument '$it' has a double quote, which the semihosting command line can't pass on" }
+            ",arg=" + (if (it.isEmpty() || it.any(Char::isWhitespace)) "\"$it\"" else it).replace(",", ",,")
+        }
         private val clangAnswers = ConcurrentHashMap<List<String>, ClangTargetInfo>()
 
         fun load(path: Path): LlvmTripleProfile = path.inputStream().use { parse(path.toString(), it, path.toAbsolutePath().parent) }

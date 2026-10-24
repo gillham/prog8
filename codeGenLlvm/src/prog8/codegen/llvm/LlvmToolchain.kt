@@ -102,17 +102,17 @@ internal object LlvmToolchain {
     }
 
     /**
-     * Runs [executable] on the console of this process until it exits, and returns its exit code; with a [runCommand],
-     * that command runs it instead, with `{file}` replaced by its path. Throws an IOException when it can't be started,
-     * or when it is still running after [timeoutSeconds]; it is stopped then.
+     * Runs [executable] with the program arguments [args] on the console of this process until it exits, and returns its exit code;
+     * with a [runCommand], that command runs it instead (see [LlvmTripleProfile.runCommandFor]). Throws an IOException when it
+     * can't be started, or when it is still running after [timeoutSeconds]; it is stopped then.
      */
-    fun runExecutable(executable: Path, quiet: Boolean, runCommand: List<String>? = null, timeoutSeconds: Int? = null): Int {
+    fun runExecutable(executable: Path, quiet: Boolean, runCommand: List<String>? = null, timeoutSeconds: Int? = null, args: List<String> = emptyList()): Int {
         if (!quiet)
             println("Running $executable...")
         System.out.flush()
         // absolute, because a name without a directory would be looked up on the PATH
         val file = executable.toAbsolutePath().toString()
-        val command = runCommand?.map { it.replace("{file}", file) } ?: listOf(file)
+        val command = LlvmTripleProfile.runCommandFor(runCommand, file, args)
         val process = ProcessBuilder(command).inheritIO().start()
         if (timeoutSeconds == null)
             return process.waitFor()
@@ -143,11 +143,14 @@ internal object LlvmToolchain {
  */
 class LlvmProgramRunner : ILlvmProgramRunner {
     override fun buildAndRun(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile?,
-                             extraCompileArgs: List<String>, extraLinkArgs: List<String>): Int? {
+                             extraCompileArgs: List<String>, extraLinkArgs: List<String>, programArgs: List<String>): Int? {
         val executable = executableOf(programFile, quiet, profile, extraCompileArgs, extraLinkArgs) ?: return null
         return try {
-            LlvmToolchain.runExecutable(executable, quiet, profile?.runCommand, profile?.runTimeoutSeconds)
+            LlvmToolchain.runExecutable(executable, quiet, profile?.runCommand, profile?.runTimeoutSeconds, programArgs)
         } catch (x: IOException) {
+            System.err.println("Can't run '$executable': ${x.message}")
+            null
+        } catch (x: IllegalArgumentException) {
             System.err.println("Can't run '$executable': ${x.message}")
             null
         }

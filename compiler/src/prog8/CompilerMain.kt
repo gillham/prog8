@@ -80,7 +80,7 @@ private class CompilerCli : CliktCommand(name = "prog8c") {
     val dumpVariables by option("-dumpvars", "--dumpvars", help = "print a dump of the variables in the program").flag()
     val libSearch by option("-libsearch", "--libsearch", help = "search for a regex pattern in the embedded library files")
     val libDump by option("-libdump", "--libdump", help = "dump all the embedded library files into the specified output directory")
-    val startEmulator1 by option("-emu", "--emu", help = "auto-start emulator after successful compilation (on llvm64: build a native executable with clang and run it)").flag()
+    val startEmulator1 by option("-emu", "--emu", help = "auto-start emulator after successful compilation (on llvm64: build a native executable with clang and run it; on the llvm targets, arguments after -- go to the program)").flag()
     val startEmulator2 by option("-emu2", "--emu2", help = "auto-start alternative emulator after successful compilation").flag()
     val newCodegen by option("-newcodegen", "--newcodegen", help = "use experimental/incomplete 6502 codegen based on IR instead of AST. Not for production code.").flag()
     val float2bytes by option("-float2bytes", "--float2bytes", help = "convert floating point number to a list of bytes for the target system")
@@ -123,8 +123,11 @@ private class CompilerCli : CliktCommand(name = "prog8c") {
 
 private fun compileMain(args: Array<String>): Boolean {
     val cli = CompilerCli()
+    // everything after a standalone -- goes to the program that -emu runs
+    val separator = args.indexOf("--")
+    val programArgs = if(separator<0) emptyList() else args.drop(separator+1)
     try {
-        cli.parse(args)
+        cli.parse(if(separator<0) args else args.copyOfRange(0, separator))
     } catch (e: CliktError) {
         cli.echoFormattedHelp(e)
         return e.statusCode == 0
@@ -176,6 +179,17 @@ private fun compileMain(args: Array<String>): Boolean {
     if(faultyOption!=null) {
         presenter.printErrorLine("Unknown command line option given: $faultyOption")
         return false
+    }
+
+    if(programArgs.isNotEmpty()) {
+        if(!startEmulator1 || startVm || checkSource) {
+            presenter.printErrorLine("Program arguments after -- are only passed on to the program that -emu runs.")
+            return false
+        }
+        if(compilationTarget?.lowercase() !in setOf(LlvmTarget.NAME32, LlvmTarget.NAME64, LlvmTarget.ALIAS)) {
+            presenter.printErrorLine("Program arguments after -- can only be given for the ${LlvmTarget.NAME32} and ${LlvmTarget.NAME64} targets.")
+            return false
+        }
     }
 
     val srcdirs = sourceDirs.flatMap { it.split(File.pathSeparator) }.map { expandTilde(it) }
@@ -416,6 +430,8 @@ private fun compileMain(args: Array<String>): Boolean {
                         if (target is VMTarget) {
                             if(!launchVirtualMachine(target, programFile, quietAll, vmTrace, presenter))
                                 return false
+                        } else if (target is LlvmTarget) {
+                            target.launchEmulator(1, programFile, quietAll, programArgs)
                         } else {
                             target.launchEmulator(1, programFile, quietAll)
                         }
@@ -504,7 +520,11 @@ private fun compileMain(args: Array<String>): Boolean {
                             outs.programFile, quietAll, vmTrace, presenter))
                         return false
                 } else {
-                    compilationResult.compilationOptions.compTarget.launchEmulator(1, outs.programFile, quietAll)
+                    val target = compilationResult.compilationOptions.compTarget
+                    if(target is LlvmTarget)
+                        target.launchEmulator(1, outs.programFile, quietAll, programArgs)
+                    else
+                        target.launchEmulator(1, outs.programFile, quietAll)
                 }
             } else if (startEmulator2)
                 compilationResult.compilationOptions.compTarget.launchEmulator(2, outs.programFile, quietAll)

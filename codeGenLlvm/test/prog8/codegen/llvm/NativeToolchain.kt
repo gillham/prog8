@@ -107,18 +107,11 @@ internal fun compileAndRunArm(ir: String, args: List<String> = emptyList(), dire
         val linked = execute(*link.toTypedArray())
         if (linked.first != 0)
             return linked
-        return execute(*armRunCommand(program, args).toTypedArray(), directory = directory)
+        val command = LlvmTripleProfile.runCommandFor(armProfile.runCommand, program.toAbsolutePath().toString(), args)
+        return execute(*command.toTypedArray(), directory = directory)
     } finally {
         dir.toFile().deleteRecursively()
     }
-}
-
-/** The run command of the ARM profile, with the program and [args] as the semihosting command line that newlib splits at unquoted spaces. */
-internal fun armRunCommand(program: Path, args: List<String>): List<String> {
-    val file = program.toAbsolutePath().toString()
-    val commandLine = (listOf(file) + args).joinToString("") { ",arg=" + (if (it.isEmpty() || it.any(Char::isWhitespace)) "\"$it\"" else it).replace(",", ",,") }
-    return checkNotNull(armProfile.runCommand).map { it.replace("{file}", file) }
-        .map { if (it.startsWith("enable=on")) it + commandLine else it }
 }
 
 internal val riscvProfile: LlvmTripleProfile = LlvmTripleProfile.resolve("riscv32-unknown-elf")
@@ -143,10 +136,10 @@ internal val requiresRiscv: (TestCase) -> Enabled = {
 
 /**
  * Builds [ir] into a bare metal RISC-V program with the clang arguments, link command and boot code of the RISC-V profile,
- * and runs it on qemu in the working [directory]; returns the exit code and output of the run, or of the build.
- * Semihosting gives the program no console input, and the boot code only its name as the command line.
+ * and runs it on qemu with the command line [args] in the working [directory]; returns the exit code and output of the run, or of the build.
+ * Semihosting gives the program no console input.
  */
-internal fun compileAndRunRiscv(ir: String, directory: Path? = null): Pair<Int, String> {
+internal fun compileAndRunRiscv(ir: String, args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val dir = createTempDirectory("prog8-llvm-riscv")
     try {
         val source = dir.resolve("program.ll").also { it.writeText(ir) }
@@ -162,7 +155,7 @@ internal fun compileAndRunRiscv(ir: String, directory: Path? = null): Pair<Int, 
         val linked = execute(*link.toTypedArray())
         if (linked.first != 0)
             return linked
-        val command = checkNotNull(riscvProfile.runCommand).map { it.replace("{file}", program.toAbsolutePath().toString()) }
+        val command = LlvmTripleProfile.runCommandFor(riscvProfile.runCommand, program.toAbsolutePath().toString(), args)
         return execute(*command.toTypedArray(), directory = directory)
     } finally {
         dir.toFile().deleteRecursively()
