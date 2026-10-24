@@ -52,10 +52,19 @@ data class LlvmTripleProfile(
      * Writes the [startupSources] files that the link command builds along as `{startup}` next to [outputFile], and returns them.
      * They are read from the profile's directory, or from the compiler's resources for an embedded profile.
      */
-    fun writeStartupSources(outputFile: Path): List<Path> = startupSources.map { source ->
-        val file = outputFile.resolveSibling("${outputFile.fileName}.${Path(source).fileName}")
-        startupSourceStream(source).use { Files.copy(it, file, StandardCopyOption.REPLACE_EXISTING) }
-        file
+    fun writeStartupSources(outputFile: Path): List<Path> {
+        val written = mutableListOf<Path>()
+        try {
+            for (source in startupSources) {
+                val file = outputFile.resolveSibling("${outputFile.fileName}.${Path(source).fileName}")
+                startupSourceStream(source).use { Files.copy(it, file, StandardCopyOption.REPLACE_EXISTING) }
+                written.add(file)
+            }
+        } catch (x: Exception) {
+            written.forEach { Files.deleteIfExists(it) }
+            throw x
+        }
+        return written
     }
 
     private fun startupSourceStream(source: String): InputStream =

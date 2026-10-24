@@ -12,7 +12,10 @@ import prog8.code.target.LlvmToolLocator
 import prog8.code.target.LlvmTripleProfile
 import prog8.code.target.getCompilationTargetByName
 import java.nio.file.Path
+import java.nio.file.NoSuchFileException
 import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteExisting
+import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
@@ -104,6 +107,10 @@ class TestLlvmTripleProfile: FunSpec({
         }
         LlvmTripleProfile.load(profileFile).writeStartupSources(directory.resolve("startup-test.elf")).map { it.readText() } shouldBe
             listOf("; boot code", "/* console code */")
+        val loaded = LlvmTripleProfile.load(profileFile)
+        sources.resolve("console.c").deleteExisting()
+        shouldThrow<NoSuchFileException> { loaded.writeStartupSources(directory.resolve("failed-startup.elf")) }
+        withClue("the startup source written before the failing one is removed") { directory.resolve("failed-startup.elf.boot.S").exists() shouldBe false }
 
         fun rejected(name: String, properties: String): String =
             shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(sources.resolve("$name.properties").also { it.writeText(properties) }) }.message!!
