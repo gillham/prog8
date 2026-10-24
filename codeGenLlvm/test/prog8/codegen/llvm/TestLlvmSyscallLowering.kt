@@ -169,7 +169,8 @@ class TestLlvmSyscallLowering: FunSpec({
         lines shouldHave "  %end.1 = call ptr @.file.load(ptr %r1.1, ptr %r2.1, i1 false)"
         lines shouldHave "  %end.2 = call ptr @.file.load(ptr %r1.2, ptr %r2.2, i1 true)"
         lines shouldHave "  %raw.1 = icmp ne i8 %r5.1, 0"
-        lines shouldHave "  %saved.1 = call i8 @.file.save(i1 %raw.1, ptr %r1.3, ptr %r2.3, i16 %r6.1)"
+        lines shouldHave "  %cast.1 = zext i16 %r6.1 to i64"
+        lines shouldHave "  %saved.1 = call i8 @.file.save(i1 %raw.1, ptr %r1.3, ptr %r2.3, i64 %cast.1)"
         lines shouldHave "  %status.1 = call i32 @remove(ptr %r1.4)"
         lines shouldHave "  %status.2 = call i32 @rename(ptr %r1.5, ptr %r1.6)"
         lines shouldHave "  %cwd.1 = call ptr @getcwd(ptr @.sys.curdir.buf, i64 4096)"
@@ -200,7 +201,7 @@ class TestLlvmSyscallLowering: FunSpec({
         text shouldHave """@.file.mode.rb = private unnamed_addr constant [3 x i8] c"rb\00""""
         text shouldHave """@.file.mode.wb = private unnamed_addr constant [3 x i8] c"wb\00""""
         text shouldHave "@.sys.curdir.buf = internal global [4096 x i8] zeroinitializer"
-        for (helper in listOf("ptr @.file.load(ptr %name, ptr %address, i1 %raw)", "i8 @.file.save(i1 %raw, ptr %name, ptr %start, i16 %size)",
+        for (helper in listOf("ptr @.file.load(ptr %name, ptr %address, i1 %raw)", "i8 @.file.save(i1 %raw, ptr %name, ptr %start, i64 %size)",
                 "i8 @.file.open(ptr %name, ptr %mode, ptr %stream)", "void @.file.close(ptr %stream)", "i16 @.file.read.byte()",
                 "i8 @.file.write.byte(i8 %byte)", "i8 @.file.seek(i32 %position)", "i32 @.file.tell()", "i32 @.file.size()"))
             text shouldHave "define internal $helper {"
@@ -388,7 +389,7 @@ class TestLlvmSyscallLowering: FunSpec({
         val save = module.function(".file.save").lines()
         save shouldHave "  %address = ptrtoint ptr %start to i32"
         save shouldHave "  %lsb = and i32 %address, 255"
-        save shouldHave "  %written = call i32 @fwrite(ptr %start, i32 1, i32 %count, ptr %file)"
+        save shouldHave "  %written = call i32 @fwrite(ptr %start, i32 1, i32 %size, ptr %file)"
         for (helper in listOf(".file.tell", ".file.size", ".file.seek", ".file.load", ".file.save"))
             withClue(helper) { module.function(helper).lines().none { "i64" in it } shouldBe true }
     }

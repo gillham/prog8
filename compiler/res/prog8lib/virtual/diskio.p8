@@ -58,11 +58,11 @@ diskio {
         }}
     }
 
-    sub f_read(str bufferpointer, uword num_bytes) -> uword {
+    sub f_read(str bufferpointer, pointer num_bytes) -> pointer {
         ; -- read from the currently open file, up to the given number of bytes.
         ;    returns the actual number of bytes read.  (checks for End-of-file and error conditions)
-        uword actual
-        repeat num_bytes {
+        pointer actual
+        while actual != num_bytes {
             %ir {{
                 syscall 54 (): r99000.w
                 storem.w r99000.w,[$ff0000]
@@ -76,11 +76,10 @@ diskio {
         return actual
     }
 
-    sub f_read_all(str bufferpointer) -> uword {
+    sub f_read_all(str bufferpointer) -> pointer {
         ; -- read the full rest of the file, returns number of bytes read.
-        ;    It is assumed the file size is less than 64 K.
         ;    Usually you will just be using load() / load_raw() to read entire files!
-        uword actual
+        pointer actual
         repeat {
             %ir {{
                 syscall 54 (): r99000.w
@@ -152,10 +151,10 @@ diskio {
         }}
     }
 
-    sub f_write(str bufferpointer, uword num_bytes) -> bool {
+    sub f_write(str bufferpointer, pointer num_bytes) -> bool {
         ; -- write the given number of bytes to the currently open file
         ;    you can call this multiple times to append more data
-        repeat num_bytes {
+        while num_bytes != 0 {
             %ir {{
                 loadm.p r99000.p,[diskio.f_write.bufferpointer]
                 loadi.b r99100.b,[r99000.p]
@@ -165,6 +164,7 @@ diskio {
             if cx16.r0L==0
                 return false
             bufferpointer++
+            num_bytes--
         }
         return true
     }
@@ -223,25 +223,25 @@ diskio {
     }
 
 
-    sub save(str filenameptr, pointer start_address, uword savesize) -> bool {
+    sub save(str filenameptr, pointer start_address, pointer savesize) -> bool {
         %ir {{
             load.b r99100.b,#0.b
             loadm.l r99200.l,[diskio.save.filenameptr]
             loadm.l r99201.l,[diskio.save.start_address]
-            loadm.w r99002.w,[diskio.save.savesize]
-            syscall 42 (r99100.b, r99200.l, r99201.l, r99002.w): r99101.b
+            loadm.l r99202.l,[diskio.save.savesize]
+            syscall 42 (r99100.b, r99200.l, r99201.l, r99202.l): r99101.b
             returnr.b r99101.b
         }}
     }
 
     ; like save() but omits the 2 byte prg header.
-    sub save_raw(str filenameptr, pointer start_address, uword savesize) -> bool {
+    sub save_raw(str filenameptr, pointer start_address, pointer savesize) -> bool {
         %ir {{
             load.b r99100.b,#1.b
             loadm.l r99200.l,[diskio.save_raw.filenameptr]
             loadm.l r99201.l,[diskio.save_raw.start_address]
-            loadm.w r99002.w,[diskio.save_raw.savesize]
-            syscall 42 (r99100.b, r99200.l, r99201.l, r99002.w): r99101.b
+            loadm.l r99202.l,[diskio.save_raw.savesize]
+            syscall 42 (r99100.b, r99200.l, r99201.l, r99202.l): r99101.b
             returnr.b r99101.b
         }}
     }
@@ -252,24 +252,24 @@ diskio {
     ; If you specify a custom address_override, the first 2 bytes in the file are ignored
     ; and the rest is loaded at the given location in memory.
     ; Returns the end load address+1 if successful or 0 if a load error occurred.
-    sub load(str filenameptr, pointer address_override) -> uword {
+    sub load(str filenameptr, pointer address_override) -> pointer {
         %ir {{
             loadm.l r99200.l,[diskio.load.filenameptr]
             loadm.l r99201.l,[diskio.load.address_override]
-            syscall 40 (r99200.l, r99201.l): r99002.w
-            returnr.w r99002.w
+            syscall 40 (r99200.l, r99201.l): r99202.l
+            returnr.l r99202.l
         }}
     }
 
     ; Identical to load(), but DOES INCLUDE the first 2 bytes in the file.
     ; No program header is assumed in the file. Everything is loaded.
     ; See comments on load() for more details.
-    sub load_raw(str filenameptr, pointer start_address) -> uword {
+    sub load_raw(str filenameptr, pointer start_address) -> pointer {
         %ir {{
             loadm.l r99200.l,[diskio.load_raw.filenameptr]
             loadm.l r99201.l,[diskio.load_raw.start_address]
-            syscall 41 (r99200.l, r99201.l): r99002.w
-            returnr.w r99002.w
+            syscall 41 (r99200.l, r99201.l): r99202.l
+            returnr.l r99202.l
         }}
     }
 
@@ -332,7 +332,7 @@ diskio {
         return pos, size
     }
 
-    sub loadlib(str libnameptr, pointer libaddress) -> uword {
+    sub loadlib(str libnameptr, pointer libaddress) -> pointer {
         ; -- Load a prog8 compiled library binary blob at the given location into memory.
         ;    This is a wrapper around load_raw() for loading library binaries.
         return load_raw(libnameptr, libaddress)

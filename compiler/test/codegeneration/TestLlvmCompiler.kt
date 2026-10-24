@@ -4674,7 +4674,7 @@ main {
         read_part(100)
         txt.spc()
         void diskio.f_seek(0)
-        txt.print_uw(diskio.f_read_all(&line))
+        txt.print_l(diskio.f_read_all(&line) as long)
         txt.nl()
         diskio.f_close()
 
@@ -4711,10 +4711,10 @@ main {
     }
 
     sub read_part(uword size) {
-        uword count = diskio.f_read(&line, size)
+        pointer count = diskio.f_read(&line, size)
         line[lsb(count)] = 0
         txt.spc()
-        txt.print_uw(count)
+        txt.print_l(count as long)
         txt.print(" [")
         txt.print(&line)
         txt.chrout(']')

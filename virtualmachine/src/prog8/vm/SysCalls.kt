@@ -627,7 +627,7 @@ object SysCalls {
             Syscall.SAVE -> {
                 val (rawA, filenamePtr, startA, sizeA) = getArgValues(callspec.arguments, vm)
                 val raw = (rawA as UByte).toInt()
-                val size = (sizeA as UShort).toInt()
+                val size = sizeA as Int
                 val startPtr: UInt = (startA as Int).toUInt()
                 val data: ByteArray
                 if(raw==0) {

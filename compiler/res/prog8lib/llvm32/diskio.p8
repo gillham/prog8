@@ -30,12 +30,12 @@ diskio {
         }}
     }
 
-    sub f_read(pointer bufferpointer, uword num_bytes) -> uword {
+    sub f_read(pointer bufferpointer, pointer num_bytes) -> pointer {
         ; -- read from the currently open file, up to the given number of bytes.
         ;    returns the actual number of bytes read.  (checks for End-of-file and error conditions)
-        uword actual
+        pointer actual
         uword data
-        repeat num_bytes {
+        while actual != num_bytes {
             data = internal_read_byte()
             if data == 0
                 return actual
@@ -46,11 +46,10 @@ diskio {
         return actual
     }
 
-    sub f_read_all(pointer bufferpointer) -> uword {
+    sub f_read_all(pointer bufferpointer) -> pointer {
         ; -- read the full rest of the file, returns number of bytes read.
-        ;    It is assumed the file size is less than 64 K.
         ;    Usually you will just be using load() / load_raw() to read entire files!
-        uword actual
+        pointer actual
         uword data
         repeat {
             data = internal_read_byte()
@@ -142,13 +141,14 @@ diskio {
         }}
     }
 
-    sub f_write(pointer bufferpointer, uword num_bytes) -> bool {
+    sub f_write(pointer bufferpointer, pointer num_bytes) -> bool {
         ; -- write the given number of bytes to the currently open file
         ;    you can call this multiple times to append more data
-        repeat num_bytes {
+        while num_bytes != 0 {
             if not internal_write_byte(@(bufferpointer))
                 return false
             bufferpointer++
+            num_bytes--
         }
         return true
     }
@@ -208,27 +208,27 @@ diskio {
     }
 
 
-    sub save(str filenameptr, pointer start_address, uword savesize) -> bool {
+    sub save(str filenameptr, pointer start_address, pointer savesize) -> bool {
         ; -- save the memory block in a file, after a 2-byte prg header with the lower 16 bits of the start address.
         ;    An existing file is overwritten. Returns true if successful.
         %ir {{
             load.b r99100.b,#0.b
             loadm.p r99200.p,[diskio.save.filenameptr]
             loadm.p r99201.p,[diskio.save.start_address]
-            loadm.w r99000.w,[diskio.save.savesize]
-            syscall 42 (r99100.b, r99200.p, r99201.p, r99000.w): r99101.b
+            loadm.p r99202.p,[diskio.save.savesize]
+            syscall 42 (r99100.b, r99200.p, r99201.p, r99202.p): r99101.b
             returnr.b r99101.b
         }}
     }
 
     ; like save() but omits the 2 byte prg header.
-    sub save_raw(str filenameptr, pointer start_address, uword savesize) -> bool {
+    sub save_raw(str filenameptr, pointer start_address, pointer savesize) -> bool {
         %ir {{
             load.b r99100.b,#1.b
             loadm.p r99200.p,[diskio.save_raw.filenameptr]
             loadm.p r99201.p,[diskio.save_raw.start_address]
-            loadm.w r99000.w,[diskio.save_raw.savesize]
-            syscall 42 (r99100.b, r99200.p, r99201.p, r99000.w): r99101.b
+            loadm.p r99202.p,[diskio.save_raw.savesize]
+            syscall 42 (r99100.b, r99200.p, r99201.p, r99202.p): r99101.b
             returnr.b r99101.b
         }}
     }

@@ -902,6 +902,11 @@ and to seek in open files.
 Read the :source:`diskio source code <compiler/res/prog8lib/cx16/diskio.p8>`
 to see what's in there. (Note: slight variations for different compiler targets)
 
+On the virtual, llvm32 and llvm64 targets, ``load`` and ``load_raw`` (and ``loadlib`` on virtual) return the end address
+as a ``pointer``, and ``save`` and ``save_raw`` take the size as a ``pointer``. Likewise ``f_read`` and ``f_write`` take
+the byte count as a ``pointer``, and ``f_read`` and ``f_read_all`` return the number of bytes read as a ``pointer``. So all
+of these handle more than 64 KiB, but store their results in a ``pointer`` or ``long`` variable, not a ``uword``.
+
 .. note::
     Opening a file using f_read() or f_read_w() doesn't set the default i/o channels to that file.
     In fact, after calling routines in diskio, it resets the input and output channels to their

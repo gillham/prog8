@@ -242,12 +242,12 @@ private fun FunctionLowering.load(site: CallSite, number: Int, raw: Boolean) {
     result(site, derive("end", LlvmType.Ptr) { LlvmInstruction.Call(it, helper, args, LlvmType.Ptr) })
 }
 
-/** SAVE(raw byte, name, start, size word): 1 when the file is written, which gets a 2-byte header first unless raw, else 0. */
+/** SAVE(raw byte, name, start, size): 1 when the file is written, which gets a 2-byte header first unless raw, else 0. */
 private fun FunctionLowering.save(site: CallSite, number: Int) {
     val (raw, name, start, size) = arguments(site, number, 4)
     val helper = builder.helperFunction(".file.save") { builder.saveHelper() }
     val headerless = derive("raw", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.NE, it, convert(read(raw), LlvmType.I8), LlvmValue.IntConstant(0, LlvmType.I8)) }
-    val args = listOf(headerless, pointerValue(name), pointerValue(start), convert(read(size), LlvmType.I16))
+    val args = listOf(headerless, pointerValue(name), pointerValue(start), convert(readWide(size), builder.mapper.sizeT))
     result(site, derive("saved", LlvmType.I8) { LlvmInstruction.Call(it, helper, args, LlvmType.I8) })
 }
 
@@ -823,23 +823,22 @@ private fun LlvmFunctionBuilder.loadHelper(): LlvmFunction {
 }
 
 /**
- * `i8 (i1 raw, ptr name, ptr start, i16 size)`: 1 when the size bytes from the start address are written to the file, else 0.
+ * `i8 (i1 raw, ptr name, ptr start, size_t size)`: 1 when the size bytes from the start address are written to the file, else 0.
  * Unless raw, they come after a 2-byte header with the low 16 bits of the start address, as in the VM.
  */
 private fun LlvmFunctionBuilder.saveHelper(): LlvmFunction {
     val raw = LlvmValue.Local("raw", LlvmType.I1)
     val name = LlvmValue.Local("name", LlvmType.Ptr)
     val start = LlvmValue.Local("start", LlvmType.Ptr)
-    val size = LlvmValue.Local("size", LlvmType.I16)
+    val sizeT = mapper.sizeT
+    val size = LlvmValue.Local("size", sizeT)
     val file = LlvmValue.Local("file", LlvmType.Ptr)
     val failed = LlvmValue.Local("failed", LlvmType.I1)
-    val sizeT = mapper.sizeT
     val address = LlvmValue.Local("address", mapper.intPtr)
     val low = if (mapper.intPtr == LlvmType.I32) address else LlvmValue.Local("low", LlvmType.I32)
     val lsb = LlvmValue.Local("lsb", LlvmType.I32)
     val shifted = LlvmValue.Local("shifted", LlvmType.I32)
     val msb = LlvmValue.Local("msb", LlvmType.I32)
-    val count = LlvmValue.Local("count", sizeT)
     val written = LlvmValue.Local("written", sizeT)
     val complete = LlvmValue.Local("complete", LlvmType.I1)
     val closed = LlvmValue.Local("closed", LlvmType.I32)
@@ -863,9 +862,8 @@ private fun LlvmFunctionBuilder.saveHelper(): LlvmFunction {
             LlvmInstruction.Br("write")),
         // fclose() reports the errors of writing what was still buffered
         "write" to listOf(
-            LlvmInstruction.Cast(CastOperator.ZEXT, count, size, sizeT),
-            LlvmInstruction.Call(written, libc(Libc.FWRITE), listOf(start, LlvmValue.IntConstant(1, sizeT), count, file), sizeT),
-            LlvmInstruction.Icmp(IcmpCondition.EQ, complete, written, count),
+            LlvmInstruction.Call(written, libc(Libc.FWRITE), listOf(start, LlvmValue.IntConstant(1, sizeT), size, file), sizeT),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, complete, written, size),
             LlvmInstruction.Call(closed, libc(Libc.FCLOSE), listOf(file), LlvmType.I32),
             LlvmInstruction.Icmp(IcmpCondition.EQ, flushed, closed, i32(0)),
             LlvmInstruction.BinaryOp(BinaryOperator.AND, ok, complete, flushed),
