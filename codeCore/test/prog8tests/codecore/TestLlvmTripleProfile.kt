@@ -29,6 +29,7 @@ class TestLlvmTripleProfile: FunSpec({
 
     val embedded = mapOf(
         "wasm32-wasip1" to Triple("wasm32-unknown-wasip1", 32, 4),
+        "wasm32-unknown-emscripten" to Triple("wasm32-unknown-emscripten", 32, 4),
         "arm64-apple-macosx" to Triple("arm64-apple-macosx", 64, 8),
         "x86_64-apple-macosx" to Triple("x86_64-apple-macosx", 64, 8),
         "x86_64-unknown-linux-gnu" to Triple("x86_64-unknown-linux-gnu", 64, 8),

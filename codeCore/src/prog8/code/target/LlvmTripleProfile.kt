@@ -138,7 +138,11 @@ data class LlvmTripleProfile(
             }
             val errors = CompletableFuture.supplyAsync { process.errorStream.bufferedReader().use { it.readText() } }
             val output = CompletableFuture.supplyAsync { process.inputStream.bufferedReader().use { it.readText() } }
-            process.outputStream.bufferedWriter().use { it.write("long prog8_c_long_size = sizeof(long);\n") }
+            try {
+                process.outputStream.bufferedWriter().use { it.write("long prog8_c_long_size = sizeof(long);\n") }
+            } catch(_: IOException) {
+                // clang already exited, rejecting its arguments; its exit status below says why
+            }
             if(!process.waitFor(30, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
                 throw IllegalArgumentException("clang did not answer within 30 seconds")

@@ -268,6 +268,78 @@ class TestLlvmCompiler: FunSpec({
         buildAndRunWasm(matching).first shouldBe 5
     }
 
+    test("the llvm32 programs without 64-bit addresses compute the right results as Emscripten programs under node").config(enabledOrReasonIf = requiresEmscripten) {
+        val dir = outputDir.resolve("emscripten").createDirectories()
+        for ((name, source) in programs.filterKeys { it !in programsWith64BitAddresses && it !in notRunUnderEmscripten }) {
+            for (optimize in listOf(false, true)) {
+                val llFile = compiledLlFile(compileText(emscriptenTarget(), optimize, source, dir))
+                val (exitCode, output) = buildAndRunEmscripten(llFile)
+                withClue("$name optimize=$optimize: exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            }
+        }
+    }
+
+    for ((name, program) in outputPrograms.filterKeys { it !in notRunUnderEmscripten }) {
+        test("$name: gives the expected exit code and console output as an llvm32 Emscripten program under node, which leaves no files behind").config(enabledOrReasonIf = requiresEmscripten) {
+            for (optimize in listOf(false, true)) {
+                withClue("optimize=$optimize") {
+                    // a program prints the name of its working directory
+                    val workingDirectory = outputDir.resolve("emscripten-run").resolve("run")
+                    workingDirectory.toFile().deleteRecursively()
+                    workingDirectory.createDirectories()
+                    val llFile = compiledLlFile(compileText(emscriptenTarget(), optimize, program.source, outputDir.resolve("emscripten").createDirectories()))
+                    val (exitCode, output) = buildAndRunEmscripten(llFile, program.input, program.args, workingDirectory)
+                    withClue(output) { exitCode shouldBe program.exitCode }
+                    output shouldBe program.output
+                    withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
+                }
+            }
+        }
+    }
+
+    test("on llvm32 with Emscripten, call() and goto reach subroutines through void () entries under node, also those that return a value").config(enabledOrReasonIf = requiresEmscripten) {
+        val dir = outputDir.resolve("emscripten-indirect").createDirectories()
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val llFile = compiledLlFile(compileText(emscriptenTarget(), optimize, indirectCalls32.source, dir))
+                llFile.readLines().any { it.startsWith("define internal void @.indirect.main.answer()") } shouldBe true
+                val (exitCode, output) = buildAndRunEmscripten(llFile)
+                withClue(output) { exitCode shouldBe indirectCalls32.exitCode }
+                output shouldBe indirectCalls32.output
+            }
+        }
+    }
+
+    test("launchEmulator links an llvm32 Emscripten program into a single .js file next to the .ll file and runs it with node").config(enabledOrReasonIf = requiresEmscriptenOnThePath) {
+        val dir = outputDir.resolve("emscripten-launched").createDirectories()
+        val llFile = compiledLlFile(compileText(emscriptenTarget(), false, nativeHello.source, dir))
+        val js = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + ".js")
+        val printed = printedOnStdout { emscriptenTarget().launchEmulator(1, llFile, quiet = false) }
+        printed shouldContain "Running $js..."
+        printed shouldContain "Program exited with status 42"
+        js.exists() shouldBe true
+        llFile.resolveSibling("${js.fileName}.o").exists() shouldBe false
+        llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + ".wasm").exists() shouldBe false
+    }
+
+    test("an llvm32 Emscripten extsub whose signature doesn't match the C function fails to link, the matching one runs").config(enabledOrReasonIf = requiresEmscripten) {
+        fun strlenProgram(returnType: String) = """
+            %zeropage basicsafe
+            main {
+                extsub strlen(str s) -> $returnType
+                sub start() {
+                    sys.exit(lsb(strlen("hello")))
+                }
+            }"""
+        val dir = outputDir.resolve("emscripten-signatures").createDirectories()
+        val mismatched = compiledLlFile(compileText(emscriptenTarget(), false, strlenProgram("uquad"), dir))
+        val (status, output) = buildAndRunEmscripten(mismatched)
+        status shouldNotBe 0
+        output shouldContain "signature mismatch"
+        val matching = compiledLlFile(compileText(emscriptenTarget(), false, strlenProgram("long"), dir))
+        buildAndRunEmscripten(matching).first shouldBe 5
+    }
+
     test("the llvm32 programs without 64-bit addresses compute the right results as bare metal ARM programs on qemu").config(enabledOrReasonIf = requiresArm) {
         val dir = outputDir.resolve("arm").createDirectories()
         for ((name, source) in programs.filterKeys { it !in programsWith64BitAddresses && it !in notRunOnArm }) {
@@ -1025,6 +1097,54 @@ private fun buildAndRunRiscv(llFile: Path, directory: Path? = null): Pair<Int, S
     return execute(*command.toTypedArray(), directory = directory ?: llFile.parent)
 }
 
+private val emscriptenProfile = LlvmTripleProfile.resolve("wasm32-unknown-emscripten")
+
+private fun emscriptenTarget() = LlvmTarget(4, emscriptenProfile)
+
+private val emcc: Path? = System.getenv("EMCC")?.let { try { Path(it) } catch (_: InvalidPathException) { null } }
+    ?: System.getenv("PATH").orEmpty().split(File.pathSeparator)
+        .mapNotNull { try { Path(it).resolve("emcc") } catch (_: InvalidPathException) { null } }.firstOrNull { Files.isExecutable(it) }
+
+private val requiresEmscripten: (TestCase) -> Enabled = {
+    fun onPath(tool: String) = System.getenv("PATH").orEmpty().split(File.pathSeparator)
+        .any { try { Files.isExecutable(Path(it).resolve(tool)) } catch (_: InvalidPathException) { false } }
+    when {
+        llvmBin == null -> Enabled.disabled("llvm-as and clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        emcc == null -> Enabled.disabled("emcc not found in EMCC or on the PATH")
+        !onPath("node") -> Enabled.disabled("node not found on the PATH")
+        else -> Enabled.enabled
+    }
+}
+
+// launchEmulator runs the profile's own link command, which finds emcc only through EMCC or the PATH
+private val requiresEmscriptenOnThePath: (TestCase) -> Enabled = {
+    val found = System.getenv("EMCC") != null || System.getenv("PATH").orEmpty().split(File.pathSeparator)
+        .any { try { Files.isExecutable(Path(it).resolve("emcc")) } catch (_: InvalidPathException) { false } }
+    if (!found) Enabled.disabled("emcc is not in EMCC or on the PATH") else requiresEmscripten(it)
+}
+
+/**
+ * Builds the .ll file into a single .js file with clang and the link command of the Emscripten profile, and runs it with node,
+ * giving it [input] on stdin and the command line [args], in the working [directory] (default: next to the .ll file).
+ */
+private fun buildAndRunEmscripten(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
+    val js = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + emscriptenProfile.outputExtension)
+    val objectFile = js.resolveSibling("${js.fileName}.o")
+    val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *emscriptenProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
+        llFile.toString(), "-o", objectFile.toString())
+    if (compiled.first != 0)
+        return compiled
+    val link = listOf(checkNotNull(emcc).toString()) + checkNotNull(emscriptenProfile.linkCommand).drop(1)
+        .map { it.replace("{object}", objectFile.toString()).replace("{file}", js.toString()) }
+    val linked = execute(*link.toTypedArray())
+    Files.deleteIfExists(objectFile)
+    if (linked.first != 0)
+        return linked
+    val stdin = js.resolveSibling("${js.fileName}.stdin").also { it.writeText(input) }
+    val command = checkNotNull(emscriptenProfile.runCommand).map { it.replace("{file}", js.toAbsolutePath().toString()) } + args
+    return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent)
+}
+
 private fun execute(vararg command: String, stdin: Path? = null, directory: Path? = null): Pair<Int, String> {
     val builder = ProcessBuilder(*command).redirectErrorStream(true)
     stdin?.let { builder.redirectInput(it.toFile()) }
@@ -1083,6 +1203,11 @@ private val programsWith64BitAddresses = setOf(
 // and extsubs declared with the 64-bit size_t of LP64 hosts don't link against wasi-libc
 private val notRunUnderWasmtime = setOf(
     "diskio directories, renaming and deleting",
+    "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
+)
+
+// programs that don't run as they are with Emscripten: extsubs declared with the 64-bit size_t of LP64 hosts don't link
+private val notRunUnderEmscripten = setOf(
     "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
 )
 

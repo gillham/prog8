@@ -190,6 +190,14 @@ system interface. Building it needs clang with ``wasm-ld`` (from lld) and the wa
 ``wasmtime``, which gives it access to the current directory only. WASI programs start in the directory ``/``
 of that sandbox, so the current directory has no host path there.
 
+With ``-triple wasm32-unknown-emscripten``, an ``llvm32`` program becomes a WebAssembly program for Emscripten instead.
+Building it needs clang and `Emscripten <https://emscripten.org/>`_, whose ``emcc`` is taken from the ``EMCC`` environment
+variable, or else from the ``PATH``; clang compiles the program, and ``emcc`` links it into a single ``.js`` file with the
+WebAssembly code inside. ``-emu`` runs that with ``node``. Unlike WASI, the program works with the host's own file system,
+relative to the current directory, including creating, changing to and removing directories and renaming files;
+it reads console input and gives back its exit status, and run as ``node program.js <arguments>`` it gets those arguments.
+Emscripten's own clang and LLVM version don't matter, because ``emcc`` only links the object file.
+
 With ``-triple armv7a-none-eabihf``, an ``llvm32`` program becomes a bare metal program for a 32-bit ARM Cortex-A15
 with hardware floating point, which reaches the host through *semihosting*. Building it needs clang and the
 `Arm GNU Toolchain <https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads>`_ for ``arm-none-eabi``
@@ -231,7 +239,7 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
 
 1. the given file path, when that file exists
 2. ``~/.prog8/llvm/<name>.properties``
-3. a profile built into the compiler: ``wasm32-wasip1``, ``armv7a-none-eabihf``, ``riscv32-unknown-elf``,
+3. a profile built into the compiler: ``wasm32-wasip1``, ``wasm32-unknown-emscripten``, ``armv7a-none-eabihf``, ``riscv32-unknown-elf``,
    ``arm64-apple-macosx``, ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``,
    ``riscv64-unknown-linux-gnu`` and ``armv7-unknown-linux-gnueabihf``
 4. any other triple that clang knows, such as ``aarch64-linux-musl`` or ``i686-unknown-linux-gnu``: the compiler asks

@@ -1666,10 +1666,10 @@ and doesn't extend arguments or return values for you. A byte or word argument o
 declares as an ``int`` should be written as a ``long``, because that is also 32 bits. Your declaration must match the C function.
 On llvm32 the C ``long`` and ``size_t`` types are 32 bits as well, so they are also written as a ``long``, and a pointer has 4 bytes.
 On llvm64 they are 64 bits, so they are written as a ``uquad`` or ``quad``.
-On WebAssembly, with the built-in profile, a declaration that doesn't match the C function fails the build; on the other targets it silently gives wrong values.
+On WebAssembly, with the built-in profiles, a declaration that doesn't match the C function fails the build; on the other targets it silently gives wrong values.
 
 Which C library you get depends on the triple profile (see :ref:`llvm_triples`): the host's own C library on llvm64,
-wasi-libc on ``wasm32-wasip1``, and newlib on the bare-metal ARM and RISC-V profiles, where some functions such as
+wasi-libc on ``wasm32-wasip1``, Emscripten's C library on ``wasm32-unknown-emscripten``, and newlib on the bare-metal ARM and RISC-V profiles, where some functions such as
 ``mkdir`` and ``rename`` don't work. To link another library, pass its ``-L`` and ``-l`` options with ``-Xlink``, for example
 ``-Xlink -L/opt/mylib -Xlink -lmylib``, or use your own triple profile that adds them to its ``clang_args``, or to its
 ``link_command`` if it has one. The library must be built for that triple.
