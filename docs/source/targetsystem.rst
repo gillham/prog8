@@ -272,6 +272,7 @@ These are the keys of a profile; an unknown key is an error:
     A command that links the executable, for platforms that clang can't link for itself, such as bare metal ones
     with the C library of a GCC toolchain. clang then only compiles the program into an object file, which the command
     gets as ``{object}``, and it writes the executable to ``{file}``. Environment variables work as in ``clang_args``.
+    The libraries of the program's ``%link`` directives go at the end of the command, or in the place of a ``{libs}`` word.
     Without it, clang builds the executable in one go.
 ``startup_source``
     A source file, such as boot code in assembly, that the link command builds along with the program, as ``{startup}``.
@@ -294,7 +295,7 @@ These are the keys of a profile; an unknown key is an error:
 
 The ``-Xcompile`` and ``-Xlink`` options add arguments to a single build without a profile of your own:
 ``-Xcompile`` arguments come after ``clang_args``, ``-Xlink`` arguments at the end of the ``link_command``, or at the
-end of the linking clang command when the profile has none. The ``.ll`` check with clang, when llvm-as isn't installed,
+end of the linking clang command when the profile has none, but before the libraries of the ``%link`` directives. The ``.ll`` check with clang, when llvm-as isn't installed,
 doesn't get them.
 
 For example, the built-in ``wasm32-wasip1`` profile::

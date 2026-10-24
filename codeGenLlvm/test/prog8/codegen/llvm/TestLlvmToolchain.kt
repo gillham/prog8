@@ -93,6 +93,15 @@ class TestLlvmToolchain: FunSpec({
             listOf("gcc", "boot.S", "p.o", "-lm", "-o", "p.elf", "-L/a b", "-lfoo")
     }
 
+    test("the %link libraries go after the -Xlink arguments, or in the place of a {libs} word of the link command") {
+        LlvmToolchain.linkCommandFor(listOf("gcc", "{object}", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), null, listOf("-L/a"), listOf("-lfoo", "/b/x.a")) shouldBe
+            listOf("gcc", "p.o", "-o", "p.elf", "-L/a", "-lfoo", "/b/x.a")
+        LlvmToolchain.linkCommandFor(listOf("gcc", "{object}", "{libs}", "-lc", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), null, listOf("-L/a"), listOf("-lfoo", "/b/x.a")) shouldBe
+            listOf("gcc", "p.o", "-lfoo", "/b/x.a", "-lc", "-o", "p.elf", "-L/a")
+        LlvmToolchain.linkCommandFor(listOf("gcc", "{object}", "{libs}", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), null, emptyList()) shouldBe
+            listOf("gcc", "p.o", "-o", "p.elf")
+    }
+
     test("the -Xlink arguments reach the link command of the profile unchanged, after its own arguments")
         .config(enabled = LlvmToolchain.clang() != null && !System.getProperty("os.name").startsWith("Windows")) {
         val target = LlvmTarget()

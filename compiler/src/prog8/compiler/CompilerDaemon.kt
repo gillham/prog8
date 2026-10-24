@@ -173,7 +173,8 @@ internal class CompilerDaemon(private val socketPath: Path) {
                 stderr = stderr,
                 t_ms = t_ms,
                 outputFiles = outputFiles,
-                importedFiles = importedFiles
+                importedFiles = importedFiles,
+                linkLibraries = result?.compilationOptions?.linkLibraries.orEmpty()
             )
 
             val respJson = DaemonProtocol.encodeResponse(resp)

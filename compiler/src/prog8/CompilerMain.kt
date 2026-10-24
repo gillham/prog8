@@ -431,7 +431,7 @@ private fun compileMain(args: Array<String>): Boolean {
                             if(!launchVirtualMachine(target, programFile, quietAll, vmTrace, presenter))
                                 return false
                         } else if (target is LlvmTarget) {
-                            target.launchEmulator(1, programFile, quietAll, programArgs)
+                            target.launchEmulator(1, programFile, quietAll, programArgs, response.linkLibraries)
                         } else {
                             target.launchEmulator(1, programFile, quietAll)
                         }
@@ -522,7 +522,7 @@ private fun compileMain(args: Array<String>): Boolean {
                 } else {
                     val target = compilationResult.compilationOptions.compTarget
                     if(target is LlvmTarget)
-                        target.launchEmulator(1, outs.programFile, quietAll, programArgs)
+                        target.launchEmulator(1, outs.programFile, quietAll, programArgs, compilationResult.compilationOptions.linkLibraries)
                     else
                         target.launchEmulator(1, outs.programFile, quietAll)
                 }

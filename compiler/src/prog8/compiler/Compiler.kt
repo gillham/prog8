@@ -627,8 +627,30 @@ internal fun determineCompilationOptions(program: Program, compTarget: ICompilat
         .romable(romable)
         .compilerVersion(VERSION)
         .build()
-        .apply { this.privateSymbols = privateSymbols }
+        .apply {
+            this.privateSymbols = privateSymbols
+            this.linkLibraries = linkLibraries(program)
+        }
 }
+
+// a repeated library keeps its last place, after those of the modules that import it, as a one pass linker such as GNU ld needs
+private fun linkLibraries(program: Program): List<String> =
+    program.modules.flatMap { module ->
+        module.statements.filterIsInstance<Directive>().filter { it.directive == "%link" }.flatMap { directive ->
+            directive.args.mapNotNull { arg -> arg.string?.let { linkLibraryArgument(it, module) } }
+        }
+    }.asReversed().distinct().asReversed()
+
+/** The linker argument for the %link value [value] of [module]: a file path made absolute, or else -l<value>. */
+internal fun linkLibraryArgument(value: String, module: Module): String {
+    if (!isLinkLibraryFile(value))
+        return "-l$value"
+    val file = if (Path(value).isRegularFile() || !module.source.isFromFilesystem) Path(value) else Path(module.source.origin).resolveSibling(value)
+    return file.absolute().normalize().toString()
+}
+
+internal fun isLinkLibraryFile(value: String) =
+    '/' in value || '\\' in value || listOf(".a", ".o", ".so", ".dylib").any { value.endsWith(it) }
 
 private fun processAst(program: Program, errors: IErrorReporter, compilerOptions: CompilationOptions) {
     program.checkVarDeclsOnOwnLine(errors)

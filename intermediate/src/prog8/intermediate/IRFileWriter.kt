@@ -294,6 +294,7 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
             target.extraCompileArgs.forEach { emitLine("llvmCompileArg=${escapeOptionValue(it)}") }
             target.extraLinkArgs.forEach { emitLine("llvmLinkArg=${escapeOptionValue(it)}") }
         }
+        irProgram.options.linkLibraries.forEach { emitLine("linkLibrary=${escapeOptionValue(it)}") }
         emitLine("output=${irProgram.options.output}")
         emitLine("launcher=${irProgram.options.launcher}")
         emitLine("zeropage=${irProgram.options.zeropage}")

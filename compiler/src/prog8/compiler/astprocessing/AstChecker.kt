@@ -7,9 +7,12 @@ import prog8.ast.walk.IAstVisitor
 import prog8.code.core.*
 import prog8.code.target.*
 import prog8.compiler.builtinFunctionReturnTypes
+import prog8.compiler.isLinkLibraryFile
+import prog8.compiler.linkLibraryArgument
 import java.io.CharConversionException
 import java.io.File
 import kotlin.io.path.Path
+import kotlin.io.path.isRegularFile
 import kotlin.math.floor
 
 /**
@@ -1627,6 +1630,29 @@ internal class AstChecker(private val program: Program,
                     err("verafx option is only valid on cx16 target")
                 if(directive.args.any { it.string=="amiga_chipram" } && options.compTarget.name != Amiga500Target.NAME && options.compTarget.name != Amiga1200Target.NAME)
                     err("amiga_chipram option is only valid on amiga targets")
+            }
+            "%link" -> {
+                if(directive.parent !is Module)
+                    err("this directive may only occur at module level")
+                if(!options.compTarget.cpu.isLlvm)
+                    err("%link is only available on the llvm32 and llvm64 targets")
+                if(directive.args.isEmpty())
+                    err("invalid link directive, expected one or more library names or files: \"name\" [, \"name\"...]")
+                for(arg in directive.args) {
+                    val value = arg.string
+                    if(value==null)
+                        errors.err("a link directive argument must be a library name or file", arg.position)
+                    else if(value.isEmpty())
+                        errors.err("a library name can't be empty", arg.position)
+                    else if(isLinkLibraryFile(value)) {
+                        if(directive.parent is Module && !Path(linkLibraryArgument(value, directive.parent as Module)).isRegularFile())
+                            errors.err("library file not found: $value", arg.position)
+                    }
+                    else if(value.startsWith('-'))
+                        errors.err("a library name can't start with '-'; pass linker options with -Xlink instead", arg.position)
+                    else if(value.any { it.isWhitespace() })
+                        errors.err("a library name can't contain whitespace", arg.position)
+                }
             }
             "%encoding" -> {
                 if(directive.parent !is Module)

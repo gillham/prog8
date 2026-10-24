@@ -143,6 +143,7 @@ class IRFileReader {
         var llvmTriple: String? = null
         val llvmCompileArgs = mutableListOf<String>()
         val llvmLinkArgs = mutableListOf<String>()
+        val linkLibraries = mutableListOf<String>()
         var outputType = OutputType.PRG
         var launcher = CbmPrgLauncherType.NONE
         var zeropage = ZeropageType.FULL
@@ -164,6 +165,7 @@ class IRFileReader {
                     "llvmTriple" -> llvmTriple = value
                     "llvmCompileArg" -> llvmCompileArgs.add(unescapeOptionValue(value))
                     "llvmLinkArg" -> llvmLinkArgs.add(unescapeOptionValue(value))
+                    "linkLibrary" -> linkLibraries.add(unescapeOptionValue(value))
                     "output" -> outputType = OutputType.valueOf(value)
                     "launcher" -> launcher = CbmPrgLauncherType.valueOf(value)
                     "zeropage" -> zeropage = ZeropageType.valueOf(value)
@@ -209,6 +211,7 @@ class IRFileReader {
             .optimize(optimize)
             .noSysInit(noSysInit)
             .build()
+            .apply { this.linkLibraries = linkLibraries }
     }
 
     private fun parseAsmSymbols(reader: XMLEventReader): Map<String, String> {

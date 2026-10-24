@@ -83,15 +83,15 @@ class LlvmTarget(
     override fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean) =
         launchEmulator(selectedEmulator, programFile, quiet, emptyList())
 
-    /** As [launchEmulator], giving the program the command line arguments [programArgs]. */
-    fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean, programArgs: List<String>) {
+    /** As [launchEmulator], giving the program the command line arguments [programArgs]; a build links in the [linkLibraries] of its %link directives. */
+    fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean, programArgs: List<String>, linkLibraries: List<String> = emptyList()) {
         if (selectedEmulator != 1) {
             System.err.println("The $name target has no alternative emulator; -emu builds the program into an executable for this host and runs it.")
             return
         }
         // the LLVM code generator module depends on this one, so its runner can only be loaded via reflection
         val runner = Class.forName("prog8.codegen.llvm.LlvmProgramRunner").getDeclaredConstructor().newInstance() as ILlvmProgramRunner
-        val status = runner.buildAndRun(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, programArgs) ?: return
+        val status = runner.buildAndRun(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, programArgs, linkLibraries) ?: return
         if (!quiet)
             println("\nProgram exited with status $status")
     }
@@ -110,7 +110,8 @@ class LlvmTarget(
  */
 interface ILlvmProgramRunner {
     fun buildAndRun(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile? = null,
-                    extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList(), programArgs: List<String> = emptyList()): Int?
+                    extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList(), programArgs: List<String> = emptyList(),
+                    linkLibraries: List<String> = emptyList()): Int?
 }
 
 private class LlvmZeropage(options: CompilationOptions): Zeropage(options) {

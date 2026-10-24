@@ -458,6 +458,69 @@ class TestLlvmCompiler: FunSpec({
         launchesWithArguments(riscvTarget(), outputDir.resolve("arguments-riscv"))
     }
 
+    test("%link libraries of all modules reach the link of -o and of launchEmulator, once each, with files relative to their module")
+        .config(enabledOrReasonIf = requiresNativeLlvm) {
+        val dir = outputDir.resolve("link-directive").createDirectories()
+        val libraryDir = dir.resolve("lib dir").createDirectories()
+        val source = libraryDir.resolve("tripler.c").also { it.writeText("int p8test_triple(int x) { return x * 3; }\n") }
+        val objectFile = libraryDir.resolve("tripler.o")
+        withClue("compiling the library") {
+            execute(checkNotNull(llvmBin).resolve("clang").toString(), "-c", source.toString(), "-o", objectFile.toString()).first shouldBe 0
+        }
+        dir.resolve("tripler.p8").writeText("""
+            %link "lib dir/tripler.o", "m"
+            tripler {
+                extsub p8test_triple(word x) -> word
+            }""")
+        val program = """
+            %import tripler
+            %zeropage basicsafe
+            %link "m"
+            main {
+                sub start() {
+                    word @shared x = 14
+                    sys.exit(lsb(tripler.p8test_triple(x)))
+                }
+            }"""
+        val result = compileText(LlvmTarget(), false, program, dir).shouldNotBeNull()
+        result.compilationOptions.linkLibraries shouldBe listOf(objectFile.toRealPath().toString(), "-lm")
+        val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        withClue("kept in the .p8ir file") { IRFileReader().read(irFile).options.linkLibraries shouldBe result.compilationOptions.linkLibraries }
+        val llFile = compiledLlFile(result)
+        withClue("the -emu build gets the libraries from the compilation") {
+            printedOnStdout { LlvmTarget().launchEmulator(1, llFile, quiet = false, emptyList(), result.compilationOptions.linkLibraries) } shouldContain
+                "Program exited with status 42"
+        }
+        val executable = dir.resolve("linked")
+        compileText(LlvmTarget(), false, program, dir, outputFile = executable).shouldNotBeNull()
+        execute(executable.toString()).first shouldBe 42
+    }
+
+    test("%link takes library names and existing files, at module level, on the llvm targets only") {
+        val dir = outputDir.resolve("link-errors").createDirectories()
+        val src = """
+            %link "nosuchfile.a", "-Wl,-x", "a b", ""
+            %link
+            main {
+                %link "m"
+                sub start() {
+                }
+            }"""
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(LlvmTarget(), false, src, dir, errors = errors, writeAssembly = false) shouldBe null
+        errors.errors.map { it.substringAfter(": ") } shouldBe listOf(
+            "library file not found: nosuchfile.a",
+            "a library name can't start with '-'; pass linker options with -Xlink instead",
+            "a library name can't contain whitespace",
+            "a library name can't be empty",
+            "invalid link directive, expected one or more library names or files: \"name\" [, \"name\"...]",
+            "this directive may only occur at module level")
+
+        val vmErrors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(VMTarget(), false, "%link \"m\"\nmain {\n sub start() {\n }\n}", dir, errors = vmErrors, writeAssembly = false) shouldBe null
+        vmErrors.errors.single() shouldContain "%link is only available on the llvm32 and llvm64 targets"
+    }
+
     test("-o without .ll builds a native executable with the LLVM IR next to it").config(enabledOrReasonIf = requiresNativeLlvm) {
         val dir = outputDir.resolve("named").createDirectories()
         val executable = dir.resolve("hello-native")

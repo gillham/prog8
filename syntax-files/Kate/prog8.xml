@@ -67,6 +67,7 @@
       <item>%ir</item>
       <item>%jmptable</item>
       <item>%launcher</item>
+      <item>%link</item>
       <item>%memtop</item>
       <item>%option</item>
       <item>%output</item>

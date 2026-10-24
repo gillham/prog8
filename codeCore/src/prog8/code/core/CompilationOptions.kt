@@ -37,7 +37,9 @@ class CompilationOptions(val output: OutputType,
                          var profilingInstrumentation: Boolean = false,
                          var symbolDefs: Map<String, String> = emptyMap(),
                          var privateSymbols: Boolean = false,
-                         var outputFile: Path? = null
+                         var outputFile: Path? = null,
+                         // the linker arguments for the %link directives of the llvm targets: -l<name> options and absolute file paths
+                         var linkLibraries: List<String> = emptyList()
 ) {
     init {
         compTarget.initializeMemoryAreas(this)

@@ -466,6 +466,21 @@ Directives
         jmp  lib.routine2       ; jump table second entry
         ...
 
+.. index:: pair: Directives; %link
+.. data:: %link "<library>" [, "<library>" ...]
+
+    Level: module.
+    Only for the llvm32 and llvm64 targets: links the named C libraries into the program, so that the module can
+    call their functions as an ``extsub`` without an address (see :ref:`llvm_triples`).
+    A plain name such as ``"m"`` or ``"SDL2"`` becomes the linker option ``-lm`` or ``-lSDL2``.
+    A value with a ``/`` in it, or that ends in ``.a``, ``.o``, ``.so`` or ``.dylib``, is a library or object file instead,
+    looked up relative to the current directory, and else relative to the module's source file.
+    The directive can occur in any module and more than once; the libraries of all modules in the program are linked,
+    each one once. A library comes after those of the modules that import it, as linkers like GNU ld need.
+    Linker options such as ``-L`` search directories can't be given here; pass those with ``-Xlink``.
+    The library must be built for the target triple.
+
+
 .. index:: pair: Directives; %launcher
 .. data:: %launcher <type>
 
@@ -1670,7 +1685,8 @@ On WebAssembly, with the built-in profiles, a declaration that doesn't match the
 
 Which C library you get depends on the triple profile (see :ref:`llvm_triples`): the host's own C library on llvm64,
 wasi-libc on ``wasm32-wasip1``, Emscripten's C library on ``wasm32-unknown-emscripten``, and newlib on the bare-metal ARM and RISC-V profiles, where some functions such as
-``mkdir`` and ``rename`` don't work. To link another library, pass its ``-L`` and ``-l`` options with ``-Xlink``, for example
+``mkdir`` and ``rename`` don't work. To link another library, name it with a ``%link`` directive in the module that uses it,
+for example ``%link "mylib"``, or pass its ``-L`` and ``-l`` options with ``-Xlink``, for example
 ``-Xlink -L/opt/mylib -Xlink -lmylib``, or use your own triple profile that adds them to its ``clang_args``, or to its
 ``link_command`` if it has one. The library must be built for that triple.
 

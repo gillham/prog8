@@ -45,7 +45,8 @@ internal data class DaemonResponse(
     val stderr: String,
     val t_ms: Long,
     val outputFiles: List<String>,
-    val importedFiles: List<String>
+    val importedFiles: List<String>,
+    val linkLibraries: List<String> = emptyList()
 )
 
 
@@ -102,6 +103,7 @@ internal object DaemonProtocol {
         append(prop("t_ms", resp.t_ms))
         append(prop("outputFiles", resp.outputFiles))
         append(prop("importedFiles", resp.importedFiles))
+        append(prop("linkLibraries", resp.linkLibraries))
         append("null")
         setLength(length - 5)
         append('}')
@@ -111,6 +113,7 @@ internal object DaemonProtocol {
         val map = parseJsonObject(json)
         val outputFiles = (map["outputFiles"] as? List<*>)?.map { it as String } ?: emptyList()
         val importedFiles = (map["importedFiles"] as? List<*>)?.map { it as String } ?: emptyList()
+        val linkLibraries = (map["linkLibraries"] as? List<*>)?.map { it as String } ?: emptyList()
         return DaemonResponse(
             ok = map["ok"] as Boolean,
             versionError = map["versionError"] as? String,
@@ -118,7 +121,8 @@ internal object DaemonProtocol {
             stderr = map["stderr"] as String,
             t_ms = (map["t_ms"] as Number).toLong(),
             outputFiles = outputFiles,
-            importedFiles = importedFiles
+            importedFiles = importedFiles,
+            linkLibraries = linkLibraries
         )
     }
 

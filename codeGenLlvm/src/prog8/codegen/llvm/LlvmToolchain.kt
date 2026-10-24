@@ -25,11 +25,13 @@ internal object LlvmToolchain {
     /**
      * Builds the executable [outputFile] from [llFile] with clang, passing the clang arguments of [profile] first; with a
      * link command in [profile], clang only compiles an object file that the command links, along with the profile's startup source if it has one.
-     * [extraCompileArgs] go last on the clang command, [extraLinkArgs] last on the command that links, so libraries come after the object file.
+     * [extraCompileArgs] go last on the clang command, [extraLinkArgs] and then [linkLibraries] last on the command that links, so libraries
+     * come after the object file; a link command can place the [linkLibraries] elsewhere with a `{libs}` word.
      * Messages and any failure are reported on System.err.
      */
     fun compileToExecutable(llFile: Path, outputFile: Path, profile: LlvmTripleProfile? = null, optLevel: String = "-O2",
-                            extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList()): Boolean {
+                            extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList(),
+                            linkLibraries: List<String> = emptyList()): Boolean {
         val clang = clang()
         if (clang == null) {
             System.err.println("Can't build '$outputFile': clang was not found on the PATH or in $homebrewLlvmBin. " +
@@ -44,7 +46,7 @@ internal object LlvmToolchain {
         }
         val compileCommand = compileCommand(clang.toString(), profileArgs, optLevel, extraCompileArgs)
         if (linkCommand == null)
-            return runTool(clangLinkCommand(compileCommand, llFile, outputFile, extraLinkArgs), "clang", outputFile) ||
+            return runTool(clangLinkCommand(compileCommand, llFile, outputFile, extraLinkArgs + linkLibraries), "clang", outputFile) ||
                 failed("clang couldn't build '$outputFile' from '$llFile'")
         val objectFile = outputFile.resolveSibling("${outputFile.fileName}.o")
         var startupFile: Path? = null
@@ -56,7 +58,7 @@ internal object LlvmToolchain {
             } catch (x: IOException) {
                 return failed("Can't build '$outputFile': the startup source of the llvm triple profile couldn't be written: ${x.message}")
             }
-            val link = linkCommandFor(linkCommand, objectFile, outputFile, startupFile, extraLinkArgs)
+            val link = linkCommandFor(linkCommand, objectFile, outputFile, startupFile, extraLinkArgs, linkLibraries)
             return runTool(link, link.first(), outputFile) || failed("the link command couldn't build '$outputFile' from '$objectFile'")
         } finally {
             Files.deleteIfExists(objectFile)
@@ -70,10 +72,16 @@ internal object LlvmToolchain {
     internal fun clangLinkCommand(compileCommand: List<String>, llFile: Path, outputFile: Path, extraLinkArgs: List<String>): List<String> =
         compileCommand + listOf(llFile.toString(), "-o", outputFile.toString()) + extraLinkArgs
 
-    internal fun linkCommandFor(template: List<String>, objectFile: Path, outputFile: Path, startupFile: Path?, extraLinkArgs: List<String>): List<String> =
-        template.map {
-            it.replace("{object}", objectFile.toString()).replace("{file}", outputFile.toString()).replace("{startup}", startupFile.toString())
+    internal fun linkCommandFor(template: List<String>, objectFile: Path, outputFile: Path, startupFile: Path?, extraLinkArgs: List<String>,
+                                linkLibraries: List<String> = emptyList()): List<String> {
+        val command = template.flatMap {
+            if (it == LIBS) linkLibraries
+            else listOf(it.replace("{object}", objectFile.toString()).replace("{file}", outputFile.toString()).replace("{startup}", startupFile.toString()))
         } + extraLinkArgs
+        return if (LIBS in template) command else command + linkLibraries
+    }
+
+    private const val LIBS = "{libs}"
 
     private fun failed(message: String): Boolean {
         System.err.println(message)
@@ -143,8 +151,8 @@ internal object LlvmToolchain {
  */
 class LlvmProgramRunner : ILlvmProgramRunner {
     override fun buildAndRun(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile?,
-                             extraCompileArgs: List<String>, extraLinkArgs: List<String>, programArgs: List<String>): Int? {
-        val executable = executableOf(programFile, quiet, profile, extraCompileArgs, extraLinkArgs) ?: return null
+                             extraCompileArgs: List<String>, extraLinkArgs: List<String>, programArgs: List<String>, linkLibraries: List<String>): Int? {
+        val executable = executableOf(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, linkLibraries) ?: return null
         return try {
             LlvmToolchain.runExecutable(executable, quiet, profile?.runCommand, profile?.runTimeoutSeconds, programArgs)
         } catch (x: IOException) {
@@ -158,7 +166,7 @@ class LlvmProgramRunner : ILlvmProgramRunner {
 
     /** An executable named with -o runs as it is; a missing one, or the one of a .ll file, is built from the LLVM IR first. */
     private fun executableOf(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile?,
-                             extraCompileArgs: List<String>, extraLinkArgs: List<String>): Path? {
+                             extraCompileArgs: List<String>, extraLinkArgs: List<String>, linkLibraries: List<String>): Path? {
         val irFile = LlvmToolchain.irFileFor(programFile)
         if (programFile != irFile && programFile.exists())
             return programFile
@@ -169,6 +177,6 @@ class LlvmProgramRunner : ILlvmProgramRunner {
         val executable = if (programFile == irFile) LlvmToolchain.executableFor(irFile, profile?.outputExtension.orEmpty()) else programFile
         if (!quiet)
             println("Building $executable from $irFile with clang...")
-        return if (LlvmToolchain.compileToExecutable(irFile, executable, profile, extraCompileArgs = extraCompileArgs, extraLinkArgs = extraLinkArgs)) executable else null
+        return if (LlvmToolchain.compileToExecutable(irFile, executable, profile, extraCompileArgs = extraCompileArgs, extraLinkArgs = extraLinkArgs, linkLibraries = linkLibraries)) executable else null
     }
 }
