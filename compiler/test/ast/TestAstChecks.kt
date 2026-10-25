@@ -2056,4 +2056,57 @@ main {
             }
         }
     }
+
+    test("status branches after statements that don't set the flags warn on the virtual and llvm targets") {
+        val text = """
+            %option no_sysinit
+            main {
+                ubyte @shared b
+                uword @shared w
+                sub start() {
+                    b = 200
+                    if_neg
+                        b = 1
+                    rol(b)
+                    if_cs
+                        b = 2
+                    w <<= 1
+                    if_cc
+                        b = 3
+                    sys.set_carry()
+                    if_cs
+                        b = 4
+                    b++
+                    if_z
+                        b = 5
+                    if_vs
+                        b = 6
+                    void other()
+                    if_cs
+                        b = 7
+                }
+
+                sub other() -> ubyte {
+                    if_cs
+                        return 1
+                    return 0
+                }
+            }
+            """
+        for(target in listOf(VMTarget(), LlvmTarget(8), LlvmTarget(4), Cx16Target())) {
+            val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+            compileText(target, false, text, outputDir, writeAssembly = false, errors = errors) shouldNotBe null
+            val warnings = errors.warnings.filter { "status flags are undefined" in it }
+            withClue(target.name) {
+                if(target is Cx16Target)
+                    warnings.size shouldBe 0
+                else {
+                    warnings.size shouldBe 3
+                    warnings[0] shouldContain ":8:21:"
+                    warnings[1] shouldContain ":20:21:"
+                    warnings[2] shouldContain ":25:21:"
+                }
+            }
+        }
+    }
 })

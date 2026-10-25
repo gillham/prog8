@@ -256,6 +256,43 @@ internal class AstChecker(private val program: Program,
         super.visit(returnStmt)
     }
 
+    override fun visit(branch: ConditionalBranch) {
+        if(options.compTarget.cpu == CpuType.VIRTUAL || options.compTarget.cpu.isLlvm)
+            warnForUndefinedStatusFlags(branch)
+        super.visit(branch)
+    }
+
+    /** The IR only sets the status flags with comparisons, and the carry with shifts, rotates and set_carry/clear_carry. */
+    private fun warnForUndefinedStatusFlags(branch: ConditionalBranch) {
+        val statements = (branch.parent as? IStatementContainer)?.statements ?: return
+        // the first statement of a scope, a label, or a chain of branches get their flags from code that can't be seen here
+        val previous = statements.getOrNull(statements.indexOf(branch) - 1) ?: return
+        if(previous is Label || previous is ConditionalBranch || (previous is InlineAssembly && previous.isIR))
+            return
+        if(branch.condition in arrayOf(BranchCondition.CS, BranchCondition.CC) && setsCarry(previous))
+            return
+        errors.warn("the status flags are undefined here on the ${options.compTarget.name} target: only comparisons set them, " +
+                "and shifts, rotates and set_carry/clear_carry the carry", branch.position)
+    }
+
+    private fun setsCarry(statement: Statement): Boolean {
+        when(statement) {
+            is FunctionCallStatement -> {
+                val name = statement.target.nameInSource.last()
+                return when(val target = statement.target.targetStatement(program.builtinFunctions)) {
+                    is BuiltinFunctionPlaceholder -> name in arrayOf("rol", "ror", "rol2", "ror2", "set_carry", "clear_carry")
+                    is Subroutine -> target.definingBlock.name == "sys" && name in arrayOf("set_carry", "clear_carry")
+                    else -> false
+                }
+            }
+            is Assignment -> {
+                val shift = statement.value as? BinaryExpression ?: return false
+                return shift.operator in arrayOf("<<", ">>") && shift.left isSameAs statement.target
+            }
+            else -> return false
+        }
+    }
+
     override fun visit(ifElse: IfElse) {
         checkCondition(ifElse.condition)
 
