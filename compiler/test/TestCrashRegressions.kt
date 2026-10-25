@@ -140,6 +140,20 @@ main {
         }
     }
 
+    test("an unused module with struct types compiles next to pointers to primitive types") {
+        val src = """
+%import lists
+main {
+    sub start() {
+    }
+}"""
+        for (target in listOf(VMTarget(), LlvmTarget(8), LlvmTarget(4))) {
+            withClue(target.name) {
+                compileText(target, true, src, outputDir, writeAssembly = true) shouldNotBe null
+            }
+        }
+    }
+
     test("a block level breakpoint on the llvm targets compiles with a warning that it has no effect") {
         val src = """
 main {
