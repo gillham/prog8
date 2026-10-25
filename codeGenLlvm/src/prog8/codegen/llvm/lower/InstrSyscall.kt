@@ -22,6 +22,8 @@ import prog8.intermediate.requireCallSite
 private const val VM_EXIT = 1
 private const val VM_PRINT_C = 2
 private const val VM_PRINT_S = 3
+private const val VM_WAIT = 13
+private const val VM_WAITVSYNC = 14
 private const val VM_ATAN = 31
 internal const val VM_MUL16_LAST_UPPER = 33
 private const val VM_MEMCOPY = 36
@@ -72,6 +74,11 @@ internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
         VM_EXIT -> exit(site, number)
         VM_PRINT_C -> printChar(site, number)
         VM_PRINT_S -> printString(site, number)
+        VM_WAIT -> waitJiffies(site, number)
+        VM_WAITVSYNC -> {
+            arguments(site, number, 0)
+            emit(LlvmInstruction.Call(null, builder.helperFunction(".sys.wait") { builder.waitHelper() }, listOf(LlvmValue.IntConstant(1, LlvmType.I16)), LlvmType.Void))
+        }
         VM_ATAN -> angle(site, number)
         VM_MUL16_LAST_UPPER -> mul16LastUpper(site, number)
         VM_MEMCOPY -> memoryCopy(site, number)
@@ -192,6 +199,12 @@ private fun FunctionLowering.angle(site: CallSite, number: Int) {
 private fun FunctionLowering.mul16LastUpper(site: CallSite, number: Int) {
     arguments(site, number, 0)
     result(site, derive("upper", LlvmType.I16) { LlvmInstruction.Load(it, builder.mul16Upper()) })
+}
+
+/** WAIT(jiffies word) sleeps for that many 1/60 seconds; WAITVSYNC() sleeps for one, as there is no vertical blank to wait for. */
+private fun FunctionLowering.waitJiffies(site: CallSite, number: Int) {
+    val (jiffies) = arguments(site, number, 1)
+    emit(LlvmInstruction.Call(null, builder.helperFunction(".sys.wait") { builder.waitHelper() }, listOf(convert(read(jiffies), LlvmType.I16)), LlvmType.Void))
 }
 
 /** EXIT(status byte) ends the program with C's exit(), which the hosted llvm targets can rely on. */
@@ -644,6 +657,38 @@ private fun LlvmFunctionBuilder.readStream(): LlvmValue.Global = runtimeGlobal("
 private fun LlvmFunctionBuilder.writeStream(): LlvmValue.Global = runtimeGlobal(".file.write_stream", LlvmType.Ptr)
 
 private fun i32(value: Long) = LlvmValue.IntConstant(value, LlvmType.I32)
+
+/**
+ * `void (i16 jiffies)`: usleep() for that many 1/60 seconds, in parts of at most half a second, because POSIX lets usleep() fail
+ * from a million microseconds on. Fewer calls also add up less of the time that each one oversleeps.
+ */
+private fun LlvmFunctionBuilder.waitHelper(): LlvmFunction {
+    val jiffies = LlvmValue.Local("jiffies", LlvmType.I16)
+    val count = LlvmValue.Local("count", LlvmType.I32)
+    val total = LlvmValue.Local("total", LlvmType.I32)
+    val left = LlvmValue.Local("left", LlvmType.I32)
+    val over = LlvmValue.Local("over", LlvmType.I1)
+    val part = LlvmValue.Local("part", LlvmType.I32)
+    val next = LlvmValue.Local("next", LlvmType.I32)
+    val usleep = LlvmValue.Global(externalFunction("usleep", LlvmType.I32, listOf(LlvmType.I32)).name)
+    val umin = LlvmValue.Global(externalFunction("llvm.umin.i32", LlvmType.I32, listOf(LlvmType.I32, LlvmType.I32)).name)
+    return helper(".sys.wait", LlvmType.Void, listOf(jiffies),
+        "entry" to listOf(
+            LlvmInstruction.Cast(CastOperator.ZEXT, count, jiffies, LlvmType.I32),
+            // at most 65535 * 16667 microseconds, which fits in 31 bits
+            LlvmInstruction.BinaryOp(BinaryOperator.MUL, total, count, i32(16667)),
+            LlvmInstruction.Br("loop")),
+        "loop" to listOf(
+            LlvmInstruction.Phi(left, listOf(total to "entry", next to "sleep")),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, over, left, i32(0)),
+            LlvmInstruction.CondBr(over, "finished", "sleep")),
+        "sleep" to listOf(
+            LlvmInstruction.Call(part, umin, listOf(left, i32(500000)), LlvmType.I32),
+            LlvmInstruction.Call(null, usleep, listOf(part), LlvmType.I32),
+            LlvmInstruction.BinaryOp(BinaryOperator.SUB, next, left, part),
+            LlvmInstruction.Br("loop")),
+        "finished" to listOf(LlvmInstruction.Ret(null)))
+}
 
 private fun LlvmFunctionBuilder.strtod(): LlvmValue.Global =
     LlvmValue.Global(externalFunction("strtod", LlvmType.Double, listOf(LlvmType.Ptr, LlvmType.Ptr)).name)

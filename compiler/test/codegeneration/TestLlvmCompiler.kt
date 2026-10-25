@@ -617,6 +617,26 @@ main {
         }
     }
 
+    test("sys.wait sleeps for the jiffies, and sys.waitvsync for one, in a native executable for the host").config(enabledOrReasonIf = requiresNativeLlvm) {
+        fun runTime(body: String): Long {
+            val program = """
+                %zeropage basicsafe
+                main {
+                    sub start() {
+                        uword @shared jiffies = 30
+                        $body
+                    }
+                }"""
+            val llFile = compiledLlFile(compileText(hostLlvmTarget, true, program, outputDir))
+            buildAndRun(llFile).first shouldBe 0
+            val started = System.nanoTime()
+            execute(llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll")).toString()).first shouldBe 0
+            return (System.nanoTime() - started) / 1_000_000
+        }
+        withClue("milliseconds of sys.wait(30)") { (runTime("sys.wait(jiffies)") in 490L..5000L) shouldBe true }
+        withClue("milliseconds of 30 sys.waitvsync()") { (runTime("repeat jiffies sys.waitvsync()") in 490L..5000L) shouldBe true }
+    }
+
     test("word multiplications keep their upper 16 bits only in programs that call math.mul16_last_upper") {
         fun references(callsIt: Boolean): Int {
             val program = """
@@ -5682,5 +5702,36 @@ main {
         "0 1 3 7 700 9000 65535 \n" +
         "100 200 300 \n" +
         "1 2 3 \n" +
-        "true 12 10 100 80 truefalse\n")
+        "true 12 10 100 80 truefalse\n"),
+
+    "arena allocations aligned to 8 bytes, and sys.wait and sys.waitvsync" to OutputProgram("""
+%import textio
+%import arena
+%zeropage basicsafe
+
+main {
+    sub start() {
+        arena.init(memory("slab", 100, 0) + 1, 99)
+        pointer p1 = arena.alloc(3)
+        pointer p2 = arena.alloc(8)
+        pointer p3 = arena.alloc(1)
+        txt.print_bool((p1 & 7) == 0 and (p2 & 7) == 0 and (p3 & 7) == 0)
+        txt.spc()
+        txt.print_l((p2 - p1) as long)
+        txt.spc()
+        txt.print_l((p3 - p2) as long)
+        txt.spc()
+        txt.print_bool(arena.alloc(200) == 0)
+        txt.spc()
+        txt.print_bool(arena.alloc(0) == 0)
+        arena.reset()
+        txt.spc()
+        txt.print_bool(arena.alloc(3) == p1)
+        txt.nl()
+        sys.wait(3)
+        repeat 3
+            sys.waitvsync()
+        txt.print("waited\n")
+    }
+}""", "true 8 8 true true true\nwaited\n")
 )

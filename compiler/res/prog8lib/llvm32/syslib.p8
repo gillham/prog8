@@ -59,6 +59,21 @@ sys {
         exit(code)
     }
 
+    sub wait(uword jiffies) {
+        ; --- wait approximately the given number of jiffies (1/60th seconds)
+        %ir {{
+            loadm.w r99000.w,[sys.wait.jiffies]
+            syscall 13 (r99000.w)
+        }}
+    }
+
+    sub waitvsync() {
+        ; --- there is no vertical blank to wait for: this waits one jiffy (1/60th second), which paces a loop to about 60 times a second
+        %ir {{
+            syscall 14()
+        }}
+    }
+
     sub exit(ubyte returnvalue) {
         ; -- exit the program with a return code. All active defers in the call chain are unwound program-wide (LIFO) before the program ends.
         %ir {{

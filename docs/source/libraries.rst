@@ -620,13 +620,18 @@ On m68k and virtual targets:
     even address so word, long, and struct accesses stay aligned. It returns
     0 when ``size`` is 0 or the slab does not have enough space left.
 
+On the llvm32 and llvm64 targets the sizes are long as well, but every allocation starts at a multiple of 8 bytes:
+``init`` moves the start of the slab up to one, and ``alloc`` rounds sizes up to a multiple of 8,
+because the generated code expects floats, quads and pointers to be aligned to their size.
+
 ``sub reset()``
     Discards all allocations and makes the slab available again from its start.
     The module tracks only one slab at a time; initializing it again replaces
     the previously tracked range.
 
-Read the :source:`word-sized arena source code <compiler/res/prog8lib/shared_word_arena.p8>`
-and :source:`long-sized arena source code <compiler/res/prog8lib/shared_long_arena.p8>` for details.
+Read the :source:`word-sized arena source code <compiler/res/prog8lib/shared_word_arena.p8>`,
+:source:`long-sized arena source code <compiler/res/prog8lib/shared_long_arena.p8>`
+and :source:`aligned long-sized arena source code <compiler/res/prog8lib/shared_aligned_long_arena.p8>` for details.
 
 
 bcd
@@ -2122,6 +2127,7 @@ miscellaneous
     can be used to avoid screen flicker/tearing when updating screen contents.
     note: a more accurate way to wait for vsync is to set up a vsync irq handler instead.
     note for cx16: the regular system irq handler has to run for this to work (this is not required on C64 and C128)
+    note for llvm32 and llvm64: there is no vsync to wait for, so this waits one jiffy (1/60th second), which still paces a loop to about 60 times a second.
 
 ``waitrastborder ()`` (c64/c128 targets only)
     busy wait till the raster position has reached the bottom screen border (approximately)

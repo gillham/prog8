@@ -108,3 +108,20 @@ int __wrap__read(int fd, char *buf, int len) {
     line_taken += count;
     return count;
 }
+
+#define SYS_ELAPSED 0x30
+#define SYS_TICKFREQ 0x31
+
+static unsigned long long elapsed_ticks(void) {
+    unsigned int ticks[2];
+    prog8_semihosting(SYS_ELAPSED, ticks);
+    return ticks[0] | (unsigned long long)ticks[1] << 32;
+}
+
+/* sys.wait() calls usleep(), which newlib lacks on RISC-V and rounds down to hundredths of a second on ARM: this one waits on the semihosting tick counter */
+int usleep(unsigned int microseconds) {
+    unsigned long long end = elapsed_ticks() + (unsigned long long)microseconds * (unsigned int)prog8_semihosting(SYS_TICKFREQ, 0) / 1000000;
+    while (elapsed_ticks() < end) {
+    }
+    return 0;
+}
