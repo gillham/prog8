@@ -16,6 +16,7 @@ import prog8.intermediate.*
 import java.math.BigInteger
 import kotlin.math.abs
 import kotlin.math.pow
+import prog8tests.helpers.hostLlvmTarget
 
 
 class TestLlvmQuadLowering: FunSpec({
@@ -168,8 +169,8 @@ class TestLlvmQuadLowering: FunSpec({
         }
     }
 
-    test("the quad instructions compute what the VM computes, in a native arm64 macOS program").config(enabledOrReasonIf = requiresNativeArm64Mac) {
-        val module = TestProgram().apply { quadCheckProgram() }.module().withMainCalling("main.check")
+    test("the quad instructions compute what the VM computes, in a native program for the host").config(enabledOrReasonIf = requiresNativeHost) {
+        val module = TestProgram(hostLlvmTarget).apply { quadCheckProgram() }.module().withMainCalling("main.check")
         val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
         output shouldBe ""

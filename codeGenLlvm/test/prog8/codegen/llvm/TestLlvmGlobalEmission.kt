@@ -17,6 +17,7 @@ import prog8.codegen.llvm.lower.PointerArray
 import prog8.codegen.llvm.model.*
 import prog8.codegen.llvm.types.LlvmTypeMapper
 import prog8.intermediate.*
+import prog8tests.helpers.hostLlvmTarget
 
 
 class TestLlvmGlobalEmission: FunSpec({
@@ -312,8 +313,8 @@ class TestLlvmGlobalEmission: FunSpec({
         withClue(output) { exitCode shouldBe 0 }
     }
 
-    test("every kind of global links into a native arm64 macOS program, whose startup code sets the unaligned struct pointer").config(enabledOrReasonIf = requiresNativeArm64Mac) {
-        val (exitCode, output) = compileAndRun(LlvmPrinter.print(everyKindOfGlobal(target)))
+    test("every kind of global links into a native program for the host, whose startup code sets the unaligned struct pointer").config(enabledOrReasonIf = requiresNativeHost) {
+        val (exitCode, output) = compileAndRun(LlvmPrinter.print(everyKindOfGlobal(hostLlvmTarget)))
         withClue(output) { exitCode shouldBe 0 }
         output shouldBe "hi\n"
     }

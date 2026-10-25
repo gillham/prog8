@@ -11,6 +11,7 @@ import prog8.code.target.LlvmTarget
 import prog8.intermediate.IMSyscall
 import prog8.intermediate.IRStSymbolicReference
 import prog8.intermediate.IRVariableInitializer
+import prog8tests.helpers.hostLlvmTarget
 
 
 class TestLlvmInstructionLowering: FunSpec({
@@ -160,8 +161,8 @@ class TestLlvmInstructionLowering: FunSpec({
         }
     }
 
-    test("the instructions compute what the VM computes, in a native arm64 macOS program").config(enabledOrReasonIf = requiresNativeArm64Mac) {
-        val module = TestProgram().apply { checkProgram() }.module().withMainCalling("main.check")
+    test("the instructions compute what the VM computes, in a native program for the host").config(enabledOrReasonIf = requiresNativeHost) {
+        val module = TestProgram(hostLlvmTarget).apply { checkProgram() }.module().withMainCalling("main.check")
         val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
     }

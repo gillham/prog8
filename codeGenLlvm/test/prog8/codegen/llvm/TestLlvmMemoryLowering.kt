@@ -16,6 +16,7 @@ import prog8.codegen.llvm.lower.PointerArray
 import prog8.codegen.llvm.lower.PointerArrayAccess
 import prog8.codegen.llvm.model.*
 import prog8.intermediate.*
+import prog8tests.helpers.hostLlvmTarget
 
 
 class TestLlvmMemoryLowering: FunSpec({
@@ -87,8 +88,8 @@ class TestLlvmMemoryLowering: FunSpec({
         withClue(output) { exitCode shouldBe 0 }
     }
 
-    test("a str[] array links into a native arm64 macOS program that prints its elements").config(enabledOrReasonIf = requiresNativeArm64Mac) {
-        val ir = LlvmPrinter.print(stringsProgram())
+    test("a str[] array links into a native program for the host that prints its elements").config(enabledOrReasonIf = requiresNativeHost) {
+        val ir = LlvmPrinter.print(stringsProgram(hostLlvmTarget))
         ir shouldNotContain "ptrtoint"
         val (exitCode, output) = compileAndRun(ir)
         withClue(output) { exitCode shouldBe 0 }

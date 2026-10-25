@@ -17,6 +17,7 @@ import java.nio.file.Path
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
+import prog8tests.helpers.hostLlvmTarget
 
 
 class TestLlvmToolchain: FunSpec({
@@ -129,7 +130,7 @@ class TestLlvmToolchain: FunSpec({
         LlvmToolchain.clang() shouldBe (if (Files.isExecutable(besideLlvmAs)) besideLlvmAs else LlvmToolchain.find("clang"))
     }
 
-    test("compileToExecutable builds a native executable, whose exit code runExecutable returns").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+    test("compileToExecutable builds a native executable, whose exit code runExecutable returns").config(enabledOrReasonIf = requiresNativeHost) {
         val llFile = dir.resolve("seven.ll").also { it.writeText(programExitingWith(7)) }
         val executable = dir.resolve("seven")
         LlvmToolchain.compileToExecutable(llFile, executable) shouldBe true
@@ -137,7 +138,7 @@ class TestLlvmToolchain: FunSpec({
         LlvmToolchain.runExecutable(executable, quiet = true) shouldBe 7
     }
 
-    test("without a link command, clang gets the -Xcompile and -Xlink arguments of a native build").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+    test("without a link command, clang gets the -Xcompile and -Xlink arguments of a native build").config(enabledOrReasonIf = requiresNativeHost) {
         val llFile = dir.resolve("extra.ll").also { it.writeText(programExitingWith(3)) }
         val executable = dir.resolve("extra")
         LlvmToolchain.compileToExecutable(llFile, executable, extraCompileArgs = listOf("-O0"), extraLinkArgs = listOf("-lm")) shouldBe true
@@ -150,7 +151,7 @@ class TestLlvmToolchain: FunSpec({
         linkMessages shouldContain "prog8_no_such_library"
     }
 
-    test("compileToExecutable fails on IR that clang rejects, and says which file it couldn't build").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+    test("compileToExecutable fails on IR that clang rejects, and says which file it couldn't build").config(enabledOrReasonIf = requiresNativeHost) {
         val unterminated = programWithMain(LlvmInstruction.Alloca(LlvmValue.Local("p", LlvmType.Ptr), LlvmType.I8))
         val llFile = dir.resolve("broken.ll").also { it.writeText(unterminated) }
         val executable = dir.resolve("broken")
@@ -168,7 +169,7 @@ class TestLlvmToolchain: FunSpec({
         }
     }
 
-    test("the runner builds the executable of a .ll file next to it, and a missing -o executable from its IR file").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+    test("the runner builds the executable of a .ll file next to it, and a missing -o executable from its IR file").config(enabledOrReasonIf = requiresNativeHost) {
         val llFile = dir.resolve("runner.ll").also { it.writeText(programExitingWith(3)) }
         LlvmProgramRunner().buildAndRun(llFile, quiet = true) shouldBe 3
         Files.isExecutable(dir.resolve("runner")) shouldBe true
@@ -183,9 +184,9 @@ class TestLlvmToolchain: FunSpec({
 
 private fun programExitingWith(code: Long): String = programWithMain(LlvmInstruction.Ret(LlvmValue.IntConstant(code, LlvmType.I32)))
 
-/** The LLVM IR of a module for the default llvm64 target, whose C `main` function is the single [instruction]. */
+/** The LLVM IR of a module for the llvm64 target of the host, whose C `main` function is the single [instruction]. */
 private fun programWithMain(instruction: LlvmInstruction): String {
-    val target = LlvmTarget()
+    val target = hostLlvmTarget
     val main = LlvmFunction("main", LlvmType.I32, emptyList(), mutableListOf(LlvmBlock("entry", mutableListOf(instruction))))
     return LlvmPrinter.print(LlvmModule("main", target.targetTriple, target.dataLayout, functions = mutableListOf(main)))
 }

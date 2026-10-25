@@ -40,6 +40,9 @@ import prog8.vm.ProgramExitException
 import prog8.vm.VirtualMachine
 import prog8tests.helpers.ErrorReporterForTests
 import prog8tests.helpers.compileText
+import prog8tests.helpers.hostLlvmProfile
+import prog8tests.helpers.hostLlvmTarget
+import prog8tests.helpers.noHostLlvmProfileReason
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.PrintStream
@@ -73,10 +76,10 @@ class TestLlvmCompiler: FunSpec({
         }
     }
 
-    test("the programs compute the right results as native arm64 macOS executables").config(enabledOrReasonIf = requiresNativeLlvm) {
+    test("the programs compute the right results as native executables for the host").config(enabledOrReasonIf = requiresNativeLlvm) {
         for ((name, source) in programs) {
             for (optimize in listOf(false, true)) {
-                val llFile = compiledLlFile(compileText(LlvmTarget(), optimize, source, outputDir))
+                val llFile = compiledLlFile(compileText(hostLlvmTarget, optimize, source, outputDir))
                 val (exitCode, output) = buildAndRun(llFile)
                 withClue("$name optimize=$optimize: exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
             }
@@ -92,13 +95,13 @@ class TestLlvmCompiler: FunSpec({
             }
         }
 
-        test("$name: gives the expected exit code and console output as a native arm64 macOS executable, which leaves no files behind").config(enabledOrReasonIf = requiresNativeLlvm) {
+        test("$name: gives the expected exit code and console output as a native executable for the host, which leaves no files behind").config(enabledOrReasonIf = requiresNativeLlvm) {
             for (optimize in listOf(false, true)) {
                 withClue("optimize=$optimize") {
                     val workingDirectory = outputDir.resolve("run")
                     workingDirectory.toFile().deleteRecursively()
                     workingDirectory.createDirectories()
-                    val llFile = compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir))
+                    val llFile = compiledLlFile(compileText(hostLlvmTarget, optimize, program.source, outputDir))
                     val (exitCode, output) = buildAndRun(llFile, program.input, program.args, workingDirectory)
                     withClue(output) { exitCode shouldBe program.exitCode }
                     output shouldBe program.output
@@ -149,7 +152,7 @@ class TestLlvmCompiler: FunSpec({
 
     test("-Xlink links an extra static library into a native executable").config(enabledOrReasonIf = requiresNativeLlvmAndAr) {
         val ar = checkNotNull(llvmBin).resolve("llvm-ar")
-        linksExtraLibrary(outputDir, LlvmTarget(), "native-library", ar) { source, objectFile ->
+        linksExtraLibrary(outputDir, hostLlvmTarget, "native-library", ar) { source, objectFile ->
             listOf(checkNotNull(llvmBin).resolve("clang").toString(), "-c", source.toString(), "-o", objectFile.toString())
         }
     }
@@ -425,22 +428,22 @@ class TestLlvmCompiler: FunSpec({
 
     test("launchEmulator builds a native executable next to the .ll file and runs it").config(enabledOrReasonIf = requiresNativeLlvm) {
         val dir = outputDir.resolve("launched").createDirectories()
-        val llFile = compiledLlFile(compileText(LlvmTarget(), false, nativeHello.source, dir))
+        val llFile = compiledLlFile(compileText(hostLlvmTarget, false, nativeHello.source, dir))
         val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll"))
         withClue("a compile without -o only writes the LLVM IR") { executable.exists() shouldBe false }
-        val printed = printedOnStdout { LlvmTarget().launchEmulator(1, llFile, quiet = false) }
+        val printed = printedOnStdout { hostLlvmTarget.launchEmulator(1, llFile, quiet = false) }
         printed shouldContain "Building $executable from $llFile with clang..."
         printed shouldContain "Running $executable..."
         printed shouldContain "Program exited with status 42"
         withClue("$executable should be executable") { Files.isExecutable(executable) shouldBe true }
         execute(executable.toString()) shouldBe (nativeHello.exitCode to nativeHello.output)
 
-        val selfChecking = compiledLlFile(compileText(LlvmTarget(), true, programs.getValue("64-bit quad and uquad integers"), dir))
-        printedOnStdout { LlvmTarget().launchEmulator(1, selfChecking, quiet = false) } shouldContain "Program exited with status 0"
+        val selfChecking = compiledLlFile(compileText(hostLlvmTarget, true, programs.getValue("64-bit quad and uquad integers"), dir))
+        printedOnStdout { hostLlvmTarget.launchEmulator(1, selfChecking, quiet = false) } shouldContain "Program exited with status 0"
     }
 
     test("launchEmulator gives the program its arguments natively").config(enabledOrReasonIf = requiresNativeLlvm) {
-        launchesWithArguments(LlvmTarget(), outputDir.resolve("arguments-native"))
+        launchesWithArguments(hostLlvmTarget, outputDir.resolve("arguments-native"))
     }
 
     test("launchEmulator gives the program its arguments after the file in the run command, under wasmtime").config(enabledOrReasonIf = requiresWasm) {
@@ -484,17 +487,17 @@ class TestLlvmCompiler: FunSpec({
                     sys.exit(lsb(tripler.p8test_triple(x)))
                 }
             }"""
-        val result = compileText(LlvmTarget(), false, program, dir).shouldNotBeNull()
+        val result = compileText(hostLlvmTarget, false, program, dir).shouldNotBeNull()
         result.compilationOptions.linkLibraries shouldBe listOf(objectFile.toRealPath().toString(), "-lm")
         val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
         withClue("kept in the .p8ir file") { IRFileReader().read(irFile).options.linkLibraries shouldBe result.compilationOptions.linkLibraries }
         val llFile = compiledLlFile(result)
         withClue("the -emu build gets the libraries from the compilation") {
-            printedOnStdout { LlvmTarget().launchEmulator(1, llFile, quiet = false, emptyList(), result.compilationOptions.linkLibraries) } shouldContain
+            printedOnStdout { hostLlvmTarget.launchEmulator(1, llFile, quiet = false, emptyList(), result.compilationOptions.linkLibraries) } shouldContain
                 "Program exited with status 42"
         }
         val executable = dir.resolve("linked")
-        compileText(LlvmTarget(), false, program, dir, outputFile = executable).shouldNotBeNull()
+        compileText(hostLlvmTarget, false, program, dir, outputFile = executable).shouldNotBeNull()
         execute(executable.toString()).first shouldBe 42
     }
 
@@ -526,20 +529,20 @@ class TestLlvmCompiler: FunSpec({
     test("-o without .ll builds a native executable with the LLVM IR next to it").config(enabledOrReasonIf = requiresNativeLlvm) {
         val dir = outputDir.resolve("named").createDirectories()
         val executable = dir.resolve("hello-native")
-        compileText(LlvmTarget(), false, nativeHello.source, dir, outputFile = executable).shouldNotBeNull()
+        compileText(hostLlvmTarget, false, nativeHello.source, dir, outputFile = executable).shouldNotBeNull()
         withClue("the LLVM IR next to the executable") { dir.resolve("hello-native.ll").exists() shouldBe true }
         withClue("$executable should be executable") { Files.isExecutable(executable) shouldBe true }
         execute(executable.toString()) shouldBe (nativeHello.exitCode to nativeHello.output)
 
         val irFile = dir.resolve("hello-ir.ll")
-        compileText(LlvmTarget(), false, nativeHello.source, dir, outputFile = irFile).shouldNotBeNull()
+        compileText(hostLlvmTarget, false, nativeHello.source, dir, outputFile = irFile).shouldNotBeNull()
         irFile.exists() shouldBe true
         withClue("an -o name ending in .ll only gets the LLVM IR") { dir.resolve("hello-ir").exists() shouldBe false }
 
         val built = Files.getLastModifiedTime(executable)
-        printedOnStdout { LlvmTarget().launchEmulator(1, executable, quiet = false) } shouldContain "Program exited with status 42"
+        printedOnStdout { hostLlvmTarget.launchEmulator(1, executable, quiet = false) } shouldContain "Program exited with status 42"
         withClue("an existing -o executable runs as it is") { Files.getLastModifiedTime(executable) shouldBe built }
-        withClue("prog8c -emu exits with the status that launchEmulator returns") { LlvmTarget().launchEmulator(1, executable, quiet = true, emptyList()) shouldBe 42 }
+        withClue("prog8c -emu exits with the status that launchEmulator returns") { hostLlvmTarget.launchEmulator(1, executable, quiet = true, emptyList()) shouldBe 42 }
     }
 
     test("code that has no LLVM translation is a compilation error") {
@@ -790,10 +793,10 @@ main {
             }
         }
 
-        test("$name: gives the expected exit code and output as a native arm64 macOS executable").config(enabledOrReasonIf = requiresNativeLlvm) {
+        test("$name: gives the expected exit code and output as a native executable for the host").config(enabledOrReasonIf = requiresNativeLlvm) {
             for (optimize in listOf(false, true)) {
                 withClue("optimize=$optimize") {
-                    val llFile = compiledLlFile(compileText(LlvmTarget(), optimize, program.source, outputDir))
+                    val llFile = compiledLlFile(compileText(hostLlvmTarget, optimize, program.source, outputDir))
                     val (exitCode, output) = buildAndRun(llFile, program.input)
                     withClue(output) { exitCode shouldBe program.exitCode }
                     output shouldBe program.output
@@ -1033,9 +1036,8 @@ private val llvmBin: Path? = (System.getenv("PATH").orEmpty().split(File.pathSep
     .firstOrNull { Files.isExecutable(it.resolve("llvm-as")) && Files.isExecutable(it.resolve("clang")) }
 
 private val requiresNativeLlvm: (TestCase) -> Enabled = {
-    val arm64Mac = System.getProperty("os.name").startsWith("Mac") && System.getProperty("os.arch") == "aarch64"
     when {
-        !arm64Mac -> Enabled.disabled("linking the default llvm64 target triple needs an arm64 macOS host")
+        noHostLlvmProfileReason != null -> Enabled.disabled(noHostLlvmProfileReason!!)
         llvmBin == null -> Enabled.disabled("llvm-as and clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         else -> Enabled.enabled
     }
@@ -1046,12 +1048,14 @@ private val requiresNativeLlvmAndAr: (TestCase) -> Enabled = {
 }
 
 /**
- * Builds the .ll file into an executable with clang -O2 and runs it with [input] on stdin and the command line [args],
- * in the working [directory] if there is one; returns its exit code and output, or clang's if that failed.
+ * Builds the .ll file, compiled for [hostLlvmTarget], into an executable with clang -O2 and the host's profile, and runs it with [input]
+ * on stdin and the command line [args], in the working [directory] if there is one; returns its exit code and output, or clang's if that failed.
  */
 private fun buildAndRun(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll"))
-    val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), "-O2", "-Wno-override-module", llFile.toString(), "-o", executable.toString())
+    val profile = checkNotNull(hostLlvmProfile)
+    val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *profile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module",
+        llFile.toString(), "-o", executable.toString(), *profile.linkArgs.toTypedArray())
     if (compiled.first != 0)
         return compiled
     val stdin = executable.resolveSibling("${executable.fileName}.stdin").also { it.writeText(input) }

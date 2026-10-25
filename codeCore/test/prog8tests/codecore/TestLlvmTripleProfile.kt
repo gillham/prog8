@@ -19,6 +19,7 @@ import kotlin.io.path.deleteExisting
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
+import prog8tests.helpers.hostProfileName
 
 class TestLlvmTripleProfile: FunSpec({
 
@@ -62,6 +63,19 @@ class TestLlvmTripleProfile: FunSpec({
         profile.strictIndirectSignatures shouldBe true
         profile.cMainSymbol shouldBe "__main_argc_argv"
         LlvmTripleProfile.resolve("arm64-apple-macosx").cMainSymbol shouldBe "main"
+    }
+
+    test("the native tests build for the built-in llvm64 profile of the host, where there is one") {
+        hostProfileName("Mac OS X", "aarch64") shouldBe "arm64-apple-macosx"
+        hostProfileName("Mac OS X", "x86_64") shouldBe "x86_64-apple-macosx"
+        hostProfileName("Linux", "amd64") shouldBe "x86_64-unknown-linux-gnu"
+        hostProfileName("Linux", "aarch64") shouldBe "aarch64-unknown-linux-gnu"
+        hostProfileName("Linux", "riscv64") shouldBe "riscv64-unknown-linux-gnu"
+        hostProfileName("Linux", "arm") shouldBe null
+        hostProfileName("Windows 11", "amd64") shouldBe null
+        for (name in listOfNotNull(hostProfileName("Mac OS X", "aarch64"), hostProfileName("Mac OS X", "x86_64"), hostProfileName("Linux", "amd64"),
+                hostProfileName("Linux", "aarch64"), hostProfileName("Linux", "riscv64")))
+            withClue(name) { LlvmTripleProfile.resolve(name).pointerBits shouldBe 64 }
     }
 
     test("the glibc Linux profiles link the math library after the program, other profiles add no link arguments") {

@@ -14,6 +14,7 @@ import kotlin.io.path.createTempDirectory
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 import kotlin.io.path.readBytes
+import prog8tests.helpers.hostLlvmTarget
 
 
 class TestLlvmSyscallLowering: FunSpec({
@@ -72,8 +73,8 @@ class TestLlvmSyscallLowering: FunSpec({
         LlvmPrinter.print(module).lines() shouldHave "declare i32 @getchar()"
     }
 
-    test("the input syscall reads stdin in a native arm64 macOS program, and gives 0 at its end").config(enabledOrReasonIf = requiresNativeArm64Mac) {
-        val module = TestProgram().apply { readCharSub(); echoSub() }.module().withMainCalling("main.echo")
+    test("the input syscall reads stdin in a native program for the host, and gives 0 at its end").config(enabledOrReasonIf = requiresNativeHost) {
+        val module = TestProgram(hostLlvmTarget).apply { readCharSub(); echoSub() }.module().withMainCalling("main.echo")
         val (exitCode, output) = compileAndRun(LlvmPrinter.print(module), input = "hi\n")
         withClue(output) { exitCode shouldBe 0 }
         output shouldBe "hi\n"
@@ -90,8 +91,8 @@ class TestLlvmSyscallLowering: FunSpec({
         withClue(output) { exitCode shouldBe 0 }
     }
 
-    test("the output syscalls write to stdout in a native arm64 macOS program").config(enabledOrReasonIf = requiresNativeArm64Mac) {
-        val module = TestProgram().apply { allOutputSubs(); greetingSub() }.module().withMainCalling("main.greeting")
+    test("the output syscalls write to stdout in a native program for the host").config(enabledOrReasonIf = requiresNativeHost) {
+        val module = TestProgram(hostLlvmTarget).apply { allOutputSubs(); greetingSub() }.module().withMainCalling("main.greeting")
         val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
         withClue(output) { exitCode shouldBe 0 }
         output shouldBe "A\nhi\nhello, world!\nhi\n"
@@ -153,8 +154,8 @@ class TestLlvmSyscallLowering: FunSpec({
         }
     }
 
-    test("a native arm64 macOS program gets its command line arguments, and an empty string for an index past them").config(enabledOrReasonIf = requiresNativeArm64Mac) {
-        val module = TestProgram().apply { argumentsOutputSub() }.programModule()
+    test("a native program for the host gets its command line arguments, and an empty string for an index past them").config(enabledOrReasonIf = requiresNativeHost) {
+        val module = TestProgram(hostLlvmTarget).apply { argumentsOutputSub() }.programModule()
         val (exitCode, output) = compileAndRun(LlvmPrinter.print(module), args = listOf("first", "second arg"))
         withClue(output) { exitCode shouldBe 3 }
         val lines = output.lines()
@@ -315,10 +316,10 @@ class TestLlvmSyscallLowering: FunSpec({
             withClue(declaration) { text.count { it == "declare $declaration" } shouldBe 1 }
     }
 
-    test("the file handle syscalls keep two files open, and seek and tell with 64-bit positions, in a native arm64 macOS program").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+    test("the file handle syscalls keep two files open, and seek and tell with 64-bit positions, in a native program for the host").config(enabledOrReasonIf = requiresNativeHost) {
         val directory = createTempDirectory("prog8-file-handles").toRealPath()
         try {
-            val module = TestProgram().apply { handleSyscallChecks(directory) }.module().withMainCalling("main.check")
+            val module = TestProgram(hostLlvmTarget).apply { handleSyscallChecks(directory) }.module().withMainCalling("main.check")
             val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
             withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
             directory.resolve("out.bin").readBytes().toList() shouldBe (1..8).map { it.toByte() }
@@ -329,10 +330,10 @@ class TestLlvmSyscallLowering: FunSpec({
         }
     }
 
-    test("the file syscalls read, write and manage files like in the VM, in a native arm64 macOS program").config(enabledOrReasonIf = requiresNativeArm64Mac) {
+    test("the file syscalls read, write and manage files like in the VM, in a native program for the host").config(enabledOrReasonIf = requiresNativeHost) {
         val directory = createTempDirectory("prog8-file-syscalls").toRealPath()
         try {
-            val module = TestProgram().apply { fileSyscallChecks(directory) }.module().withMainCalling("main.check")
+            val module = TestProgram(hostLlvmTarget).apply { fileSyscallChecks(directory) }.module().withMainCalling("main.check")
             val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
             withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
             val data = (1..8).map { it.toByte() }

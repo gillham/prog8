@@ -8,6 +8,7 @@ import io.kotest.matchers.string.shouldContain
 import prog8.code.core.*
 import prog8.code.target.LlvmTarget
 import prog8.intermediate.*
+import prog8tests.helpers.hostLlvmTarget
 
 
 class TestLlvmControlFlow: FunSpec({
@@ -186,8 +187,8 @@ class TestLlvmControlFlow: FunSpec({
         withClue(output) { exitCode shouldBe 0 }
     }
 
-    test("the control flow runs correctly as a native arm64 macOS program").config(enabledOrReasonIf = requiresNativeArm64Mac) {
-        val module = TestProgram().apply { allSubs(); checkSub() }.module().withMainCalling("main.check")
+    test("the control flow runs correctly as a native program for the host").config(enabledOrReasonIf = requiresNativeHost) {
+        val module = TestProgram(hostLlvmTarget).apply { allSubs(); checkSub() }.module().withMainCalling("main.check")
         val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
         withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
     }

@@ -11,15 +11,16 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.writeText
+import prog8tests.helpers.hostLlvmProfile
+import prog8tests.helpers.noHostLlvmProfileReason
 
 
 // prefer the clang of the same LLVM installation as llvm-as
 internal val clang: Path? = llvmAs?.resolveSibling("clang")?.takeIf { Files.isExecutable(it) } ?: LlvmToolchain.find("clang")
 
-internal val requiresNativeArm64Mac: (TestCase) -> Enabled = {
-    val arm64Mac = System.getProperty("os.name").startsWith("Mac") && System.getProperty("os.arch") == "aarch64"
+internal val requiresNativeHost: (TestCase) -> Enabled = {
     when {
-        !arm64Mac -> Enabled.disabled("linking the default llvm64 target triple needs an arm64 macOS host")
+        noHostLlvmProfileReason != null -> Enabled.disabled(noHostLlvmProfileReason!!)
         clang == null -> Enabled.disabled("clang not found next to llvm-as, on the PATH or in ${LlvmToolchain.homebrewLlvmBin}")
         else -> Enabled.enabled
     }
@@ -178,8 +179,9 @@ internal fun compileWasmObject(ir: String): Pair<Int, String> {
 }
 
 /**
- * Builds [ir] into a native executable with clang and runs it with [input] on stdin and the command line [args]; returns the exit code
- * and output of the run, or of clang if that failed. Optimizes, because that is when LLVM could fold startup stores back into static data.
+ * Builds [ir], made for [prog8tests.helpers.hostLlvmTarget], into a native executable with clang and the host's profile, and runs it with [input]
+ * on stdin and the command line [args]; returns the exit code and output of the run, or of clang if that failed.
+ * Optimizes, because that is when LLVM could fold startup stores back into static data.
  */
 internal fun compileAndRun(ir: String, input: String = "", args: List<String> = emptyList()): Pair<Int, String> {
     val dir = createTempDirectory("prog8-llvm-native")
@@ -187,7 +189,9 @@ internal fun compileAndRun(ir: String, input: String = "", args: List<String> = 
         val source = dir.resolve("program.ll").also { it.writeText(ir) }
         val executable = dir.resolve("program")
         val stdin = dir.resolve("stdin.txt").also { it.writeText(input) }
-        val compiled = execute(checkNotNull(clang).toString(), "-O2", "-Wno-override-module", source.toString(), "-o", executable.toString())
+        val profile = checkNotNull(hostLlvmProfile)
+        val compiled = execute(checkNotNull(clang).toString(), *profile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", source.toString(),
+            "-o", executable.toString(), *profile.linkArgs.toTypedArray())
         return if (compiled.first != 0) compiled else execute(executable.toString(), *args.toTypedArray(), stdin = stdin)
     } finally {
         dir.toFile().deleteRecursively()
