@@ -93,35 +93,33 @@ diskio {
         }
     }
 
-    sub f_readline(str bufptr) -> ubyte {
-        ; Routine to read text lines from a text file. Lines must be less than 255 characters.
-        ; Reads characters from the input file UNTIL a newline or return character, or 0 byte (likely EOF).
+    sub f_readline(str bufptr) -> ubyte, ubyte {
+        ; Routine to read text lines from a text file.
+        ; Reads characters from the input file UNTIL a newline or return character, or 0 byte, or the end of the file.
         ; The line read will be 0-terminated in the buffer (and not contain the end of line character).
-        ; The length of the line is returned. Note that an empty line is okay and is length 0!
-        ; The success status is returned in the Carry flag instead: C set = success, C clear = failure/endoffile
+        ; A line longer than 255 characters continues in the next call, so the buffer needs room for 256 bytes.
+        ; Returns the length of the line (an empty line is okay and is length 0!), and a status byte:
+        ; 0 when the line ended, $40 when the file ended instead, or there was an error, or no file was open.
         ubyte size
         repeat {
             %ir {{
                 syscall 54 (): r99000.w
                 storem.w r99000.w,[$ff0000]
             }}
-
             if cx16.r0H==0 {
-                sys.clear_carry()
-                return size
-            } else {
-                if cx16.r0L in ['\n', '\r', 0] {
-                    @(bufptr) = 0
-                    sys.set_carry()
-                    return size
-                }
-                @(bufptr) = cx16.r0L
-                bufptr++
-                size++
-                if_z {
-                    @(bufptr) = 0
-                    return 255
-                }
+                @(bufptr) = 0
+                return size, $40
+            }
+            if cx16.r0L in ['\n', '\r', 0] {
+                @(bufptr) = 0
+                return size, 0
+            }
+            @(bufptr) = cx16.r0L
+            bufptr++
+            size++
+            if size==255 {
+                @(bufptr) = 0
+                return size, 0
             }
         }
     }

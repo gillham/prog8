@@ -820,6 +820,10 @@ system (which then selects the next coroutine to run).
 This way it can seem that your program is executing many subroutines at the same time (without the use of an interrupt routine).
 This library handles the voodoo required to switch between such coroutines.
 
+.. note::
+    Not available on the llvm32 and llvm64 targets: switching between coroutines replaces return addresses on
+    the CPU stack, which code compiled by LLVM can't do.
+
 Read the :source:`coroutines source code <compiler/res/prog8lib/coroutines.p8>`
 to see what's in there. And look at the ``multitasking`` example to see how it can be used.
 Better docs will be written here in the manual, at some point, but until then: here is a minimal example::

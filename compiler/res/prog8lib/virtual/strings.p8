@@ -97,10 +97,9 @@ strings {
     }
 
     sub contains(str st, ubyte character) -> bool {
-        void find(st, character)
-        if_cs
-            return true
-        return false
+        bool found
+        void, found = find(st, character)
+        return found
     }
 
     sub copy(str source, str target) -> ubyte {

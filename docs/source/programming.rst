@@ -912,6 +912,8 @@ So ``if_cc goto target`` will directly translate into the single CPU instruction
     that the status register (still) contains the correct status bits.
     This is not always the case after a function call or other operations!
     If in doubt, check the generated assembly code!
+    On the virtual and llvm targets only comparisons, bit shifts and rotations (the carry), ``set_carry()`` and ``clear_carry()``
+    set the status flags. After anything else, such as loading or incrementing a value, the flags are undefined.
 
 .. note::
     For now, the symbols used or declared in the statement block(s) are shared with

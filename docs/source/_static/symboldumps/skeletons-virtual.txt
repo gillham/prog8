@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA2 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 6c86bd67 in branch llvm
+Prerelease version from git commit 0849c01b in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 
 Compiling program import-all-virtual.p8
@@ -194,7 +194,7 @@ diskio  {
     f_open_w  (str filenameptr) -> bool
     f_read  (str bufferpointer, long num_bytes) -> long
     f_read_all  (str bufferpointer) -> long
-    f_readline  (str bufptr) -> ubyte
+    f_readline  (str bufptr) -> ubyte, ubyte
     f_seek  (long position) -> bool
     f_tell  () -> long, long
     f_write  (str bufferpointer, long num_bytes) -> bool
