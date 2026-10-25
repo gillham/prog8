@@ -1,0 +1,745 @@
+
+Prog8 compiler v14.0-BETA2 by Irmen de Jong (irmen@razorvine.net)
+Prerelease version from git commit a63800f4 in branch llvm
+This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
+
+Compiling program import-all-llvm32.p8
+Compiler target: llvm32
+
+
+BUILTIN FUNCTIONS
+-----------------
+abs  (ubyte|byte|uword|word|long|float value) -> undefined
+call  (pointer address) -> uword
+callfar  (ubyte bank, pointer address, uword arg) -> uword
+callfar2  (ubyte bank, pointer address, ubyte argA, ubyte argX, ubyte argY, bool argC) -> uword
+clamp  (byte value, byte minimum, byte maximum) -> undefined
+cmp  (ubyte|byte|uword|word|long value1, ubyte|byte|uword|word|long|float value2)
+divmod  (ubyte|uword dividend, ubyte|uword divisor) -> undefined, undefined
+len  (str|array|array_splitw values) -> uword
+lmh  (long value) -> ubyte, ubyte, ubyte
+lsb  (uword|word|long|quad|uquad value) -> ubyte
+lsw  (uword|word|long|quad|uquad value) -> uword
+max  (byte val1, byte val2) -> undefined
+memory  (str name, uword size, uword alignment) -> pointer
+min  (byte val1, byte val2) -> undefined
+mklong  (ubyte msb, ubyte b2, ubyte b1, ubyte lsb) -> long
+mklong2  (uword msw, uword lsw) -> long
+mkword  (ubyte msb, ubyte lsb) -> uword
+msb  (uword|word|long|quad|uquad value) -> ubyte
+msw  (uword|word|long|quad|uquad value) -> uword
+offsetof  (ubyte field) -> ubyte
+peek  (uword|long|uquad|pointer address) -> ubyte
+peekbool  (uword|long|uquad|pointer address) -> bool
+peekf  (uword|long|uquad|pointer address) -> float
+peekl  (uword|long|uquad|pointer address) -> long
+peekp  (pointer|uword|long|uquad address) -> pointer
+peekq  (uword|long|uquad|pointer address) -> quad
+peekw  (uword|long|uquad|pointer address) -> uword
+poke  (uword|long|uquad|pointer address, ubyte|byte value)
+pokebool  (uword|long|uquad|pointer address, bool value)
+pokebowl  (uword|long|uquad|pointer address, bool value)
+pokef  (uword|long|uquad|pointer address, float value)
+pokel  (uword|long|uquad|pointer address, long value)
+pokemon  (uword|long|uquad|pointer address, ubyte value) -> ubyte
+pokep  (pointer|uword|long|uquad address, pointer value)
+pokeq  (uword|long|uquad|pointer address, quad|uquad value)
+pokew  (uword|long|uquad|pointer address, uword|word value)
+pop  () -> ubyte
+popf  () -> float
+popl  () -> long
+popp  () -> pointer
+popq  () -> quad
+popw  () -> uword
+push  (ubyte|byte|bool value)
+pushf  (float value)
+pushl  (long value)
+pushp  (pointer value)
+pushq  (quad|uquad value)
+pushw  (uword|word|pointer value)
+rol  (ubyte|uword|long item)
+rol2  (ubyte|uword|long item)
+ror  (ubyte|uword|long item)
+ror2  (ubyte|uword|long item)
+rrestore  ()
+rsave  ()
+setlsb  (word|uword|long variable, byte|ubyte value)
+setmsb  (word|uword|long variable, byte|ubyte value)
+sgn  (ubyte|byte|uword|word|long|float value) -> byte
+sizeof  (ubyte|byte|uword|word|long|quad|uquad|float|bool|str|array|array_splitw|pointer|undefined object) -> ubyte
+sqrt  (ubyte|byte|uword|word|long|float value) -> undefined
+
+
+LIBRARY MODULE NAME: buffers
+----------------------------
+
+smallringbuffer  {
+    ubyte[]  buffer
+    ubyte  fill
+    ubyte  head
+    ubyte  tail
+    free  () -> ubyte
+    get  () -> ubyte
+    getw  () -> uword
+    init  ()
+    isempty  () -> bool
+    isfull  () -> bool
+    put  (ubyte value)
+    putw  (uword value)
+    size  () -> ubyte
+}
+
+smallstack  {
+    ubyte[]  buffer
+    ubyte  sp
+    free  () -> ubyte
+    init  ()
+    isempty  () -> bool
+    isfull  () -> bool
+    pop_b  () -> ubyte
+    pop_w  () -> uword
+    push_b  (ubyte value)
+    push_w  (uword value)
+    size  () -> ubyte
+}
+
+stack  {
+    uword  buffer_ptr
+    uword  sp
+    free  () -> uword
+    init  ()
+    isempty  () -> bool
+    isfull  () -> bool
+    pop_b  () -> ubyte
+    pop_w  () -> uword
+    push_b  (ubyte value)
+    push_w  (uword value)
+    size  () -> uword
+}
+
+ringbuffer  {
+    uword  buffer_ptr
+    uword  fill
+    uword  head
+    uword  tail
+    free  () -> uword
+    get  () -> ubyte
+    getw  () -> uword
+    inc_head  ()
+    inc_tail  ()
+    init  ()
+    isempty  () -> bool
+    isfull  () -> bool
+    put  (ubyte value)
+    putw  (uword value)
+    size  () -> uword
+}
+
+
+LIBRARY MODULE NAME: compression
+--------------------------------
+
+compression  {
+    decode_rle  (uword compressed @AY, uword target @R0, uword maxsize @R1) clobbers (X) -> uword @AY
+    decode_rle_srcfunc  (uword source_function @AY, uword target @R0, uword maxsize @R1) clobbers (X) -> uword @AY
+    decode_tscrunch  (uword compressed @R0, uword target @R1) clobbers (A,X,Y)
+    decode_tscrunch_inplace  (uword compressed @R0) clobbers (A,X,Y)
+    decode_zx0  (uword compressed @R0, uword target @R1) clobbers (A,X,Y)
+    encode_rle  (uword data, uword size, uword target, bool is_last_block) -> uword
+    encode_rle_outfunc  (uword data, uword size, uword output_function, bool is_last_block)
+}
+
+
+LIBRARY MODULE NAME: conv
+-------------------------
+
+conv  {
+    str  hex_digits
+    str  string_out
+    any2uword  (str string) -> uword, ubyte
+    bin2uword  (str string) -> uword
+    hex2long  (str string) -> long
+    hex2uword  (str string) -> uword
+    str2byte  (str string) -> byte
+    str2long  (str string) -> long
+    str2ubyte  (str string) -> ubyte
+    str2uword  (str string) -> uword
+    str2word  (str string) -> word
+    str_b  (byte value) -> str
+    str_bool  (bool value) -> str
+    str_i16   alias for: str_w
+    str_i32   alias for: str_l
+    str_i64  (quad value) -> str
+    str_l  (long value) -> str
+    str_q   alias for: str_i64
+    str_u16   alias for: str_uw
+    str_u32  (long value) -> str
+    str_u64  (uquad value) -> str
+    str_ub  (ubyte value) -> str
+    str_ub0  (ubyte value) -> str
+    str_ubbin  (ubyte value) -> str
+    str_ubhex  (ubyte value) -> str
+    str_ulhex  (long value) -> str
+    str_uq   alias for: str_u64
+    str_uqbin  (uquad value) -> str
+    str_uqhex  (uquad value) -> str
+    str_uw  (uword value) -> str
+    str_uw0  (uword value) -> str
+    str_uwbin  (uword value) -> str
+    str_uwhex  (uword value) -> str
+    str_w  (word value) -> str
+}
+
+
+LIBRARY MODULE NAME: cx16logo
+-----------------------------
+
+cx16logo  {
+    long[]  logo_lines
+    logo  ()
+    logo_at  (ubyte column, ubyte row)
+}
+
+
+LIBRARY MODULE NAME: diskio
+---------------------------
+
+diskio  {
+    chdir  (str path)
+    curdir  () -> str
+    delete  (str filenameptr)
+    directory  () -> bool
+    directory_dirs  () -> bool
+    directory_files  () -> bool
+    diskname  () -> str
+    exists  (str filename) -> bool
+    f_close  ()
+    f_close_w  ()
+    f_open  (str filenameptr) -> bool
+    f_open_w  (str filenameptr) -> bool
+    f_read  (long bufferpointer, long num_bytes) -> long
+    f_read_all  (long bufferpointer) -> long
+    f_readline  (long bufptr) -> ubyte, ubyte
+    f_seek  (long position) -> bool
+    f_size  () -> long
+    f_tell  () -> long, long
+    f_write  (long bufferpointer, long num_bytes) -> bool
+    get_loadaddress  (str filename) -> uword
+    internal_list  (ubyte kind) -> bool
+    load  (str filenameptr, long address_override) -> long
+    load_raw  (str filenameptr, long start_address) -> long
+    mkdir  (str name)
+    rename  (str oldfileptr, str newfileptr)
+    rmdir  (str name)
+    save  (str filenameptr, long start_address, long savesize) -> bool
+    save_raw  (str filenameptr, long start_address, long savesize) -> bool
+    status  () -> str
+    status_code  () -> ubyte
+}
+
+
+LIBRARY MODULE NAME: fileio
+---------------------------
+
+fileio  {
+    const ubyte  SEEK_CUR
+    const ubyte  SEEK_END
+    const ubyte  SEEK_SET
+    close  (long handle) -> bool
+    eof  (long handle) -> bool
+    flush  (long handle) -> bool
+    open  (str path, str mode) -> long
+    read  (long handle, long buf, uword count) -> uword
+    seek  (long handle, quad offset, ubyte whence) -> bool
+    tell  (long handle) -> quad
+    write  (long handle, long buf, uword count) -> uword
+}
+
+
+LIBRARY MODULE NAME: floats
+---------------------------
+
+floats  {
+    const float  E
+    const float  EPSILON
+    const float  PI
+    const float  TWOPI
+    const float  π
+    acos  (float value) -> float
+    asin  (float value) -> float
+    atan  (float value) -> float
+    atan2  (float y, float x) -> float
+    ceil  (float value) -> float
+    clampf  (float value, float minimum, float maximum) -> float
+    cos  (float angle) -> float
+    cot  (float value) -> float
+    csc  (float value) -> float
+    deg  (float angle) -> float
+    exp  (float value) -> float
+    floor  (float value) -> float
+    interpolate  (float v, float inputMin, float inputMax, float outputMin, float outputMax) -> float
+    lerp  (float v0, float v1, float t) -> float
+    lerp_fast  (float v0, float v1, float t) -> float
+    ln  (float value) -> float
+    log   alias for: floats.ln
+    log2  (float value) -> float
+    maxf  (float f1, float f2) -> float
+    minf  (float f1, float f2) -> float
+    mod  (float value, float divisor) -> float
+    normalize  (float value) -> float
+    parse  (str value) -> float
+    pow  (float value, float power) -> float
+    print  (float value)
+    rad  (float angle) -> float
+    rnd  () -> float
+    rndseed  (float seed)
+    round  (float value) -> float
+    secant  (float value) -> float
+    sin  (float angle) -> float
+    tan  (float value) -> float
+    tostr  (float value) -> str
+}
+
+
+LIBRARY MODULE NAME: lineclip
+-----------------------------
+
+lineclip  {
+    clip  (word x1, word y1, word x2, word y2) -> bool, word, word, word, word
+    inside  (word x, word y) -> bool
+    set_cliprect  (word x1, word y1, word x2, word y2)
+}
+
+
+LIBRARY MODULE NAME: lists
+--------------------------
+
+lists  {
+    struct FullNode
+    struct List
+    struct Node
+    add_head  (long listptr, long node)
+    add_tail  (long listptr, long node)
+    enqueue  (long listptr, long node)
+    find_name  (long listptr, str name) -> long
+    init  (long listptr)
+    insert  (long listptr, long node, long pred)
+    is_empty  (long listptr) -> bool
+    remove  (long node)
+    remove_head  (long listptr) -> long
+    remove_tail  (long listptr) -> long
+}
+
+
+LIBRARY MODULE NAME: math
+-------------------------
+
+math  {
+    atan2  (ubyte x1, ubyte y1, ubyte x2, ubyte y2) -> ubyte
+    cos8  (ubyte angle) -> byte
+    cos8u  (ubyte angle) -> ubyte
+    cosr8  (ubyte radians) -> byte
+    cosr8u  (ubyte radians) -> ubyte
+    crc16  (^^ubyte data, uword length, uword initvalue, uword xorout) -> uword
+    crc16_end  (uword xorout) -> uword
+    crc16_start  (uword initvalue)
+    crc16_update  (ubyte value)
+    crc32  (^^ubyte data, uword length) -> long
+    crc32_end  () -> long
+    crc32_start  ()
+    crc32_update  (ubyte value)
+    diff  (ubyte b1, ubyte b2) -> ubyte
+    diffl  (long v1, long v2) -> long
+    diffw  (uword w1, uword w2) -> uword
+    direction  (ubyte x1, ubyte y1, ubyte x2, ubyte y2) -> ubyte
+    direction_qd  (ubyte quadrant, ubyte xdelta, ubyte ydelta) -> ubyte
+    direction_sc  (byte x1, byte y1, byte x2, byte y2) -> ubyte
+    gcd  (uword aa, uword bb) -> uword
+    interpolate  (ubyte v, ubyte inputMin, ubyte inputMax, ubyte outputMin, ubyte outputMax) -> ubyte
+    interpolatef   alias for: floats.interpolate
+    interpolatew  (uword v, uword inputMin, uword inputMax, uword outputMin, uword outputMax) -> uword
+    lcm  (uword aa, uword bb) -> uword
+    lerp  (ubyte v0, ubyte v1, ubyte t) -> ubyte
+    lerpf   alias for: floats.lerp
+    lerpf_fast   alias for: floats.lerp_fast
+    lerpw  (uword v0, uword v1, uword t) -> uword
+    log2  (ubyte value) -> ubyte
+    log2l  (long value) -> ubyte
+    log2w  (uword value) -> ubyte
+    mul16_last_upper  () -> uword
+    mul32  (uword a, uword b) -> long
+    randrange  (ubyte n) -> ubyte
+    randrange_rom   alias for: math.randrange
+    randrangew  (uword n) -> uword
+    randrangew_rom   alias for: math.randrangew
+    rnd  () -> ubyte
+    rnd_rom   alias for: math.rnd
+    rndseed  (uword seed1, uword seed2)
+    rndseed_rom   alias for: math.rndseed
+    rndw  () -> uword
+    rndw_rom   alias for: math.rndw
+    sin8  (ubyte angle) -> byte
+    sin8u  (ubyte angle) -> ubyte
+    sinr8  (ubyte radians) -> byte
+    sinr8u  (ubyte radians) -> ubyte
+}
+
+
+LIBRARY MODULE NAME: shared_aligned_long_arena
+----------------------------------------------
+
+arena  {
+    alloc  (long size) -> long
+    init  (long base_addr, long size)
+    reset  ()
+}
+
+
+LIBRARY MODULE NAME: sorting
+----------------------------
+
+sorting  {
+    shellsort_by_ub  (^^ubyte ub_keys, ^^uword wordvalues, ubyte num_elements)
+    shellsort_by_uw  (^^uword uw_keys, ^^uword wordvalues, ubyte num_elements)
+    shellsort_ub  (^^ubyte values, ubyte num_elements)
+    shellsort_uw  (^^uword values, ubyte num_elements)
+}
+
+
+LIBRARY MODULE NAME: strings
+----------------------------
+
+strings  {
+    ^^ubyte  last_token_source
+    append  (str target, str suffix) -> ubyte
+    compare  (str st1, str st2) -> byte
+    compare_nocase  (str st1, str st2) -> byte
+    compare_nocase_iso   alias for: strings.compare_nocase
+    contains  (str st, ubyte character) -> bool
+    copy  (str source, str target) -> ubyte
+    endswith  (str st, str suffix) -> bool
+    find  (str st, ubyte character) -> ubyte, bool
+    find_eol  (str st) -> ubyte, bool
+    findstr  (str haystack, str needle) -> ubyte
+    hash  (str st) -> ubyte
+    isdigit  (ubyte character) -> bool
+    isletter  (ubyte character) -> bool
+    islower  (ubyte character) -> bool
+    isprint  (ubyte character) -> bool
+    isspace  (ubyte character) -> bool
+    isupper  (ubyte character) -> bool
+    isxdigit  (ubyte character) -> bool
+    left  (str source, ubyte slen, str target)
+    length  (str st) -> ubyte
+    lower  (str st) -> ubyte
+    lower_iso   alias for: strings.lower
+    lowerchar  (ubyte char) -> ubyte
+    lowerchar_iso   alias for: strings.lowerchar
+    lstrip  (str s)
+    lstripped  (str s) -> str
+    ltrim  (str s)
+    ltrimmed  (str s) -> str
+    nappend  (str target, str suffix, ubyte maxlength) -> ubyte
+    ncopy  (str source, str target, ubyte maxlength) -> ubyte
+    next_token  (str source, str delimiters) -> str
+    rfind  (str stringptr, ubyte character) -> ubyte, bool
+    right  (str source, ubyte slen, str target)
+    rstrip  (str s)
+    rtrim  (str s)
+    slice  (str source, ubyte start, ubyte slen, str target)
+    split  (str s, ^^long parts, ubyte maxparts) -> ubyte
+    startswith  (str st, str prefix) -> bool
+    strcat   alias for: strings.append
+    strcmp   alias for: strings.compare
+    strcontains   alias for: strings.contains
+    strcpy   alias for: strings.copy
+    strip  (str s)
+    strlen   alias for: strings.length
+    strlower   alias for: strings.lower
+    strtrim   alias for: strings.trim
+    strupper   alias for: strings.upper
+    substr   alias for: strings.slice
+    trim  (str s)
+    upper  (str st) -> ubyte
+    upper_iso   alias for: strings.upper
+    upperchar  (ubyte char) -> ubyte
+    upperchar_iso   alias for: strings.upperchar
+}
+
+
+LIBRARY MODULE NAME: syslib
+---------------------------
+
+sys  {
+    const byte  MAX_BYTE
+    const float  MAX_FLOAT
+    const long  MAX_LONG
+    const quad  MAX_QUAD
+    const ubyte  MAX_UBYTE
+    const uquad  MAX_UQUAD
+    const uword  MAX_UWORD
+    const word  MAX_WORD
+    const byte  MIN_BYTE
+    const float  MIN_FLOAT
+    const long  MIN_LONG
+    const quad  MIN_QUAD
+    const ubyte  MIN_UBYTE
+    const uquad  MIN_UQUAD
+    const uword  MIN_UWORD
+    const word  MIN_WORD
+    const ubyte  SIZEOF_BOOL
+    const ubyte  SIZEOF_BYTE
+    const ubyte  SIZEOF_FLOAT
+    const ubyte  SIZEOF_LONG
+    const ubyte  SIZEOF_POINTER
+    const ubyte  SIZEOF_QUAD
+    const ubyte  SIZEOF_UBYTE
+    const ubyte  SIZEOF_UQUAD
+    const ubyte  SIZEOF_UWORD
+    const ubyte  SIZEOF_WORD
+    const ubyte  target
+    argc  () -> uword
+    argv  (uword index) -> str
+    clear_carry  ()
+    clear_irqd  ()
+    die  (ubyte code, str message)
+    exit  (ubyte returnvalue)
+    memcmp  (long address1, long address2, uword size) -> byte
+    memcopy  (long source, long tgt, uword count)
+    memset  (long mem, uword numbytes, ubyte value)
+    memsetw  (long mem, uword numwords, uword value)
+    poweroff_system  ()
+    reset_system  ()
+    set_carry  ()
+    set_irqd  ()
+    wait  (uword jiffies)
+    waitvsync  ()
+}
+
+cx16  {
+    &uword  r0
+    &ubyte  r0H
+    &ubyte  r0L
+    &bool  r0bH
+    &bool  r0bL
+    &long  r0r1sl
+    &word  r0s
+    &byte  r0sH
+    &byte  r0sL
+    &uword  r1
+    &uword  r10
+    &ubyte  r10H
+    &ubyte  r10L
+    &bool  r10bH
+    &bool  r10bL
+    &long  r10r11sl
+    &word  r10s
+    &byte  r10sH
+    &byte  r10sL
+    &uword  r11
+    &ubyte  r11H
+    &ubyte  r11L
+    &bool  r11bH
+    &bool  r11bL
+    &word  r11s
+    &byte  r11sH
+    &byte  r11sL
+    &uword  r12
+    &ubyte  r12H
+    &ubyte  r12L
+    &bool  r12bH
+    &bool  r12bL
+    &long  r12r13sl
+    &word  r12s
+    &byte  r12sH
+    &byte  r12sL
+    &uword  r13
+    &ubyte  r13H
+    &ubyte  r13L
+    &bool  r13bH
+    &bool  r13bL
+    &word  r13s
+    &byte  r13sH
+    &byte  r13sL
+    &uword  r14
+    &ubyte  r14H
+    &ubyte  r14L
+    &bool  r14bH
+    &bool  r14bL
+    &long  r14r15sl
+    &word  r14s
+    &byte  r14sH
+    &byte  r14sL
+    &uword  r15
+    &ubyte  r15H
+    &ubyte  r15L
+    &bool  r15bH
+    &bool  r15bL
+    &word  r15s
+    &byte  r15sH
+    &byte  r15sL
+    &ubyte  r1H
+    &ubyte  r1L
+    &bool  r1bH
+    &bool  r1bL
+    &word  r1s
+    &byte  r1sH
+    &byte  r1sL
+    &uword  r2
+    &ubyte  r2H
+    &ubyte  r2L
+    &bool  r2bH
+    &bool  r2bL
+    &long  r2r3sl
+    &word  r2s
+    &byte  r2sH
+    &byte  r2sL
+    &uword  r3
+    &ubyte  r3H
+    &ubyte  r3L
+    &bool  r3bH
+    &bool  r3bL
+    &word  r3s
+    &byte  r3sH
+    &byte  r3sL
+    &uword  r4
+    &ubyte  r4H
+    &ubyte  r4L
+    &bool  r4bH
+    &bool  r4bL
+    &long  r4r5sl
+    &word  r4s
+    &byte  r4sH
+    &byte  r4sL
+    &uword  r5
+    &ubyte  r5H
+    &ubyte  r5L
+    &bool  r5bH
+    &bool  r5bL
+    &word  r5s
+    &byte  r5sH
+    &byte  r5sL
+    &uword  r6
+    &ubyte  r6H
+    &ubyte  r6L
+    &bool  r6bH
+    &bool  r6bL
+    &long  r6r7sl
+    &word  r6s
+    &byte  r6sH
+    &byte  r6sL
+    &uword  r7
+    &ubyte  r7H
+    &ubyte  r7L
+    &bool  r7bH
+    &bool  r7bL
+    &word  r7s
+    &byte  r7sH
+    &byte  r7sL
+    &uword  r8
+    &ubyte  r8H
+    &ubyte  r8L
+    &bool  r8bH
+    &bool  r8bL
+    &long  r8r9sl
+    &word  r8s
+    &byte  r8sH
+    &byte  r8sL
+    &uword  r9
+    &ubyte  r9H
+    &ubyte  r9L
+    &bool  r9bH
+    &bool  r9bL
+    &word  r9s
+    &byte  r9sH
+    &byte  r9sL
+}
+
+
+LIBRARY MODULE NAME: textio
+---------------------------
+
+txt  {
+    const ubyte  DEFAULT_HEIGHT
+    const ubyte  DEFAULT_WIDTH
+    bell  ()
+    chrin  () -> ubyte
+    chrout  (ubyte char)
+    clear_screen  ()
+    clear_screenchars  (ubyte character)
+    cls  ()
+    color  (ubyte txtcol)
+    column  (ubyte col)
+    fill_screen  (ubyte character, ubyte color)
+    height  () -> ubyte
+    home  ()
+    input_chars  (str buffer) -> ubyte
+    input_line  (str buffer, ubyte maxlength) -> ubyte
+    iso  ()
+    iso2petscii  (ubyte iso_char) -> ubyte
+    iso2petscii_str  (str iso_string)
+    iso_off  ()
+    lowercase  ()
+    nl  ()
+    petscii2scr  (ubyte petscii_char) -> ubyte
+    petscii2scr_str  (str petscii_string)
+    plot  (ubyte col, ubyte row)
+    print  (str text)
+    print_b  (byte value)
+    print_bool  (bool value)
+    print_f   alias for: floats.print
+    print_i16   alias for: print_w
+    print_i32   alias for: print_l
+    print_i64  (quad value)
+    print_l  (long value)
+    print_q   alias for: print_i64
+    print_u16   alias for: print_uw
+    print_u32  (long value)
+    print_u64  (uquad value)
+    print_ub  (ubyte value)
+    print_ub0  (ubyte value)
+    print_ubbin  (ubyte value, bool prefix)
+    print_ubhex  (ubyte value, bool prefix)
+    print_ulhex  (long value, bool prefix)
+    print_uq   alias for: print_u64
+    print_uqbin  (uquad value)
+    print_uqhex  (uquad value)
+    print_uw  (uword value)
+    print_uw0  (uword value)
+    print_uwbin  (uword value, bool prefix)
+    print_uwhex  (uword value, bool prefix)
+    print_w  (word value)
+    prompt  (str message) -> str
+    readln  () -> str
+    rvs_off  ()
+    rvs_on  ()
+    setcc  (ubyte col, ubyte row, ubyte char, ubyte color)
+    setchr  (ubyte col, ubyte row, ubyte char)
+    size  () -> ubyte, ubyte
+    spc  ()
+    uppercase  ()
+    width  () -> ubyte
+}
+
+
+LIBRARY MODULE NAME: wavfile
+----------------------------
+
+wavfile  {
+    const ubyte  Format::ADPCM
+    const ubyte  Format::ALAW
+    const ubyte  Format::DVI_ADPCM
+    const ubyte  Format::IEEE_FLOAT
+    const ubyte  Format::MULAW
+    const ubyte  Format::PCM
+    ubyte  bits_per_sample
+    uword  block_align
+    uword  data_offset
+    long  data_size
+    ubyte  nchannels
+    uword  sample_rate
+    ubyte  wavefmt
+    parse_header  (^^ubyte wav_data) -> bool
+}
+
+

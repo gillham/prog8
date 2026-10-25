@@ -408,6 +408,8 @@ Grouped per compilation target.
 * `amiga500 <_static/symboldumps/skeletons-amiga500.txt>`_
 * `amiga1200 <_static/symboldumps/skeletons-amiga1200.txt>`_
 * `qemu68k <_static/symboldumps/skeletons-qemu68k.txt>`_
+* `llvm32 <_static/symboldumps/skeletons-llvm32.txt>`_
+* `llvm64 <_static/symboldumps/skeletons-llvm64.txt>`_
 
 
 Library modules
