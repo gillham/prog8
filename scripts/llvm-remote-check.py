@@ -14,7 +14,8 @@ whatever their login shell is.
 
 A triple with 4-byte pointers is compiled for the llvm32 target, without the programs that need 8-byte pointers. A host
 can also run the programs of another CPU: --clang names its clang, --clang-arg adds the sysroot and other arguments for
-remote linking, and --run-prefix the emulator that runs each program, such as qemu-riscv32 -L <sysroot>.
+remote linking, and --run-prefix the emulator that runs each program, such as qemu-riscv32 -L <sysroot>. For local
+linking, --link-arg adds a clang link argument, such as the --gcc-install-dir that a Buildroot sysroot needs.
 
 Examples:
     export PROG8_REMOTE_HOSTS="linuxbox=x86_64-unknown-linux-gnu pi=aarch64-unknown-linux-gnu oldmac=x86_64-apple-macosx"
@@ -24,6 +25,7 @@ Examples:
     scripts/llvm-remote-check.py --host linuxbox=x86_64-unknown-linux-gnu --noopt-only
     scripts/llvm-remote-check.py --host linuxbox=riscv32-unknown-linux-gnu --clang clang-19 --clang-arg=--sysroot=<dir> \
         --clang-arg=--gcc-install-dir=<dir> --clang-arg=-fuse-ld=lld --run-prefix "qemu-riscv32 -L <dir>"
+    scripts/llvm-remote-check.py --host rv32vm=riscv32-unknown-linux-gnu --link local --link-arg=--gcc-install-dir=<dir>
 
 Needs a built compiler: gradle installdist installshadowdist
 """
@@ -422,6 +424,7 @@ def main():
     parser.add_argument("--keep", action="store_true", help=f"leave the ~/{REMOTE_DIR} directory on the hosts")
     parser.add_argument("--clang", default="clang", help="the clang command on the hosts, for remote linking (default: clang)")
     parser.add_argument("--clang-arg", action="append", default=[], help="an extra argument for clang on the hosts, such as --sysroot=<dir> (repeatable)")
+    parser.add_argument("--link-arg", action="append", default=[], help="an extra clang link argument for local linking (repeatable)")
     parser.add_argument("--run-prefix", default="", help="a command that runs each program on the hosts, such as an emulator")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4, help="parallel compiler runs")
     options = parser.parse_args()
@@ -470,7 +473,7 @@ def main():
         for link in links:
             if link == "local":
                 try:
-                    extra = sysroot_args(triple)
+                    extra = sysroot_args(triple) + [x for a in options.link_arg for x in ("-Xlink", a)]
                 except RuntimeError as x:
                     print(f"\n{host} ({triple}), local linking: skipped, {x}")
                     continue
