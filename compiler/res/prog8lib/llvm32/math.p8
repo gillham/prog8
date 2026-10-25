@@ -1,7 +1,6 @@
 ; Math library routines for the llvm32 target.
 ; note: some functions you might expect here are builtin functions,
 ;       such as abs, sqrt, clamp, min, max and sgn (the sign) for example.
-; Not available on llvm32: atan2 and the direction routines, and mul16_last_upper (multiply into a long instead).
 
 math {
     %option ignore_unused
@@ -191,6 +190,77 @@ math {
                 result++
         }
         return result
+    }
+
+    sub atan2(ubyte x1, ubyte y1, ubyte x2, ubyte y2) -> ubyte {
+        ;; Calculate the angle, in a 256-degree circle, between two points into A.
+        ;; The points (x1, y1) and (x2, y2) have to use *unsigned coordinates only* from the positive quadrant in the cartesian plane!
+        %ir {{
+            loadm.b r99100.b,[math.atan2.x1]
+            loadm.b r99101.b,[math.atan2.y1]
+            loadm.b r99102.b,[math.atan2.x2]
+            loadm.b r99103.b,[math.atan2.y2]
+            syscall 31 (r99100.b, r99101.b, r99102.b, r99103.b): r99104.b
+            returnr.b r99104.b
+        }}
+    }
+
+    sub direction(ubyte x1, ubyte y1, ubyte x2, ubyte y2) -> ubyte {
+        ; From a pair of positive coordinates, calculate discrete direction between 0 and 23 into A.
+        ; This adjusts the atan() result  so that the direction N is centered on the angle=N instead of having it as a boundary
+        ubyte angle = atan2(x1, y1, x2, y2) - (256/48 as ubyte)
+        return 23-lsb(mkword(angle,0) / 2730)
+    }
+
+    sub direction_qd(ubyte quadrant, ubyte xdelta, ubyte ydelta) -> ubyte {
+        ; From a pair of X/Y deltas (both >=0), and quadrant 0-3, calculate discrete direction between 0 and 23.
+        when quadrant {
+            3 -> return direction(0, 0, xdelta, ydelta)
+            2 -> return direction(xdelta, 0, 0, ydelta)
+            1 -> return direction(0, ydelta, xdelta, 0)
+            else -> return direction(xdelta, ydelta, 0, 0)
+        }
+    }
+
+    sub direction_sc(byte x1, byte y1, byte x2, byte y2) -> ubyte {
+        ; From a pair of signed coordinates around the origin, calculate discrete direction between 0 and 23 into A.
+        ; shift the points into the positive quadrant
+        ubyte px1
+        ubyte py1
+        ubyte px2
+        ubyte py2
+        if x1<0 or x2<0 {
+            px1 = x1 as ubyte + 128
+            px2 = x2 as ubyte + 128
+        } else {
+            px1 = x1 as ubyte
+            px2 = x2 as ubyte
+        }
+        if y1<0 or y2<0 {
+            py1 = y1 as ubyte + 128
+            py2 = y2 as ubyte + 128
+        } else {
+            py1 = y1 as ubyte
+            py2 = y2 as ubyte
+        }
+
+        return direction(px1, py1, px2, py2)
+    }
+
+    sub mul16_last_upper() -> uword {
+        ; This routine peeks into the internal 32 bits multiplication result buffer of the
+        ; 16*16 bits multiplication routine, to fetch the upper 16 bits of the last calculation.
+        ; Notes:
+        ;   - to avoid interference it's best to fetch and store this value immediately after the multiplication expression.
+        ;     for instance, simply printing a number may already result in new multiplication calls being performed
+        ;   - not all multiplications in the source code result in an actual multiplication call:
+        ;     some simpler multiplications will be optimized away into faster routines. These will not set the upper 16 bits at all!
+        ;   - THE RESULT IS ONLY VALID IF THE MULTIPLICATION WAS DONE WITH UWORD ARGUMENTS (or two positive WORD arguments)
+        ;     as soon as a negative word value (or 2) was used in the multiplication, these upper 16 bits are not valid!!
+        %ir {{
+            syscall 33 (): r99000.w
+            returnr.w r99000.w
+        }}
     }
 
     sub mul32(uword a, uword b) -> long {

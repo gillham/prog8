@@ -605,14 +605,35 @@ main {
         }
     }
 
-    test("the float printing program prints the same on the virtual machine as on the llvm targets") {
-        val program = outputPrograms.getValue("floats printing, conversion to and from strings, and random numbers")
-        for (optimize in listOf(false, true)) {
-            val result = compileText(VMTarget(), optimize, program.source, outputDir).shouldNotBeNull()
-            val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
-            // after the line in which the IR file reader names the file
-            withClue("optimize=$optimize") { printedOnStdout { exitStatusOnVirtualMachine(irFile) } shouldEndWith "\n" + program.output }
+    test("the float printing and the math, sorting and lineclip programs print the same on the virtual machine as on the llvm targets") {
+        for (name in listOf("floats printing, conversion to and from strings, and random numbers", "math atan2, direction, mul16_last_upper, sorting and lineclip")) {
+            val program = outputPrograms.getValue(name)
+            for (optimize in listOf(false, true)) {
+                val result = compileText(VMTarget(), optimize, program.source, outputDir).shouldNotBeNull()
+                val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+                // after the line in which the IR file reader names the file
+                withClue("$name optimize=$optimize") { printedOnStdout { exitStatusOnVirtualMachine(irFile) } shouldEndWith "\n" + program.output }
+            }
         }
+    }
+
+    test("word multiplications keep their upper 16 bits only in programs that call math.mul16_last_upper") {
+        fun references(callsIt: Boolean): Int {
+            val program = """
+                %import math
+                %zeropage basicsafe
+                main {
+                    sub start() {
+                        uword @shared a = 50000
+                        uword @shared b = 3000
+                        a *= b
+                        ${if (callsIt) "a = math.mul16_last_upper()" else ""}
+                    }
+                }"""
+            return compiledLlFile(compileText(LlvmTarget(), true, program, outputDir)).readLines().count { "@.math.mul16_upper" in it }
+        }
+        references(callsIt = false) shouldBe 0
+        (references(callsIt = true) > 0) shouldBe true
     }
 
     test("an unknown target name is rejected") {
@@ -5556,5 +5577,110 @@ main {
     }
 }""", "0.0 true\n-0.0 true\n1.0 true\n-1.5 true\n0.1 true\n3.141592653589793 true\n100.0 true\n1234567.0 true\n9999999.0 true\n1.0E7 true\n" +
         "0.001 true\n9.999E-4 true\n1.0E-5 true\n1.23456789012E11 true\n1.0E23 true\n0.002 true\n1.7976931348623157E308 true\n4.9E-324 true\n" +
-        "2.2250738585072014E-308 true\n0.3 true\n0.6666666666666666 true\n1.0E100 true\n-1.23456E-8 true\n125.0\nInfinity\n0.0\n0.0\n-0.5\ntrue\n")
+        "2.2250738585072014E-308 true\n0.3 true\n0.6666666666666666 true\n1.0E100 true\n-1.23456E-8 true\n125.0\nInfinity\n0.0\n0.0\n-0.5\ntrue\n"),
+
+    "math atan2, direction, mul16_last_upper, sorting and lineclip" to OutputProgram("""
+%import textio
+%import math
+%import sorting
+%import lineclip
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.print_ub(math.atan2(0, 0, 10, 0))
+        txt.spc()
+        txt.print_ub(math.atan2(0, 0, 10, 10))
+        txt.spc()
+        txt.print_ub(math.atan2(0, 0, 0, 10))
+        txt.spc()
+        txt.print_ub(math.atan2(10, 0, 0, 0))
+        txt.spc()
+        txt.print_ub(math.atan2(0, 10, 0, 0))
+        txt.spc()
+        txt.print_ub(math.atan2(200, 100, 30, 250))
+        txt.spc()
+        txt.print_ub(math.atan2(5, 5, 5, 5))
+        txt.nl()
+        ubyte i
+        for i in 0 to 23 {
+            txt.print_ub(math.direction(128, 128, 128 + lsb(math.cos8(i * 11) as byte as word / 2), 128 + lsb(math.sin8(i * 11) as byte as word / 2)))
+            txt.spc()
+        }
+        txt.nl()
+        txt.print_ub(math.direction_qd(0, 10, 3))
+        txt.spc()
+        txt.print_ub(math.direction_qd(1, 10, 3))
+        txt.spc()
+        txt.print_ub(math.direction_qd(2, 10, 3))
+        txt.spc()
+        txt.print_ub(math.direction_qd(3, 10, 3))
+        txt.spc()
+        txt.print_ub(math.direction_sc(-10, -10, 20, 30))
+        txt.spc()
+        txt.print_ub(math.direction_sc(5, 5, 1, 1))
+        txt.nl()
+        uword @shared a = 50000
+        uword @shared b = 3000
+        uword @shared low = a * b
+        uword upper = math.mul16_last_upper()
+        txt.print_uw(low)
+        txt.spc()
+        txt.print_uw(upper)
+        txt.spc()
+        word @shared sa = -1234
+        word @shared sb = 567
+        word @shared slow = sa * sb
+        txt.print_uw(math.mul16_last_upper())
+        txt.spc()
+        a *= 7
+        txt.print_uw(math.mul16_last_upper())
+        txt.nl()
+
+        ubyte[] ub = [9, 3, 200, 0, 7, 7, 255, 1]
+        sorting.shellsort_ub(ub, len(ub))
+        for i in ub { txt.print_ub(i) txt.spc() }
+        txt.nl()
+        uword[] uw = [9000, 3, 65535, 0, 700, 7, 1]
+        sorting.shellsort_uw(uw, len(uw))
+        for cx16.r0 in uw { txt.print_uw(cx16.r0) txt.spc() }
+        txt.nl()
+        ubyte[] keys = [3, 1, 2]
+        uword[] vals = [300, 100, 200]
+        sorting.shellsort_by_ub(keys, vals, len(keys))
+        for cx16.r0 in vals { txt.print_uw(cx16.r0) txt.spc() }
+        txt.nl()
+        uword[] wkeys = [3000, 1000, 2000]
+        uword[] wvals = [3, 1, 2]
+        sorting.shellsort_by_uw(wkeys, wvals, len(wkeys))
+        for cx16.r0 in wvals { txt.print_uw(cx16.r0) txt.spc() }
+        txt.nl()
+
+        lineclip.set_cliprect(10, 10, 100, 80)
+        word x1, y1, x2, y2
+        bool visible
+        visible, x1, y1, x2, y2 = lineclip.clip(0, 0, 150, 120)
+        txt.print_bool(visible)
+        txt.spc()
+        txt.print_w(x1)
+        txt.spc()
+        txt.print_w(y1)
+        txt.spc()
+        txt.print_w(x2)
+        txt.spc()
+        txt.print_w(y2)
+        txt.spc()
+        txt.print_bool(lineclip.inside(50, 50))
+        txt.print_bool(lineclip.inside(5, 50))
+        txt.nl()
+    }
+}""", "0 32 64 128 192 98 0\n" +
+        "0 23 22 21 20 19 18 17 16 15 14 13 12 11 10 8 7 6 5 4 3 2 1 0 \n" +
+        "11 1 13 23 20 9\n" +
+        "53632 2288 65525 5\n" +
+        "0 1 3 7 7 9 200 255 \n" +
+        "0 1 3 7 700 9000 65535 \n" +
+        "100 200 300 \n" +
+        "1 2 3 \n" +
+        "true 12 10 100 80 truefalse\n")
 )

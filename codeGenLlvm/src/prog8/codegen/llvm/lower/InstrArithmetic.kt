@@ -22,7 +22,8 @@ internal fun FunctionLowering.lowerArithmetic(ins: IRInstruction) {
         Opcode.NEG, Opcode.NEGM -> modify(ins, wide = true) { value, base -> negate(value, base) }
         Opcode.ADD, Opcode.ADDR, Opcode.ADDM, Opcode.ADDIM -> combine(ins, BinaryOperator.ADD)
         Opcode.SUB, Opcode.SUBR, Opcode.SUBM, Opcode.SUBIM -> combine(ins, BinaryOperator.SUB)
-        Opcode.MUL, Opcode.MULR, Opcode.MULM, Opcode.MULS, Opcode.MULSR, Opcode.MULSM -> combine(ins, BinaryOperator.MUL)
+        Opcode.MUL, Opcode.MULR, Opcode.MULM -> multiply(ins, signed = false)
+        Opcode.MULS, Opcode.MULSR, Opcode.MULSM -> multiply(ins, signed = true)
         Opcode.DIV, Opcode.DIVR, Opcode.DIVM -> divide(ins, signed = false, remainder = false)
         Opcode.DIVS, Opcode.DIVSR, Opcode.DIVSM -> divide(ins, signed = true, remainder = false)
         Opcode.MOD, Opcode.MODR -> divide(ins, signed = false, remainder = true)
@@ -75,6 +76,19 @@ internal fun FunctionLowering.combine(ins: IRInstruction, operator: BinaryOperat
         val right = ins.srcA?.let { readWide(it) } ?: immediate(ins, if (left.type == LlvmType.Ptr) builder.mapper.intPtr else left.type)
         operation(operator, left, right, base)
     }
+
+/** A multiplication; one of words keeps the upper 16 bits of its 32-bit product for math.mul16_last_upper when the program calls that. */
+private fun FunctionLowering.multiply(ins: IRInstruction, signed: Boolean) {
+    if (ins.type != IRDataType.WORD || !builder.keepsMul16Upper)
+        return combine(ins, BinaryOperator.MUL)
+    modify(ins, wide = true) { left, base ->
+        val right = ins.srcA?.let { convert(read(it), LlvmType.I16, base) } ?: immediate(ins, LlvmType.I16)
+        val product = operation(BinaryOperator.MUL, widen(left, LlvmType.I32, signed, base), widen(right, LlvmType.I32, signed, base), base)
+        val upper = derive(base, LlvmType.I32) { LlvmInstruction.BinaryOp(BinaryOperator.LSHR, it, product, LlvmValue.IntConstant(16, LlvmType.I32)) }
+        emit(LlvmInstruction.Store(convert(upper, LlvmType.I16, base), builder.mul16Upper()))
+        convert(product, LlvmType.I16, base)
+    }
+}
 
 /** [left] [operator] [right] on integers or floats; a pointer gets an integer added or subtracted as a byte offset. */
 internal fun FunctionLowering.operation(operator: BinaryOperator, left: LlvmValue, right: LlvmValue, base: String): LlvmValue {

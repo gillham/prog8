@@ -22,6 +22,8 @@ import prog8.intermediate.requireCallSite
 private const val VM_EXIT = 1
 private const val VM_PRINT_C = 2
 private const val VM_PRINT_S = 3
+private const val VM_ATAN = 31
+internal const val VM_MUL16_LAST_UPPER = 33
 private const val VM_MEMCOPY = 36
 private const val VM_MEMSET = 37
 private const val VM_MEMSETW = 38
@@ -70,6 +72,8 @@ internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
         VM_EXIT -> exit(site, number)
         VM_PRINT_C -> printChar(site, number)
         VM_PRINT_S -> printString(site, number)
+        VM_ATAN -> angle(site, number)
+        VM_MUL16_LAST_UPPER -> mul16LastUpper(site, number)
         VM_MEMCOPY -> memoryCopy(site, number)
         VM_MEMSET -> memorySet(site, number)
         VM_MEMSETW -> memorySetWords(site, number)
@@ -165,6 +169,29 @@ private fun FunctionLowering.clamp(site: CallSite, number: Int, type: LlvmType, 
     val suffix = LlvmPrinter.format(type)
     val atLeastMinimum = intrinsic(if (signed) "llvm.smax.$suffix" else "llvm.umax.$suffix", type, value, minimum)
     result(site, intrinsic(if (signed) "llvm.smin.$suffix" else "llvm.umin.$suffix", type, atLeastMinimum, maximum))
+}
+
+/** ATAN(x1, y1, x2, y2): the angle from the first point to the second, in 256 steps for a full circle, as in the VM. */
+private fun FunctionLowering.angle(site: CallSite, number: Int) {
+    val (x1, y1, x2, y2) = arguments(site, number, 4).map { derive("coord", LlvmType.Double) { value -> LlvmInstruction.Cast(CastOperator.UITOFP, value, convert(read(it), LlvmType.I8), LlvmType.Double) } }
+    val dy = derive("dy", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FSUB, it, y2, y1) }
+    val dx = derive("dx", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FSUB, it, x2, x1) }
+    val radians = derive("radians", LlvmType.Double) { LlvmInstruction.Call(it, external("atan2", LlvmType.Double, listOf(LlvmType.Double, LlvmType.Double)), listOf(dy, dx), LlvmType.Double) }
+    val negative = derive("negative", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OLT, it, radians, LlvmValue.FloatConstant(0.0)) }
+    val turned = derive("radians", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FADD, it, radians, LlvmValue.FloatConstant(2 * Math.PI)) }
+    val full = derive("radians", LlvmType.Double) { LlvmInstruction.Select(it, negative, turned, radians) }
+    // the VM's radians/2.0/PI*256.0, in that order, so that values on a step boundary round the same
+    val halved = derive("steps", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FDIV, it, full, LlvmValue.FloatConstant(2.0)) }
+    val turns = derive("steps", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FDIV, it, halved, LlvmValue.FloatConstant(Math.PI)) }
+    val scaled = derive("steps", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FMUL, it, turns, LlvmValue.FloatConstant(256.0)) }
+    val steps = derive("steps", LlvmType.I32) { LlvmInstruction.Cast(CastOperator.FPTOSI, it, intrinsic("llvm.floor.f64", LlvmType.Double, scaled), LlvmType.I32) }
+    result(site, convert(steps, LlvmType.I8, "angle"))
+}
+
+/** MUL16_LAST_UPPER(): the upper 16 bits of the product of the last word multiplication. */
+private fun FunctionLowering.mul16LastUpper(site: CallSite, number: Int) {
+    arguments(site, number, 0)
+    result(site, derive("upper", LlvmType.I16) { LlvmInstruction.Load(it, builder.mul16Upper()) })
 }
 
 /** EXIT(status byte) ends the program with C's exit(), which the hosted llvm targets can rely on. */

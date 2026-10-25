@@ -36,6 +36,15 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     private val profile = (program.options.compTarget as? LlvmTarget)?.profile
     /** Whether an indirect call must use the callee's exact signature, as WebAssembly's call_indirect traps on any other. */
     val strictIndirectSignatures: Boolean = profile?.strictIndirectSignatures == true
+    /** Whether the program calls math.mul16_last_upper, so that word multiplications keep the upper 16 bits of their product for it, as in the VM. */
+    val keepsMul16Upper: Boolean = run {
+        var found = false
+        program.forEachInstruction {
+            if (it.opcode == Opcode.SYSCALL && (it.requireCallSite().target as? CallTarget.SystemCall)?.number == VM_MUL16_LAST_UPPER)
+                found = true
+        }
+        found
+    }
     private val subroutines = program.allSubs().associateBy { it.label }
     private val asmSubroutines = program.allAsmSubs().associateBy { it.label }
     private val externalFunctions = linkedMapOf<String, LlvmFunction>()
@@ -260,6 +269,9 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     }
 
     /** A zero-initialized internal global of the generated code itself, such as the value stack of PUSH and POP. */
+    /** The upper 16 bits of the 32-bit product of the last word multiplication, when [keepsMul16Upper]. */
+    fun mul16Upper(): LlvmValue.Global = runtimeGlobal(".math.mul16_upper", LlvmType.I16)
+
     fun runtimeGlobal(name: String, type: LlvmType, constant: Boolean = false): LlvmValue.Global {
         runtimeGlobals.getOrPut(name) { LlvmGlobal(name, type, LlvmValue.ZeroInitializer(type), isConstant = constant, linkage = LlvmLinkage.INTERNAL) }
         return LlvmValue.Global(name)

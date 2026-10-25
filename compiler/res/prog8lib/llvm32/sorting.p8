@@ -1,0 +1,103 @@
+; **experimental** data sorting routines, API subject to change!!
+
+; NOTE: gnomesort is not implemented here, just use shellshort.
+
+sorting {
+    %option ignore_unused
+
+    sub shellsort_ub(^^ubyte values, ubyte num_elements) {
+        num_elements--
+        ubyte @zp gap
+        for gap in [132, 57, 23, 10, 4, 1] {
+            ubyte i
+            for i in gap to num_elements {
+                ubyte @zp temp = values[i]
+                ubyte @zp j = i
+                ubyte @zp k = j-gap
+                repeat {
+                    ubyte @zp v = values[k]
+                    if v <= temp break
+                    if j < gap break
+                    values[j] = v
+                    j = k
+                    k -= gap
+                }
+                values[j] = temp
+            }
+        }
+    }
+
+    sub shellsort_uw(^^uword values, ubyte num_elements) {
+        num_elements--
+        ubyte gap
+        for gap in [132, 57, 23, 10, 4, 1] {
+            ubyte i
+            for i in gap to num_elements {
+                uword @zp temp = values[i]
+                ubyte @zp j = i
+                ubyte @zp k = j-gap
+                while j>=gap {
+                    uword @zp v = values[k]
+                    if v <= temp break
+                    values[j] = v
+                    j = k
+                    k -= gap
+                }
+                values[j] = temp
+            }
+        }
+    }
+
+
+    sub shellsort_by_ub(^^ubyte ub_keys, ^^uword wordvalues, ubyte num_elements) {
+        ; sorts the 'wordvalues' array (no-split array of words) according to the 'ub_keys' array (which also gets sorted of course).
+        num_elements--
+        ubyte @zp gap
+        for gap in [132, 57, 23, 10, 4, 1] {
+            ubyte i
+            for i in gap to num_elements {
+                ubyte @zp temp = ub_keys[i]
+                uword temp_wv = wordvalues[i]
+                ubyte @zp j = i
+                ubyte @zp k = j-gap
+                repeat {
+                    ubyte @zp v = ub_keys[k]
+                    if v <= temp break
+                    if j < gap break
+                    ub_keys[j] = v
+                    wordvalues[j] = wordvalues[k]
+                    j = k
+                    k -= gap
+                }
+                ub_keys[j] = temp
+                wordvalues[j] = temp_wv
+            }
+        }
+    }
+
+    sub shellsort_by_uw(^^uword uw_keys, ^^uword wordvalues, ubyte num_elements) {
+        ; sorts the 'wordvalues' array according to the 'uw_keys' array (which also gets sorted of course).
+        ; both arrays should be no-split array of words. uw_keys are unsigned.
+        num_elements--
+        ubyte gap
+        for gap in [132, 57, 23, 10, 4, 1] {
+            ubyte i
+            for i in gap to num_elements {
+                uword @zp temp = uw_keys[i]
+                uword temp_wv = wordvalues[i]
+                ubyte @zp j = i
+                ubyte @zp k = j-gap
+                while j>=gap {
+                    uword @zp v = uw_keys[k]
+                    if v <= temp break
+                    uw_keys[j] = v
+                    wordvalues[j] = wordvalues[k]
+                    j = k
+                    k -= gap
+                }
+                uw_keys[j] = temp
+                wordvalues[j] = temp_wv
+            }
+        }
+    }
+}
