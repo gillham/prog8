@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Runs the llvm64 test programs of compiler/test/codegeneration/TestLlvmCompiler.kt on other hosts over ssh.
+Runs the llvm test programs of compiler/test/codegeneration/TestLlvmCompiler.kt on other hosts over ssh.
 
 The compiler's own tests only run the programs natively on the build machine. This script checks the triple profiles of
 other platforms: it compiles every program for the triple of each host, builds the executable there with the host's own
@@ -12,12 +12,18 @@ and output as the native build. Hosts are given as host=triple, with --host or i
 variable, separated by spaces; ssh and rsync must work without prompts. The commands on the hosts run under sh,
 whatever their login shell is.
 
+A triple with 4-byte pointers is compiled for the llvm32 target, without the programs that need 8-byte pointers. A host
+can also run the programs of another CPU: --clang names its clang, --clang-arg adds the sysroot and other arguments for
+remote linking, and --run-prefix the emulator that runs each program, such as qemu-riscv32 -L <sysroot>.
+
 Examples:
     export PROG8_REMOTE_HOSTS="linuxbox=x86_64-unknown-linux-gnu pi=aarch64-unknown-linux-gnu oldmac=x86_64-apple-macosx"
     scripts/llvm-remote-check.py                                 # those hosts, remote linking
     scripts/llvm-remote-check.py --fetch-sysroots                # copy the sysroots of the Linux hosts once
     scripts/llvm-remote-check.py --link both --filter quad       # also cross link here, only programs matching 'quad'
     scripts/llvm-remote-check.py --host linuxbox=x86_64-unknown-linux-gnu --noopt-only
+    scripts/llvm-remote-check.py --host linuxbox=riscv32-unknown-linux-gnu --clang clang-19 --clang-arg=--sysroot=<dir> \
+        --clang-arg=--gcc-install-dir=<dir> --clang-arg=-fuse-ld=lld --run-prefix "qemu-riscv32 -L <dir>"
 
 Needs a built compiler: gradle installdist installshadowdist
 """
@@ -165,6 +171,30 @@ def output_program(text, pos):
     return source, inputs, args, pos
 
 
+def kotlin_set(text, marker):
+    """The strings of a top level setOf(...), plus those of the sets that it adds with + name."""
+    pos = text.index(marker) + len(marker)
+    names = set()
+    while True:
+        pos = skip_space(text, pos)
+        if text[pos] == ")":
+            break
+        name, pos = kotlin_string(text, pos)
+        names.add(name)
+        pos = skip_space(text, pos)
+        if text[pos] == ",":
+            pos += 1
+    for added in re.findall(r"\+\s*(\w+)", text[pos + 1:text.index("\n", pos)]):
+        names |= kotlin_set(text, f"private val {added} = setOf(")
+    return names
+
+
+def needs_64bit_pointers():
+    """The programs that only build and run right with 8-byte pointers."""
+    text = TEST_SOURCE.read_text()
+    return kotlin_set(text, "private val programsWith64BitAddresses = setOf(") | kotlin_set(text, "private val programsWithLp64Extsubs = setOf(")
+
+
 def read_programs():
     text = TEST_SOURCE.read_text()
     programs = []
@@ -211,9 +241,9 @@ def write_case(case_dir: Path, program: Program):
     (case_dir / "input.txt").write_text(program.input)
 
 
-def run_script(program: Program):
-    """run.sh, which runs the program from the empty run directory next to it, with the program's arguments."""
-    return "exec ../prog " + " ".join(shlex.quote(a) for a in program.args) + "\n"
+def run_script(program: Program, prefix=""):
+    """run.sh, which runs the program from the empty run directory next to it, with the program's arguments, after the prefix."""
+    return "exec " + (prefix + " " if prefix else "") + "../prog " + " ".join(shlex.quote(a) for a in program.args) + "\n"
 
 
 def run_locally(case_dir: Path, executable: Path, program: Program) -> Result:
@@ -294,7 +324,7 @@ cd "$(dirname "$0")" || exit 1
 for case in */; do
     case=${case%/}
     if [ -f "$case/prog.ll" ]; then
-        if ! clang __CLANG_ARGS__ -O2 -Wno-override-module "$case/prog.ll" -o "$case/prog" __LINK_ARGS__ > "$case/build.txt" 2>&1; then
+        if ! __CLANG__ __CLANG_ARGS__ -O2 -Wno-override-module "$case/prog.ll" -o "$case/prog" __LINK_ARGS__ > "$case/build.txt" 2>&1; then
             echo build > "$case/status"
             continue
         fi
@@ -316,10 +346,16 @@ def profile_property(triple, key):
     return ""
 
 
-def run_on_host(host, triple, staged: Path, keep: bool):
+def pointer_bytes(triple):
+    """4 for a profile whose data layout has 32-bit pointers, else 8."""
+    return 4 if re.search(r"(^|-)p:32:", profile_property(triple, "datalayout")) else 8
+
+
+def run_on_host(host, triple, staged: Path, keep: bool, clang="clang", clang_args=()):
     """Copies the staged case directories to the host, builds and runs them there, and copies the results back."""
     # the same clang command as the compiler's own build: clang_args, the optimization level, the file, then link_args
-    driver = DRIVER.replace("__CLANG_ARGS__", profile_property(triple, "clang_args"))
+    args = " ".join([profile_property(triple, "clang_args")] + [shlex.quote(a) for a in clang_args])
+    driver = DRIVER.replace("__CLANG__", clang).replace("__CLANG_ARGS__", args)
     driver = driver.replace("__LINK_ARGS__", profile_property(triple, "link_args")).replace("__TIMEOUT__", str(RUN_TIMEOUT))
     (staged / "driver.sh").write_text(driver)
     steps = [
@@ -384,6 +420,9 @@ def main():
     parser.add_argument("--filter", help="only the programs whose name matches this regular expression")
     parser.add_argument("--noopt-only", action="store_true", help="only compile without optimizations")
     parser.add_argument("--keep", action="store_true", help=f"leave the ~/{REMOTE_DIR} directory on the hosts")
+    parser.add_argument("--clang", default="clang", help="the clang command on the hosts, for remote linking (default: clang)")
+    parser.add_argument("--clang-arg", action="append", default=[], help="an extra argument for clang on the hosts, such as --sysroot=<dir> (repeatable)")
+    parser.add_argument("--run-prefix", default="", help="a command that runs each program on the hosts, such as an emulator")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4, help="parallel compiler runs")
     options = parser.parse_args()
 
@@ -435,6 +474,8 @@ def main():
                 except RuntimeError as x:
                     print(f"\n{host} ({triple}), local linking: skipped, {x}")
                     continue
+            target_name = "llvm32" if pointer_bytes(triple) == 4 else "llvm64"
+            host_cases = [c for c in cases if target_name == "llvm64" or c[0].name not in needs_64bit_pointers()]
             staged = WORK / "hosts" / f"{host}-{link}"
             if staged.exists():
                 shutil.rmtree(staged)
@@ -444,8 +485,8 @@ def main():
                 target = staged / case_dir.name
                 target.mkdir(parents=True)
                 shutil.copy(case_dir / "input.txt", target)
-                (target / "run.sh").write_text(run_script(program))
-                common = ["-target", "llvm64", "-triple", triple] + (["-noopt"] if noopt else [])
+                (target / "run.sh").write_text(run_script(program, options.run_prefix))
+                common = ["-target", target_name, "-triple", triple] + (["-noopt"] if noopt else [])
                 if link == "remote":
                     prog8c(common + ["-out", str(target), str(case_dir / "prog.p8")], target)
                 else:
@@ -455,16 +496,18 @@ def main():
             print(f"\n{host} ({triple}), {link} linking: building...", flush=True)
             try:
                 with concurrent.futures.ThreadPoolExecutor(options.jobs) as pool:
-                    list(pool.map(stage, cases))
+                    list(pool.map(stage, host_cases))
                 print(f"{host} ({triple}), {link} linking: running...", flush=True)
-                run_on_host(host, triple, staged, options.keep)
+                run_on_host(host, triple, staged, options.keep, options.clang, options.clang_arg)
             except RuntimeError as x:
                 print(f"  FAILED: {x}")
-                failures += len(cases)
+                failures += len(host_cases)
                 continue
 
             passed = 0
             for (program, noopt, case_dir), ref in zip(cases, references):
+                if (program, noopt, case_dir) not in host_cases:
+                    continue
                 problems = compare(program, ref, remote_result(staged / case_dir.name))
                 if problems:
                     failures += 1
@@ -473,7 +516,7 @@ def main():
                         print(f"      {problem}")
                 else:
                     passed += 1
-            print(f"{host} ({triple}), {link} linking: {passed} of {len(cases)} passed")
+            print(f"{host} ({triple}), {link} linking: {passed} of {len(host_cases)} passed")
 
     print(f"\n{'all passed' if failures == 0 else f'{failures} failed'}")
     return 1 if failures else 0

@@ -1510,17 +1510,19 @@ private val programsWith64BitAddresses = setOf(
     "a goto through a uquad address variable ends a subroutine that returns a value"
 )
 
-// programs that don't run as they are under wasmtime: WASI's working directory is "/" rather than a host path;
-// and extsubs declared with the 64-bit size_t of LP64 hosts don't link against wasi-libc
-private val notRunUnderWasmtime = setOf(
-    "diskio directories, renaming and deleting",
+// these declare C functions with the 64-bit size_t of LP64 hosts, so they only link and run right where pointers have 8 bytes
+private val programsWithLp64Extsubs = setOf(
     "extsubs call C library functions with long, quad, uquad, float, string and pointer types"
 )
 
+// programs that don't run as they are under wasmtime: WASI's working directory is "/" rather than a host path;
+// and extsubs declared with the 64-bit size_t of LP64 hosts don't link against wasi-libc
+private val notRunUnderWasmtime = setOf(
+    "diskio directories, renaming and deleting"
+) + programsWithLp64Extsubs
+
 // programs that don't run as they are with Emscripten: extsubs declared with the 64-bit size_t of LP64 hosts don't link
-private val notRunUnderEmscripten = setOf(
-    "extsubs call C library functions with long, quad, uquad, float, string and pointer types"
-)
+private val notRunUnderEmscripten = programsWithLp64Extsubs
 
 // programs that don't run as they are on bare metal ARM: newlib on semihosting has no mkdir, chdir, rmdir and getcwd,
 // its rename fails, and it loses the position in a file when a seek fails; extsubs declared with the 64-bit size_t of LP64 hosts get wrong results
@@ -1528,16 +1530,14 @@ private val notRunOnArm = setOf(
     "diskio directories, renaming and deleting",
     "diskio directory listings of the files and subdirectories, sorted by name",
     "diskio writing, reading lines, seeking in and deleting a text file",
-    "fileio copying between two open files, seeking and the end of the file",
-    "extsubs call C library functions with long, quad, uquad, float, string and pointer types"
-)
+    "fileio copying between two open files, seeking and the end of the file"
+) + programsWithLp64Extsubs
 
 // the same on bare metal RISC-V, except that its newlib keeps the position in a file when a seek fails
 private val notRunOnRiscv = setOf(
     "diskio directories, renaming and deleting",
-    "diskio directory listings of the files and subdirectories, sorted by name",
-    "extsubs call C library functions with long, quad, uquad, float, string and pointer types"
-)
+    "diskio directory listings of the files and subdirectories, sorted by name"
+) + programsWithLp64Extsubs
 
 // the 64-bit programs that don't use the constants of the llvm64 library, so they also run on the virtual machine
 private val quadProgramsForTheVm = listOf(

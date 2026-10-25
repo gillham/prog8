@@ -39,6 +39,7 @@ class TestLlvmTripleProfile: FunSpec({
         "x86_64-unknown-linux-gnu" to Triple("x86_64-unknown-linux-gnu", 64, 8),
         "aarch64-unknown-linux-gnu" to Triple("aarch64-unknown-linux-gnu", 64, 8),
         "riscv64-unknown-linux-gnu" to Triple("riscv64-unknown-linux-gnu", 64, 8),
+        "riscv32-unknown-linux-gnu" to Triple("riscv32-unknown-linux-gnu", 32, 4),
         "armv7-unknown-linux-gnueabihf" to Triple("armv7-unknown-linux-gnueabihf", 32, 4),
         "riscv32-unknown-elf" to Triple("riscv32-unknown-unknown-elf", 32, 4),
         "armv7a-none-eabihf" to Triple("armv7-unknown-none-eabihf", 32, 4),
@@ -78,7 +79,7 @@ class TestLlvmTripleProfile: FunSpec({
     }
 
     test("the glibc Linux profiles link the math library after the program, other profiles add no link arguments") {
-        for (name in listOf("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "riscv64-unknown-linux-gnu", "armv7-unknown-linux-gnueabihf"))
+        for (name in listOf("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "riscv64-unknown-linux-gnu", "riscv32-unknown-linux-gnu", "armv7-unknown-linux-gnueabihf"))
             withClue(name) { LlvmTripleProfile.resolve(name).linkArgs shouldBe listOf("-lm") }
         for (name in listOf("arm64-apple-macosx", "x86_64-apple-macosx", "wasm32-wasip1", "armv7a-none-eabihf"))
             withClue(name) { LlvmTripleProfile.resolve(name).linkArgs shouldBe emptyList() }

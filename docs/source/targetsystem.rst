@@ -252,7 +252,7 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
 2. ``~/.prog8/llvm/<name>.properties``
 3. a profile built into the compiler: ``wasm32-wasip1``, ``wasm32-unknown-emscripten``, ``armv7a-none-eabihf``, ``riscv32-unknown-elf``,
    ``arm64-apple-macosx``, ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``,
-   ``riscv64-unknown-linux-gnu`` and ``armv7-unknown-linux-gnueabihf``
+   ``riscv64-unknown-linux-gnu``, ``riscv32-unknown-linux-gnu`` and ``armv7-unknown-linux-gnueabihf``
 4. any other triple that clang knows, such as ``aarch64-linux-musl`` or ``i686-unknown-linux-gnu``: the compiler asks
    clang for its normalized name, data layout and C ``long`` size, and builds with ``--target=<name>``.
    Run, link and startup settings need a profile file.
