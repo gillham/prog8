@@ -996,7 +996,138 @@ other {
             }
         }
     }
+
+    test("c-header-to-prog8.py bindings of stdio.h work natively for the host, and FILE has the size of the C struct").config(enabledOrReasonIf = requiresNativeLlvmAndPython) {
+        val dir = outputDir.resolve("bindings-stdio").createDirectories()
+        val lines = generateBindings(dir, "stdio.p8", checkNotNull(hostLlvmProfile).triple, "stdio.h").readLines().map { it.trim() }
+        lines.any { Regex("""extsub fopen\(str \w+, str \w+\) -> \^\^FILE""").matches(it) } shouldBe true
+        lines.any { Regex("""extsub fread\(pointer \w+, uquad \w+, uquad \w+, \^\^FILE \w+\) -> uquad""").matches(it) } shouldBe true
+        lines shouldContain "const byte EOF = -1"
+        lines.any { it.startsWith("; skipped, variadic:") && "printf," in it } shouldBe true
+        val sizeofFile = dir.resolve("sizeof_file.c").also {
+            it.writeText("#include <stdio.h>\nint main(void) { printf(\"%zu\\n\", sizeof(FILE)); return 0; }\n")
+        }
+        val profile = checkNotNull(hostLlvmProfile)
+        val cProgram = dir.resolve("sizeof_file")
+        execute(checkNotNull(llvmBin).resolve("clang").toString(), *profile.clangArgs.toTypedArray(), sizeofFile.toString(), "-o", cProgram.toString()).first shouldBe 0
+        val cSize = execute(cProgram.toString()).second
+        val program = stdioBindingsProgram("^^c_stdio.FILE", "txt.print_uw(sizeof(c_stdio.FILE))\ntxt.nl()")
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val llFile = compiledLlFile(compileText(hostLlvmTarget, optimize, program, dir))
+                val (exitCode, output) = buildAndRun(llFile, directory = dir)
+                withClue(output) { exitCode shouldBe 0 }
+                output shouldBe "written by fputs\n33\n-1\n-1\n$cSize"
+                dir.resolve("bindings.tmp").exists() shouldBe false
+            }
+        }
+    }
+
+    test("c-header-to-prog8.py bindings of math.h work natively for the host, with the double functions and M_PI, and leave out the sqrt builtin")
+        .config(enabledOrReasonIf = requiresNativeLlvmAndPython) {
+        val dir = outputDir.resolve("bindings-libm").createDirectories()
+        val lines = generateBindings(dir, "libm.p8", checkNotNull(hostLlvmProfile).triple, "math.h", "--block", "libm").readLines().map { it.trim() }
+        lines shouldContain "libm {"
+        lines.any { Regex("""extsub pow\(float \w+, float \w+\) -> float""").matches(it) } shouldBe true
+        lines shouldContain "const float M_PI = 3.141592653589793"
+        lines.any { it.startsWith("; skipped, name is a Prog8 keyword or builtin function:") && "sqrt" in it } shouldBe true
+        lines.any { it.startsWith("; skipped, parameter type float:") && "sinf," in it } shouldBe true
+        val program = """
+            %import textio
+            %import floats
+            %import libm
+            %zeropage basicsafe
+            main {
+                sub start() {
+                    float @shared x = 2.0
+                    show(sqrt(x))
+                    show(libm.pow(x, 10.0))
+                    show(libm.sin(libm.M_PI / 2))
+                    show(libm.cbrt(27.0))
+                    show(libm.fabs(-3.5))
+                    show(libm.round(2.5))
+                    txt.print_l(libm.ilogb(1024.0))
+                    txt.nl()
+                }
+                sub show(float f) {
+                    txt.print_l((f * 1000.0) as long)
+                    txt.spc()
+                }
+            }"""
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val (exitCode, output) = buildAndRun(compiledLlFile(compileText(hostLlvmTarget, optimize, program, dir)))
+                withClue(output) { exitCode shouldBe 0 }
+                output shouldBe "1414 1024000 1000 3000 3500 3000 10\n"
+            }
+        }
+    }
+
+    test("c-header-to-prog8.py bindings of stdio.h for wasm32-wasip1 have 32-bit size_t and an opaque FILE, and pass the signature checks under wasmtime")
+        .config(enabledOrReasonIf = requiresWasmAndPython) {
+        val dir = outputDir.resolve("bindings-wasm-stdio").createDirectories()
+        val lines = generateBindings(dir, "stdio.p8", "wasm32-wasip1", "stdio.h").readLines().map { it.trim() }
+        lines.any { Regex("""extsub fread\(pointer \w+, long \w+, long \w+, pointer \w+\) -> long""").matches(it) } shouldBe true
+        lines.none { it.startsWith("struct FILE") } shouldBe true
+        val program = stdioBindingsProgram("pointer", "")
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val (exitCode, output) = buildAndRunWasm(compiledLlFile(compileText(LlvmTarget(4), optimize, program, dir)), directory = dir)
+                withClue(output) { exitCode shouldBe 0 }
+                output shouldBe "written by fputs\n33\n-1\n-1\n"
+                dir.resolve("bindings.tmp").exists() shouldBe false
+            }
+        }
+    }
 })
+
+
+/** Runs scripts/c-header-to-prog8.py for the [triple] profile, with the clang of the tests, writing the module [fileName] in [dir]. */
+private fun generateBindings(dir: Path, fileName: String, triple: String, vararg args: String): Path {
+    val output = dir.resolve(fileName)
+    val (exitCode, messages) = execute("python3", Path("..", "scripts", "c-header-to-prog8.py").toAbsolutePath().normalize().toString(),
+        *args, "--triple", triple, "--clang", checkNotNull(llvmBin).resolve("clang").toString(), "-o", output.toString())
+    withClue(messages) { exitCode shouldBe 0 }
+    return output
+}
+
+/** A program that writes, reads back and removes a file through the generated c_stdio bindings, keeping the FILE pointers in [fileType] variables. */
+private fun stdioBindingsProgram(fileType: String, extra: String) = """
+    %import textio
+    %import stdio
+    %zeropage basicsafe
+    main {
+        sub start() {
+            $fileType f = c_stdio.fopen("bindings.tmp", "w")
+            void c_stdio.fputs("written by fputs\n", f)
+            void c_stdio.fputc('!', f)
+            void c_stdio.fclose(f)
+            f = c_stdio.fopen("bindings.tmp", "r")
+            ubyte[40] buffer
+            void c_stdio.fgets(buffer, len(buffer), f)
+            txt.print(buffer)
+            txt.print_l(c_stdio.fgetc(f))
+            txt.nl()
+            txt.print_l(c_stdio.fgetc(f))
+            txt.nl()
+            txt.print_l(c_stdio.EOF)
+            txt.nl()
+            $extra
+            void c_stdio.fclose(f)
+            void c_stdio.remove("bindings.tmp")
+        }
+    }"""
+
+private val python3OnThePath: Boolean = System.getenv("PATH").orEmpty().split(File.pathSeparator)
+    .any { try { Files.isExecutable(Path(it).resolve("python3")) } catch (_: InvalidPathException) { false } }
+
+private val requiresNativeLlvmAndPython: (TestCase) -> Enabled = {
+    if (!python3OnThePath) Enabled.disabled("python3 not found on the PATH") else requiresNativeLlvm(it)
+}
+
+private val requiresWasmAndPython: (TestCase) -> Enabled = {
+    if (!python3OnThePath) Enabled.disabled("python3 not found on the PATH") else requiresWasm(it)
+}
 
 
 /**

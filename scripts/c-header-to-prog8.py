@@ -130,8 +130,10 @@ class Clang:
 
 def parse_ir_constant(irtype: str, text: str):
     if irtype == "double":
-        if text.startswith("0x"):
-            return struct.unpack(">d", bytes.fromhex(text[2:].rjust(16, "0")))[0]
+        if text.startswith(("0x", "f0x")):
+            return struct.unpack(">d", bytes.fromhex(text.split("x", 1)[1].rjust(16, "0")))[0]
+        if text.lstrip("+-") in ("qnan", "snan", "inf"):
+            return float(text.replace("qnan", "nan").replace("snan", "nan"))
         return float(text)
     if text in ("true", "false"):
         return int(text == "true")
@@ -166,6 +168,7 @@ class Function:
 @dataclass
 class Unit:
     typedefs: dict = field(default_factory=dict)      # name -> qualType
+    sugar: dict = field(default_factory=dict)         # type name without a typedef, such as __size_t -> its desugared type
     records: dict = field(default_factory=dict)       # 'struct tag' or (file, line, col) -> Record
     functions: dict = field(default_factory=dict)
     enum_constants: list = field(default_factory=list)  # (name, enum name, file)
@@ -213,6 +216,9 @@ def parse_unit(ast: dict) -> Unit:
             last_line[0] = loc["line"]
         line, col = last_line[0], loc.get("col", 0)
         kind = node.get("kind")
+        t = node.get("type")
+        if isinstance(t, dict) and "desugaredQualType" in t and re.fullmatch(r"[A-Za-z_]\w*", t.get("qualType", "")):
+            unit.sugar.setdefault(t["qualType"], t["desugaredQualType"])
         if kind == "RecordDecl":
             tag = node.get("name")
             rec = Record(node.get("tagUsed", "struct"), tag, node, file, line, col, bool(node.get("completeDefinition")))
@@ -260,8 +266,23 @@ def strip_type(qt: str) -> str:
 
 
 class TypeResolver:
-    def __init__(self, unit: Unit):
+    def __init__(self, unit: Unit, clang: Clang):
         self.unit = unit
+        self.clang = clang
+        self.builtin_kinds: dict[str, int | None] = {}
+
+    def builtin(self, name: str) -> CType:
+        """A type name that clang knows without a typedef in the AST, such as the __size_t of clang 22 and later."""
+        if name not in self.builtin_kinds:
+            self.builtin_kinds[name] = self.clang.evaluate({name: f"__builtin_classify_type(*({name}*)0)"}, "int").get(name)
+        kind = self.builtin_kinds[name]
+        if kind in (1, 2, 3):
+            return CType("int", spelling=name)
+        if kind == 4:
+            return CType("bool")
+        if kind == 8:
+            return CType("real", spelling=name)
+        return CType("unknown")
 
     def record_for(self, text: str) -> Record | None:
         m = UNNAMED.search(text)
@@ -305,6 +326,10 @@ class TypeResolver:
             if target.kind == "record" and target.record and not target.record.typedef:
                 target.record.typedef = t
             return target
+        if t in self.unit.sugar:
+            return self.resolve(self.unit.sugar[t], depth + 1)
+        if re.fullmatch(r"[A-Za-z_]\w*", t):
+            return self.builtin(t)
         return CType("unknown")
 
 
@@ -317,7 +342,7 @@ class Generator:
         self.unit = unit
         self.clang = clang
         self.in_scope = in_scope
-        self.types = TypeResolver(unit)
+        self.types = TypeResolver(unit, clang)
         self.names: set[str] = set()
         self.int_info: dict[str, tuple[int, bool]] = {}
         self.record_names: dict[int, str] = {}
