@@ -628,11 +628,13 @@ main {
     test("the float printing and the math, sorting and lineclip programs print the same on the virtual machine as on the llvm targets") {
         for (name in listOf("floats printing, conversion to and from strings, and random numbers", "math atan2, direction, mul16_last_upper, sorting and lineclip")) {
             val program = outputPrograms.getValue(name)
+            // the VM prints with Double.toString, which only gives the shortest digits from JDK 19 on (JDK-4511638)
+            val expected = if (Runtime.version().feature() < 19) program.output.replace("\n1.0E23 true\n", "\n9.999999999999999E22 true\n") else program.output
             for (optimize in listOf(false, true)) {
                 val result = compileText(VMTarget(), optimize, program.source, outputDir).shouldNotBeNull()
                 val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
                 // after the line in which the IR file reader names the file
-                withClue("$name optimize=$optimize") { printedOnStdout { exitStatusOnVirtualMachine(irFile) } shouldEndWith "\n" + program.output }
+                withClue("$name optimize=$optimize") { printedOnStdout { exitStatusOnVirtualMachine(irFile) } shouldEndWith "\n" + expected }
             }
         }
     }
