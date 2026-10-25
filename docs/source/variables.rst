@@ -354,6 +354,10 @@ value                     datatype
 -2147483648 .. 2147483647 long  (there is no unsigned long right now)
 ========================= =================
 
+A 32-bit literal above the signed long range, such as ``$9000_0000`` or ``4294967295``, is a long with the same 32 bits:
+``long l = $ffff_ffff`` is -1. Where it becomes a ``quad``, ``uquad`` or 64-bit pointer, it keeps the value it was written
+with, so ``uquad q = $ffff_ffff`` is 4294967295 and not sign extended.
+
 Numeric expressions usually 'stay within their type' unless a cast is used, see :ref:`arithmetic`.
 If the number fits in a byte but you really require it as a word value, you'll have to explicitly cast it: ``60 as uword``
 or you can use the full word hexadecimal notation ``$003c``.  This is useful in expressions where you want a calculation

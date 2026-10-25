@@ -380,6 +380,11 @@ class BinaryExpression(
                     }
                 }
             }
+            // a long or quad literal that isn't negative is a uquad value too
+            if (left is NumericLiteral && (left.type.isLong || left.type.isSignedQuad) && left.integerBits >= 0 && rightDt.isUnsignedQuad)
+                return DataType.UQUAD to left
+            if (right is NumericLiteral && (right.type.isLong || right.type.isSignedQuad) && right.integerBits >= 0 && leftDt.isUnsignedQuad)
+                return DataType.UQUAD to right
 
             return when (leftDt.base) {
                 BaseDataType.BOOL -> {
@@ -823,7 +828,7 @@ class DirectMemoryRead(var addressExpression: Expression, override val position:
 
 class NumericLiteral private constructor(val type: BaseDataType,    // only numerical types allowed + bool (there is no separate BooleanLiteral node)
                      val number: Double,    // can be byte, word or float depending on the type; only the nearest Double of a quad or uquad value
-                     private val quadBits: Long,    // all 64 bits of a quad or uquad value, two's complement
+                     private val quadBits: Long,    // all 64 bits of a quad or uquad value, two's complement; for a long see fromUnsigned32Bits
                      override val position: Position) : Expression() {
     override lateinit var parent: Node
 
@@ -850,12 +855,18 @@ class NumericLiteral private constructor(val type: BaseDataType,    // only nume
     override fun isIORead(target: ICompilationTarget) = false
     override fun copy() = NumericLiteral(type, number, quadBits, position)
 
-    /** The exact value of an integer or bool literal as 64 bits, two's complement: a uquad above Long.MAX_VALUE is negative here. */
+    /**
+     * The exact value of an integer or bool literal as 64 bits, two's complement: a uquad above Long.MAX_VALUE is negative here.
+     * A long from [fromUnsigned32Bits] gives its written value, so it isn't sign extended where it becomes 64 bits.
+     */
     val integerBits: Long
         get() {
             require(type.isIntegerOrBool) { "$type literal has no integer value at $position" }
-            return if(type.isQuad) quadBits else number.toLong()
+            return if(type.isQuad || isUnsigned32Bits) quadBits else number.toLong()
         }
+
+    /** A long literal from [fromUnsigned32Bits], whose written value is not its long value. */
+    val isUnsigned32Bits: Boolean get() = type==BaseDataType.LONG && quadBits!=0L
 
     companion object {
         fun fromBoolean(bool: Boolean, position: Position) =
@@ -866,6 +877,10 @@ class NumericLiteral private constructor(val type: BaseDataType,    // only nume
             require(type.isQuad) { "$type is not a quad type" }
             return NumericLiteral(type, if(type.isUnsignedQuad) bits.toULong().toDouble() else bits.toDouble(), bits, position)
         }
+
+        /** A long literal written as an unsigned 32-bit value above $7fff_ffff: a negative long, that becomes the written value as a (u)quad. */
+        fun fromUnsigned32Bits(bits: UInt, position: Position) =
+            NumericLiteral(BaseDataType.LONG, bits.toInt().toDouble(), bits.toLong(), position)
 
         // the bits of a quad value that is only known as a Double, saturated at the limits of its type
         private fun quadBitsOf(type: BaseDataType, number: Double): Long = when(type) {
@@ -1224,6 +1239,8 @@ class NumericLiteral private constructor(val type: BaseDataType,    // only nume
                         return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
                     if (targettype == BaseDataType.UWORD && number >= 0 && number <= 65535)
                         return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
+                    if(targettype.isQuad && isUnsigned32Bits)
+                        return ValueAfterCast(true, null, fromQuadBits(targettype, integerBits, position))
                     if(targettype==BaseDataType.FLOAT || targettype==BaseDataType.QUAD)
                         return ValueAfterCast(true, null, NumericLiteral(targettype, number, position))
                     if(targettype==BaseDataType.UQUAD && (number>=0.0 || !implicit))

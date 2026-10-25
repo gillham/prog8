@@ -531,7 +531,7 @@ class Antlr2KotlinVisitor(val source: SourceCode, private val target: ICompilati
 
             // TODO "hack" to allow unsigned long constants to be used as values for signed longs, without needing a cast
             if(datatype.isLong && integer > Integer.MAX_VALUE)
-                return NumericLiteral(datatype, integer.toInt().toDouble(), ctx.toPosition())
+                return NumericLiteral.fromUnsigned32Bits(integer.toUInt(), ctx.toPosition())
 
             return NumericLiteral(datatype, integer.toDouble(), ctx.toPosition())
         }

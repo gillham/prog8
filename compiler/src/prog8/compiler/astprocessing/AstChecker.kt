@@ -986,11 +986,9 @@ internal class AstChecker(private val program: Program,
 
         val constAddress = assignTarget.memoryAddress?.addressExpression?.constValue(program)
         if (constAddress != null) {
-            val memAddr = constAddress.number.toLong()
-            val maxAddr = if(options.compTarget.POINTER_MEM_SIZE > 2u) 0xFFFFFFFFL else 0xFFFFL
-            if(options.compTarget.POINTER_MEM_SIZE > 4u && isUnsupportedConstantAddress(constAddress))
-                errors.err(unsupportedConstantAddressMessage(constAddress), assignTarget.position)
-            else if (memAddr !in 0..maxAddr)
+            if(options.compTarget.POINTER_MEM_SIZE > 2u)
+                checkConstantMemoryAddress(assignTarget.memoryAddress!!.addressExpression)
+            else if (constAddress.number !in 0.0..65535.0)
                 errors.err("address out of range", assignTarget.position)
         }
 

@@ -1104,9 +1104,10 @@ main {
         check("HEX", BaseDataType.QUAD, 0x1_0000_0000L)
         check("HEX_MASK", BaseDataType.UQUAD, -16L)
         check("BINARY", BaseDataType.QUAD, 0x1_0000_0001L)
-        // 32-bit unsigned values still become signed longs, as before
-        check("LONG_DECIMAL", BaseDataType.LONG, -1L)
-        check("LONG_HEX", BaseDataType.LONG, -1L)
+        // 32-bit unsigned values still become signed longs, as before, that keep their written value for 64 bits
+        check("LONG_DECIMAL", BaseDataType.LONG, 0xffff_ffffL)
+        check("LONG_HEX", BaseDataType.LONG, 0xffff_ffffL)
+        (constants.getValue("LONG_HEX").value as NumericLiteral).number shouldBe -1.0
     }
 
     test("quad and uquad values must be in range, and integer literals can't be wider than 64 bits") {
@@ -1327,8 +1328,8 @@ main {
         val negativeAddress = $$"""
             main {
                 sub start() {
-                    uword @shared w = peekw($ff00_8000)
-                    pokew($ff00_8000, 1)
+                    uword @shared w = peekw(-$0100_0000)
+                    pokew(-$0100_0000, 1)
                 }
             }
         """
@@ -1354,6 +1355,10 @@ main {
                     uquad p = $0_ffff_fff0
                     x = @(p)
                     w = peekw(p+2)
+                    x = @($ffff_ffff)
+                    @($9000_0000) = x
+                    w = peekw($ff00_8000)
+                    pokew($ff00_8000, w)
                 }
             }
         """

@@ -1432,6 +1432,40 @@ main {
         return 0
     }
 }""",
+    $$"32-bit literals above $7fff_ffff keep their written value as a uquad, quad or pointer" to $$"""
+main {
+    uquad @shared globalQuad = $9000_0000
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        uquad @shared q = $ffff_ffff
+        quad @shared sq = $8000_0000
+        long @shared l = $ffff_ffff
+        uquad @shared q2
+        q2 = 4294967295
+        pointer @shared p = $9000_0000
+        if q != 4294967295 or (q >> 31) != 1
+            return 1
+        if sq <= 0
+            return 2
+        if l != -1 or l != $ffff_ffff
+            return 3
+        if q2 != q
+            return 4
+        if (globalQuad >> 28) != 9 or globalQuad != $9000_0000
+            return 5
+        if q + 1 != $1_0000_0000
+            return 6
+        if (globalQuad | $ffff_ffff) != $ffff_ffff or (q & $8000_0000) != $8000_0000
+            return 7
+        if p != $9000_0000
+            return 8
+        return 0
+    }
+}""",
     "if/else, when and loops" to """
 main {
     ubyte @shared count = 10

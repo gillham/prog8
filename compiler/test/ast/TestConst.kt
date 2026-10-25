@@ -537,7 +537,7 @@ main {
         (a[2].value as NumericLiteral).number shouldBe -1.0
         (a[3].value as NumericLiteral).number shouldBe 0x7fffffffL.toDouble()
         ((a[4].value as BinaryExpression).right as NumericLiteral).number shouldBe -1.0
-        ((a[5].value as BinaryExpression).right as NumericLiteral).number shouldBe -1.0
+        (a[5].value as PrefixExpression).operator shouldBe "~"
         ((a[6].value as BinaryExpression).right as NumericLiteral).number shouldBe 0x7fffffffL.toDouble()
     }
 

@@ -45,7 +45,7 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
 
     override fun after(numLiteral: NumericLiteral, parent: Node): Iterable<AstModification> {
 
-        if(numLiteral.type==BaseDataType.LONG) {
+        if(numLiteral.type==BaseDataType.LONG && !numLiteral.isUnsigned32Bits) {
             // Do not reduce LONG literals that are the direct value of a const long declaration.
             // The declared type is long; shrinking the literal at the declaration site is unnecessary
             // because IdentifierReference.constValue() re-casts it back to long on substitution.

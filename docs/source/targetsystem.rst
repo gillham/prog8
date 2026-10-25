@@ -351,6 +351,10 @@ On 6502 targets it is equivalent to ``uword``; on m68k and virtual targets it is
 on the llvm64 target it is equivalent to ``uquad``, and on the llvm32 target to ``long``.
 Alternatively, you can use ``uword``, ``long`` or ``uquad`` directly if you know the target in advance.
 
+On llvm64 a *constant* address is limited to 32 bits for now: a memory-mapped variable, ``@(...)`` and ``goto`` at a fixed
+address, and a constant cast to a pointer type, must stay at or below ``$ffff_ffff``. Addresses computed at run time, and
+64-bit constants stored into a ``pointer`` or ``uquad`` variable, use all 64 bits.
+
 Generic 6502 Physical address space layout
 ------------------------------------------
 
