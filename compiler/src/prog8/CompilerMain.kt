@@ -48,7 +48,12 @@ fun main(args: Array<String>) {
     val succes = compileMain(args)
     if(!succes)
         exitProcess(1)
+    if(llvmProgramStatus!=0)
+        exitProcess(llvmProgramStatus)
 }
+
+// -emu on an llvm target passes on the exit status of the program it ran
+private var llvmProgramStatus = 0
 
 
 fun pathFrom(stringPath: String, vararg rest: String): Path  = FileSystems.getDefault().getPath(stringPath, *rest)
@@ -431,7 +436,7 @@ private fun compileMain(args: Array<String>): Boolean {
                             if(!launchVirtualMachine(target, programFile, quietAll, vmTrace, presenter))
                                 return false
                         } else if (target is LlvmTarget) {
-                            target.launchEmulator(1, programFile, quietAll, programArgs, response.linkLibraries)
+                            llvmProgramStatus = target.launchEmulator(1, programFile, quietAll, programArgs, response.linkLibraries) ?: return false
                         } else {
                             target.launchEmulator(1, programFile, quietAll)
                         }
@@ -522,7 +527,7 @@ private fun compileMain(args: Array<String>): Boolean {
                 } else {
                     val target = compilationResult.compilationOptions.compTarget
                     if(target is LlvmTarget)
-                        target.launchEmulator(1, outs.programFile, quietAll, programArgs, compilationResult.compilationOptions.linkLibraries)
+                        llvmProgramStatus = target.launchEmulator(1, outs.programFile, quietAll, programArgs, compilationResult.compilationOptions.linkLibraries) ?: return false
                     else
                         target.launchEmulator(1, outs.programFile, quietAll)
                 }

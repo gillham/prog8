@@ -11,7 +11,6 @@ Future Things and Ideas
 - implement the signed divmod byte and word routines on 6502 old codegen (virtual, m68k and IR-based codegens already have them working)
 - the c64 sprite multiplexer still needs adjustments to make it smooth, it lacks a proper raster event scheduler.
 - support typed pointer arrays as struct fields, curretly requires untyped pointers arrays.
-- llvm targets: ``prog8c -emu`` exits with status 0 even when the program it runs exits with another status or crashes; it could pass the program's exit status on.
 - constant addresses wider than 32 bits are rejected with an error on llvm64 (pointer literals are LONG); only computed 64-bit addresses work.
 - the warning for the untyped address of a word array (``&wordarray``) passed where a ``^^pointer`` is expected, or of a split word array passed where a word pointer is expected, only checks call arguments; ``^^pointer p = &wordarray`` declarations and assignments aren't checked.
 - llvm32 bare-metal console input: on a Windows host ``/dev/stdin`` doesn't exist, so the semihosting console code can't tell a terminal from piped input and never echoes typing. Hosted Linux cross linking and x86_64 macOS runs are untested.

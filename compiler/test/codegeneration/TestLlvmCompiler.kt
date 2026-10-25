@@ -539,6 +539,7 @@ class TestLlvmCompiler: FunSpec({
         val built = Files.getLastModifiedTime(executable)
         printedOnStdout { LlvmTarget().launchEmulator(1, executable, quiet = false) } shouldContain "Program exited with status 42"
         withClue("an existing -o executable runs as it is") { Files.getLastModifiedTime(executable) shouldBe built }
+        withClue("prog8c -emu exits with the status that launchEmulator returns") { LlvmTarget().launchEmulator(1, executable, quiet = true, emptyList()) shouldBe 42 }
     }
 
     test("code that has no LLVM translation is a compilation error") {

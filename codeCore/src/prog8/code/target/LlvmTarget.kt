@@ -80,20 +80,25 @@ class LlvmTarget(
         return Double.fromBits(bytes.foldIndexed(0L) { index, bits, byte -> bits or (byte.toLong() shl (8 * index)) })
     }
 
-    override fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean) =
+    override fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean) {
         launchEmulator(selectedEmulator, programFile, quiet, emptyList())
+    }
 
-    /** As [launchEmulator], giving the program the command line arguments [programArgs]; a build links in the [linkLibraries] of its %link directives. */
-    fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean, programArgs: List<String>, linkLibraries: List<String> = emptyList()) {
+    /**
+     * As [launchEmulator], giving the program the command line arguments [programArgs]; a build links in the [linkLibraries] of its %link directives.
+     * Returns the program's exit status, or null when it didn't run.
+     */
+    fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean, programArgs: List<String>, linkLibraries: List<String> = emptyList()): Int? {
         if (selectedEmulator != 1) {
             System.err.println("The $name target has no alternative emulator; -emu builds the program into an executable for this host and runs it.")
-            return
+            return null
         }
         // the LLVM code generator module depends on this one, so its runner can only be loaded via reflection
         val runner = Class.forName("prog8.codegen.llvm.LlvmProgramRunner").getDeclaredConstructor().newInstance() as ILlvmProgramRunner
-        val status = runner.buildAndRun(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, programArgs, linkLibraries) ?: return
+        val status = runner.buildAndRun(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, programArgs, linkLibraries) ?: return null
         if (!quiet)
             println("\nProgram exited with status $status")
+        return status
     }
 
     override fun isIOAddress(address: UInt): Boolean = false
