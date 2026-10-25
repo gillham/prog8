@@ -209,11 +209,16 @@ sub chrin() -> ubyte {
 sub  input_line  (str buffer, ubyte maxlength) -> ubyte  {
     ; ---- read a line from stdin into the buffer, which needs room for maxlength chars and the terminating 0 byte.
     ;      Returns the length. The line end is not stored, and the rest of a longer line is skipped.
+    ;      When the input has already ended, the program ends with exit status 1.
     ubyte count = 0
+    bool started = false
     repeat {
         ubyte char = chrin()
+        if char == 0 and not started
+            sys.exit(1)
         if char == 0 or char == '\n'
             break
+        started = true
         if char != '\r' and count < maxlength {
             buffer[count] = char
             count++

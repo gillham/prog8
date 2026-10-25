@@ -184,6 +184,7 @@ sub  print_l  (long value) {
 sub  input_chars  (str buffer) -> ubyte  {
     ; ---- Input a string (max. 80 chars) from the keyboard. Returns length of input. (string is terminated with a 0 byte as well)
     ;      It assumes the keyboard is selected as I/O channel!
+    ;      When the input has already ended, the program ends with exit status 1.
     %ir {{
         loadm.l r99200.l,[txt.input_chars.buffer]
         load.b r99100.b,#80.b

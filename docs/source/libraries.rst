@@ -2217,6 +2217,10 @@ dealing with text-based input and output (to the screen). Such as
 
 All routines work with Screencode character encoding, except ``print``, ``chrout`` and ``input_chars``, these work with PETSCII encoding instead.
 
+On the virtual, llvm32 and llvm64 targets, which read the input from stdin, ``input_chars`` (and on llvm also
+``input_line``, ``readln`` and ``prompt``) ends the program with exit status 1 when the input has already ended.
+On llvm, ``chrin`` returns 0 there instead, so a program can check for the end of the input itself.
+
 There are *a lot of routines* in this module, many more than mentioned above.
 Read the :source:`textio source code <compiler/res/prog8lib/cx16/textio.p8>`
 to see what's in there. (Note: slight variations for different compiler targets)

@@ -267,7 +267,7 @@ object SysCalls {
             }
             Syscall.INPUT -> {
                 val (address, maxlen) = getArgValues(callspec.arguments, vm)
-                var input = readln()
+                var input = readlnOrNull() ?: return vm.exit(1)
                 val maxlenvalue = (maxlen as UByte).toInt()
                 if(maxlenvalue>0)
                     input = input.take(min(input.length, maxlenvalue))

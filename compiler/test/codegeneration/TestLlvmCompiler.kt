@@ -4907,6 +4907,21 @@ main {
     }
 }""", "65\nname? hello bc!\n5:World\nline two\n80\n0\n", input = "Abc\nWorld\r\nline two\n" + "x".repeat(90) + "\n"),
 
+    "line input ends the program at the end of the input" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    ubyte[81] buffer
+
+    sub start() {
+        repeat {
+            txt.print_ub(txt.input_chars(buffer))
+            txt.nl()
+        }
+    }
+}""", "3\n0\n4\n", input = "abc\n\nlast", exitCode = 1),
+
     "command line arguments" to OutputProgram("""
 %import textio
 %zeropage basicsafe
