@@ -307,6 +307,12 @@ These are the keys of a profile; an unknown key is an error:
 ``c_main_symbol``
     The name that the C runtime of the platform calls the program's C ``main`` function by. The default is ``main``;
     wasi-libc calls it ``__main_argc_argv``.
+``dirent_name_offset``
+    The offset in bytes of ``d_name`` in the ``struct dirent`` that ``readdir()`` returns, which the diskio directory
+    listings read. Without it, they fail: the bare metal profiles leave it out, as newlib has no directory routines.
+``opendir_symbol``, ``readdir_symbol``
+    The C library's names of ``opendir()`` and ``readdir()`` for that struct, when they differ from those, such as
+    ``readdir$INODE64`` on Intel macOS and ``readdir64`` on 32-bit ARM Linux.
 
 The ``-Xcompile`` and ``-Xlink`` options add arguments to a single build without a profile of your own:
 ``-Xcompile`` arguments come after ``clang_args``, ``-Xlink`` arguments at the end of the ``link_command``, or at the

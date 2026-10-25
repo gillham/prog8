@@ -117,6 +117,26 @@ class TestLlvmCompiler: FunSpec({
         compiledLlFile(compileText(LlvmTarget(), false, programs.getValue("arithmetic expressions"), outputDir)).toString() shouldEndWith ".ll"
     }
 
+    test("diskio.directory calls the directory routines that the triple profile names, and fails without its dirent layout") {
+        val source = """
+%import diskio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        void diskio.directory()
+    }
+}"""
+        val mac = compiledLlFile(compileText(getCompilationTargetByName("llvm64", "x86_64-apple-macosx"), false, source,
+            outputDir.resolve("dir-mac").createDirectories(), assemble = false)).readLines()
+        mac shouldContain $$"declare ptr @opendir$INODE64(ptr)"
+        mac shouldContain $$"declare ptr @readdir$INODE64(ptr)"
+        mac.any { it.contains("getelementptr inbounds i8, ptr %dirent, i32 21") } shouldBe true
+        val bare = compiledLlFile(compileText(getCompilationTargetByName("llvm32", "riscv32-unknown-elf"), false, source,
+            outputDir.resolve("dir-riscv").createDirectories(), assemble = false)).readLines()
+        bare.count { it.contains("opendir") || it.contains("readdir") } shouldBe 0
+    }
+
     test("a -triple profile sets the triple and data layout of the LLVM module, and is kept in the .p8ir file") {
         val dir = outputDir.resolve("x86_64").createDirectories()
         val target = getCompilationTargetByName("llvm64", "x86_64-unknown-linux-gnu")
@@ -1504,6 +1524,7 @@ private val notRunUnderEmscripten = setOf(
 // its rename fails, and it loses the position in a file when a seek fails; extsubs declared with the 64-bit size_t of LP64 hosts get wrong results
 private val notRunOnArm = setOf(
     "diskio directories, renaming and deleting",
+    "diskio directory listings of the files and subdirectories, sorted by name",
     "diskio writing, reading lines, seeking in and deleting a text file",
     "fileio copying between two open files, seeking and the end of the file",
     "extsubs call C library functions with long, quad, uquad, float, string and pointer types"
@@ -1512,6 +1533,7 @@ private val notRunOnArm = setOf(
 // the same on bare metal RISC-V, except that its newlib keeps the position in a file when a seek fails
 private val notRunOnRiscv = setOf(
     "diskio directories, renaming and deleting",
+    "diskio directory listings of the files and subdirectories, sorted by name",
     "extsubs call C library functions with long, quad, uquad, float, string and pointer types"
 )
 
@@ -5053,6 +5075,35 @@ main {
         return name
     }
 }""", "run subdir\nfalse true\nrun true true false false\n"),
+
+    "diskio directory listings of the files and subdirectories, sorted by name" to OutputProgram("""
+%import textio
+%import diskio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        diskio.mkdir("listing")
+        diskio.chdir("listing")
+        txt.print_bool(diskio.directory())
+        txt.nl()
+        void diskio.save_raw("zeta.txt", "hello", 5)
+        void diskio.save_raw("alpha", "", 0)
+        diskio.mkdir("beta")
+        diskio.mkdir("Gamma")
+        txt.print_bool(diskio.directory())
+        txt.nl()
+        void diskio.directory_dirs()
+        txt.print("--\n")
+        void diskio.directory_files()
+        diskio.delete("zeta.txt")
+        diskio.delete("alpha")
+        diskio.rmdir("beta")
+        diskio.rmdir("Gamma")
+        diskio.chdir("..")
+        diskio.rmdir("listing")
+    }
+}""", "true\ndir\tGamma\n0\talpha\ndir\tbeta\n5\tzeta.txt\ntrue\ndir\tGamma\ndir\tbeta\n--\n0\talpha\n5\tzeta.txt\n"),
 
     "fileio copying between two open files, seeking and the end of the file" to OutputProgram("""
 %import textio

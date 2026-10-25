@@ -61,10 +61,11 @@ private const val VM_FFLUSH = 79
 private const val VM_FEOF = 80
 private const val VM_FLOAT_DIGITS = 81
 private const val VM_PARSE_FLOAT = 82
+private const val VM_LIST_DIRECTORY = 83
 
 /**
  * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory, file and filesystem
- * syscalls of the virtual target's library, and the command line argument, file handle and float conversion syscalls of the llvm libraries.
+ * syscalls of the virtual target's library, and the command line argument, file handle, float conversion and directory listing syscalls of the llvm libraries.
  * Searches, string comparisons, string output, argument lookups and the file stream routines become internal helper functions.
  */
 internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
@@ -115,6 +116,7 @@ internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
         VM_FEOF -> endOfFile(site, number)
         VM_FLOAT_DIGITS -> floatDigits(site, number)
         VM_PARSE_FLOAT -> parseFloat(site, number)
+        VM_LIST_DIRECTORY -> listDirectory(site, number)
         else -> when (IMSyscall.entries.firstOrNull { it.number == number }) {
             IMSyscall.COMPARE_STRINGS -> compareStrings(site, number)
             IMSyscall.STRING_CONTAINS -> stringContains(site, number)
@@ -445,6 +447,22 @@ private fun FunctionLowering.parseFloat(site: CallSite, number: Int) {
     result(site, derive("float", LlvmType.Double) { LlvmInstruction.Call(it, helper, listOf(pointerValue(string)), LlvmType.Double) })
 }
 
+/**
+ * LIST_DIRECTORY(kind byte): prints the entries of the current directory sorted by name, all of them for kind 0, the subdirectories
+ * for 1 and the files for 2. 1 when the directory could be read, else 0, which it always is without the triple's dirent layout.
+ */
+private fun FunctionLowering.listDirectory(site: CallSite, number: Int) {
+    val (kind) = arguments(site, number, 1)
+    val nameOffset = builder.profile?.direntNameOffset
+    if (nameOffset == null) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I8))
+        return
+    }
+    val helper = builder.helperFunction(".diskio.list") { builder.listDirectoryHelper(nameOffset) }
+    val args = listOf(convert(read(kind), LlvmType.I8))
+    result(site, derive("listed", LlvmType.I8) { LlvmInstruction.Call(it, helper, args, LlvmType.I8) })
+}
+
 /** `i8 (needle, ptr array, i16 count)`: 1 when one of the count elements equals the needle, else 0. */
 private fun containsHelper(name: String, elementType: LlvmType, intPtr: LlvmType): LlvmFunction {
     val needle = LlvmValue.Local("needle", elementType)
@@ -614,7 +632,7 @@ private const val LOAD_CHUNK_SIZE = 4096L
 private const val SEEK_SET = 0L
 private const val SEEK_END = 2L
 
-private enum class CType { INT, PTR, SIZE_T, LONG }
+private enum class CType { VOID, INT, PTR, SIZE_T, LONG }
 
 /** The C library routines of the file syscalls; the widths of size_t and long come from the target triple. */
 private enum class Libc(val returnType: CType, vararg parameters: CType) {
@@ -635,12 +653,19 @@ private enum class Libc(val returnType: CType, vararg parameters: CType) {
     // mode_t has 16 bits on macOS, 32 on Linux; both take it extended to 32 bits
     MKDIR(CType.INT, CType.PTR, CType.INT),
     CHDIR(CType.INT, CType.PTR),
-    RMDIR(CType.INT, CType.PTR);
+    RMDIR(CType.INT, CType.PTR),
+    CLOSEDIR(CType.INT, CType.PTR),
+    STRCMP(CType.INT, CType.PTR, CType.PTR),
+    STRDUP(CType.PTR, CType.PTR),
+    REALLOC(CType.PTR, CType.PTR, CType.SIZE_T),
+    FREE(CType.VOID, CType.PTR),
+    QSORT(CType.VOID, CType.PTR, CType.SIZE_T, CType.SIZE_T, CType.PTR);
 
     val parameterTypes = parameters.toList()
 }
 
 private fun LlvmFunctionBuilder.cType(type: CType): LlvmType = when (type) {
+    CType.VOID -> LlvmType.Void
     CType.INT -> LlvmType.I32
     CType.PTR -> LlvmType.Ptr
     CType.SIZE_T -> mapper.sizeT
@@ -1012,6 +1037,165 @@ private fun LlvmFunctionBuilder.saveHelper(): LlvmFunction {
             LlvmInstruction.Cast(CastOperator.ZEXT, result, ok, LlvmType.I8),
             LlvmInstruction.Ret(result)),
         "fail" to listOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I8))))
+}
+
+/**
+ * `i8 (i8 kind)`: the LIST_DIRECTORY syscall, with the d_name of struct dirent at [nameOffset]. It prints "size<tab>name" for a file,
+ * and "dir<tab>name" for an entry that opendir() opens; the names are copied and sorted first, as readdir() has no order.
+ */
+private fun LlvmFunctionBuilder.listDirectoryHelper(nameOffset: Int): LlvmFunction {
+    val profile = checkNotNull(profile)
+    val sizeT = mapper.sizeT
+    val cLong = mapper.cLong
+    val pointerSize = LlvmValue.IntConstant((profile.pointerBits / 8).toLong(), sizeT)
+    val opendir = LlvmValue.Global(externalFunction(profile.opendirSymbol, LlvmType.Ptr, listOf(LlvmType.Ptr)).name)
+    val readdir = LlvmValue.Global(externalFunction(profile.readdirSymbol, LlvmType.Ptr, listOf(LlvmType.Ptr)).name)
+    val printf = externalFunction("printf", LlvmType.I32, listOf(LlvmType.Ptr), isVarArg = true)
+    val compare = helperFunction(".diskio.compare") { compareNamesHelper() }
+    fun local(name: String, type: LlvmType) = LlvmValue.Local(name, type)
+    val kind = local("kind", LlvmType.I8)
+    val namesSlot = local("names_slot", LlvmType.Ptr)
+    val countSlot = local("count_slot", LlvmType.Ptr)
+    val dir = local("dir", LlvmType.Ptr)
+    val failed = local("failed", LlvmType.I1)
+    val entry = local("dirent", LlvmType.Ptr)
+    val end = local("end", LlvmType.I1)
+    val name = local("entry_name", LlvmType.Ptr)
+    val dot = local("dot", LlvmType.I32)
+    val isDot = local("is_dot", LlvmType.I1)
+    val dotDot = local("dotdot", LlvmType.I32)
+    val isDotDot = local("is_dotdot", LlvmType.I1)
+    val skip = local("skip", LlvmType.I1)
+    val count = local("count", sizeT)
+    val names = local("names", LlvmType.Ptr)
+    val grownCount = local("grown_count", sizeT)
+    val bytes = local("bytes", sizeT)
+    val grown = local("grown", LlvmType.Ptr)
+    val full = local("full", LlvmType.I1)
+    val copy = local("name_copy", LlvmType.Ptr)
+    val lost = local("lost", LlvmType.I1)
+    val slot = local("slot", LlvmType.Ptr)
+    val total = local("total", sizeT)
+    val list = local("list", LlvmType.Ptr)
+    val index = local("index", sizeT)
+    val done = local("done", LlvmType.I1)
+    val at = local("at", LlvmType.Ptr)
+    val file = local("file", LlvmType.Ptr)
+    val sub = local("sub", LlvmType.Ptr)
+    val isDir = local("is_dir", LlvmType.I1)
+    val wantDirs = local("want_dirs", LlvmType.I1)
+    val wantFiles = local("want_files", LlvmType.I1)
+    val stream = local("stream", LlvmType.Ptr)
+    val opened = local("opened", LlvmType.I1)
+    val length = local("length", cLong)
+    val size = local("file_size", cLong)
+    val next = local("next_index", sizeT)
+    val zero = LlvmValue.IntConstant(0, sizeT)
+    fun print(format: String, text: String, vararg values: LlvmValue) =
+        LlvmInstruction.Call(null, LlvmValue.Global(printf.name), listOf(runtimeString(format, text)) + values, LlvmType.I32, printf.type)
+    return helper(".diskio.list", LlvmType.I8, listOf(kind),
+        "entry" to listOf(
+            LlvmInstruction.Alloca(namesSlot, LlvmType.Ptr),
+            LlvmInstruction.Alloca(countSlot, sizeT),
+            LlvmInstruction.Store(LlvmValue.NullPtr(), namesSlot),
+            LlvmInstruction.Store(zero, countSlot),
+            LlvmInstruction.Call(dir, opendir, listOf(runtimeString(".diskio.dot", ".")), LlvmType.Ptr),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, failed, dir, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(failed, "fail", "read")),
+        "read" to listOf(
+            LlvmInstruction.Call(entry, readdir, listOf(dir), LlvmType.Ptr),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, end, entry, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(end, "sort", "name")),
+        "name" to listOf(
+            LlvmInstruction.GetElementPtr(name, LlvmType.I8, entry, listOf(i32(nameOffset.toLong())), inBounds = true),
+            LlvmInstruction.Call(dot, libc(Libc.STRCMP), listOf(name, runtimeString(".diskio.dot", ".")), LlvmType.I32),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, isDot, dot, i32(0)),
+            LlvmInstruction.Call(dotDot, libc(Libc.STRCMP), listOf(name, runtimeString(".diskio.dotdot", "..")), LlvmType.I32),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, isDotDot, dotDot, i32(0)),
+            LlvmInstruction.BinaryOp(BinaryOperator.OR, skip, isDot, isDotDot),
+            LlvmInstruction.CondBr(skip, "read", "keep")),
+        // without the memory for another name, the listing has the names so far
+        "keep" to listOf(
+            LlvmInstruction.Load(count, countSlot),
+            LlvmInstruction.Load(names, namesSlot),
+            LlvmInstruction.BinaryOp(BinaryOperator.ADD, grownCount, count, LlvmValue.IntConstant(1, sizeT)),
+            LlvmInstruction.BinaryOp(BinaryOperator.MUL, bytes, grownCount, pointerSize),
+            LlvmInstruction.Call(grown, libc(Libc.REALLOC), listOf(names, bytes), LlvmType.Ptr),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, full, grown, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(full, "sort", "copy")),
+        "copy" to listOf(
+            LlvmInstruction.Store(grown, namesSlot),
+            LlvmInstruction.Call(copy, libc(Libc.STRDUP), listOf(name), LlvmType.Ptr),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, lost, copy, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(lost, "sort", "add")),
+        "add" to listOf(
+            LlvmInstruction.GetElementPtr(slot, LlvmType.Ptr, grown, listOf(count), inBounds = true),
+            LlvmInstruction.Store(copy, slot),
+            LlvmInstruction.Store(grownCount, countSlot),
+            LlvmInstruction.Br("read")),
+        "sort" to listOf(
+            LlvmInstruction.Call(null, libc(Libc.CLOSEDIR), listOf(dir), LlvmType.I32),
+            LlvmInstruction.Load(total, countSlot),
+            LlvmInstruction.Load(list, namesSlot),
+            LlvmInstruction.Call(null, libc(Libc.QSORT), listOf(list, total, pointerSize, compare), LlvmType.Void),
+            LlvmInstruction.Br("loop")),
+        "loop" to listOf(
+            LlvmInstruction.Phi(index, listOf(zero to "sort", next to "next")),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, done, index, total),
+            LlvmInstruction.CondBr(done, "finish", "show")),
+        "show" to listOf(
+            LlvmInstruction.GetElementPtr(at, LlvmType.Ptr, list, listOf(index), inBounds = true),
+            LlvmInstruction.Load(file, at),
+            LlvmInstruction.Call(sub, opendir, listOf(file), LlvmType.Ptr),
+            LlvmInstruction.Icmp(IcmpCondition.NE, isDir, sub, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(isDir, "directory", "other")),
+        "directory" to listOf(
+            LlvmInstruction.Call(null, libc(Libc.CLOSEDIR), listOf(sub), LlvmType.I32),
+            LlvmInstruction.Icmp(IcmpCondition.NE, wantDirs, kind, LlvmValue.IntConstant(2, LlvmType.I8)),
+            LlvmInstruction.CondBr(wantDirs, "print_dir", "next")),
+        "print_dir" to listOf(
+            print(".diskio.format.dir", "dir\t%s\n", file),
+            LlvmInstruction.Br("next")),
+        "other" to listOf(
+            LlvmInstruction.Icmp(IcmpCondition.NE, wantFiles, kind, LlvmValue.IntConstant(1, LlvmType.I8)),
+            LlvmInstruction.CondBr(wantFiles, "measure", "next")),
+        "measure" to listOf(
+            LlvmInstruction.Call(stream, libc(Libc.FOPEN), listOf(file, runtimeString(".file.mode.rb", "rb")), LlvmType.Ptr),
+            LlvmInstruction.Icmp(IcmpCondition.NE, opened, stream, LlvmValue.NullPtr()),
+            LlvmInstruction.CondBr(opened, "size", "print_file")),
+        "size" to listOf(
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(stream, LlvmValue.IntConstant(0, cLong), i32(SEEK_END)), LlvmType.I32),
+            LlvmInstruction.Call(length, libc(Libc.FTELL), listOf(stream), cLong),
+            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(stream), LlvmType.I32),
+            LlvmInstruction.Br("print_file")),
+        // an unreadable file shows size 0
+        "print_file" to listOf(
+            LlvmInstruction.Phi(size, listOf(LlvmValue.IntConstant(0, cLong) to "measure", length to "size")),
+            print(".diskio.format.file", "%ld\t%s\n", size, file),
+            LlvmInstruction.Br("next")),
+        "next" to listOf(
+            LlvmInstruction.Call(null, libc(Libc.FREE), listOf(file), LlvmType.Void),
+            LlvmInstruction.BinaryOp(BinaryOperator.ADD, next, index, LlvmValue.IntConstant(1, sizeT)),
+            LlvmInstruction.Br("loop")),
+        "finish" to listOf(
+            LlvmInstruction.Call(null, libc(Libc.FREE), listOf(list), LlvmType.Void),
+            LlvmInstruction.Ret(LlvmValue.IntConstant(1, LlvmType.I8))),
+        "fail" to listOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I8))))
+}
+
+/** `i32 (ptr, ptr)`: the qsort() comparison of two string pointers, by strcmp() of the strings. */
+private fun LlvmFunctionBuilder.compareNamesHelper(): LlvmFunction {
+    val first = LlvmValue.Local("first", LlvmType.Ptr)
+    val second = LlvmValue.Local("second", LlvmType.Ptr)
+    val a = LlvmValue.Local("a", LlvmType.Ptr)
+    val b = LlvmValue.Local("b", LlvmType.Ptr)
+    val order = LlvmValue.Local("order", LlvmType.I32)
+    return helper(".diskio.compare", LlvmType.I32, listOf(first, second),
+        "entry" to listOf(
+            LlvmInstruction.Load(a, first),
+            LlvmInstruction.Load(b, second),
+            LlvmInstruction.Call(order, libc(Libc.STRCMP), listOf(a, b), LlvmType.I32),
+            LlvmInstruction.Ret(order)))
 }
 
 private fun helper(name: String, returnType: LlvmType, parameters: List<LlvmValue.Local>, vararg blocks: Pair<String, List<LlvmInstruction>>) =

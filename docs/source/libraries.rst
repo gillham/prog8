@@ -912,6 +912,11 @@ as a ``pointer``, and ``save`` and ``save_raw`` take the size as a ``pointer``. 
 the byte count as a ``pointer``, and ``f_read`` and ``f_read_all`` return the number of bytes read as a ``pointer``. So all
 of these handle more than 64 KiB, but store their results in a ``pointer`` or ``long`` variable, not a ``uword``.
 
+On llvm32 and llvm64, ``directory``, ``directory_dirs`` and ``directory_files`` print the entries of the current
+directory sorted by name, a line each: ``<size><tab><name>`` for a file and ``dir<tab><name>`` for a subdirectory.
+They return false when the directory can't be read, and always on the bare metal triples, whose C library has
+no directory routines.
+
 .. note::
     Opening a file using f_read() or f_read_w() doesn't set the default i/o channels to that file.
     In fact, after calling routines in diskio, it resets the input and output channels to their

@@ -32,7 +32,11 @@ data class LlvmTripleProfile(
     val runTimeoutSeconds: Int? = null,
     val startupSources: List<String> = emptyList(),
     private val directory: Path? = null,
-    private val linkArgsTemplate: List<String> = emptyList()
+    private val linkArgsTemplate: List<String> = emptyList(),
+    /** Where readdir()'s struct dirent has d_name, or null when the C library has no directory routines. */
+    val direntNameOffset: Int? = null,
+    val opendirSymbol: String = "opendir",
+    val readdirSymbol: String = "readdir"
 ) {
     /** The pointer width in bits of the default address space, which LLVM takes as 64 when the data layout has no `p:` entry. */
     val pointerBits: Int = dataLayout.split('-').firstOrNull { it.startsWith("p:") }
@@ -100,12 +104,14 @@ data class LlvmTripleProfile(
         }
         require(runTimeoutSeconds == null || runTimeoutSeconds > 0) { "the run_timeout_seconds of llvm triple profile '$name' must be a positive number" }
         require(cMainSymbol.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "the c_main_symbol of llvm triple profile '$name' must be a C identifier" }
+        require(direntNameOffset == null || direntNameOffset >= 0) { "the dirent_name_offset of llvm triple profile '$name' must not be negative" }
     }
 
     companion object {
         const val RESOURCE_DIR = "/prog8lib/llvm-triples"
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
-            "link_command", "link_args", "run_timeout_seconds", "startup_source")
+            "link_command", "link_args", "run_timeout_seconds", "startup_source",
+            "dirent_name_offset", "opendir_symbol", "readdir_symbol")
         private val environmentVariable = Regex($$"""\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?}""")
         private val tripleName = Regex("[A-Za-z0-9_][A-Za-z0-9_.-]*")
         private const val ARGS = "{args}"
@@ -232,6 +238,9 @@ data class LlvmTripleProfile(
             val cLongSize = optional("c_long_size")?.let {
                 it.toIntOrNull() ?: throw IllegalArgumentException("llvm triple profile '$name' has a non-numeric c_long_size")
             } ?: fromClang.cLongSize
+            val direntNameOffset = optional("dirent_name_offset")?.let {
+                it.toIntOrNull() ?: throw IllegalArgumentException("llvm triple profile '$name' has a non-numeric dirent_name_offset")
+            }
             val runTimeout = props.getProperty("run_timeout_seconds")?.trim()?.let {
                 it.toIntOrNull() ?: throw IllegalArgumentException("llvm triple profile '$name' has a non-numeric run_timeout_seconds")
             }
@@ -249,7 +258,10 @@ data class LlvmTripleProfile(
                 runTimeout,
                 words("startup_source").orEmpty(),
                 directory,
-                words("link_args").orEmpty()
+                words("link_args").orEmpty(),
+                direntNameOffset,
+                optional("opendir_symbol") ?: "opendir",
+                optional("readdir_symbol") ?: "readdir"
             )
         }
     }

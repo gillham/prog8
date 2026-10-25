@@ -2,7 +2,8 @@
 ;
 ; NOTE: some calls differ from the "official" diskio library, because a hosted 64-bit program has no carry flag to return
 ;       and no 16-bit addresses: f_readline() returns a status instead, and load() and load_raw() return a pointer.
-; NOTE: there are no directory listings. The fileio module has routines for several open files at the same time.
+; NOTE: the directory listings print "size<tab>name" for a file and "dir<tab>name" for a subdirectory, sorted by name;
+;       they fail on a bare-metal triple. The fileio module has routines for several open files at the same time.
 
 %import textio
 %import syslib
@@ -10,6 +11,29 @@
 
 diskio {
     %option no_symbol_prefixing, ignore_unused
+
+    sub directory() -> bool {
+        ; -- Prints the files and subdirectories of the current directory to the screen. Returns success.
+        return internal_list(0)
+    }
+
+    sub directory_dirs() -> bool {
+        ; -- Prints the subdirectories of the current directory to the screen. Returns success.
+        return internal_list(1)
+    }
+
+    sub directory_files() -> bool {
+        ; -- Prints the files of the current directory to the screen. Returns success.
+        return internal_list(2)
+    }
+
+    sub internal_list(ubyte kind) -> bool {
+        %ir {{
+            loadm.b r99100.b,[diskio.internal_list.kind]
+            syscall 83 (r99100.b): r99101.b
+            returnr.b r99101.b
+        }}
+    }
 
     sub diskname() -> str {
         ; -- Returns the name of the "disk", which is the filesystem of the host.
