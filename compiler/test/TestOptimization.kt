@@ -1567,4 +1567,27 @@ main {
         compileText(C64Target(), true, src, outputDir, writeAssembly = true) shouldNotBe null
     }
 
+    test("zero minus an unsigned value stays a subtraction, zero minus a signed value becomes a negation") {
+        val src = """
+            main {
+                sub start() {
+                    uword @shared low = 5
+                    ubyte @shared b = 3
+                    word @shared w = 9
+                    uword @shared x = 0 - low
+                    ubyte @shared y = 0 - b
+                    word @shared v = 0 - w
+                }
+            }"""
+        for(target in listOf(Cx16Target(), VMTarget())) {
+            val result = compileText(target, true, src, outputDir, writeAssembly = false)!!
+            val assignments = result.compilerAst.entrypoint.statements.filterIsInstance<Assignment>()
+            fun valueOf(name: String) = assignments.single { it.target.identifier?.nameInSource == listOf(name) }.value
+            withClue(target.name) {
+                (valueOf("x") as BinaryExpression).operator shouldBe "-"
+                (valueOf("y") as BinaryExpression).operator shouldBe "-"
+                (valueOf("v") as PrefixExpression).operator shouldBe "-"
+            }
+        }
+    }
 })

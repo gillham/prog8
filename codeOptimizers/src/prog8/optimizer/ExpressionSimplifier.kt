@@ -930,8 +930,9 @@ class ExpressionSimplifier(private val program: Program, private val errors: IEr
             // left value is a constant, see if we can optimize
             when (leftVal.number) {
                 0.0 -> {
-                    // -right
-                    return PrefixExpression("-", expr.right, expr.position)
+                    // -right, but an unsigned operand can't be negated: keep its subtraction
+                    if(expr.right.inferType(program).getOrUndef().isSigned)
+                        return PrefixExpression("-", expr.right, expr.position)
                 }
             }
         }
