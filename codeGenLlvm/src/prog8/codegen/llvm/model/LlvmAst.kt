@@ -19,7 +19,8 @@ internal sealed interface LlvmType {
         }
     }
 
-    data class Function(val returnType: LlvmType, val paramTypes: List<LlvmType>) : LlvmType {
+    /** A [isVarArg] function, such as C's snprintf, takes more arguments after [paramTypes]. */
+    data class Function(val returnType: LlvmType, val paramTypes: List<LlvmType>, val isVarArg: Boolean = false) : LlvmType {
         init {
             require(paramTypes.all { it.isFirstClass }) { "function parameter types must be first-class: $paramTypes" }
         }
@@ -209,11 +210,15 @@ internal sealed interface LlvmInstruction {
         }
     }
 
-    data class Call(val result: Local?, val callee: LlvmValue, val args: List<LlvmValue>, val returnType: LlvmType) : LlvmInstruction {
+    /** A call of a variadic function needs its [calleeType], which LLVM can't derive from the arguments. */
+    data class Call(val result: Local?, val callee: LlvmValue, val args: List<LlvmValue>, val returnType: LlvmType,
+                    val calleeType: LlvmType.Function? = null) : LlvmInstruction {
         constructor(result: Local?, callee: String, args: List<LlvmValue>, returnType: LlvmType) :
                 this(result, LlvmValue.Global(callee), args, returnType)
 
         init {
+            require(calleeType == null || calleeType.returnType == returnType) { "callee type $calleeType doesn't return $returnType" }
+            require(calleeType == null || args.size >= calleeType.paramTypes.size) { "call of a $calleeType function needs at least ${calleeType?.paramTypes?.size} arguments" }
             require(callee.type == LlvmType.Ptr) { "callee must have type ptr, not ${callee.type}" }
             require(returnType != LlvmType.Void || result == null) { "void call cannot have a result" }
             require(result == null || result.type == returnType) { "call result type ${result?.type} differs from return type $returnType" }
@@ -298,14 +303,16 @@ internal data class LlvmFunction(
     val parameters: List<Local>,
     val blocks: MutableList<LlvmBlock> = mutableListOf(),
     val isExternal: Boolean = false,
-    val linkage: LlvmLinkage = LlvmLinkage.EXTERNAL
+    val linkage: LlvmLinkage = LlvmLinkage.EXTERNAL,
+    val isVarArg: Boolean = false
 ) {
     init {
+        require(!isVarArg || isExternal) { "only declarations can be variadic: @$name" }
         require(!isExternal || linkage == LlvmLinkage.EXTERNAL) { "declaration of @$name must have external linkage, not $linkage" }
         require(linkage != LlvmLinkage.APPENDING) { "function @$name can't have appending linkage" }
     }
 
-    val type: LlvmType.Function get() = LlvmType.Function(returnType, parameters.map { it.type })
+    val type: LlvmType.Function get() = LlvmType.Function(returnType, parameters.map { it.type }, isVarArg)
 }
 
 /** A null [initializer] makes this an `external` declaration of a global defined elsewhere. */

@@ -605,6 +605,16 @@ main {
         }
     }
 
+    test("the float printing program prints the same on the virtual machine as on the llvm targets") {
+        val program = outputPrograms.getValue("floats printing, conversion to and from strings, and random numbers")
+        for (optimize in listOf(false, true)) {
+            val result = compileText(VMTarget(), optimize, program.source, outputDir).shouldNotBeNull()
+            val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+            // after the line in which the IR file reader names the file
+            withClue("optimize=$optimize") { printedOnStdout { exitStatusOnVirtualMachine(irFile) } shouldEndWith "\n" + program.output }
+        }
+    }
+
     test("an unknown target name is rejected") {
         shouldThrow<IllegalArgumentException> { getCompilationTargetByName("llvm16") }
     }
@@ -5510,5 +5520,41 @@ main {
         txt.print_l(floats.round(value * 1000000.0) as long)
         txt.spc()
     }
-}""", "500000 500000 1000000 523599 1570796 -1570796 1570796 1047198 3141593 785398 785398 2356194 3926991 5497787 1570796 4712389 0 \n1500000 1414214 1024000000 2718282 1000000 1000000 4605170 10000000 \n-3000000 -2000000 -2000000 2000000 4000000 2000000 2000000 3000000 \n3141593 180000000 1000000 1000000 1000000 -2500000 2000000 -1000000 1500000 12500000 17500000 150000000 6283185 \ntruetruetrue\n")
+}""", "500000 500000 1000000 523599 1570796 -1570796 1570796 1047198 3141593 785398 785398 2356194 3926991 5497787 1570796 4712389 0 \n1500000 1414214 1024000000 2718282 1000000 1000000 4605170 10000000 \n-3000000 -2000000 -2000000 2000000 4000000 2000000 2000000 3000000 \n3141593 180000000 1000000 1000000 1000000 -2500000 2000000 -1000000 1500000 12500000 17500000 150000000 6283185 \ntruetruetrue\n"),
+
+    "floats printing, conversion to and from strings, and random numbers" to OutputProgram("""
+%import textio
+%import floats
+%zeropage basicsafe
+
+main {
+    sub start() {
+        float[] values = [0.0, -0.0, 1.0, -1.5, 0.1, 3.141592653589793, 100.0, 1234567.0, 9999999.0, 10000000.0, 0.001, 0.0009999, 1.0e-5,
+                          123456789012.0, 1.0e23, 2.0e-3, 1.7976931348623157e308, 4.9e-324, 2.2250738585072014E-308, 0.3, 2.0/3.0, 1.0e100, -123.456e-10]
+        ubyte i
+        for i in 0 to len(values)-1 {
+            txt.print_f(values[i])
+            txt.chrout(' ')
+            txt.print_bool(floats.parse(floats.tostr(values[i])) == values[i])
+            txt.nl()
+        }
+        txt.print(floats.tostr(floats.parse(" 1 2.5e1xyz")))
+        txt.nl()
+        floats.print(floats.parse("1e999"))
+        txt.nl()
+        txt.print_f(floats.parse("1e"))
+        txt.nl()
+        txt.print_f(floats.parse(""))
+        txt.nl()
+        txt.print_f(floats.parse("-.5"))
+        txt.nl()
+        floats.rndseed(1.234)
+        float r1 = floats.rnd()
+        float r2 = floats.rnd()
+        txt.print_bool(r1 >= 0.0 and r1 < 1.0 and r2 >= 0.0 and r2 < 1.0 and r2 != r1)
+        txt.nl()
+    }
+}""", "0.0 true\n-0.0 true\n1.0 true\n-1.5 true\n0.1 true\n3.141592653589793 true\n100.0 true\n1234567.0 true\n9999999.0 true\n1.0E7 true\n" +
+        "0.001 true\n9.999E-4 true\n1.0E-5 true\n1.23456789012E11 true\n1.0E23 true\n0.002 true\n1.7976931348623157E308 true\n4.9E-324 true\n" +
+        "2.2250738585072014E-308 true\n0.3 true\n0.6666666666666666 true\n1.0E100 true\n-1.23456E-8 true\n125.0\nInfinity\n0.0\n0.0\n-0.5\ntrue\n")
 )

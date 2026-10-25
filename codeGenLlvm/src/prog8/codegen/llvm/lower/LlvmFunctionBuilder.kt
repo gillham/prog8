@@ -217,9 +217,9 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     fun returnType(sub: IRSubroutine): LlvmType = sub.returns.singleOrNull()?.let { mapper.map(it.base) } ?: LlvmType.Void
 
     /** Declares a routine that isn't part of the program, such as a C library function, with the signature of its first call. */
-    fun externalFunction(name: String, returnType: LlvmType, paramTypes: List<LlvmType>): LlvmFunction {
+    fun externalFunction(name: String, returnType: LlvmType, paramTypes: List<LlvmType>, isVarArg: Boolean = false): LlvmFunction {
         externalRoutines[name]?.let { (sub, declared) ->
-            val used = LlvmType.Function(returnType, paramTypes)
+            val used = LlvmType.Function(returnType, paramTypes, isVarArg)
             if (declared.type != used) {
                 val error = conflict(sub, declared, "the ${program.options.compTarget.name} runtime", used)
                 runtimeConflicts += loweringSub to error
@@ -228,9 +228,9 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
             return declared
         }
         val function = externalFunctions.getOrPut(name) {
-            LlvmFunction(name, returnType, paramTypes.mapIndexed { index, type -> LlvmValue.Local("p$index", type) }, isExternal = true)
+            LlvmFunction(name, returnType, paramTypes.mapIndexed { index, type -> LlvmValue.Local("p$index", type) }, isExternal = true, isVarArg = isVarArg)
         }
-        require(function.type == LlvmType.Function(returnType, paramTypes)) { "routine $name is called with different signatures" }
+        require(function.type == LlvmType.Function(returnType, paramTypes, isVarArg)) { "routine $name is called with different signatures" }
         return function
     }
 

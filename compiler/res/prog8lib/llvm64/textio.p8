@@ -1,6 +1,6 @@
 ; Prog8 definitions for the Text I/O console routines for the llvm64 target.
 ; Text goes to stdout and input comes from stdin; colors, reverse video and cursor movement use ANSI escape sequences.
-; txt.print_f is not here: as on the other targets, it belongs in the floats module (which can't format floats on llvm64 yet).
+; txt.print_f is not here: as on the other targets, it comes with the floats module.
 
 %import conv
 

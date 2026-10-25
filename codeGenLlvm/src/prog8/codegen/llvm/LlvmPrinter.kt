@@ -44,7 +44,7 @@ internal object LlvmPrinter {
         LlvmType.Ptr -> "ptr"
         LlvmType.Void -> "void"
         is LlvmType.Array -> "[${type.size} x ${format(type.elementType)}]"
-        is LlvmType.Function -> "${format(type.returnType)} (${type.paramTypes.joinToString { format(it) }})"
+        is LlvmType.Function -> "${format(type.returnType)} (${parameterList(type.paramTypes.map { format(it) }, type.isVarArg)})"
         is LlvmType.Struct -> structBraces(type.packed, type.fields.map { format(it) })
     }
 
@@ -90,7 +90,7 @@ internal object LlvmPrinter {
         }
         is LlvmInstruction.Call -> {
             val assignment = insn.result?.let { "${format(it)} = " }.orEmpty()
-            "${assignment}call ${format(insn.returnType)} ${format(insn.callee)}(${insn.args.joinToString { typed(it) }})"
+            "${assignment}call ${format(insn.calleeType ?: insn.returnType)} ${format(insn.callee)}(${insn.args.joinToString { typed(it) }})"
         }
         is LlvmInstruction.Select -> "${format(insn.result)} = select ${typed(insn.condition)}, ${typed(insn.trueValue)}, ${typed(insn.falseValue)}"
         is LlvmInstruction.Phi -> {
@@ -117,7 +117,7 @@ internal object LlvmPrinter {
         val name = globalName(function.name)
         if (function.isExternal) {
             require(function.blocks.isEmpty()) { "declaration of $name must not have blocks" }
-            out.appendLine("declare $returnType $name(${function.parameters.joinToString { format(it.type) }})")
+            out.appendLine("declare $returnType $name(${parameterList(function.parameters.map { format(it.type) }, function.isVarArg)})")
             return
         }
         require(function.blocks.isNotEmpty()) { "definition of $name needs at least one block" }
@@ -138,6 +138,8 @@ internal object LlvmPrinter {
     private fun alignSuffix(align: Int?): String = align?.let { ", align $it" }.orEmpty()
 
     private fun volatilePrefix(volatile: Boolean): String = if (volatile) "volatile " else ""
+
+    private fun parameterList(types: List<String>, isVarArg: Boolean): String = (if (isVarArg) types + "..." else types).joinToString()
 
     private fun structBraces(packed: Boolean, items: List<String>): String = when {
         items.isEmpty() -> if (packed) "<{}>" else "{}"

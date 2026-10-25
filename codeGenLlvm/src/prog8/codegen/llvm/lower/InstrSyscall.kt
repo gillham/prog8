@@ -55,10 +55,12 @@ private const val VM_FSEEK = 77
 private const val VM_FTELL = 78
 private const val VM_FFLUSH = 79
 private const val VM_FEOF = 80
+private const val VM_FLOAT_DIGITS = 81
+private const val VM_PARSE_FLOAT = 82
 
 /**
  * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory, file and filesystem
- * syscalls of the virtual target's library, and the command line argument and file handle syscalls of the llvm libraries.
+ * syscalls of the virtual target's library, and the command line argument, file handle and float conversion syscalls of the llvm libraries.
  * Searches, string comparisons, string output, argument lookups and the file stream routines become internal helper functions.
  */
 internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
@@ -100,6 +102,8 @@ internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
         VM_FTELL -> tellHandle(site, number)
         VM_FFLUSH -> handleStatus(site, number, Libc.FFLUSH)
         VM_FEOF -> endOfFile(site, number)
+        VM_FLOAT_DIGITS -> floatDigits(site, number)
+        VM_PARSE_FLOAT -> parseFloat(site, number)
         else -> when (IMSyscall.entries.firstOrNull { it.number == number }) {
             IMSyscall.COMPARE_STRINGS -> compareStrings(site, number)
             IMSyscall.STRING_CONTAINS -> stringContains(site, number)
@@ -387,6 +391,20 @@ private fun FunctionLowering.endOfFile(site: CallSite, number: Int) {
     result(site, derive("eof", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, set, LlvmType.I8) })
 }
 
+/** FLOAT_DIGITS(buffer of 32 bytes, float): the shortest "%.*e" text of the float, of at least two digits, that reads back as the same float. */
+private fun FunctionLowering.floatDigits(site: CallSite, number: Int) {
+    val (buffer, value) = arguments(site, number, 2)
+    val helper = builder.helperFunction(".float.digits") { builder.floatDigitsHelper() }
+    emit(LlvmInstruction.Call(null, helper, listOf(pointerValue(buffer), read(value)), LlvmType.Void))
+}
+
+/** PARSE_FLOAT(string): the float that strtod() reads from the whole string, or 0.0 when the string isn't one number. */
+private fun FunctionLowering.parseFloat(site: CallSite, number: Int) {
+    val (string) = arguments(site, number, 1)
+    val helper = builder.helperFunction(".float.parse") { builder.parseFloatHelper() }
+    result(site, derive("float", LlvmType.Double) { LlvmInstruction.Call(it, helper, listOf(pointerValue(string)), LlvmType.Double) })
+}
+
 /** `i8 (needle, ptr array, i16 count)`: 1 when one of the count elements equals the needle, else 0. */
 private fun containsHelper(name: String, elementType: LlvmType, intPtr: LlvmType): LlvmFunction {
     val needle = LlvmValue.Local("needle", elementType)
@@ -599,6 +617,58 @@ private fun LlvmFunctionBuilder.readStream(): LlvmValue.Global = runtimeGlobal("
 private fun LlvmFunctionBuilder.writeStream(): LlvmValue.Global = runtimeGlobal(".file.write_stream", LlvmType.Ptr)
 
 private fun i32(value: Long) = LlvmValue.IntConstant(value, LlvmType.I32)
+
+private fun LlvmFunctionBuilder.strtod(): LlvmValue.Global =
+    LlvmValue.Global(externalFunction("strtod", LlvmType.Double, listOf(LlvmType.Ptr, LlvmType.Ptr)).name)
+
+/**
+ * `void (ptr buffer, double value)`: snprintf's "%.*e" of the value with the precisions 1 to 16, until strtod() reads it back as the value.
+ * It starts at two digits, because that is what Java's Double.toString gives when one would do, such as 4.9E-324 instead of 5.0E-324.
+ */
+private fun LlvmFunctionBuilder.floatDigitsHelper(): LlvmFunction {
+    val buffer = LlvmValue.Local("buffer", LlvmType.Ptr)
+    val value = LlvmValue.Local("value", LlvmType.Double)
+    val precision = LlvmValue.Local("precision", LlvmType.I32)
+    val next = LlvmValue.Local("next", LlvmType.I32)
+    val parsed = LlvmValue.Local("parsed", LlvmType.Double)
+    val same = LlvmValue.Local("same", LlvmType.I1)
+    val last = LlvmValue.Local("last", LlvmType.I1)
+    val found = LlvmValue.Local("found", LlvmType.I1)
+    val snprintf = externalFunction("snprintf", LlvmType.I32, listOf(LlvmType.Ptr, mapper.sizeT, LlvmType.Ptr), isVarArg = true)
+    val args = listOf(buffer, LlvmValue.IntConstant(32, mapper.sizeT), runtimeString(".float.digits.format", "%.*e"), precision, value)
+    return helper(".float.digits", LlvmType.Void, listOf(buffer, value),
+        "entry" to listOf(LlvmInstruction.Br("loop")),
+        "loop" to listOf(
+            LlvmInstruction.Phi(precision, listOf(i32(1) to "entry", next to "loop")),
+            LlvmInstruction.Call(null, LlvmValue.Global(snprintf.name), args, LlvmType.I32, snprintf.type),
+            LlvmInstruction.Call(parsed, strtod(), listOf(buffer, LlvmValue.NullPtr()), LlvmType.Double),
+            LlvmInstruction.Fcmp(FcmpCondition.OEQ, same, parsed, value),
+            LlvmInstruction.BinaryOp(BinaryOperator.ADD, next, precision, i32(1)),
+            LlvmInstruction.Icmp(IcmpCondition.SGE, last, next, i32(17)),
+            LlvmInstruction.BinaryOp(BinaryOperator.OR, found, same, last),
+            LlvmInstruction.CondBr(found, "done", "loop")),
+        "done" to listOf(LlvmInstruction.Ret(null)))
+}
+
+/** `double (ptr string)`: strtod() of the string when it reads all of it, else 0.0. */
+private fun LlvmFunctionBuilder.parseFloatHelper(): LlvmFunction {
+    val string = LlvmValue.Local("string", LlvmType.Ptr)
+    val endSlot = LlvmValue.Local("end_slot", LlvmType.Ptr)
+    val parsed = LlvmValue.Local("parsed", LlvmType.Double)
+    val end = LlvmValue.Local("end", LlvmType.Ptr)
+    val rest = LlvmValue.Local("rest", LlvmType.I8)
+    val whole = LlvmValue.Local("whole", LlvmType.I1)
+    val result = LlvmValue.Local("result", LlvmType.Double)
+    return helper(".float.parse", LlvmType.Double, listOf(string),
+        "entry" to listOf(
+            LlvmInstruction.Alloca(endSlot, LlvmType.Ptr),
+            LlvmInstruction.Call(parsed, strtod(), listOf(string, endSlot), LlvmType.Double),
+            LlvmInstruction.Load(end, endSlot),
+            LlvmInstruction.Load(rest, end),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, whole, rest, LlvmValue.IntConstant(0, LlvmType.I8)),
+            LlvmInstruction.Select(result, whole, parsed, LlvmValue.FloatConstant(0.0)),
+            LlvmInstruction.Ret(result)))
+}
 
 /** `i8 (ptr name, ptr mode, ptr stream)`: 1 when fopen() opens the file into the stream variable, closing the one it held, else 0. */
 private fun LlvmFunctionBuilder.openHelper(): LlvmFunction {

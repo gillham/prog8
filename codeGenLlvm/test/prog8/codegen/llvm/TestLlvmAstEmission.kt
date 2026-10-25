@@ -229,6 +229,21 @@ class TestLlvmAstEmission: FunSpec({
         }
     }
 
+    test("a variadic function is declared with ..., and called with its function type") {
+        val snprintf = LlvmFunction("snprintf", LlvmType.I32, listOf(LlvmValue.Local("p0", LlvmType.Ptr), LlvmValue.Local("p1", LlvmType.I64)),
+            isExternal = true, isVarArg = true)
+        snprintf.type shouldBe LlvmType.Function(LlvmType.I32, listOf(LlvmType.Ptr, LlvmType.I64), isVarArg = true)
+        val buffer = LlvmValue.Local("buffer", LlvmType.Ptr)
+        val call = LlvmInstruction.Call(null, LlvmValue.Global("snprintf"), listOf(buffer, LlvmValue.IntConstant(32, LlvmType.I64), LlvmValue.FloatConstant(1.5)),
+            LlvmType.I32, snprintf.type)
+        val caller = LlvmFunction("f", LlvmType.Void, listOf(buffer), mutableListOf(LlvmBlock("entry", mutableListOf(call, LlvmInstruction.Ret(null)))))
+        val lines = LlvmPrinter.print(LlvmModule("m", functions = mutableListOf(snprintf, caller))).lines().map { it.trim() }
+        lines shouldContain "declare i32 @snprintf(ptr, i64, ...)"
+        lines.any { it.startsWith("call i32 (ptr, i64, ...) @snprintf(ptr %buffer, i64 32, double ") } shouldBe true
+        shouldThrow<IllegalArgumentException> { LlvmFunction("g", LlvmType.Void, emptyList(), mutableListOf(LlvmBlock("entry", mutableListOf(LlvmInstruction.Ret(null)))), isVarArg = true) }
+        shouldThrow<IllegalArgumentException> { LlvmInstruction.Call(null, LlvmValue.Global("snprintf"), listOf(buffer), LlvmType.I32, snprintf.type) }
+    }
+
     test("the printer rejects declarations with a body and definitions without one") {
         val body = mutableListOf(LlvmBlock("entry", mutableListOf(LlvmInstruction.Ret(null))))
         val declarationWithBody = LlvmFunction("f", LlvmType.Void, emptyList(), body, isExternal = true)

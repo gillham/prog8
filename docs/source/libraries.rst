@@ -979,7 +979,7 @@ floats
 .. index:: pair: Libraries; floats
 
 .. note::
-    Floating point support is available on most cbm-compatible targets (except the C128 for now), and the virtual target.
+    Floating point support is available on most cbm-compatible targets (except the C128 for now), and the virtual, llvm32 and llvm64 targets.
     On the X16, make sure rom bank 4 is still active before doing floating point operations (it's the bank that contains the fp routines).
     On the C64, you have to make sure the Basic ROM is still banked in (same reason).
     On the ``qemu68k``, ``amiga500`` and ``amiga1200`` targets, floating point support requires a 68020 or better CPU with an 68881/68882 FPU.
@@ -1058,6 +1058,7 @@ Provides definitions for the ROM/Kernal subroutines and utility routines dealing
 ``print (x)``
     Prints the floating point number x as a string.
     There's no leading whitespace (unlike cbm BASIC when printing a floating point number)
+    On the virtual and llvm targets this is the text of ``tostr``.
 
 ``rad (x)``
     Degrees to radians.
@@ -1067,6 +1068,7 @@ Provides definitions for the ROM/Kernal subroutines and utility routines dealing
 
 ``rndseed (seed)``
     Sets a new seed for the float pseudo-RNG sequence. Use a negative non-zero number as seed value.
+    On the llvm targets ``rnd`` takes its bits from ``math.rndw``, so this seeds that generator, with the bits of any seed value.
 
 ``round (x)``
     Rounds the floating point to the closest integer.
@@ -1083,6 +1085,8 @@ Provides definitions for the ROM/Kernal subroutines and utility routines dealing
 ``tostr (x)``
     Converts the floating point number x to a string (returns address of the string buffer)
     There's no leading whitespace.
+    On the virtual and llvm targets the string has the fewest digits that read back as the same number,
+    in scientific notation below 0.001 and from 10000000 on: ``0.1``, ``100.0``, ``1.0E7``, ``-1.23456E-8``, ``NaN``, ``Infinity``.
 
 
 gfx_lores and gfx_hires (cx16 only)
