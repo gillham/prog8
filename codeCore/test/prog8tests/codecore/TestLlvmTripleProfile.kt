@@ -19,7 +19,6 @@ import kotlin.io.path.deleteExisting
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
-import prog8tests.helpers.hostProfileName
 
 class TestLlvmTripleProfile: FunSpec({
 
@@ -65,16 +64,16 @@ class TestLlvmTripleProfile: FunSpec({
         LlvmTripleProfile.resolve("arm64-apple-macosx").cMainSymbol shouldBe "main"
     }
 
-    test("the native tests build for the built-in llvm64 profile of the host, where there is one") {
-        hostProfileName("Mac OS X", "aarch64") shouldBe "arm64-apple-macosx"
-        hostProfileName("Mac OS X", "x86_64") shouldBe "x86_64-apple-macosx"
-        hostProfileName("Linux", "amd64") shouldBe "x86_64-unknown-linux-gnu"
-        hostProfileName("Linux", "aarch64") shouldBe "aarch64-unknown-linux-gnu"
-        hostProfileName("Linux", "riscv64") shouldBe "riscv64-unknown-linux-gnu"
-        hostProfileName("Linux", "arm") shouldBe null
-        hostProfileName("Windows 11", "amd64") shouldBe null
-        for (name in listOfNotNull(hostProfileName("Mac OS X", "aarch64"), hostProfileName("Mac OS X", "x86_64"), hostProfileName("Linux", "amd64"),
-                hostProfileName("Linux", "aarch64"), hostProfileName("Linux", "riscv64")))
+    test("the default llvm64 triple and the native tests use the built-in llvm64 profile of the host, where there is one") {
+        LlvmTarget.hostTriple64("Mac OS X", "aarch64") shouldBe "arm64-apple-macosx"
+        LlvmTarget.hostTriple64("Mac OS X", "x86_64") shouldBe "x86_64-apple-macosx"
+        LlvmTarget.hostTriple64("Linux", "amd64") shouldBe "x86_64-unknown-linux-gnu"
+        LlvmTarget.hostTriple64("Linux", "aarch64") shouldBe "aarch64-unknown-linux-gnu"
+        LlvmTarget.hostTriple64("Linux", "riscv64") shouldBe "riscv64-unknown-linux-gnu"
+        LlvmTarget.hostTriple64("Linux", "arm") shouldBe null
+        LlvmTarget.hostTriple64("Windows 11", "amd64") shouldBe null
+        for (name in listOfNotNull(LlvmTarget.hostTriple64("Mac OS X", "aarch64"), LlvmTarget.hostTriple64("Mac OS X", "x86_64"), LlvmTarget.hostTriple64("Linux", "amd64"),
+                LlvmTarget.hostTriple64("Linux", "aarch64"), LlvmTarget.hostTriple64("Linux", "riscv64")))
             withClue(name) { LlvmTripleProfile.resolve(name).pointerBits shouldBe 64 }
     }
 
@@ -272,8 +271,8 @@ class TestLlvmTripleProfile: FunSpec({
         llvm64.name shouldBe LlvmTarget.NAME64
         llvm64.cpu shouldBe CpuType.LLVM64
         llvm64.POINTER_MEM_SIZE shouldBe 8u
-        llvm64.targetTriple shouldBe "arm64-apple-macosx"
-        llvm64.dataLayout shouldBe "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
+        llvm64.targetTriple shouldBe (LlvmTarget.hostTriple64(System.getProperty("os.name"), System.getProperty("os.arch")) ?: "arm64-apple-macosx")
+        LlvmTarget(8, LlvmTripleProfile.resolve("arm64-apple-macosx")).dataLayout shouldBe "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
     }
 
     test("a triple whose pointer width doesn't match the target is rejected") {

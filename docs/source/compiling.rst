@@ -319,7 +319,7 @@ One or more .p8 module files
     ``c64`` = Commodore 64, ``c128`` = Commodore 128, ``cx16`` = Commander X16, ``pet32`` - Commodore PET model 4032,
     ``qemu68k`` = Qemu M68k (experimental), ``amiga500`` = Amiga 500 (experimental), ``amiga1200`` = Amiga 1200 (experimental),
     ``virtual`` = builtin virtual machine, ``llvm64`` (or ``llvm``) and ``llvm32`` = hosted programs compiled to LLVM IR
-    (by default for 64-bit macOS on arm64 and for 32-bit WebAssembly with WASI).
+    (by default for the 64-bit platform the compiler runs on and for 32-bit WebAssembly with WASI).
     You can also specify a file name as target, prog8 will then try to read the target
     machine's configuration and properties from that configuration file instead of using one of the built-in targets.
     See :ref:`customizable_target` for details about this.
@@ -327,7 +327,7 @@ One or more .p8 module files
 ``-triple <name|file>``
     Selects the platform of the ``llvm64`` and ``llvm32`` targets: the name or file of a triple profile, which gives the
     LLVM target triple, its data layout, and how clang builds and ``-emu`` runs the executable; or any triple that clang
-    knows, which clang then supplies the data layout for. The default is ``arm64-apple-macosx`` for ``llvm64`` and ``wasm32-wasip1`` for ``llvm32``.
+    knows, which clang then supplies the data layout for. The default for ``llvm64`` is the profile of the machine the compiler runs on, and ``wasm32-wasip1`` for ``llvm32``.
     It is an error with the other targets. See :ref:`llvm_triples` for the lookup order and the profile keys.
 
 ``-Xcompile <argument>``, ``-Xlink <argument>``

@@ -43,8 +43,26 @@ class LlvmTarget(
         const val NAME64 = "llvm64"
         const val NAME32 = "llvm32"
         const val ALIAS = "llvm"
-        const val DEFAULT_TRIPLE_64 = "arm64-apple-macosx"
+        const val FALLBACK_TRIPLE_64 = "arm64-apple-macosx"
         const val DEFAULT_TRIPLE_32 = "wasm32-wasip1"
+
+        /** The built-in llvm64 profile of the host the compiler runs on, or [FALLBACK_TRIPLE_64] where there is none. */
+        val DEFAULT_TRIPLE_64: String = hostTriple64(System.getProperty("os.name"), System.getProperty("os.arch")) ?: FALLBACK_TRIPLE_64
+
+        /** The built-in llvm64 profile for a host with these Java `os.name` and `os.arch` properties, or null when there is none. */
+        fun hostTriple64(osName: String, osArch: String): String? {
+            val arch = when (osArch) {
+                "aarch64", "arm64" -> "aarch64"
+                "amd64", "x86_64" -> "x86_64"
+                "riscv64" -> "riscv64"
+                else -> return null
+            }
+            return when {
+                osName.startsWith("Mac") -> if (arch == "aarch64") "arm64-apple-macosx" else if (arch == "x86_64") "x86_64-apple-macosx" else null
+                osName.startsWith("Linux") -> "$arch-unknown-linux-gnu"
+                else -> null
+            }
+        }
 
         fun defaultTriple(pointerSize: Int): String = if(pointerSize == 4) DEFAULT_TRIPLE_32 else DEFAULT_TRIPLE_64
     }

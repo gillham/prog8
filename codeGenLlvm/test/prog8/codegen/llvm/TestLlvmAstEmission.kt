@@ -270,10 +270,10 @@ class TestLlvmAstEmission: FunSpec({
         out.toString() shouldBe expected
     }
 
-    test("the llvm64 target defaults to hosted arm64 macOS with 64-bit pointers and doubles") {
-        val target = LlvmTarget()
+    test("the llvm64 target defaults to the host's triple with 64-bit pointers and doubles") {
+        LlvmTarget().targetTriple shouldBe LlvmTarget.DEFAULT_TRIPLE_64
+        val target = LlvmTarget(8, LlvmTripleProfile.resolve("arm64-apple-macosx"))
         target.name shouldBe "llvm64"
-        target.targetTriple shouldBe "arm64-apple-macosx"
         target.dataLayout shouldBe "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
         LlvmTarget(8, LlvmTripleProfile.resolve("x86_64-unknown-linux-gnu")).targetTriple shouldBe "x86_64-unknown-linux-gnu"
         target.cpu shouldBe CpuType.LLVM64
@@ -315,7 +315,7 @@ private val ctorEntryType = LlvmType.Struct(listOf(LlvmType.I32, LlvmType.Ptr, L
 private fun ctorEntry(function: String) = LlvmValue.StructConstant(ctorEntryType, listOf(i32(65535), LlvmValue.Global(function), LlvmValue.NullPtr()))
 
 private fun goldenModule(): LlvmModule {
-    val target = LlvmTarget()
+    val target = LlvmTarget(8, LlvmTripleProfile.resolve("arm64-apple-macosx"))
     val a = LlvmValue.Local("a", LlvmType.I16)
     val sum = LlvmValue.Local("r0", LlvmType.I16)
     val isZero = LlvmValue.Local("iszero", LlvmType.I1)

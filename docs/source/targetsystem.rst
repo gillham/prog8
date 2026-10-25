@@ -182,7 +182,10 @@ LLVM targets and triple profiles
 The ``llvm64`` and ``llvm32`` targets compile the program to LLVM IR, which clang then builds into an
 executable for a particular platform, identified by its LLVM *target triple*. The target name fixes the
 pointer size (8 or 4 bytes); the ``-triple`` compiler option selects the platform, by naming a *triple profile*.
-Without it, ``llvm64`` uses ``arm64-apple-macosx`` and ``llvm32`` uses ``wasm32-wasip1``.
+Without it, ``llvm64`` uses the built-in profile of the machine the compiler runs on (``arm64-apple-macosx``,
+``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu`` or ``riscv64-unknown-linux-gnu``,
+and ``arm64-apple-macosx`` on any other machine), and ``llvm32`` uses ``wasm32-wasip1``. So the same source gives
+a different ``.ll`` file on different machines; pass ``-triple`` to build for a fixed platform.
 
 With the default ``wasm32-wasip1`` profile, an ``llvm32`` program becomes a WebAssembly program for the WASI
 system interface. Building it needs clang with ``wasm-ld`` (from lld) and the wasi-libc sysroot, given by the
