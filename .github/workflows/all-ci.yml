@@ -51,4 +51,4 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: test-results
-          path: compiler/build/test-results/test/
+          path: '*/build/test-results/test/'

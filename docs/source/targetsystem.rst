@@ -186,6 +186,8 @@ Without it, ``llvm64`` uses the built-in profile of the machine the compiler run
 ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu`` or ``riscv64-unknown-linux-gnu``,
 and ``arm64-apple-macosx`` on any other machine), and ``llvm32`` uses ``wasm32-wasip1``. So the same source gives
 a different ``.ll`` file on different machines; pass ``-triple`` to build for a fixed platform.
+Building needs clang 15 or newer, because the LLVM IR uses opaque pointers (the ``ptr`` type), which older
+versions don't read. The compiler's tests run with clang 18 and newer.
 
 With the default ``wasm32-wasip1`` profile, an ``llvm32`` program becomes a WebAssembly program for the WASI
 system interface. Building it needs clang with ``wasm-ld`` (from lld) and the wasi-libc sysroot, given by the
