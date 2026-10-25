@@ -1988,6 +1988,45 @@ main {
         }
     }
 
+    test("the address of a word array as the value of a pointer variable warns like a call argument") {
+        val text = """
+            %option no_sysinit
+            main {
+                uword[4] @nosplit gwords
+                ^^pointer @shared gp = &gwords
+                sub start() {
+                    uword[4] @nosplit wparts
+                    uword[4] wsplit
+                    pointer[4] @nosplit pparts
+                    ^^pointer @shared p1 = &wparts
+                    ^^pointer @shared p2 = &pparts
+                    p2 = &wparts
+                    p2 = &pparts
+                    ^^uword @shared w1 = &wsplit
+                    w1 = &wsplit
+                    w1 = &wparts
+                }
+            }
+            """
+        for(target in listOf(LlvmTarget(8), VMTarget(), Cx16Target())) {
+            val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+            compileText(target, false, text, outputDir, writeAssembly = false, errors = errors) shouldNotBe null
+            val warnings = errors.warnings.filter { "the value is the address of" in it }
+            withClue(target.name) {
+                if(target.POINTER_MEM_SIZE > 2u) {
+                    warnings.size shouldBe 3
+                    warnings[0] shouldContain ":5:40: the value is the address of a uword array, but it gets pointers of ${target.POINTER_MEM_SIZE} bytes each here: use a pointer[] array"
+                    warnings[1] shouldContain ":10:44:"
+                    warnings[2] shouldContain ":12:26:"
+                } else {
+                    warnings.size shouldBe 2
+                    warnings[0] shouldContain ":14:42: the value is the address of a split word array, but the ^^uword variable reads its elements as consecutive words: use a @nosplit array"
+                    warnings[1] shouldContain ":15:26:"
+                }
+            }
+        }
+    }
+
     test("passing the address of a split word array where a word pointer is expected warns") {
         val text = """
             %option no_sysinit

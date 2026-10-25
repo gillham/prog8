@@ -78,35 +78,48 @@ internal class VerifyFunctionArgTypes(val program: Program, val options: Compila
         super.visit(functionCallStatement)
     }
 
-    // the untyped address of an array passes for any typed pointer, also when its elements can't be read through that pointer
     private fun warnArrayArgsForPointers(call: IFunctionCall) {
-        val target = program.target
         val sub = call.target.targetSubroutine() ?: return
         call.args.zip(sub.parameters).forEachIndexed { index, (arg, param) ->
-            val pointee = param.type.sub
-            if(!param.type.isPointer || pointee==null || pointee.isByteOrBool)
-                return@forEachIndexed
-            val array = when(arg) {
-                is AddressOf -> if(!arg.typed && arg.arrayIndex==null && arg.dereference==null) arg.identifier else null
-                is IdentifierReference -> arg
-                else -> null
-            } ?: return@forEachIndexed
-            val arrayDt = array.inferType(program).getOrUndef()
-            val elementDt = arrayDt.sub
-            if(!arrayDt.isArray || elementDt==null || elementDt.isByteOrBool)
-                return@forEachIndexed
-            if(arrayDt.isSplitWordArray(target))
-                errors.warn("argument ${index + 1} is the address of a split word array, but the ^^${DataType.forDt(pointee)} parameter reads its elements as consecutive words: use a @nosplit array", arg.position)
-            else if(target.POINTER_MEM_SIZE > 2u && pointee == target.pointerBaseType && target.memorySize(elementDt) < target.POINTER_MEM_SIZE.toInt())
-                errors.warn("argument ${index + 1} is the address of a ${DataType.forDt(elementDt)} array, but it gets pointers of ${target.POINTER_MEM_SIZE} bytes each here: use a pointer[] array", arg.position)
+            warnArrayForPointer(param.type, arg, "argument ${index + 1} is", "parameter")
         }
+    }
+
+    // the untyped address of an array passes for any typed pointer, also when its elements can't be read through that pointer
+    private fun warnArrayForPointer(pointerDt: DataType, value: Expression, subject: String, receiver: String) {
+        val target = program.target
+        val pointee = pointerDt.sub
+        if(!pointerDt.isPointer || pointee==null || pointee.isByteOrBool)
+            return
+        val array = when(value) {
+            is AddressOf -> if(!value.typed && value.arrayIndex==null && value.dereference==null) value.identifier else null
+            is IdentifierReference -> value
+            else -> null
+        } ?: return
+        val arrayDt = array.inferType(program).getOrUndef()
+        val elementDt = arrayDt.sub
+        if(!arrayDt.isArray || elementDt==null || elementDt.isByteOrBool)
+            return
+        if(arrayDt.isSplitWordArray(target))
+            errors.warn("$subject the address of a split word array, but the ^^${DataType.forDt(pointee)} $receiver reads its elements as consecutive words: use a @nosplit array", value.position)
+        else if(target.POINTER_MEM_SIZE > 2u && pointee == target.pointerBaseType && target.memorySize(elementDt) < target.POINTER_MEM_SIZE.toInt())
+            errors.warn("$subject the address of a ${DataType.forDt(elementDt)} array, but it gets pointers of ${target.POINTER_MEM_SIZE} bytes each here: use a pointer[] array", value.position)
     }
 
     override fun visit(decl: VarDecl) {
         if(options.zeropage==ZeropageType.DONTUSE && decl.zeropage == ZeropageWish.REQUIRE_ZEROPAGE)
             errors.err("zeropage usage has been disabled by options", decl.position)
+        decl.value?.let { warnArrayForPointer(decl.datatype, it, "the value is", "variable") }
 
         super.visit(decl)
+    }
+
+    override fun visit(assignment: Assignment) {
+        val targetDt = assignment.target.inferType(program)
+        if(targetDt.isKnown)
+            warnArrayForPointer(targetDt.getOrUndef(), assignment.value, "the value is", "variable")
+
+        super.visit(assignment)
     }
 
     companion object {

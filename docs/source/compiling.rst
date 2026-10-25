@@ -223,6 +223,7 @@ One or more .p8 module files
     emu2 starts the alternative emulator if available.
     The compiled program and the symbol and breakpoint lists
     (for the machine code monitor) are immediately loaded into the emulator (if it supports them)
+    On the ``virtual`` target ``-emu`` runs the program in the internal virtual machine, and ``prog8c`` exits with the program's exit status.
 
     The ``llvm64`` and ``llvm32`` targets have no emulator: there ``-emu`` builds the LLVM IR into an executable
     with clang, and runs it. The program's exit status is printed afterwards, and ``prog8c`` exits with that status.
@@ -375,6 +376,7 @@ One or more .p8 module files
 
 ``-vm``
     load and run a 'p8ir' intermediate representation file in the internal VirtualMachine instead of compiling a prog8 program file.
+    ``prog8c`` exits with the program's exit status.
 
 ``-vmtrace``
     Enable instruction-by-instruction tracing when running the virtual machine (use with ``-vm`` or ``-emu`` on the virtual target).

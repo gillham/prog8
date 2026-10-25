@@ -77,14 +77,15 @@ class VMTarget: ICompilationTarget,
     /**
      * Runs the given .p8ir file in the embedded virtual machine.
      * The caller must pass the exact path; no fallback probing happens here, the -vm CLI flow resolves a bare name itself.
+     * Returns the program's exit status.
      */
-    fun launchEmulatorWithTrace(programFile: Path, quiet: Boolean, traceEnabled: Boolean) {
+    fun launchEmulatorWithTrace(programFile: Path, quiet: Boolean, traceEnabled: Boolean): Int {
         if(!quiet)
             println("\nStarting Virtual Machine...")
 
         // to not have external module dependencies in our own module, we launch the virtual machine via reflection
         val vm = Class.forName("prog8.vm.VmRunner").getDeclaredConstructor().newInstance() as IVirtualMachineRunner
-        if(programFile.isReadable())
+        return if(programFile.isReadable())
             vm.runProgram(programFile.readText(), quiet, traceEnabled)
         else
             throw java.nio.file.NoSuchFileException(programFile.toString(), null, "not a .p8ir file")
@@ -100,7 +101,8 @@ class VMTarget: ICompilationTarget,
 
 
 interface IVirtualMachineRunner {
-    fun runProgram(irSource: String, quiet: Boolean, traceEnabled: Boolean = false)
+    /** Returns the exit status of the program. */
+    fun runProgram(irSource: String, quiet: Boolean, traceEnabled: Boolean = false): Int
 }
 
 private class VirtualZeropage(options: CompilationOptions): Zeropage(options) {

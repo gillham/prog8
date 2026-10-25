@@ -141,7 +141,8 @@ class VirtualMachine(private val irProgram: IRProgram) {
         reset(false)
     }
 
-    fun run(quiet: Boolean) {
+    /** Runs the program until it exits, and returns its exit status. */
+    fun run(quiet: Boolean): Int {
         try {
             var before = System.nanoTime()
             var numIns = 0
@@ -166,6 +167,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
             if(!quiet)
                 println("\nProgram exit! Statuscode=${hx.status} #steps=${stepCount}")
             gfx_close()
+            return hx.status
         }
     }
 
@@ -3460,11 +3462,10 @@ class VirtualMachine(private val irProgram: IRProgram) {
 
 // probably called via reflection
 class VmRunner: IVirtualMachineRunner {
-    override fun runProgram(irSource: String, quiet: Boolean, traceEnabled: Boolean) {
+    override fun runProgram(irSource: String, quiet: Boolean, traceEnabled: Boolean): Int =
         runAndTestProgram(irSource, quiet, traceEnabled) { /* no tests */ }
-    }
 
-    fun runAndTestProgram(irSource: String, quiet: Boolean = false, traceEnabled: Boolean = false, test: (VirtualMachine) -> Unit = {}) {
+    fun runAndTestProgram(irSource: String, quiet: Boolean = false, traceEnabled: Boolean = false, test: (VirtualMachine) -> Unit = {}): Int {
         val irProgram = IRFileReader().read(irSource)
         val vm = VirtualMachine(irProgram)
         vm.traceEnabled = traceEnabled
@@ -3472,7 +3473,8 @@ class VmRunner: IVirtualMachineRunner {
 //            println("UNHANDLED BREAKPOINT")
 //            println("  IN CHUNK: $pcChunk(${pcChunk.label})  INDEX: $pcIndex = INSTR ${pcChunk.instructions[pcIndex]}")
 //        }
-        vm.run(quiet)
+        val status = vm.run(quiet)
         test(vm)
+        return status
     }
 }

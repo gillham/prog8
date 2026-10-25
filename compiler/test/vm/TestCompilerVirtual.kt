@@ -49,6 +49,13 @@ main {
         VmRunner().runProgram(virtfile.readText(), false)
     }
 
+    test("running a program returns its exit status, which prog8c -emu and -vm exit with") {
+        val result = compileText(VMTarget(), false, "main {\n sub start() {\n  sys.exit(3)\n }\n}", outputDir, writeAssembly = true)!!
+        val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        VmRunner().runProgram(virtfile.readText(), true) shouldBe 3
+        VMTarget().launchEmulatorWithTrace(virtfile, true, false) shouldBe 3
+    }
+
     test("split words array with pointers") {
         val src = """
 main {

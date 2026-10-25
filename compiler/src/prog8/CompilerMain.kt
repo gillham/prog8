@@ -48,12 +48,12 @@ fun main(args: Array<String>) {
     val succes = compileMain(args)
     if(!succes)
         exitProcess(1)
-    if(llvmProgramStatus!=0)
-        exitProcess(llvmProgramStatus)
+    if(emulatedProgramStatus!=0)
+        exitProcess(emulatedProgramStatus)
 }
 
-// -emu on an llvm target passes on the exit status of the program it ran
-private var llvmProgramStatus = 0
+// -emu on the virtual and llvm targets, and -vm, pass on the exit status of the program they ran
+private var emulatedProgramStatus = 0
 
 
 fun pathFrom(stringPath: String, vararg rest: String): Path  = FileSystems.getDefault().getPath(stringPath, *rest)
@@ -436,7 +436,7 @@ private fun compileMain(args: Array<String>): Boolean {
                             if(!launchVirtualMachine(target, programFile, quietAll, vmTrace, presenter))
                                 return false
                         } else if (target is LlvmTarget) {
-                            llvmProgramStatus = target.launchEmulator(1, programFile, quietAll, programArgs, response.linkLibraries) ?: return false
+                            emulatedProgramStatus = target.launchEmulator(1, programFile, quietAll, programArgs, response.linkLibraries) ?: return false
                         } else {
                             target.launchEmulator(1, programFile, quietAll)
                         }
@@ -527,7 +527,7 @@ private fun compileMain(args: Array<String>): Boolean {
                 } else {
                     val target = compilationResult.compilationOptions.compTarget
                     if(target is LlvmTarget)
-                        llvmProgramStatus = target.launchEmulator(1, outs.programFile, quietAll, programArgs, compilationResult.compilationOptions.linkLibraries) ?: return false
+                        emulatedProgramStatus = target.launchEmulator(1, outs.programFile, quietAll, programArgs, compilationResult.compilationOptions.linkLibraries) ?: return false
                     else
                         target.launchEmulator(1, outs.programFile, quietAll)
                 }
@@ -595,7 +595,7 @@ private fun runVm(irFilename: String, quiet: Boolean, traceEnabled: Boolean, pre
 
 private fun launchVirtualMachine(target: VMTarget, programFile: Path, quiet: Boolean, traceEnabled: Boolean, presenter: Presenter): Boolean {
     return try {
-        target.launchEmulatorWithTrace(programFile, quiet, traceEnabled)
+        emulatedProgramStatus = target.launchEmulatorWithTrace(programFile, quiet, traceEnabled)
         true
     } catch (e: IRParseException) {
         presenter.printErrorLine("Can't run this program in the virtual machine: ${e.message}")
