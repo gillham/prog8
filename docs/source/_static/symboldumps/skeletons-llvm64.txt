@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA2 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit a63800f4 in branch llvm
+Prerelease version from git commit 6c86bd67 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 
 Compiling program import-all-llvm64.p8
@@ -104,7 +104,7 @@ smallstack  {
 }
 
 stack  {
-    uword  buffer_ptr
+    ^^ubyte  buffer_ptr
     uword  sp
     free  () -> uword
     init  ()
@@ -118,7 +118,7 @@ stack  {
 }
 
 ringbuffer  {
-    uword  buffer_ptr
+    ^^ubyte  buffer_ptr
     uword  fill
     uword  head
     uword  tail
@@ -133,20 +133,6 @@ ringbuffer  {
     put  (ubyte value)
     putw  (uword value)
     size  () -> uword
-}
-
-
-LIBRARY MODULE NAME: compression
---------------------------------
-
-compression  {
-    decode_rle  (uword compressed @AY, uword target @R0, uword maxsize @R1) clobbers (X) -> uword @AY
-    decode_rle_srcfunc  (uword source_function @AY, uword target @R0, uword maxsize @R1) clobbers (X) -> uword @AY
-    decode_tscrunch  (uword compressed @R0, uword target @R1) clobbers (A,X,Y)
-    decode_tscrunch_inplace  (uword compressed @R0) clobbers (A,X,Y)
-    decode_zx0  (uword compressed @R0, uword target @R1) clobbers (A,X,Y)
-    encode_rle  (uword data, uword size, uword target, bool is_last_block) -> uword
-    encode_rle_outfunc  (uword data, uword size, uword output_function, bool is_last_block)
 }
 
 
@@ -188,16 +174,6 @@ conv  {
     str_uwbin  (uword value) -> str
     str_uwhex  (uword value) -> str
     str_w  (word value) -> str
-}
-
-
-LIBRARY MODULE NAME: cx16logo
------------------------------
-
-cx16logo  {
-    uquad[]  logo_lines
-    logo  ()
-    logo_at  (ubyte column, ubyte row)
 }
 
 
@@ -392,6 +368,15 @@ arena  {
     alloc  (long size) -> uquad
     init  (uquad base_addr, long size)
     reset  ()
+}
+
+
+LIBRARY MODULE NAME: shared_hosted_compression
+----------------------------------------------
+
+compression  {
+    decode_rle  (^^ubyte compressed, ^^ubyte target, uword maxsize) -> uword
+    encode_rle  (^^ubyte data, uword size, ^^ubyte target, bool is_last_block) -> uword
 }
 
 

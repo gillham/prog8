@@ -4220,6 +4220,62 @@ main {
         srand(5)
         return 0
     }
+}""",
+    "the buffers, compression and wavfile modules, and consecutive pointer increments" to $$"""
+%import buffers
+%import compression
+%import wavfile
+main {
+    ubyte[100] data
+    ubyte[200] packed
+    ubyte[100] unpacked
+    ubyte[44] wav = [iso:'R', iso:'I', iso:'F', iso:'F', 0, 0, 0, 0, iso:'W', iso:'A', iso:'V', iso:'E',
+                     iso:'f', iso:'m', iso:'t', iso:' ', 16, 0, 0, 0, 1, 0, 2, 0, $44, $ac, 0, 0, 0, 0, 0, 0, 4, 0, 16, 0,
+                     iso:'d', iso:'a', iso:'t', iso:'a', $10, $20, $30, 0]
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub words_advanced(^^uword target) -> uword {
+        ^^uword orig = target
+        target++
+        target++
+        target += 3
+        return (target-orig) as uword
+    }
+
+    sub check() -> ubyte {
+        stack.init()
+        stack.push_b(7)
+        stack.push_w(4660)
+        if stack.size() != 3 or stack.pop_w() != 4660 or stack.pop_b() != 7
+            return 1
+        ringbuffer.init()
+        ringbuffer.put(9)
+        ringbuffer.putw(54321)
+        if ringbuffer.get() != 9 or ringbuffer.getw() != 54321
+            return 2
+        ubyte i
+        for i in 0 to 99
+            data[i] = if i<40 then 5 else i
+        if compression.encode_rle(&data, 100, &packed, true) != 64
+            return 3
+        if compression.decode_rle(&packed, &unpacked, 100) != 100
+            return 4
+        for i in 0 to 99
+            if data[i] != unpacked[i]
+                return 5
+        if not wavfile.parse_header(&wav)
+            return 6
+        if wavfile.sample_rate != 44100 or wavfile.nchannels != 2 or wavfile.bits_per_sample != 16
+            return 7
+        if wavfile.data_offset != 44 or wavfile.data_size != $302010
+            return 8
+        if words_advanced(&data) != 5
+            return 9
+        return 0
+    }
 }"""
 )
 

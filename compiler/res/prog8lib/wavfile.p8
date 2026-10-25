@@ -30,7 +30,7 @@ wavfile {
 
     sub parse_header(^^ubyte wav_data) -> bool {
         ; "RIFF" , filesize (int32) , "WAVE", "fmt ", fmtsize (int32)
-        uword @zp header = wav_data
+        ^^ubyte @zp header = wav_data
         if header[0]!=iso:'R' or header[1]!=iso:'I' or header[2]!=iso:'F' or header[3]!=iso:'F'
             or header[8]!=iso:'W' or header[9]!=iso:'A' or header[10]!=iso:'V' or header[11]!=iso:'E'
             or header[12]!=iso:'f' or header[13]!=iso:'m' or header[14]!=iso:'t' or header[15]!=iso:' ' {
@@ -53,7 +53,7 @@ wavfile {
             chunksize = peekw(header+4)        ; assume chunk size never exceeds 64kb so ignore upper word
             if header[0]==iso:'d' and header[1]==iso:'a' and header[2]==iso:'t' and header[3]==iso:'a' {
                 data_size = mklong2(peekw(header+6), chunksize)
-                data_offset = header + 8 - (wav_data as uword)
+                data_offset = (header - wav_data) as uword + 8
                 return true
             }
             offset = 8 + chunksize

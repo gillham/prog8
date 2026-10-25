@@ -137,7 +137,7 @@ stack {
     ;    You can store and retrieve bytes and words. There are no guards against stack over/underflow.
 
     uword sp = 8191
-    uword buffer_ptr = memory("buffers_stack", 8192, 0)
+    ^^ubyte buffer_ptr = memory("buffers_stack", 8192, 0)
 
     sub init() {
         sp = 8191
@@ -198,7 +198,7 @@ ringbuffer {
     uword fill = 0
     uword head = 0
     uword tail = 8191
-    uword buffer_ptr = memory("buffers_ringbuffer", 8192, 0)
+    ^^ubyte buffer_ptr = memory("buffers_ringbuffer", 8192, 0)
 
     sub init() {
         head = fill = 0

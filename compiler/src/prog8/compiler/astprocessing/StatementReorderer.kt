@@ -296,7 +296,7 @@ internal class StatementReorderer(
                             "*" -> allAssignments.fold(1.0) { acc, element -> (element.value as BinaryExpression).right.constValue(program)!!.number * acc }
                             else -> throw IllegalStateException("unexpected operator $operator")
                         }
-                        val type = assignment.value.inferType(program).getOrUndef()
+                        val type = assignment.value.inferType(program).getOrUndef().let { if(it.isPointer) options.compTarget.pointerType else it }
                         val totalNumber = if(type.isQuad) {
                             // a Double total would lose the low bits of a large quad, so wrap around in 64 bits instead
                             val constants = allAssignments.mapNotNull { (it.value as BinaryExpression).right.constValue(program)?.integerBits }

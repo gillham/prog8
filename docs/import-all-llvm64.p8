@@ -4,7 +4,6 @@
 %import buffers
 %import compression
 %import conv
-%import cx16logo
 %import diskio
 %import fileio
 %import floats

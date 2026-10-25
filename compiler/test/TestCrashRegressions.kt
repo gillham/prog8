@@ -154,6 +154,23 @@ main {
         }
     }
 
+    test("consecutive increments of a typed pointer merge into one addition") {
+        val src = """
+main {
+    sub start() {
+        ^^uword @shared p = 1000
+        p++
+        p++
+        p += 3
+    }
+}"""
+        for (target in listOf(Cx16Target(), VMTarget())) {
+            withClue(target.name) {
+                compileText(target, false, src, outputDir, writeAssembly = false) shouldNotBe null
+            }
+        }
+    }
+
     test("a block level breakpoint on the llvm targets compiles with a warning that it has no effect") {
         val src = """
 main {
