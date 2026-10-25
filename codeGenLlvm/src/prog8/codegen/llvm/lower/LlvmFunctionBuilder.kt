@@ -404,7 +404,9 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     fun integerConstant(value: Long, type: LlvmType): LlvmValue = when {
         type != LlvmType.Ptr -> LlvmValue.IntConstant(truncate(value, checkNotNull(type.bitWidth) { "$type is no integer type" }), type)
         value == 0L -> LlvmValue.NullPtr()
-        else -> LlvmValue.ConstantCast(CastOperator.INTTOPTR, LlvmValue.IntConstant(value, builder.mapper.intPtr), LlvmType.Ptr)
+        // a fixed address inside a memory-mapped variable, such as its &&address, means its backing storage
+        else -> builder.symbols.memoryMappedAddress(value)
+            ?: LlvmValue.ConstantCast(CastOperator.INTTOPTR, LlvmValue.IntConstant(value, builder.mapper.intPtr), LlvmType.Ptr)
     }
 
     /** The immediate operand of [ins] as a value of [type]. */

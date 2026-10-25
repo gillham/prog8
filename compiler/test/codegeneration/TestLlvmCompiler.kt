@@ -1399,6 +1399,38 @@ main {
         return 0
     }
 }""",
+    "pointers to memory-mapped variables use the same storage as the variables" to $$"""
+main {
+    &ubyte[4] regs = $0400
+    &uword wreg = $0410
+    ^^ubyte @shared globalPointer = &&regs
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        regs[1] = 5
+        regs[3] = 7
+        wreg = $1234
+        ^^ubyte p = &&regs
+        if p[1] != 5
+            return 1
+        ^^ubyte @shared q
+        q = &&regs[3]
+        if q^^ != 7
+            return 2
+        if globalPointer[1] != 5
+            return 3
+        ^^uword @shared wp = &&wreg
+        if wp^^ != $1234
+            return 4
+        p[2] = 9
+        if regs[2] != 9
+            return 5
+        return 0
+    }
+}""",
     "if/else, when and loops" to """
 main {
     ubyte @shared count = 10

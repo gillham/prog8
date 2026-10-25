@@ -320,7 +320,8 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         BaseDataType.FLOAT -> LlvmValue.FloatConstant(value)
         BaseDataType.POINTER ->
             if (value == 0.0) LlvmValue.NullPtr()
-            else LlvmValue.ConstantCast(CastOperator.INTTOPTR, LlvmValue.IntConstant(value.toLong(), mapper.intPtr), LlvmType.Ptr)
+            else memoryMappedClusters.addressOf(value.toLong())
+                ?: LlvmValue.ConstantCast(CastOperator.INTTOPTR, LlvmValue.IntConstant(value.toLong(), mapper.intPtr), LlvmType.Ptr)
         BaseDataType.QUAD -> LlvmValue.IntConstant(quadBits ?: value.toLong(), LlvmType.I64)
         BaseDataType.UQUAD -> LlvmValue.IntConstant(quadBits ?: value.toULong().toLong(), LlvmType.I64)
         else -> LlvmValue.IntConstant(value.toLong(), mapper.map(base))
@@ -345,9 +346,12 @@ internal class LlvmDataSymbols(
     val indirectEntries: Set<String> = emptySet()
 ) {
     /** The backing storage of absolute [address] when a memory-mapped variable covers it (the IR accesses those by address), else null. */
-    fun memoryMappedAddress(address: Long): LlvmValue? =
-        memoryMapped.firstOrNull { address >= it.start && address < it.end }?.addressAt(address)
+    fun memoryMappedAddress(address: Long): LlvmValue? = memoryMapped.addressOf(address)
 }
+
+/** The backing storage of absolute [address] when one of these memory-mapped clusters covers it, else null. */
+internal fun List<MemoryMappedCluster>.addressOf(address: Long): LlvmValue? =
+    firstOrNull { address >= it.start && address < it.end }?.addressAt(address)
 
 /**
  * A global array of native `ptr` elements that the IR addresses as [irElementSize]-byte elements, such as those of the address integer type for str[].

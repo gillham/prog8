@@ -118,8 +118,7 @@ private fun FunctionLowering.memoryAddress(memory: MemoryReference): LlvmValue =
 private fun FunctionLowering.baseAddress(base: AddressBase, displacement: Int): LlvmValue = when (base) {
     is AddressBase.Symbol -> symbolAddress(base.name, displacement)
     is AddressBase.Absolute -> {
-        val address = base.address.value.toLong() + displacement
-        builder.symbols.memoryMappedAddress(address) ?: integerConstant(address, LlvmType.Ptr)
+        integerConstant(base.address.value.toLong() + displacement, LlvmType.Ptr)
     }
     is AddressBase.FrameSlot -> throw IllegalArgumentException("${sub.label} uses a stack frame slot, which the llvm targets don't have")
 }
