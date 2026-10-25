@@ -1692,6 +1692,13 @@ for example ``%link "mylib"``, or pass its ``-L`` and ``-l`` options with ``-Xli
 ``-Xlink -L/opt/mylib -Xlink -lmylib``, or use your own triple profile that adds them to its ``link_args``, or to its
 ``link_command`` if it has one. The library must be built for that triple.
 
+The script ``scripts/c-header-to-prog8.py`` in the Prog8 source repository writes these declarations for you, for
+a given header and triple profile: ``extsub`` declarations of the functions it can map, struct and union definitions
+with the C field layout, and consts of the enums and ``#define`` values. For example
+``scripts/c-header-to-prog8.py math.h --block libm -o libm.p8`` writes a module with a block ``libm``;
+``--pkg-config sdl2`` adds the include directories and ``%link`` directives of a library. It needs clang and
+the headers of that triple, and the result only applies to that triple. Run it with ``--help`` for its options.
+
 Other targets report an error for this form, and so does an ``extsub`` with an address on the llvm targets.
 A C function can't be declared with a different signature than the llvm runtime library uses for the same name: ``putchar``, ``getchar``,
 ``exit`` and the file functions (``fopen``, ``fclose``, ...). Declaring ``putchar`` for a program that imports ``textio`` for example is a compile error.
