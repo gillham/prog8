@@ -1679,6 +1679,8 @@ booleans, (unsigned) bytes, words, longs and quads, floats, and strings or point
 The compiler does not know the C prototype. It declares the function with the sizes of the Prog8 types as you wrote them,
 and doesn't extend arguments or return values for you. A byte or word argument or return value that the C function
 declares as an ``int`` should be written as a ``long``, because that is also 32 bits. Your declaration must match the C function.
+That includes an ``int`` that C uses as a truth value, such as the result of ``isdigit``: it can be any nonzero value
+(glibc returns 2048), so declare it as a ``long`` and compare it with 0, rather than as a ``bool``.
 On llvm32 the C ``long`` and ``size_t`` types are 32 bits as well, so they are also written as a ``long``, and a pointer has 4 bytes.
 On llvm64 they are 64 bits, so they are written as a ``uquad`` or ``quad``.
 On WebAssembly, with the built-in profiles, a declaration that doesn't match the C function fails the build; on the other targets it silently gives wrong values.
@@ -1687,7 +1689,7 @@ Which C library you get depends on the triple profile (see :ref:`llvm_triples`):
 wasi-libc on ``wasm32-wasip1``, Emscripten's C library on ``wasm32-unknown-emscripten``, and newlib on the bare-metal ARM and RISC-V profiles, where some functions such as
 ``mkdir`` and ``rename`` don't work. To link another library, name it with a ``%link`` directive in the module that uses it,
 for example ``%link "mylib"``, or pass its ``-L`` and ``-l`` options with ``-Xlink``, for example
-``-Xlink -L/opt/mylib -Xlink -lmylib``, or use your own triple profile that adds them to its ``clang_args``, or to its
+``-Xlink -L/opt/mylib -Xlink -lmylib``, or use your own triple profile that adds them to its ``link_args``, or to its
 ``link_command`` if it has one. The library must be built for that triple.
 
 Other targets report an error for this form, and so does an ``extsub`` with an address on the llvm targets.

@@ -26,7 +26,7 @@ internal object LlvmToolchain {
      * Builds the executable [outputFile] from [llFile] with clang, passing the clang arguments of [profile] first; with a
      * link command in [profile], clang only compiles an object file that the command links, along with the profile's startup sources if it has any.
      * [extraCompileArgs] go last on the clang command, [extraLinkArgs] and then [linkLibraries] last on the command that links, so libraries
-     * come after the object file; a link command can place the [linkLibraries] elsewhere with a `{libs}` word.
+     * come after the object file, and the profile's link arguments after those; a link command can place the [linkLibraries] elsewhere with a `{libs}` word.
      * Messages and any failure are reported on System.err.
      */
     fun compileToExecutable(llFile: Path, outputFile: Path, profile: LlvmTripleProfile? = null, optLevel: String = "-O2",
@@ -38,15 +38,15 @@ internal object LlvmToolchain {
                 "Install LLVM, for example with 'brew install llvm', or put clang on the PATH.")
             return false
         }
-        val (profileArgs, linkCommand) = try {
-            profile?.clangArgs.orEmpty() to profile?.linkCommand
+        val (profileArgs, linkCommand, profileLinkArgs) = try {
+            Triple(profile?.clangArgs.orEmpty(), profile?.linkCommand, profile?.linkArgs.orEmpty())
         } catch (x: IllegalArgumentException) {
             System.err.println("Can't build '$outputFile': ${x.message}")
             return false
         }
         val compileCommand = compileCommand(clang.toString(), profileArgs, optLevel, extraCompileArgs)
         if (linkCommand == null)
-            return runTool(clangLinkCommand(compileCommand, llFile, outputFile, extraLinkArgs + linkLibraries), "clang", outputFile) ||
+            return runTool(clangLinkCommand(compileCommand, llFile, outputFile, extraLinkArgs + linkLibraries + profileLinkArgs), "clang", outputFile) ||
                 failed("clang couldn't build '$outputFile' from '$llFile'")
         val objectFile = outputFile.resolveSibling("${outputFile.fileName}.o")
         var startupFiles = emptyList<Path>()

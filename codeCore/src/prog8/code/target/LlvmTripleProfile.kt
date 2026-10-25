@@ -31,7 +31,8 @@ data class LlvmTripleProfile(
     private val linkCommandTemplate: List<String>? = null,
     val runTimeoutSeconds: Int? = null,
     val startupSources: List<String> = emptyList(),
-    private val directory: Path? = null
+    private val directory: Path? = null,
+    private val linkArgsTemplate: List<String> = emptyList()
 ) {
     /** The pointer width in bits of the default address space, which LLVM takes as 64 when the data layout has no `p:` entry. */
     val pointerBits: Int = dataLayout.split('-').firstOrNull { it.startsWith("p:") }
@@ -43,6 +44,10 @@ data class LlvmTripleProfile(
      */
     val clangArgs: List<String>
         get() = expandEnvironment(clangArgsTemplate) { System.getenv(it) }
+
+    /** The arguments at the end of the clang command that links, after the program's libraries, such as -lm; expanded as [clangArgs]. */
+    val linkArgs: List<String>
+        get() = expandEnvironment(linkArgsTemplate) { System.getenv(it) }
 
     /** The command that links clang's object file `{object}` into the executable `{file}`, with environment variables expanded as in [clangArgs]. */
     val linkCommand: List<String>?
@@ -90,6 +95,9 @@ data class LlvmTripleProfile(
                 else LlvmTripleProfile::class.java.getResource("$RESOURCE_DIR/$source") != null) {
                 "the startup_source '$source' of llvm triple profile '$name' was not found"
             }
+        require(linkArgsTemplate.isEmpty() || linkCommandTemplate == null) {
+            "llvm triple profile '$name' has a link_command, which takes the arguments of its link_args itself"
+        }
         require(runTimeoutSeconds == null || runTimeoutSeconds > 0) { "the run_timeout_seconds of llvm triple profile '$name' must be a positive number" }
         require(cMainSymbol.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "the c_main_symbol of llvm triple profile '$name' must be a C identifier" }
     }
@@ -97,7 +105,7 @@ data class LlvmTripleProfile(
     companion object {
         const val RESOURCE_DIR = "/prog8lib/llvm-triples"
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
-            "link_command", "run_timeout_seconds", "startup_source")
+            "link_command", "link_args", "run_timeout_seconds", "startup_source")
         private val environmentVariable = Regex($$"""\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?}""")
         private val tripleName = Regex("[A-Za-z0-9_][A-Za-z0-9_.-]*")
         private const val ARGS = "{args}"
@@ -240,7 +248,8 @@ data class LlvmTripleProfile(
                 words("link_command")?.takeIf { it.isNotEmpty() },
                 runTimeout,
                 words("startup_source").orEmpty(),
-                directory
+                directory,
+                words("link_args").orEmpty()
             )
         }
     }

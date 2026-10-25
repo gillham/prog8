@@ -63,6 +63,17 @@ class TestLlvmTripleProfile: FunSpec({
         LlvmTripleProfile.resolve("arm64-apple-macosx").cMainSymbol shouldBe "main"
     }
 
+    test("the glibc Linux profiles link the math library after the program, other profiles add no link arguments") {
+        for (name in listOf("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "riscv64-unknown-linux-gnu", "armv7-unknown-linux-gnueabihf"))
+            withClue(name) { LlvmTripleProfile.resolve(name).linkArgs shouldBe listOf("-lm") }
+        for (name in listOf("arm64-apple-macosx", "x86_64-apple-macosx", "wasm32-wasip1", "armv7a-none-eabihf"))
+            withClue(name) { LlvmTripleProfile.resolve(name).linkArgs shouldBe emptyList() }
+        LlvmTripleProfile.load(profileFile("linkargs", validProfile("link_args = -lm -lfoo"))).linkArgs shouldBe listOf("-lm", "-lfoo")
+        shouldThrow<IllegalArgumentException> {
+            LlvmTripleProfile.load(profileFile("linkargs-and-command", validProfile("link_command = gcc {object} -o {file}\nlink_args = -lm")))
+        }.message!! shouldContain "takes the arguments of its link_args itself"
+    }
+
     test("the bare metal ARM profile links with the Arm GNU Toolchain and runs on qemu with a timeout") {
         val profile = LlvmTripleProfile.resolve("armv7a-none-eabihf")
         profile.outputExtension shouldBe ".elf"

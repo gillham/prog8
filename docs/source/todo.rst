@@ -12,7 +12,7 @@ Future Things and Ideas
 - the c64 sprite multiplexer still needs adjustments to make it smooth, it lacks a proper raster event scheduler.
 - support typed pointer arrays as struct fields, curretly requires untyped pointers arrays.
 - constant addresses wider than 32 bits are rejected with an error on llvm64 (pointer literals are LONG); only computed 64-bit addresses work.
-- llvm32 bare-metal console input: on a Windows host ``/dev/stdin`` doesn't exist, so the semihosting console code can't tell a terminal from piped input and never echoes typing. Hosted Linux cross linking and x86_64 macOS runs are untested.
+- llvm32 bare-metal console input: on a Windows host ``/dev/stdin`` doesn't exist, so the semihosting console code can't tell a terminal from piped input and never echoes typing. The riscv64 and armv7 Linux profiles are untested (x86_64 and aarch64 Linux and x86_64 macOS pass ``scripts/llvm-remote-check.py``).
 - evaluated the feature suggestions in ideas/c16-banked-data.md (cx16 banked data): evaluated Sep 2026, the plan is not worth implementing as written. Banked data already works via ``-varshigh <bank>`` / ``%varsaddress`` + ``cx16.rambank()``, and the ``cx16.fetch``/``cx16.stash`` kernal primitives turn out to be neither IRQ-safe nor reentrant, and ~5x slower than a bank switch. Cheapest useful follow-up is documentation plus small ``asmsub`` wrappers in ``syslib.p8``; see the Recommendation section in that file.
 
 Won't do's or deferred

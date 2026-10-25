@@ -1306,12 +1306,12 @@ private val programsWith64BitAddresses = setOf(
 // and extsubs declared with the 64-bit size_t of LP64 hosts don't link against wasi-libc
 private val notRunUnderWasmtime = setOf(
     "diskio directories, renaming and deleting",
-    "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
+    "extsubs call C library functions with long, quad, uquad, float, string and pointer types"
 )
 
 // programs that don't run as they are with Emscripten: extsubs declared with the 64-bit size_t of LP64 hosts don't link
 private val notRunUnderEmscripten = setOf(
-    "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
+    "extsubs call C library functions with long, quad, uquad, float, string and pointer types"
 )
 
 // programs that don't run as they are on bare metal ARM: newlib on semihosting has no mkdir, chdir, rmdir and getcwd,
@@ -1320,13 +1320,13 @@ private val notRunOnArm = setOf(
     "diskio directories, renaming and deleting",
     "diskio writing, reading lines, seeking in and deleting a text file",
     "fileio copying between two open files, seeking and the end of the file",
-    "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
+    "extsubs call C library functions with long, quad, uquad, float, string and pointer types"
 )
 
 // the same on bare metal RISC-V, except that its newlib keeps the position in a file when a seek fails
 private val notRunOnRiscv = setOf(
     "diskio directories, renaming and deleting",
-    "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types"
+    "extsubs call C library functions with long, quad, uquad, float, string and pointer types"
 )
 
 // the 64-bit programs that don't use the constants of the llvm64 library, so they also run on the virtual machine
@@ -3956,7 +3956,7 @@ main {
         }
     }
 }""",
-    "extsubs call C library functions with long, quad, uquad, float, bool, string and pointer types" to """
+    "extsubs call C library functions with long, quad, uquad, float, string and pointer types" to """
 %option enable_floats
 
 main {
@@ -3967,7 +3967,7 @@ main {
     extsub atol(str s) -> quad
     extsub strlen(str s) -> uquad
     extsub toupper(ubyte c) -> ubyte
-    extsub isdigit(ubyte c) -> bool
+    extsub isdigit(ubyte c) -> long
     extsub cbrt(float x) -> float
     extsub srand(uword seed)
 
@@ -3996,11 +3996,13 @@ main {
         if toupper('a') != 'A'
             return 8
         ubyte @shared digit = '7'
-        if not isdigit(digit)
+        ; isdigit returns a C int, which is only nonzero for a digit: glibc gives 2048
+        if isdigit(digit) == 0
             return 9
-        if isdigit('x')
+        if isdigit('x') != 0
             return 10
-        if cbrt(27.0) != 3.0
+        ; glibc's cbrt isn't correctly rounded for every value: cbrt(27.0) is 3.0000000000000004 there
+        if cbrt(8.0) != 2.0
             return 11
         ^^ubyte @shared chars = text
         if strlen(chars) != 6

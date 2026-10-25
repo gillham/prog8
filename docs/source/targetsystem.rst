@@ -254,7 +254,9 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
 
 So you can add a platform, or change the settings of a built-in one, without rebuilding the compiler.
 The Linux profiles and a triple from clang build on a host of that platform; cross compiling needs a sysroot and
-a linker for it, given with ``-Xcompile`` and ``-Xlink`` or in a profile file. ``x86_64-apple-macosx`` builds on any
+a linker for it, given with ``-Xcompile`` and ``-Xlink`` or in a profile file, for example
+``-Xcompile --sysroot=<dir> -Xlink -fuse-ld=lld``. The ``scripts/llvm-remote-check.py`` script runs the compiler's
+llvm64 test programs on other hosts over ssh, built there or cross linked with a sysroot copied from them. ``x86_64-apple-macosx`` builds on any
 Mac, and runs on Apple Silicon under Rosetta 2. On 64-bit Windows a C ``long`` has 4 bytes; that triple is not tested.
 These are the keys of a profile; an unknown key is an error:
 
@@ -279,6 +281,10 @@ These are the keys of a profile; an unknown key is an error:
     gets as ``{object}``, and it writes the executable to ``{file}``. Environment variables work as in ``clang_args``.
     The libraries of the program's ``%link`` directives go at the end of the command, or in the place of a ``{libs}`` word.
     Without it, clang builds the executable in one go.
+``link_args``
+    Arguments at the end of the clang command that links the executable, after the libraries of the program's ``%link``
+    directives, such as ``-lm``: the Linux profiles link glibc's math library this way. A profile with a ``link_command``
+    can't have them; it puts them in that command instead. Environment variables work as in ``clang_args``.
 ``startup_source``
     Source files separated by spaces, such as boot code in assembly, that the link command builds along with the program;
     a word ``{startup}`` becomes their paths. They are looked up next to the profile file; for a profile built into the
