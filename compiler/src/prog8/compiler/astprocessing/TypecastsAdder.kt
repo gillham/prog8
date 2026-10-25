@@ -915,7 +915,7 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
             if (castedValue.isValid) {
                 val signOriginal = sign(expressionToCast.number)
                 val signCasted = sign(castedValue.valueOrZero().number)
-                if(signOriginal==signCasted || expressionToCast.isUnsigned32Bits) {
+                if(signOriginal==signCasted || expressionToCast.hasWiderValue) {
                     modifications += AstReplaceNode(expressionToCast, castedValue.valueOrZero(), parent)
                 }
                 return

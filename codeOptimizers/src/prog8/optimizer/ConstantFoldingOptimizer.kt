@@ -45,7 +45,7 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
 
     override fun after(numLiteral: NumericLiteral, parent: Node): Iterable<AstModification> {
 
-        if(numLiteral.type==BaseDataType.LONG && !numLiteral.isUnsigned32Bits) {
+        if(numLiteral.type==BaseDataType.LONG && !numLiteral.hasWiderValue) {
             // Do not reduce LONG literals that are the direct value of a const long declaration.
             // The declared type is long; shrinking the literal at the declaration site is unnecessary
             // because IdentifierReference.constValue() re-casts it back to long on substitution.
@@ -162,6 +162,14 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
                 if(result < 0.0 || result > resultType.maxUnsignedValue)
                     return noModifications
                 return listOf(AstReplaceNode(expr, NumericLiteral(resultType, result, expr.position), parent))
+            }
+        }
+
+        // before it is regrouped or negated in long arithmetic: such a long literal next to a quad is the quad of its written value
+        if(expr.operator!="<<" && expr.operator!=">>") {
+            for ((operand, otherDt) in listOf(expr.left to rightDt, expr.right to leftDt)) {
+                if(operand is NumericLiteral && operand.hasWiderValue && otherDt.isQuad)
+                    return listOf(AstReplaceNode(operand, operand.cast(otherDt.getOrUndef().base, true, program.target).valueOrZero(), expr))
             }
         }
 
@@ -316,7 +324,7 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
                         // (X + C2) +/- rightConst  -->  X + (C2 +/- rightConst)
                         // (X - C2) +/- rightConst  -->  X - (C2 +/- rightConst)   mind the flipped right operator
                         val operator = if(leftBinExpr.operator=="+") expr.operator else if(expr.operator=="-") "+" else "-"
-                        val constants = BinaryExpression(c2, operator, rightconst, c2.position)
+                        val constants = BinaryExpression(inQuadOf(expr, c2), operator, inQuadOf(expr, rightconst), c2.position)
                         val newExpr = BinaryExpression(leftBinExpr.left, leftBinExpr.operator, constants, expr.position)
                         return listOf(AstReplaceNode(expr, newExpr, parent))
                     }
@@ -327,7 +335,7 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
                 if(c2!=null) {
                     if(leftBinExpr.operator=="*") {
                         // (X * C2) * rightConst  -->  X * (rightConst*C2)
-                        val constants = BinaryExpression(rightconst, "*", c2, c2.position)
+                        val constants = BinaryExpression(inQuadOf(expr, rightconst), "*", inQuadOf(expr, c2), c2.position)
                         val newExpr = BinaryExpression(leftBinExpr.left, "*", constants, expr.position)
                         return listOf(AstReplaceNode(expr, newExpr, parent))
                     } else if (leftBinExpr.operator=="/") {
@@ -359,7 +367,7 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
                 if(leftBinExpr.operator=="+" && rightBinExpr.operator=="+") {
                     if (c1 != null && c2 != null) {
                         // (X + C1) <plusmin> (Y + C2)  =>  (X <plusmin> Y) + (C1 <plusmin> C2)
-                        val c3 = evaluator.evaluate(c1, expr.operator, c2)
+                        val c3 = evaluator.evaluate(inQuadOf(expr, c1), expr.operator, inQuadOf(expr, c2))
                         val xwithy = BinaryExpression(leftBinExpr.left, expr.operator, rightBinExpr.left, expr.position)
                         val newExpr = BinaryExpression(xwithy, "+", c3, expr.position)
                         modifications += AstReplaceNode(expr, newExpr, parent)
@@ -368,7 +376,7 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
                 else if(leftBinExpr.operator=="-" && rightBinExpr.operator=="-") {
                     if (c1 != null && c2 != null) {
                         // (X - C1) <plusmin> (Y - C2)  =>  (X <plusmin> Y) - (C1 <plusmin> C2)
-                        val c3 = evaluator.evaluate(c1, expr.operator, c2)
+                        val c3 = evaluator.evaluate(inQuadOf(expr, c1), expr.operator, inQuadOf(expr, c2))
                         val xwithy = BinaryExpression(leftBinExpr.left, expr.operator, rightBinExpr.left, expr.position)
                         val newExpr = BinaryExpression(xwithy, "-", c3, expr.position)
                         modifications += AstReplaceNode(expr, newExpr, parent)
@@ -390,6 +398,15 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
         }
 
         return modifications
+    }
+
+    // constants regrouped in a quad expression are combined in its 64 bits, not wrapped around in their own smaller type
+    private fun inQuadOf(expr: Expression, constant: NumericLiteral): NumericLiteral {
+        val dt = expr.inferType(program).getOrUndef()
+        if(!dt.isQuad || !constant.type.isInteger || constant.type.isQuad)
+            return constant
+        val cast = constant.cast(dt.base, false, program.target)
+        return if(cast.isValid) cast.valueOrZero() else constant
     }
 
     override fun after(array: ArrayLiteral, parent: Node): Iterable<AstModification> {

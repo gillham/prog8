@@ -1110,6 +1110,26 @@ main {
         (constants.getValue("LONG_HEX").value as NumericLiteral).number shouldBe -1.0
     }
 
+    test("a negated 32-bit literal beyond the long range is truncated as a long, but keeps its value as a quad") {
+        val src = """
+            main {
+                const long TRUNCATED = -2147483649
+                const quad EXACT = -2147483649
+
+                sub start() {
+                }
+            }
+        """.trimIndent()
+        val result = compileText(VMTarget(), false, src, outputDir, writeAssembly = false).shouldNotBeNull()
+        val constants = result.compilerAst.allBlocks.single { it.name == "main" }.statements.filterIsInstance<VarDecl>().associateBy { it.name }
+        (constants.getValue("TRUNCATED").value as NumericLiteral).number shouldBe 2147483647.0
+        (constants.getValue("EXACT").value as NumericLiteral).integerBits shouldBe -2147483649L
+
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(VMTarget(), false, "main {\n sub start() {\n  uquad @shared q = -2147483649\n }\n}", outputDir, errors, writeAssembly = false) shouldBe null
+        errors.errors.first().substringAfter(": ") shouldBe "value '-2147483649' out of range for uquad"
+    }
+
     test("quad and uquad values must be in range, and integer literals can't be wider than 64 bits") {
         val src = """
             main {

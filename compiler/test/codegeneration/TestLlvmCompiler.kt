@@ -1432,7 +1432,7 @@ main {
         return 0
     }
 }""",
-    $$"32-bit literals above $7fff_ffff keep their written value as a uquad, quad or pointer" to $$"""
+    $$"32-bit literals above $7fff_ffff keep their written value as a uquad, quad or pointer, also in comparisons and regrouped constants" to $$"""
 main {
     uquad @shared globalQuad = $9000_0000
 
@@ -1463,6 +1463,16 @@ main {
             return 7
         if p != $9000_0000
             return 8
+        uquad @shared one = 1
+        quad @shared signedOne = 1
+        if one + 70000 != 70001 or 70000 + one != 70001 or one * 70000 < 5
+            return 9
+        if one - 1 + $9000_0000 != $9000_0000 or one + $ffff_ffff != $1_0000_0000 or $ffff_ffff - one != $ffff_fffe
+            return 10
+        if one + 2147483647 + 2147483647 != 4294967295 or one * 65536 * 65536 != $1_0000_0000
+            return 11
+        if signedOne - 5 - 2147483647 != -2147483651 or (one + 2147483647) + (one + 2147483647) != 4294967296
+            return 12
         return 0
     }
 }""",
