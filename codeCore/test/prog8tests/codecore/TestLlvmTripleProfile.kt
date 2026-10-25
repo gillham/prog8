@@ -212,9 +212,9 @@ class TestLlvmTripleProfile: FunSpec({
         shouldThrow<IllegalArgumentException> { LlvmTripleProfile.resolve("prog8-no-such-triple") }.message!! shouldContain "unknown llvm triple"
     }
 
-    // LLVM versions differ in entries that Prog8's IR doesn't use: i128 alignment, and the layouts of other address spaces
-    // than the default one, such as the p270-p272 of x86 and newer AArch64; clang 19 has neither on wasm32 or aarch64
-    fun usedLayout(layout: String) = layout.split('-').filterNot { it.startsWith("i128:") || it.matches(Regex("p[1-9][0-9]*:.*")) }
+    // LLVM versions differ in entries that Prog8's IR doesn't use: i128 alignment, the layouts of other address spaces
+    // than the default one, such as the p270-p272 of x86 and newer AArch64, and function pointer alignment (Fn32), which clang 18 leaves out
+    fun usedLayout(layout: String) = layout.split('-').filterNot { it.startsWith("i128:") || it.startsWith("Fn") || it.matches(Regex("p[1-9][0-9]*:.*")) }
 
     test("the data layout and C long size of every embedded profile are what clang reports for it, apart from entries that Prog8 doesn't use").config(enabled = hasClang) {
         for (name in embedded.keys) {
@@ -228,7 +228,7 @@ class TestLlvmTripleProfile: FunSpec({
     }
 
     test("the data layout comparison only leaves out the entries that differ between LLVM versions") {
-        usedLayout("e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32") shouldBe usedLayout("e-m:o-i64:64-i128:128-n32:64-S128-Fn32")
+        usedLayout("e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32") shouldBe usedLayout("e-m:o-i64:64-i128:128-n32:64-S128")
         usedLayout("e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20") shouldBe usedLayout("e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-n32:64-S128-ni:1:10:20")
         usedLayout("e-m:e-p:32:32-i64:64-n32-S128") shouldNotBe usedLayout("e-m:e-p:64:64-i64:64-n32-S128")
         usedLayout("e-m:e-i64:64-n32:64-S128") shouldNotBe usedLayout("e-m:e-i64:32-n32:64-S128")

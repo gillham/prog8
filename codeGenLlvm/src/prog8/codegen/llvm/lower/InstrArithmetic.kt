@@ -45,8 +45,9 @@ internal fun FunctionLowering.lowerArithmetic(ins: IRInstruction) {
         Opcode.FABS -> floatFunction(ins, "llvm.fabs.f64")
         Opcode.FSIN -> floatFunction(ins, "llvm.sin.f64")
         Opcode.FCOS -> floatFunction(ins, "llvm.cos.f64")
-        Opcode.FTAN -> floatFunction(ins, "llvm.tan.f64")
-        Opcode.FATAN -> floatFunction(ins, "llvm.atan.f64")
+        // the C library's, as LLVM only has the llvm.tan and llvm.atan intrinsics from version 19 on
+        Opcode.FTAN -> floatFunction(ins, "tan")
+        Opcode.FATAN -> floatFunction(ins, "atan")
         Opcode.FLN -> floatFunction(ins, "llvm.log.f64")
         Opcode.FLOG -> floatFunction(ins, "llvm.log2.f64")
         // the VM rounds with Kotlin's round(), which rounds half to even
