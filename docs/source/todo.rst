@@ -11,6 +11,11 @@ Future Things and Ideas
 - implement the signed divmod byte and word routines on 6502 old codegen (virtual, m68k and IR-based codegens already have them working)
 - the c64 sprite multiplexer still needs adjustments to make it smooth, it lacks a proper raster event scheduler.
 - support typed pointer arrays as struct fields, curretly requires untyped pointers arrays.
+- the optimizer rewrites ``uword x = 0 - low`` (unsigned operand) into a negation, which is then rejected with "can only take negative of a signed number type"; ``-noopt`` compiles it correctly. All targets. Keep the subtraction for unsigned operands.
+- llvm64: ``&&regs`` of a memory-mapped variable (``&ubyte[4] regs = $0400``) gives the raw constant address, while ``regs[1]`` uses the backing global that codeGenLlvm creates for it. Redirect address immediates of memory-mapped symbols to their backing globals in codeGenLlvm.
+- constant addresses wider than 32 bits are rejected with an error on llvm64 (pointer literals are LONG); only computed 64-bit addresses work.
+- the warning for the untyped address of a word array (``&wordarray``) passed where a ``^^pointer`` is expected, or of a split word array passed where a word pointer is expected, only checks call arguments; ``^^pointer p = &wordarray`` declarations and assignments aren't checked.
+- llvm32 bare-metal console input: on a Windows host ``/dev/stdin`` doesn't exist, so the semihosting console code can't tell a terminal from piped input and never echoes typing. Hosted Linux cross linking and x86_64 macOS runs are untested.
 - evaluated the feature suggestions in ideas/c16-banked-data.md (cx16 banked data): evaluated Sep 2026, the plan is not worth implementing as written. Banked data already works via ``-varshigh <bank>`` / ``%varsaddress`` + ``cx16.rambank()``, and the ``cx16.fetch``/``cx16.stash`` kernal primitives turn out to be neither IRQ-safe nor reentrant, and ~5x slower than a bank switch. Cheapest useful follow-up is documentation plus small ``asmsub`` wrappers in ``syslib.p8``; see the Recommendation section in that file.
 
 Won't do's or deferred
