@@ -29,6 +29,7 @@ fun outputStemOf(name: Path): String {
  * On the virtual target the artifact is the IR file, so ".p8ir" is always enforced on -o.
  * On the llvm targets it is the LLVM IR text file by default or for an -o name ending in ".ll";
  * any other -o name is the native executable, whose LLVM IR goes in "<stem>.ll" next to it.
+ * An -o name without an extension gets the triple profile's output extension, such as ".exe" on Windows.
  */
 fun CompilationOptions.programFile(defaultName: String): Path {
     // VMTarget's defaultOutputType = PRG is misleading: its artifact is the .p8ir file, never PRG.
@@ -38,7 +39,12 @@ fun CompilationOptions.programFile(defaultName: String): Path {
         val ir = outputFile ?: return outputDir.resolve("$defaultName.p8ir")
         return if (ir.extension=="p8ir") ir else ir.resolveSibling("${ir.name}.p8ir")
     }
-    outputFile?.let { return it }
+    outputFile?.let { file ->
+        val target = compTarget
+        if(target is LlvmTarget && target.profile.outputExtension.isNotEmpty() && file.name.lastIndexOf('.') <= 0)
+            return file.resolveSibling(file.name + target.profile.outputExtension)
+        return file
+    }
     // on the llvm targets the artifact is the LLVM IR text file
     if(compTarget is LlvmTarget)
         return outputDir.resolve("$defaultName.ll")

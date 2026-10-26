@@ -277,7 +277,9 @@ One or more .p8 module files
     ``-o build/game`` writes ``build/game.p8ir``.
     On the ``llvm64`` target a name ending in ``.ll`` gets the LLVM IR, and any other name is the native executable
     that clang builds from the LLVM IR in ``<stem>.ll`` next to it (this needs clang to be installed):
-    ``-o build/game`` writes ``build/game.ll`` and ``build/game``.
+    ``-o build/game`` writes ``build/game.ll`` and ``build/game``. A name without an extension gets the extension
+    of the triple profile's programs, when it has one: with ``x86_64-pc-windows-msvc``, ``-o build/game`` writes
+    ``build/game.exe``, and with ``wasm32-wasip1`` it writes ``build/game.wasm``.
     This option cannot be combined with ``-out``, and it only works when a single source file is compiled.
     It is silently ignored when no program artifact is produced anyway: with ``-noasm``, ``-check``,
     ``-dumpsymbols`` or ``-gendoc``.

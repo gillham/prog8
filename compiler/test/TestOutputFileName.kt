@@ -8,6 +8,8 @@ import io.kotest.matchers.shouldNotBe
 import prog8.code.core.*
 import prog8.code.target.C64Target
 import prog8.code.target.Cx16Target
+import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmTripleProfile
 import prog8.code.target.VMTarget
 import prog8.compiler.CompilationResult
 import prog8.compiler.CompilerArguments
@@ -129,6 +131,20 @@ class TestOutputFileName : FunSpec({
         // ... and the stem must follow the resolved name, so the aux files stay consistent with the artifact
         OutputFiles.of(builder(tmp.resolve("game")), "prog").ir() shouldBe tmp.resolve("game.p8ir")
         OutputFiles.of(builder(tmp.resolve("game")), "prog").stem shouldBe "game"
+    }
+
+    test("programFile adds the triple profile's output extension to an llvm -o name without one") {
+        val tmp = tempdir().toPath()
+        val builder = { triple: String, file: Path ->
+            val profile = LlvmTripleProfile.resolve(triple)
+            CompilationOptions.builder(LlvmTarget(if(triple.startsWith("wasm32")) 4 else 8, profile)).outputDir(tmp).outputFile(file).build()
+        }
+        builder("x86_64-pc-windows-msvc", tmp.resolve("game")).programFile("prog") shouldBe tmp.resolve("game.exe")
+        builder("x86_64-pc-windows-msvc", tmp.resolve("game.bin")).programFile("prog") shouldBe tmp.resolve("game.bin")
+        builder("x86_64-pc-windows-msvc", tmp.resolve("game.ll")).programFile("prog") shouldBe tmp.resolve("game.ll")
+        builder("wasm32-wasip1", tmp.resolve("sub/game")).programFile("prog") shouldBe tmp.resolve("sub/game.wasm")
+        builder("x86_64-unknown-linux-gnu", tmp.resolve("game")).programFile("prog") shouldBe tmp.resolve("game")
+        OutputFiles.of(builder("x86_64-pc-windows-msvc", tmp.resolve("game")), "prog").stem shouldBe "game"
     }
 
     test("OutputFiles.of with -o resolves the artifact verbatim and all aux files from its stem") {
