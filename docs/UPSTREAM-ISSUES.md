@@ -108,7 +108,7 @@ Keeping the list: add new items at the end with the next number, and remove an i
 
 **U19. Docs: `popf` says the value was pushed by `pushl`**
 - Where: `docs/source/libraries.rst`, the `popf` entry.
-- Branch: not fixed.
+- Branch: fixed, it says `pushf`.
 
 **U20. Shifting a long by a word or long variable crashes the IR codegen**
 - Repro: `long @shared q = 1`, `uword @shared n = 3`, `q <<= n` (or `q = q << n`, `q >>= n`) on virtual:

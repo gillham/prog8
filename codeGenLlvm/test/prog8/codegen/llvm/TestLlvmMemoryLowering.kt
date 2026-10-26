@@ -74,13 +74,25 @@ class TestLlvmMemoryLowering: FunSpec({
         shouldThrow<IllegalArgumentException> { PointerArrayAccess.load(names, IRDataType.BYTE, direct("main.names", 4), null, result) }
         shouldThrow<IllegalArgumentException> { PointerArrayAccess.load(names, IRDataType.FLOAT, direct("main.names", 0), null, result) }
         shouldThrow<IllegalArgumentException> { PointerArrayAccess.load(names, IRDataType.LONG, direct("main.other", 0), null, result) }
-        shouldThrow<IllegalArgumentException> { PointerArrayAccess.load(names, IRDataType.LONG, indexed("main.names", scale = 1), r1, result) }
         shouldThrow<IllegalArgumentException> { PointerArrayAccess.load(names, IRDataType.LONG, indexed("main.names", scale = 4), null, result) }
         shouldThrow<IllegalArgumentException> { PointerArrayAccess.load(names, IRDataType.LONG, direct("main.names", 0), r1, result) }
         shouldThrow<IllegalArgumentException> { PointerArrayAccess.load(names, IRDataType.LONG, direct("main.names", 0), null, LlvmValue.Local("i", LlvmType.I32)) }
         val pointer = RegisterOperand(VirtualRegister.int(9), IRDataType.POINTER, OperandRole.POINTER_BASE, OperandDirection.USE)
         shouldThrow<IllegalArgumentException> { PointerArrayAccess.load(names, IRDataType.LONG, MemoryReference.Indirect(pointer), null, result) }
         shouldThrow<IllegalArgumentException> { PointerArrayAccess.store(names, IRDataType.LONG, direct("main.names", 0), null, LlvmValue.FloatConstant(1.0), "st") }
+    }
+
+    test("an index register that holds a byte offset is divided by the element size") {
+        formatted(PointerArrayAccess.load(names, IRDataType.LONG, indexed("main.names", scale = 1), LlvmValue.Local("r1", LlvmType.I16), LlvmValue.Local("r2", LlvmType.Ptr))) shouldBe listOf(
+            "%r2.index = zext i16 %r1 to i64",
+            "%r2.scaled = udiv i64 %r2.index, 4",
+            "%r2.elem = getelementptr inbounds ptr, ptr @main.names, i64 %r2.scaled",
+            "%r2 = load ptr, ptr %r2.elem")
+        formatted(PointerArrayAccess.load(names, IRDataType.LONG, indexed("main.names", scale = 2), LlvmValue.Local("r3", LlvmType.I64), LlvmValue.Local("r4", LlvmType.Ptr))) shouldBe listOf(
+            "%r4.bytes = mul i64 %r3, 2",
+            "%r4.scaled = udiv i64 %r4.bytes, 4",
+            "%r4.elem = getelementptr inbounds ptr, ptr @main.names, i64 %r4.scaled",
+            "%r4 = load ptr, ptr %r4.elem")
     }
 
     test("a str[] array with getelementptr ptr loads and stores is valid LLVM IR").config(enabledOrReasonIf = requiresLlvmAs) {

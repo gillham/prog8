@@ -255,8 +255,6 @@ internal object PointerArrayAccess {
             is MemoryReference.Indexed -> {
                 val register = requireNotNull(index) { "indexed access into ${array.name} needs the index register's value" }
                 require(register.type.isInteger) { "index into ${array.name} must be an integer, not ${register.type}" }
-                require(memory.scale % array.irElementSize == 0) { "index scale ${memory.scale} doesn't address whole elements of ${array.name}" }
-                val factor = (memory.scale / array.irElementSize).toLong()
                 val offset = elementOffset(array, memory.displacement)
                 val widened = when {
                     register.type == indexType -> register
@@ -264,8 +262,16 @@ internal object PointerArrayAccess {
                         derived("index", indexType) { LlvmInstruction.Cast(CastOperator.TRUNC, it, register, indexType) }
                     else -> derived("index", indexType) { LlvmInstruction.Cast(CastOperator.ZEXT, it, register, indexType) }
                 }
-                val scaled = if (factor == 1L) widened
+                val scaled = if (memory.scale % array.irElementSize == 0) {
+                    val factor = (memory.scale / array.irElementSize).toLong()
+                    if (factor == 1L) widened
                     else derived("scaled", indexType) { LlvmInstruction.BinaryOp(BinaryOperator.MUL, it, widened, constant(factor)) }
+                } else {
+                    // the IR computed a byte offset, such as for an in-place update with a variable index
+                    val bytes = if (memory.scale == 1) widened
+                        else derived("bytes", indexType) { LlvmInstruction.BinaryOp(BinaryOperator.MUL, it, widened, constant(memory.scale.toLong())) }
+                    derived("scaled", indexType) { LlvmInstruction.BinaryOp(BinaryOperator.UDIV, it, bytes, constant(array.irElementSize.toLong())) }
+                }
                 if (offset == 0L) scaled
                 else derived("slot", indexType) { LlvmInstruction.BinaryOp(BinaryOperator.ADD, it, scaled, constant(offset)) }
             }

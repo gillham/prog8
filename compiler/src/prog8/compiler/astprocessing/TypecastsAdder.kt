@@ -212,6 +212,13 @@ class TypecastsAdder(val program: Program, val options: CompilationOptions, val 
                     return modifications
                 }
 
+                if((expr.operator=="<<" || expr.operator==">>") && leftDt.isQuad && rightDt.isInteger && !rightDt.isBytes && !(leftDt istype rightDt.getOrUndef())) {
+                    // the shift count doesn't change the type of the result, so a uquad isn't made signed by a signed count
+                    val modifications = mutableListOf<AstModification>()
+                    addTypecastOrCastedValueModification(modifications, expr.right, leftDt.getOrUndef(), expr)
+                    return modifications
+                }
+
                 if((expr.operator!="<<" && expr.operator!=">>") || !leftDt.isInteger || !rightDt.isBytes) {
                     // determine common datatype and add typecast as required to make left and right equal types
                     // don't do this for pointer - pointer, that has its own semantics

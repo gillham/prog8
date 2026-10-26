@@ -121,7 +121,7 @@ main {
         }
     }
 
-    test("a long or quad shifted by a word or long variable uses the low byte of the count") {
+    test("a long, quad or uquad shifted by a word or long variable uses the low byte of the count") {
         val src = """
 main {
     sub start() {
@@ -130,6 +130,7 @@ main {
         long @shared l3 = 1
         quad @shared q1 = 1
         quad @shared q2 = 64
+        uquad @shared uq1 = 1
         uword @shared count = 3
         long @shared lcount = 259
         l1 <<= count
@@ -137,6 +138,7 @@ main {
         l3 = l3 << lcount
         q1 <<= count
         q2 >>= lcount
+        uq1 = uq1 << lcount
     }
 }"""
         compileText(LlvmTarget(8), false, src, outputDir, writeAssembly = true) shouldNotBe null
@@ -156,6 +158,7 @@ main {
                     long("l3") shouldBe 8
                     quad("q1") shouldBe 8L
                     quad("q2") shouldBe 8L
+                    quad("uq1") shouldBe 8L
                 }
             }
         }

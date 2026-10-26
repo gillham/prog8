@@ -1507,7 +1507,8 @@ private val programsWith64BitAddresses = setOf(
     "inlined subroutines compute with pointer arguments as their integer parameters, and with integer arguments as their pointer parameters",
     "uquad constants folded with signed operands as at runtime, and typed pointers compared with negative numbers",
     "the untyped pointer is a uquad in variables, constants, parameters, return values, struct fields and arrays",
-    "a goto through a uquad address variable ends a subroutine that returns a value"
+    "a goto through a uquad address variable ends a subroutine that returns a value",
+    "in-place updates of uquad and pointer address array elements with a variable index"
 )
 
 // these declare C functions with the 64-bit size_t of LP64 hosts, so they only link and run right where pointers have 8 bytes
@@ -4218,6 +4219,31 @@ main {
         if strlen(chars) != 6
             return 12
         srand(5)
+        return 0
+    }
+}""",
+    "in-place updates of uquad and pointer address array elements with a variable index" to """
+main {
+    ubyte[10] buf
+    ubyte[10] buf2
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        uquad[3] arr = [&buf, 0, &buf2]
+        pointer[3] parr = [&buf, 0, &buf2]
+        ubyte @shared i = 2
+        arr[i] += 2
+        arr[i] -= 1
+        parr[i] += 3
+        if arr[2] != (&buf2 as uquad) + 1
+            return 1
+        if parr[2] != &buf2 + 3
+            return 2
+        if arr[0] != (&buf as uquad) or arr[1] != 0
+            return 3
         return 0
     }
 }""",

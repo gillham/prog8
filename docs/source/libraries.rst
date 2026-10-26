@@ -151,7 +151,7 @@ CPU Stack
     Low-level function that is seldomly used in user code.
 
 :index:`popf` ()
-    pops a floating point value off the CPU hardware stack that was pushed before by pushl, and returns it.
+    pops a floating point value off the CPU hardware stack that was pushed before by pushf, and returns it.
     Low-level function that is seldomly used in user code.
 
 
