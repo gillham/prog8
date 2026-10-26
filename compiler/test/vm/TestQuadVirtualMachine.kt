@@ -1511,4 +1511,49 @@ main {
             )
         }
     }
+
+    test("abs, min, max, clamp, sgn and sqrt of constant quads are folded at compile time") {
+        val src = $$"""
+main {
+    const quad A = -5000000000
+    const quad B = 3
+    const uquad U = $9000_0000_0000_0000
+    const uquad S = $ffff_fffe_0000_0001
+    quad @shared absq
+    quad @shared minq
+    quad @shared maxq
+    quad @shared clampq
+    uquad @shared minuq
+    uquad @shared clampuq
+    byte @shared sgnq
+    uquad @shared sqrtuq
+
+    sub start() {
+        absq = abs(A)
+        minq = min(A, B)
+        maxq = max(A, B)
+        clampq = clamp(A, B, 10)
+        minuq = min(U, 4)
+        clampuq = clamp(U, 4, 100)
+        sgnq = sgn(A)
+        sqrtuq = sqrt(S)
+    }
+}"""
+        val result = compileText(VMTarget(), true, src, outputDir, writeAssembly = true)!!
+        fun calls(node: prog8.code.ast.PtNode): List<String> =
+            (if(node is prog8.code.ast.PtFunctionCall) listOf(node.name) else emptyList()) + node.children.flatMap { calls(it) }
+        calls(result.codegenAst!!).filter { it.substringBefore("__") in setOf("abs", "min", "max", "clamp", "sgn", "sqrt") } shouldBe emptyList()
+        runOptimizedAndUnoptimized(src) {
+            shouldHave(
+                "absq" to 5_000_000_000L,
+                "minq" to -5_000_000_000L,
+                "maxq" to 3L,
+                "clampq" to 3L,
+                "minuq" to 4uL,
+                "clampuq" to 100uL,
+                "sgnq" to (-1).toByte(),
+                "sqrtuq" to 4_294_967_295uL,
+            )
+        }
+    }
 })

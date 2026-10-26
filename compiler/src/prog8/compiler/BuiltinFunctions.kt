@@ -20,6 +20,7 @@ internal val constEvaluatorsForBuiltinFuncs: Map<String, (args: List<Expression>
     "abs__word" to { a, p, prg -> listOf(oneIntArgOutputInt(a, p, prg, true) { abs(it).toDouble() }) },
     "abs__long" to { a, p, prg -> listOf(oneIntArgOutputInt(a, p, prg, true) { abs(it).toDouble() }) },
     "abs__float" to { a, p, prg -> listOf(oneFloatArgOutputFloat(a, p, prg) { abs(it) }) },
+    "abs__quad" to { a, p, prg -> listOf(NumericLiteral.fromQuadBits(BaseDataType.QUAD, abs(constQuadBits(a, 0, prg)), p)) },
     "len" to { a, p, prg -> listOf(builtinLen(a, p)) },
     "sizeof" to { a, p, prg -> listOf(builtinSizeof(a, p, prg)) },
     "offsetof" to { a, p, prg -> listOf(builtinOffsetof(a, p, prg)) },
@@ -33,6 +34,8 @@ internal val constEvaluatorsForBuiltinFuncs: Map<String, (args: List<Expression>
         else
             sqrt(value)
     }) },
+    "sqrt__uquad" to { a, p, prg -> listOf(NumericLiteral.fromQuadBits(BaseDataType.UQUAD,
+        java.math.BigInteger(java.lang.Long.toUnsignedString(constQuadBits(a, 0, prg))).sqrt().toLong(), p)) },
     "sqrt__float" to { a, p, prg -> listOf(oneFloatArgOutputFloat(a, p, prg) {
         if(it<0)
             throw CannotEvaluateException("sqrt", "argument cannot be negative")
@@ -53,16 +56,22 @@ internal val constEvaluatorsForBuiltinFuncs: Map<String, (args: List<Expression>
     "clamp__uword" to { a, p, prg -> listOf(builtinClampUWord(a, p, prg)) },
     "clamp__word" to { a, p, prg -> listOf(builtinClampWord(a, p, prg)) },
     "clamp__long" to { a, p, prg -> listOf(builtinClampLong(a, p, prg)) },
+    "clamp__quad" to { a, p, prg -> listOf(builtinQuadMinMax(a, p, prg, BaseDataType.QUAD, "clamp")) },
+    "clamp__uquad" to { a, p, prg -> listOf(builtinQuadMinMax(a, p, prg, BaseDataType.UQUAD, "clamp")) },
     "min__ubyte" to { a, p, prg -> listOf(builtinMinUByte(a, p, prg)) },
     "min__byte" to { a, p, prg -> listOf(builtinMinByte(a, p, prg)) },
     "min__uword" to { a, p, prg -> listOf(builtinMinUWord(a, p, prg)) },
     "min__word" to { a, p, prg -> listOf(builtinMinWord(a, p, prg)) },
     "min__long" to { a, p, prg -> listOf(builtinMinLong(a, p, prg)) },
+    "min__quad" to { a, p, prg -> listOf(builtinQuadMinMax(a, p, prg, BaseDataType.QUAD, "min")) },
+    "min__uquad" to { a, p, prg -> listOf(builtinQuadMinMax(a, p, prg, BaseDataType.UQUAD, "min")) },
     "max__ubyte" to { a, p, prg -> listOf(builtinMaxUByte(a, p, prg)) },
     "max__byte" to { a, p, prg -> listOf(builtinMaxByte(a, p, prg)) },
     "max__uword" to { a, p, prg -> listOf(builtinMaxUWord(a, p, prg)) },
     "max__word" to { a, p, prg -> listOf(builtinMaxWord(a, p, prg)) },
     "max__long" to { a, p, prg -> listOf(builtinMaxLong(a, p, prg)) },
+    "max__quad" to { a, p, prg -> listOf(builtinQuadMinMax(a, p, prg, BaseDataType.QUAD, "max")) },
+    "max__uquad" to { a, p, prg -> listOf(builtinQuadMinMax(a, p, prg, BaseDataType.UQUAD, "max")) },
     "lmh" to ::builtinLmh,
     "divmod__ubyte" to ::builtinDivmodUByte,
     "divmod__uword" to ::builtinDivmodUWord,
@@ -99,6 +108,25 @@ private fun oneIntArgOutputInt(args: List<Expression>, position: Position, progr
     if(result.isNaN())
         throw CannotEvaluateException("built-in function", "result is NaN $position")
     return NumericLiteral.optimalInteger(result.toInt(), args[0].position)
+}
+
+/** All 64 bits of a constant integer argument, which a Double can't hold for every quad. */
+private fun constQuadBits(args: List<Expression>, index: Int, program: Program): Long =
+    (args.getOrNull(index)?.constValue(program) ?: throw NotConstArgumentException()).integerBits
+
+/** min, max or clamp of constant arguments, compared as signed quads or as unsigned uquads. */
+private fun builtinQuadMinMax(args: List<Expression>, position: Position, program: Program, type: BaseDataType, function: String): NumericLiteral {
+    val count = if(function=="clamp") 3 else 2
+    if(args.size!=count)
+        throw SyntaxError("$function requires $count arguments", position)
+    val bits = (0 until count).map { constQuadBits(args, it, program) }
+    fun less(a: Long, b: Long) = if(type==BaseDataType.UQUAD) a.toULong() < b.toULong() else a < b
+    val result = when(function) {
+        "min" -> if(less(bits[1], bits[0])) bits[1] else bits[0]
+        "max" -> if(less(bits[0], bits[1])) bits[1] else bits[0]
+        else -> if(less(bits[0], bits[1])) bits[1] else if(less(bits[2], bits[0])) bits[2] else bits[0]
+    }
+    return NumericLiteral.fromQuadBits(type, result, position)
 }
 
 /** The bits from [shift] up of a constant quad argument, masked with [mask]; null for any other argument. */
