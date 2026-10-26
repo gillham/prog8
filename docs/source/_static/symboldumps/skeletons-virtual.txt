@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA2 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 0849c01b in branch llvm
+Prerelease version from git commit 14a6e7e8 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 
 Compiling program import-all-virtual.p8
@@ -163,16 +163,6 @@ conv  {
     str_uwbin  (uword value) -> str
     str_uwhex  (uword value) -> str
     str_w  (word value) -> str
-}
-
-
-LIBRARY MODULE NAME: cx16logo
------------------------------
-
-cx16logo  {
-    long[]  logo_lines
-    logo  ()
-    logo_at  (ubyte column, ubyte row)
 }
 
 
