@@ -1508,8 +1508,10 @@ class ArrayLiteral(val type: InferredTypes.InferredType,     // inferred because
         if(datatypesInArray.any{ it.isUnknown })
             return InferredTypes.unknown()
         val dts = datatypesInArray.map { it.getOrUndef() }
-        if(dts.all { it.isPointer }) {
-            val unique = dts.toSet()
+        // a 0 among pointers is a null pointer, not a byte that makes it a byte array
+        val pointerDts = dts.filterIndexed { index, _ -> (value[index] as? NumericLiteral)?.number != 0.0 }
+        if(pointerDts.isNotEmpty() && pointerDts.all { it.isPointer }) {
+            val unique = pointerDts.toSet()
             if(unique.size==1) {
                 val dt = unique.single()
                 if(dt.subType!=null) {

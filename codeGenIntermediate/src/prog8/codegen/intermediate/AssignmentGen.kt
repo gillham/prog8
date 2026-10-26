@@ -731,7 +731,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                     require(targetDt == IRDataType.BYTE) { "must be byte type ${memory!!.position}"}
                     if(zero) {
                         if(memory!!.address is PtNumber) {
-                            val chunk = IRCodeChunk(null, null).also { it += IRInstructions.storeZero(Opcode.STOREZM, targetDt, IRMemory.direct((memory!!.address as PtNumber).number.toUInt().toAddress())) }
+                            val chunk = IRCodeChunk(null, null).also { it += IRInstructions.storeZero(Opcode.STOREZM, targetDt, IRMemory.direct((memory!!.address as PtNumber).addressValue().toAddress())) }
                             result += chunk
                         } else {
                             val (address, offset) = exprGen.getAddressAndOffset(memory!!.address)
@@ -756,10 +756,10 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                                         IRDataType.POINTER -> if(codeGen.options.compTarget.POINTER_MEM_SIZE<=2u) constInt and 0xffff else constInt
                                         IRDataType.LONG -> constInt
                                     }
-                                    IRInstructions.storeImmediate(targetDt, v, IRMemory.direct(constAddress.number.toUInt().toAddress()))
+                                    IRInstructions.storeImmediate(targetDt, v, IRMemory.direct(constAddress.addressValue().toAddress()))
                                 }
                                 else -> null
-                            } ?: IRInstructions.storeMemory(Opcode.STOREM, targetDt, valueRegister, IRMemory.direct(constAddress.number.toUInt().toAddress()))
+                            } ?: IRInstructions.storeMemory(Opcode.STOREM, targetDt, valueRegister, IRMemory.direct(constAddress.addressValue().toAddress()))
                             addInstr(result, storeIns, null)
                             return result
                         }
@@ -1900,7 +1900,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
             // Check if address is a constant number
             val constMemAddress = memory.address as? PtNumber
             if(constMemAddress!=null) {
-                val addr = constMemAddress.number.toUInt()
+                val addr = constMemAddress.addressValue()
                 val operandConstValue = (operand as? PtNumber)?.number
                 if(operandConstValue==null) {
                     val valueTr = exprGen.translateExpression(operand)
@@ -2224,7 +2224,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
             val constMemAddress = memory.address as? PtNumber
             if(constMemAddress!=null) {
                 // Direct constant address - shouldn't normally happen but handle it
-                val addr = constMemAddress.number.toUInt()
+                val addr = constMemAddress.addressValue()
                 val operandConstValue = (operand as? PtNumber)?.number
                 if(operandConstValue==null) {
                     val valueTr = exprGen.translateExpression(operand)

@@ -164,6 +164,23 @@ main {
         }
     }
 
+    test($$"constant addresses from $8000_0000 to $ffff_ffff keep their value on the virtual machine") {
+        val src = $$"""
+main {
+    sub start() {
+        ubyte @shared x = @($ffff_ffff)
+        @($ffff_fff0) = 5
+        uword @shared w = peekw($8000_0000)
+    }
+}"""
+        val result = compileText(VMTarget(), false, src, outputDir, writeAssembly = true)!!
+        val irLines = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir").toFile().readText().lines().map { it.trim() }
+        irLines.count { it.startsWith("loadm.b") && it.endsWith($$",[$ffffffff]") } shouldBe 1
+        irLines.count { it.startsWith("storeim.b") && it.endsWith($$",[$fffffff0]") } shouldBe 1
+        irLines.count { it.startsWith("loadm.w") && it.endsWith($$",[$80000000]") } shouldBe 1
+        irLines.count { it.endsWith($$",[$0]") } shouldBe 0
+    }
+
     test("a constant address that doesn't fit a 2-byte pointer is an error, with or without a cast") {
         for(value in listOf($$"$12345 as ^^ubyte", $$"$12345")) {
             val src = """

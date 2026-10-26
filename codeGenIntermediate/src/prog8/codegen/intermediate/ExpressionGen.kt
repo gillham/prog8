@@ -456,7 +456,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
 
         val constAddress = mem.address as? PtNumber
         if(constAddress!=null) {
-            addInstr(result, IRInstructions.loadMemory(Opcode.LOADM, IRDataType.BYTE, resultRegister, IRMemory.direct(constAddress.number.toUInt().toAddress())), null)
+            addInstr(result, IRInstructions.loadMemory(Opcode.LOADM, IRDataType.BYTE, resultRegister, IRMemory.direct(constAddress.addressValue().toAddress())), null)
             return ExpressionCodeResult(result, IRDataType.BYTE, resultRegister, -1)
         }
 

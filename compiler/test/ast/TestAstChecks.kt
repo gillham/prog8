@@ -7,6 +7,7 @@ import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 import prog8.ast.expressions.NumericLiteral
 import prog8.ast.printSymbols
 import prog8.ast.statements.Assignment
@@ -2148,5 +2149,39 @@ main {
                 compileText(Cx16Target(), optimize, text, outputDir, writeAssembly = true) shouldNotBe null
             }
         }
+    }
+
+    test("an address list with null entries initializes split and nosplit pointer arrays") {
+        val text = """
+            main {
+                ubyte a
+                ubyte b
+                sub start() {
+                    ^^ubyte[3] @shared arr = [&&a, &&b, 0]
+                    ^^ubyte[3] @nosplit @shared arr2 = [0, &&b, &&a]
+                    ^^ubyte @shared p = arr2[1]
+                }
+            }
+            """
+        for(target in listOf(Cx16Target(), VMTarget(), LlvmTarget(8))) {
+            withClue(target.name) {
+                compileText(target, false, text, outputDir, writeAssembly = false) shouldNotBe null
+            }
+        }
+    }
+
+    test("a nosplit pointer array isn't called a split word array in an error") {
+        val text = """
+            main {
+                sub start() {
+                    ^^ubyte[2] @nosplit @shared arr = [1.5, 2.5]
+                }
+            }
+            """
+        val errors = ErrorReporterForTests()
+        compileText(Cx16Target(), false, text, outputDir, writeAssembly = false, errors = errors) shouldBe null
+        errors.errors.size shouldBe 1
+        errors.errors[0] shouldContain "value has incompatible type (float[]) for the variable (^^ubyte[])"
+        errors.errors[0] shouldNotContain "split word array"
     }
 })

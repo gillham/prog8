@@ -2375,7 +2375,7 @@ main {
         errors.errors.size shouldBe 6
         errors.errors[0] shouldContain "11:30: initialization value for pointer array"
         errors.errors[1] shouldContain "11:30: undefined array type"        // a bit redundant but can't be helped
-        errors.errors[2] shouldContain "13:13: struct initializer element has invalid type"
+        errors.errors[2] shouldContain "13:13: pointer array element has invalid type"
         errors.errors[3] shouldContain "16:28: invalid assignment value"
         errors.errors[4] shouldContain "16:28: undefined array type"
         errors.errors[5] shouldContain "21:23: cannot assign different pointer type"
@@ -2618,11 +2618,11 @@ main {
     }
 
     sub start() {
-        ^^Node[10] @nosplit nodearray       ; converted to a regular uword array (see VariousCleanups)
-        func(nodearray[0])                  ; ok: uword element accepted as ^^Node param
-        func(&&nodearray)                   ; error: ^^uword is not ^^Node
-        func(&nodearray)                    ; ok: uword address accepted as ^^Node param
-        func(nodearray)                     ; error: ^^uword is not ^^Node
+        ^^Node[10] @nosplit nodearray       ; converted to a regular array of pointer-sized integers (see VariousCleanups)
+        func(nodearray[0])                  ; ok: the address element is accepted as ^^Node param
+        func(&&nodearray)                   ; error: ^^long is not ^^Node
+        func(&nodearray)                    ; ok: the address is accepted as ^^Node param
+        func(nodearray)                     ; error: ^^long is not ^^Node
     }
 
     sub func(^^Node n) {
@@ -2635,8 +2635,8 @@ main {
         errors.errors.size shouldBe 2
         errors.warnings.size shouldBe 0
         errors.infos.size shouldBe 0
-        errors.errors[0] shouldContain "10:14: argument 1 type mismatch, was: ^^uword expected: ^^main.Node"
-        errors.errors[1] shouldContain "12:14: argument 1 type mismatch, was: ^^uword expected: ^^main.Node"
+        errors.errors[0] shouldContain "10:14: argument 1 type mismatch, was: ^^long expected: ^^main.Node"
+        errors.errors[1] shouldContain "12:14: argument 1 type mismatch, was: ^^long expected: ^^main.Node"
     }
 
     test("passing split array of structpointers to a subroutine in various forms should be param type ptr to ubyte (the lsb part of the split array)") {

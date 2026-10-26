@@ -1173,12 +1173,13 @@ internal class AstChecker(private val program: Program,
 
         fun incompatibleTypeError(valueDt: InferredTypes.InferredType, variableDt: DataType): String {
             val value = valueDt.getOrUndef()
+            val variableIsSplit = variableDt.isSplitWordArray(options.compTarget) && decl.splitwordarray != SplitWish.NOSPLIT
             val splitNote = when {
-                value.isSplitWordArray(options.compTarget) && variableDt.isSplitWordArray(options.compTarget) ->
+                value.isSplitWordArray(options.compTarget) && variableIsSplit ->
                     " (both the value and the variable are split word arrays)"
                 value.isSplitWordArray(options.compTarget) ->
                     " (the value is a split word array)"
-                variableDt.isSplitWordArray(options.compTarget) ->
+                variableIsSplit ->
                     " (the variable is a split word array)"
                 else -> ""
             }
@@ -1765,9 +1766,10 @@ internal class AstChecker(private val program: Program,
                     array.value.forEach {
                         val valueDt = it.inferType(program).getOrUndef()
                         val isAcceptedPtrType = valueDt.isUnsignedWord || (options.compTarget.POINTER_MEM_SIZE > 2u && valueDt.isLong)
-                        if(!isAcceptedPtrType && valueDt != elementDt) {
+                        val isNull = (it as? NumericLiteral)?.number == 0.0
+                        if(!isAcceptedPtrType && !isNull && valueDt != elementDt) {
                             val expectedExtra = if(options.compTarget.POINTER_MEM_SIZE > 2u) "long" else "uword"
-                            errors.err("struct initializer element has invalid type, expected $elementDt or $expectedExtra but got $valueDt", it.position)
+                            errors.err("pointer array element has invalid type, expected $elementDt or $expectedExtra but got $valueDt", it.position)
                         }
                     }
                 }

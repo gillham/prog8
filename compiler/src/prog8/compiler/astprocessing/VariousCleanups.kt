@@ -35,12 +35,13 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
                                     valueDt.isWordArray && decl.datatype.isPointerArray && decl.splitwordarray == SplitWish.DONTCARE ||
                                     decl.datatype.isLongArray && (valueDt.isPointerArray || valueDt.isWordArray)
                             if (!ok) {
+                                val variableIsSplit = decl.datatype.isSplitWordArray(options.compTarget) && decl.splitwordarray != SplitWish.NOSPLIT
                                 val splitNote = when {
-                                    valueDt.isSplitWordArray(options.compTarget) && decl.datatype.isSplitWordArray(options.compTarget) ->
+                                    valueDt.isSplitWordArray(options.compTarget) && variableIsSplit ->
                                         " (both the value and the variable are split word arrays)"
                                     valueDt.isSplitWordArray(options.compTarget) ->
                                         " (the value is a split word array)"
-                                    decl.datatype.isSplitWordArray(options.compTarget) ->
+                                    variableIsSplit ->
                                         " (the variable is a split word array)"
                                     else -> ""
                                 }
@@ -140,9 +141,9 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
             }
         }
 
-        // handle @nosplit on pointer arrays: convert to regular non-split word array
+        // handle @nosplit on pointer arrays: convert to regular non-split array of the target's pointer-sized integers
         if(decl.datatype.isPointerArray && decl.splitwordarray == SplitWish.NOSPLIT) {
-            val newDt = DataType.arrayFor(BaseDataType.UWORD, options.compTarget)  // non-split
+            val newDt = DataType.arrayFor(options.compTarget.pointerBaseType, options.compTarget)  // non-split
             var value = decl.value
             if(value is ArrayLiteral && !(value.type istype newDt)) {
                 value = ArrayLiteral(InferredTypes.knownFor(newDt), value.value, value.position)
@@ -150,6 +151,7 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
             val newDecl = VarDecl.builder(newDt, decl.position)
                 .copyFrom(decl)
                 .value(value)
+                .splitwordarray(if(newDt.isWordArray) SplitWish.NOSPLIT else SplitWish.DONTCARE)
                 .build()
             return listOf(AstReplaceNode(decl, newDecl, parent))
         }

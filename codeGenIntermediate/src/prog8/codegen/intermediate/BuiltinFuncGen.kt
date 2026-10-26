@@ -599,7 +599,7 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         val result = mutableListOf<IRCodeChunkBase>()
         if(codeGen.isZero(call.args[1])) {
             if (call.args[0] is PtNumber) {
-                val address = (call.args[0] as PtNumber).number.toUInt()
+                val address = (call.args[0] as PtNumber).addressValue()
                 result += IRCodeChunk(null, null).also {
                     it += IRInstructions.storeZero(Opcode.STOREZM, dt, IRMemory.direct(address.toAddress()))
                 }
@@ -618,7 +618,7 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         } else {
             val valueTr = exprGen.translateExpression(call.args[1])
             if (call.args[0] is PtNumber) {
-                val address = (call.args[0] as PtNumber).number.toUInt()
+                val address = (call.args[0] as PtNumber).addressValue()
                 addToResult(result, valueTr, valueTr.resultReg, valueTr.resultFpReg)
                 if(dt==IRDataType.FLOAT) {
                     addInstr(result, IRInstructions.storeMemory(Opcode.STOREM, dt, valueTr.resultFpReg, IRMemory.direct(address.toAddress())), null)
@@ -656,7 +656,7 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         return if(dt==IRDataType.FLOAT) {
             if(call.args[0] is PtNumber) {
                 val resultFpRegister = codeGen.registers.next(IRDataType.FLOAT)
-                val address = (call.args[0] as PtNumber).number.toUInt()
+                val address = (call.args[0] as PtNumber).addressValue()
                 addInstr(result, IRInstructions.loadMemory(Opcode.LOADM, IRDataType.FLOAT, resultFpRegister, IRMemory.direct(address.toAddress())), null)
                 ExpressionCodeResult(result, IRDataType.FLOAT, -1, resultFpRegister)
             } else {
@@ -669,7 +669,7 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         } else {
             if (call.args[0] is PtNumber) {
                 val resultRegister = codeGen.registers.next(dt)
-                val address = (call.args[0] as PtNumber).number.toUInt()
+                val address = (call.args[0] as PtNumber).addressValue()
                 addInstr(result, IRInstructions.loadMemory(Opcode.LOADM, dt, resultRegister, IRMemory.direct(address.toAddress())), null)
                 ExpressionCodeResult(result, dt, resultRegister, -1)
             } else {
@@ -690,7 +690,7 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         val newValueTr = if (codeGen.isZero(newValue)) null else exprGen.translateExpression(newValue)
 
         return if (address is PtNumber) {
-            val addressNum = address.number.toUInt()
+            val addressNum = address.addressValue()
             val resultRegister = codeGen.registers.next(IRDataType.BYTE)
             if (newValueTr != null) addToResult(result, newValueTr, newValueTr.resultReg, -1)
             addInstr(result, IRInstructions.loadMemory(Opcode.LOADM, IRDataType.BYTE, resultRegister, IRMemory.direct(addressNum.toAddress())), null)

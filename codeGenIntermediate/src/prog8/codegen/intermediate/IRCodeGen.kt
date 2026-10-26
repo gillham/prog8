@@ -2379,3 +2379,6 @@ class IRCodeGen(
  * Use this everywhere the IR generator emits a register or argument that holds a memory address.
  */
 internal fun addressDtFor(target: ICompilationTarget): IRDataType = target.pointerIRType
+
+/** A constant address: a long such as $ffff_ffff is -1 as a number, which wraps to the same 32 bits instead of saturating at 0. */
+internal fun PtNumber.addressValue(): UInt = number.toLong().toUInt()

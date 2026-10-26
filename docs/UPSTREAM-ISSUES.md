@@ -52,9 +52,12 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Branch: not fixed.
 
 **U8. A constant address above `$7fff_ffff` reads address 0 on the VM**
-- Repro: `ubyte @shared x = @($ffff_ffff)` on virtual compiles to `loadm.b r1.b,[$0]`. The literal is parsed as the
-  long -1 and `Double.toUInt()` saturates to 0. Writes give "address out of range"; reads don't.
-- Branch: not fixed.
+- Repro: `ubyte @shared x = @($ffff_ffff)` or `peek($ffff_ffff)` on virtual compiles to `loadm.b r1.b,[$0]`. The
+  literal is the long -1 (the same 32 bits), and `Double.toUInt()` saturates it to 0. Writes such as
+  `@($ffff_ffff) = 5` and `poke($ffff_fff0, 5)` are rejected with "address out of range", and `peekw($ffff_fffe)`
+  gives `no implicit cast available from BYTE to UWORD for value -2.0`.
+- Branch: fixed, the IR codegen converts constant addresses through `Long` (`PtNumber.addressValue()`), so -1 is
+  `$ffffffff`; the writes and `peekw` already compiled here because of the branch's handling of such literals.
 
 **U9. `return if c arr1 else arr2` crashes the 6502 codegen**
 - Repro: `sub f(ubyte c) -> uword { return if c==0 arr1 else arr2 }` on cx16:
@@ -64,10 +67,12 @@ Keeping the list: add new items at the end with the next number, and remove an i
   address there.)
 - Branch: fixed, the requirement also allows an if expression of arrays; on x16emu it returns the right addresses.
 
-**U10. Misleading error for an address list in a `^^ubyte[N]`**
+**U10. An address list with a 0 in a pointer array is rejected with a misleading message**
 - Repro: `^^ubyte[3] arr = [&&a, &&b, 0]` on cx16: `value has incompatible type (ubyte[]) for the variable
-  (^^ubyte[]) (the variable is a split word array)`.
-- Branch: not fixed.
+  (^^ubyte[]) (the variable is a split word array)`. The 0 (a null pointer) makes `ArrayLiteral.guessDatatype` treat
+  the list as numbers, where the ubyte wins. With `@nosplit` the message still says the variable is split.
+- Branch: fixed, a 0 among pointers doesn't decide the array type, the pointer array element check accepts it
+  (and says "pointer array element" instead of "struct initializer element"), and the split note respects `@nosplit`.
 
 **U11. `p^^ += 5` followed by `p^^++` on a long crashes the compiler**
 - Repro: `long @shared p = $4000`, `p^^ += 5`, `p^^++`: `IllegalArgumentException: numeric literal type should be
@@ -121,3 +126,11 @@ Keeping the list: add new items at the end with the next number, and remove an i
   count's low byte.
 - Branch: fixed, `ExpressionGen.translateShiftCount` narrows a wider count to its low byte (`LSIGB`), for the
   in-place and the expression shifts.
+
+**U21. A `@nosplit` pointer array becomes a uword array on targets with wider pointers**
+- Repro (virtual): `^^ubyte[2] @nosplit arr = [&&a, &&b]` then `^^ubyte p = arr[0]`:
+  `incompatible value type, can only assign long or identical pointer type`. `VariousCleanups` turns a `@nosplit`
+  pointer array into a `uword` array, whatever the target's pointer size.
+- Branch: fixed, it becomes an array of the target's pointer-sized integer (`pointerBaseType`), so `long` on the VM
+  and `uword` on 6502.
+
