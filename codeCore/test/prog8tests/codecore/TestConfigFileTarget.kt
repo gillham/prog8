@@ -6,6 +6,7 @@ import io.kotest.matchers.shouldBe
 import prog8.code.core.BaseDataType
 import prog8.code.target.ConfigFileTarget
 import java.nio.file.Files
+import kotlin.io.path.invariantSeparatorsPathString
 import kotlin.io.path.writeText
 
 class TestConfigFileTarget: FunSpec({
@@ -33,7 +34,7 @@ class TestConfigFileTarget: FunSpec({
             zp_kernalsafe = 34-239
             zp_basicsafe = 34-239
             io_regions =
-            """.trimIndent() + "\nlibrary = $library\n$extraProperties"
+            """.trimIndent() + "\nlibrary = ${library.invariantSeparatorsPathString}\n$extraProperties"
         )
         return try {
             ConfigFileTarget.fromConfigFile(config)

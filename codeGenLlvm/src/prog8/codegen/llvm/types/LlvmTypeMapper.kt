@@ -12,12 +12,12 @@ import prog8.intermediate.IRSymbolTable
 
 /**
  * Maps Prog8 IR and Prog8 data types onto LLVM types for the llvm targets ([pointerBytes]-byte pointers, doubles, packed Prog8 struct layout).
- * [cLongBytes] is the size of the C `long` of the target triple.
+ * [cLongBytes] is the size of the C `long` of the target triple, and [fileOffsetBytes] that of the file offset of its fseek and ftell routines.
  */
-internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: Int = 8, cLongBytes: Int = 8) {
+internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: Int = 8, cLongBytes: Int = 8, fileOffsetBytes: Int = cLongBytes) {
 
     constructor(st: IRSymbolTable, target: ICompilationTarget) :
-        this(st, target.POINTER_MEM_SIZE.toInt(), (target as? LlvmTarget)?.profile?.cLongSize ?: 8)
+        this(st, target.POINTER_MEM_SIZE.toInt(), (target as? LlvmTarget)?.profile?.cLongSize ?: 8, (target as? LlvmTarget)?.profile?.fileOffsetSize ?: 8)
 
     init {
         require(pointerBytes == 4 || pointerBytes == 8) { "unsupported pointer size: $pointerBytes" }
@@ -32,6 +32,9 @@ internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: I
 
     /** C's `long`, which is 32 bits on ILP32 and LLP64 targets. */
     val cLong: LlvmType = if (cLongBytes == 8) LlvmType.I64 else LlvmType.I32
+
+    /** The file offset of the target's fseek and ftell routines, which is C's `long` unless the triple profile names others. */
+    val fileOffset: LlvmType = if (fileOffsetBytes == 8) LlvmType.I64 else LlvmType.I32
 
     fun map(type: IRDataType): LlvmType = when (type) {
         IRDataType.BYTE -> LlvmType.I8

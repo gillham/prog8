@@ -3,6 +3,7 @@ package prog8.codegen.llvm
 import io.kotest.core.test.Enabled
 import io.kotest.core.test.TestCase
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmToolLocator
 import prog8.code.target.LlvmTripleProfile
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
@@ -16,7 +17,7 @@ import prog8tests.helpers.noHostLlvmProfileReason
 
 
 // prefer the clang of the same LLVM installation as llvm-as
-internal val clang: Path? = llvmAs?.resolveSibling("clang")?.takeIf { Files.isExecutable(it) } ?: LlvmToolchain.find("clang")
+internal val clang: Path? = llvmAs?.resolveSibling(LlvmToolLocator.executableName("clang"))?.takeIf { Files.isExecutable(it) } ?: LlvmToolchain.find("clang")
 
 internal val requiresNativeHost: (TestCase) -> Enabled = {
     when {
@@ -74,13 +75,16 @@ internal fun compileAndRunWasm(ir: String, input: String = "", args: List<String
     }
 }
 
+/** An llvm64 target with a 64-bit C long, for checks of LLVM IR that shouldn't depend on the host, whose C long may have 32 bits. */
+internal val lp64Target: LlvmTarget get() = LlvmTarget(8, LlvmTripleProfile.resolve("x86_64-unknown-linux-gnu"))
+
 internal val armProfile: LlvmTripleProfile = LlvmTripleProfile.resolve("armv7a-none-eabihf")
 
 /** The llvm32 target for 32-bit ARM bare metal, run on qemu through semihosting. */
 internal val armTarget: LlvmTarget get() = LlvmTarget(4, armProfile)
 
 internal val requiresArm: (TestCase) -> Enabled = {
-    val linker = try { armProfile.linkCommand?.first()?.let { Path.of(it) } } catch (_: IllegalArgumentException) { null } catch (_: InvalidPathException) { null }
+    val linker = try { armProfile.linkCommand?.first()?.let { Path.of(LlvmToolLocator.executableName(it)) } } catch (_: IllegalArgumentException) { null } catch (_: InvalidPathException) { null }
     when {
         clang == null -> Enabled.disabled("clang not found next to llvm-as, on the PATH or in ${LlvmToolchain.homebrewLlvmBin}")
         linker == null || !Files.isExecutable(linker) -> Enabled.disabled("arm-none-eabi-gcc of the Arm GNU Toolchain not found in ARM_GNU_TOOLCHAIN or its default location")
@@ -187,12 +191,13 @@ internal fun compileAndRun(ir: String, input: String = "", args: List<String> = 
     val dir = createTempDirectory("prog8-llvm-native")
     try {
         val source = dir.resolve("program.ll").also { it.writeText(ir) }
-        val executable = dir.resolve("program")
         val stdin = dir.resolve("stdin.txt").also { it.writeText(input) }
         val profile = checkNotNull(hostLlvmProfile)
-        val compiled = execute(checkNotNull(clang).toString(), *profile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", source.toString(),
-            "-o", executable.toString(), *profile.linkArgs.toTypedArray())
-        return if (compiled.first != 0) compiled else execute(executable.toString(), *args.toTypedArray(), stdin = stdin)
+        // built like prog8c builds it, so a profile's startup sources and link command take part
+        val executable = LlvmToolchain.executableFor(source, profile.outputExtension)
+        if (!LlvmToolchain.compileToExecutable(source, executable, profile))
+            return 1 to "building $executable failed, see the messages on stderr"
+        return execute(executable.toString(), *args.toTypedArray(), stdin = stdin)
     } finally {
         dir.toFile().deleteRecursively()
     }

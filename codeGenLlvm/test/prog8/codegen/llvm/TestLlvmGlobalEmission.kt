@@ -323,7 +323,8 @@ class TestLlvmGlobalEmission: FunSpec({
 
     test("the pointer-sized integer, size_t and C long types follow the target's pointer size and triple") {
         fun types(target: LlvmTarget) = LlvmTypeMapper(IRSymbolTable(), target).let { listOf(it.intPtr, it.sizeT, it.cLong, it.byteSize(LlvmType.Ptr)) }
-        types(target) shouldBe listOf(LlvmType.I64, LlvmType.I64, LlvmType.I64, 8)
+        types(LlvmTarget(8, LlvmTripleProfile.resolve("arm64-apple-macosx"))) shouldBe listOf(LlvmType.I64, LlvmType.I64, LlvmType.I64, 8)
+        types(LlvmTarget(8, LlvmTripleProfile.resolve("x86_64-pc-windows-msvc"))) shouldBe listOf(LlvmType.I64, LlvmType.I64, LlvmType.I32, 8)
         types(target32) shouldBe listOf(LlvmType.I32, LlvmType.I32, LlvmType.I32, 4)
         types(LlvmTarget(4, LlvmTripleProfile.resolve("armv7-unknown-linux-gnueabihf"))) shouldBe listOf(LlvmType.I32, LlvmType.I32, LlvmType.I32, 4)
         types(LlvmTarget(8, LlvmTripleProfile.resolve("x86_64-unknown-linux-gnu"))) shouldBe listOf(LlvmType.I64, LlvmType.I64, LlvmType.I64, 8)

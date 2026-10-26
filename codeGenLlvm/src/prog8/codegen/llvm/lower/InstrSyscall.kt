@@ -400,28 +400,28 @@ private fun FunctionLowering.transfer(site: CallSite, number: Int, routine: Libc
 /** FSEEK(file, offset quad, origin byte): 1 when fseek() moves to the offset from the origin, SEEK_SET 0, SEEK_CUR 1 or SEEK_END 2, else 0. */
 private fun FunctionLowering.seekHandle(site: CallSite, number: Int) {
     val (file, offset, origin) = arguments(site, number, 3)
-    val cLong = builder.mapper.cLong
+    val fileOffset = builder.mapper.fileOffset
     val quadOffset = read(offset)
-    val narrowed = checkNotNull(quadOffset.type.bitWidth) > checkNotNull(cLong.bitWidth)
-    val longOffset = if (narrowed) convert(quadOffset, cLong, "offset") else widen(quadOffset, cLong, signed = true, "offset")
+    val narrowed = checkNotNull(quadOffset.type.bitWidth) > checkNotNull(fileOffset.bitWidth)
+    val longOffset = if (narrowed) convert(quadOffset, fileOffset, "offset") else widen(quadOffset, fileOffset, signed = true, "offset")
     var whence = convert(read(origin), LlvmType.I32, "origin")
     if (narrowed) {
-        // an offset that doesn't fit in the C long fails the seek, with an origin that fseek rejects, instead of going to its low bits
+        // an offset that doesn't fit in the file offset fails the seek, with an origin that fseek rejects, instead of going to its low bits
         val restored = widen(longOffset, quadOffset.type, signed = true, "offset")
         val fits = derive("fits", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, restored, quadOffset) }
         val checked = whence
         whence = derive("origin", LlvmType.I32) { LlvmInstruction.Select(it, fits, checked, i32(-1)) }
     }
     val args = listOf(pointerValue(file), longOffset, whence)
-    val status = derive("status", LlvmType.I32) { LlvmInstruction.Call(it, builder.libc(Libc.FSEEK), args, LlvmType.I32) }
+    val status = derive("status", LlvmType.I32) { LlvmInstruction.Call(it, builder.restoringSeek(), args, LlvmType.I32) }
     result(site, succeeded(status))
 }
 
 /** FTELL(file): the position in the file as a quad, which is -1 for an error. */
 private fun FunctionLowering.tellHandle(site: CallSite, number: Int) {
     val (file) = arguments(site, number, 1)
-    val cLong = builder.mapper.cLong
-    val position = derive("position", cLong) { LlvmInstruction.Call(it, builder.libc(Libc.FTELL), listOf(pointerValue(file)), cLong) }
+    val fileOffset = builder.mapper.fileOffset
+    val position = derive("position", fileOffset) { LlvmInstruction.Call(it, builder.libc(Libc.FTELL), listOf(pointerValue(file)), fileOffset) }
     result(site, widen(position, LlvmType.I64, signed = true, "position"))
 }
 
@@ -631,9 +631,9 @@ private const val CURDIR_BUFFER_SIZE = 4096
 private const val SEEK_SET = 0L
 private const val SEEK_END = 2L
 
-private enum class CType { VOID, INT, PTR, SIZE_T, LONG }
+private enum class CType { VOID, INT, PTR, SIZE_T, OFFSET }
 
-/** The C library routines of the file syscalls; the widths of size_t and long come from the target triple. */
+/** The C library routines of the file syscalls; the widths of size_t and of the file offset come from the target triple. */
 private enum class Libc(val returnType: CType, vararg parameters: CType) {
     FOPEN(CType.PTR, CType.PTR, CType.PTR),
     FCLOSE(CType.INT, CType.PTR),
@@ -641,8 +641,8 @@ private enum class Libc(val returnType: CType, vararg parameters: CType) {
     FPUTC(CType.INT, CType.INT, CType.PTR),
     FREAD(CType.SIZE_T, CType.PTR, CType.SIZE_T, CType.SIZE_T, CType.PTR),
     FWRITE(CType.SIZE_T, CType.PTR, CType.SIZE_T, CType.SIZE_T, CType.PTR),
-    FSEEK(CType.INT, CType.PTR, CType.LONG, CType.INT),
-    FTELL(CType.LONG, CType.PTR),
+    FSEEK(CType.INT, CType.PTR, CType.OFFSET, CType.INT),
+    FTELL(CType.OFFSET, CType.PTR),
     FERROR(CType.INT, CType.PTR),
     FEOF(CType.INT, CType.PTR),
     FFLUSH(CType.INT, CType.PTR),
@@ -668,11 +668,17 @@ private fun LlvmFunctionBuilder.cType(type: CType): LlvmType = when (type) {
     CType.INT -> LlvmType.I32
     CType.PTR -> LlvmType.Ptr
     CType.SIZE_T -> mapper.sizeT
-    CType.LONG -> mapper.cLong
+    CType.OFFSET -> mapper.fileOffset
 }
 
-private fun LlvmFunctionBuilder.libc(routine: Libc): LlvmValue.Global =
-    LlvmValue.Global(externalFunction(routine.name.lowercase(), cType(routine.returnType), routine.parameterTypes.map { cType(it) }).name)
+private fun LlvmFunctionBuilder.libc(routine: Libc): LlvmValue.Global {
+    val name = when (routine) {
+        Libc.FSEEK -> profile?.fseekSymbol
+        Libc.FTELL -> profile?.ftellSymbol
+        else -> null
+    } ?: routine.name.lowercase()
+    return LlvmValue.Global(externalFunction(name, cType(routine.returnType), routine.parameterTypes.map { cType(it) }).name)
+}
 
 /** The FILE pointer of the stream that the file syscalls read from, which is null when there is none. */
 private fun LlvmFunctionBuilder.readStream(): LlvmValue.Global = runtimeGlobal(".file.read_stream", LlvmType.Ptr)
@@ -857,13 +863,39 @@ private fun LlvmFunctionBuilder.writeByteHelper(): LlvmFunction {
         "fail" to listOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I8))))
 }
 
+private fun LlvmFunctionBuilder.restoringSeek(): LlvmValue.Global = helperFunction(".file.fseek") { restoringSeekHelper() }
+
+/**
+ * `i32 (ptr file, offset, i32 origin)`: fseek(), which after a failure goes back to the position it had, as in the VM.
+ * The Microsoft C library leaves a read stream at the end of its buffered data instead.
+ */
+private fun LlvmFunctionBuilder.restoringSeekHelper(): LlvmFunction {
+    val fileOffset = mapper.fileOffset
+    val file = LlvmValue.Local("file", LlvmType.Ptr)
+    val offset = LlvmValue.Local("offset", fileOffset)
+    val origin = LlvmValue.Local("origin", LlvmType.I32)
+    val before = LlvmValue.Local("before", fileOffset)
+    val status = LlvmValue.Local("status", LlvmType.I32)
+    val failed = LlvmValue.Local("failed", LlvmType.I1)
+    return helper(".file.fseek", LlvmType.I32, listOf(file, offset, origin),
+        "entry" to listOf(
+            LlvmInstruction.Call(before, libc(Libc.FTELL), listOf(file), fileOffset),
+            LlvmInstruction.Call(status, libc(Libc.FSEEK), listOf(file, offset, origin), LlvmType.I32),
+            LlvmInstruction.Icmp(IcmpCondition.NE, failed, status, i32(0)),
+            LlvmInstruction.CondBr(failed, "restore", "done")),
+        "restore" to listOf(
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, before, i32(SEEK_SET)), LlvmType.I32),
+            LlvmInstruction.Ret(status)),
+        "done" to listOf(LlvmInstruction.Ret(status)))
+}
+
 /** `i8 (i32 position)`: 1 when fseek() moves the read stream to the position, else 0; as in the VM, a negative one fails. */
 private fun LlvmFunctionBuilder.seekHelper(): LlvmFunction {
     val position = LlvmValue.Local("position", LlvmType.I32)
     val file = LlvmValue.Local("file", LlvmType.Ptr)
     val open = LlvmValue.Local("open", LlvmType.I1)
-    val cLong = mapper.cLong
-    val offset = if (cLong == LlvmType.I32) position else LlvmValue.Local("offset", cLong)
+    val fileOffset = mapper.fileOffset
+    val offset = if (fileOffset == LlvmType.I32) position else LlvmValue.Local("offset", fileOffset)
     val status = LlvmValue.Local("status", LlvmType.I32)
     val ok = LlvmValue.Local("ok", LlvmType.I1)
     val result = LlvmValue.Local("result", LlvmType.I8)
@@ -873,8 +905,8 @@ private fun LlvmFunctionBuilder.seekHelper(): LlvmFunction {
             LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
             LlvmInstruction.CondBr(open, "seek", "fail")),
         "seek" to listOfNotNull(
-            if (offset === position) null else LlvmInstruction.Cast(CastOperator.SEXT, offset, position, cLong),
-            LlvmInstruction.Call(status, libc(Libc.FSEEK), listOf(file, offset, i32(SEEK_SET)), LlvmType.I32),
+            if (offset === position) null else LlvmInstruction.Cast(CastOperator.SEXT, offset, position, fileOffset),
+            LlvmInstruction.Call(status, restoringSeek(), listOf(file, offset, i32(SEEK_SET)), LlvmType.I32),
             LlvmInstruction.Icmp(IcmpCondition.EQ, ok, status, i32(0)),
             LlvmInstruction.Cast(CastOperator.ZEXT, result, ok, LlvmType.I8),
             LlvmInstruction.Ret(result)),
@@ -883,22 +915,22 @@ private fun LlvmFunctionBuilder.seekHelper(): LlvmFunction {
 
 /** `i32 ()`: the position in the read stream, truncated like the VM's, or 0 for an error or without a read stream. */
 private fun LlvmFunctionBuilder.tellHelper(): LlvmFunction {
-    val cLong = mapper.cLong
+    val fileOffset = mapper.fileOffset
     val file = LlvmValue.Local("file", LlvmType.Ptr)
     val open = LlvmValue.Local("open", LlvmType.I1)
-    val position = LlvmValue.Local("position", cLong)
+    val position = LlvmValue.Local("position", fileOffset)
     val valid = LlvmValue.Local("valid", LlvmType.I1)
-    val known = LlvmValue.Local("known", cLong)
-    val result = if (cLong == LlvmType.I32) known else LlvmValue.Local("result", LlvmType.I32)
+    val known = LlvmValue.Local("known", fileOffset)
+    val result = if (fileOffset == LlvmType.I32) known else LlvmValue.Local("result", LlvmType.I32)
     return helper(".file.tell", LlvmType.I32, emptyList(),
         "entry" to listOf(
             LlvmInstruction.Load(file, readStream()),
             LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
             LlvmInstruction.CondBr(open, "tell", "none")),
         "tell" to listOfNotNull(
-            LlvmInstruction.Call(position, libc(Libc.FTELL), listOf(file), cLong),
-            LlvmInstruction.Icmp(IcmpCondition.SGE, valid, position, LlvmValue.IntConstant(0, cLong)),
-            LlvmInstruction.Select(known, valid, position, LlvmValue.IntConstant(0, cLong)),
+            LlvmInstruction.Call(position, libc(Libc.FTELL), listOf(file), fileOffset),
+            LlvmInstruction.Icmp(IcmpCondition.SGE, valid, position, LlvmValue.IntConstant(0, fileOffset)),
+            LlvmInstruction.Select(known, valid, position, LlvmValue.IntConstant(0, fileOffset)),
             if (result === known) null else LlvmInstruction.Cast(CastOperator.TRUNC, result, known, LlvmType.I32),
             LlvmInstruction.Ret(result)),
         "none" to listOf(LlvmInstruction.Ret(i32(0))))
@@ -906,30 +938,30 @@ private fun LlvmFunctionBuilder.tellHelper(): LlvmFunction {
 
 /** `i32 ()`: the size of the read stream's file, from seeking to its end and back, or 0 for an error or without a read stream. */
 private fun LlvmFunctionBuilder.sizeHelper(): LlvmFunction {
-    val cLong = mapper.cLong
+    val fileOffset = mapper.fileOffset
     val file = LlvmValue.Local("file", LlvmType.Ptr)
     val open = LlvmValue.Local("open", LlvmType.I1)
-    val position = LlvmValue.Local("position", cLong)
+    val position = LlvmValue.Local("position", fileOffset)
     val seekable = LlvmValue.Local("seekable", LlvmType.I1)
-    val size = LlvmValue.Local("size", cLong)
+    val size = LlvmValue.Local("size", fileOffset)
     val valid = LlvmValue.Local("valid", LlvmType.I1)
-    val known = LlvmValue.Local("known", cLong)
-    val result = if (cLong == LlvmType.I32) known else LlvmValue.Local("result", LlvmType.I32)
+    val known = LlvmValue.Local("known", fileOffset)
+    val result = if (fileOffset == LlvmType.I32) known else LlvmValue.Local("result", LlvmType.I32)
     return helper(".file.size", LlvmType.I32, emptyList(),
         "entry" to listOf(
             LlvmInstruction.Load(file, readStream()),
             LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
             LlvmInstruction.CondBr(open, "measure", "none")),
         "measure" to listOf(
-            LlvmInstruction.Call(position, libc(Libc.FTELL), listOf(file), cLong),
-            LlvmInstruction.Icmp(IcmpCondition.SGE, seekable, position, LlvmValue.IntConstant(0, cLong)),
+            LlvmInstruction.Call(position, libc(Libc.FTELL), listOf(file), fileOffset),
+            LlvmInstruction.Icmp(IcmpCondition.SGE, seekable, position, LlvmValue.IntConstant(0, fileOffset)),
             LlvmInstruction.CondBr(seekable, "end", "none")),
         "end" to listOfNotNull(
-            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, LlvmValue.IntConstant(0, cLong), i32(SEEK_END)), LlvmType.I32),
-            LlvmInstruction.Call(size, libc(Libc.FTELL), listOf(file), cLong),
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, LlvmValue.IntConstant(0, fileOffset), i32(SEEK_END)), LlvmType.I32),
+            LlvmInstruction.Call(size, libc(Libc.FTELL), listOf(file), fileOffset),
             LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, position, i32(SEEK_SET)), LlvmType.I32),
-            LlvmInstruction.Icmp(IcmpCondition.SGE, valid, size, LlvmValue.IntConstant(0, cLong)),
-            LlvmInstruction.Select(known, valid, size, LlvmValue.IntConstant(0, cLong)),
+            LlvmInstruction.Icmp(IcmpCondition.SGE, valid, size, LlvmValue.IntConstant(0, fileOffset)),
+            LlvmInstruction.Select(known, valid, size, LlvmValue.IntConstant(0, fileOffset)),
             if (result === known) null else LlvmInstruction.Cast(CastOperator.TRUNC, result, known, LlvmType.I32),
             LlvmInstruction.Ret(result)),
         "none" to listOf(LlvmInstruction.Ret(i32(0))))
@@ -949,11 +981,11 @@ private fun LlvmFunctionBuilder.loadHelper(): LlvmFunction {
     val second = LlvmValue.Local("second", LlvmType.I32)
     val truncated = LlvmValue.Local("truncated", LlvmType.I1)
     val sizeT = mapper.sizeT
-    val cLong = mapper.cLong
-    val start = LlvmValue.Local("start", cLong)
-    val end = LlvmValue.Local("end", cLong)
-    val rest = LlvmValue.Local("rest", cLong)
-    val size = if (cLong == sizeT) rest else LlvmValue.Local("size", sizeT)
+    val fileOffset = mapper.fileOffset
+    val start = LlvmValue.Local("start", fileOffset)
+    val end = LlvmValue.Local("end", fileOffset)
+    val rest = LlvmValue.Local("rest", fileOffset)
+    val size = if (fileOffset == sizeT) rest else LlvmValue.Local("size", sizeT)
     val count = LlvmValue.Local("count", sizeT)
     val next = LlvmValue.Local("next", LlvmType.Ptr)
     val unknown = LlvmValue.Local("unknown", LlvmType.I1)
@@ -976,15 +1008,15 @@ private fun LlvmFunctionBuilder.loadHelper(): LlvmFunction {
             LlvmInstruction.CondBr(truncated, "unloaded", "read")),
         // exactly the rest of the file: Windows' fread fails when its count goes past writable memory, even when the file is shorter
         "read" to listOfNotNull(
-            LlvmInstruction.Call(start, libc(Libc.FTELL), listOf(file), cLong),
-            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, LlvmValue.IntConstant(0, cLong), i32(SEEK_END)), LlvmType.I32),
-            LlvmInstruction.Call(end, libc(Libc.FTELL), listOf(file), cLong),
+            LlvmInstruction.Call(start, libc(Libc.FTELL), listOf(file), fileOffset),
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, LlvmValue.IntConstant(0, fileOffset), i32(SEEK_END)), LlvmType.I32),
+            LlvmInstruction.Call(end, libc(Libc.FTELL), listOf(file), fileOffset),
             LlvmInstruction.Icmp(IcmpCondition.SLT, unknown, end, start),
             LlvmInstruction.CondBr(unknown, "unloaded", "measured")),
         "measured" to listOfNotNull(
             LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, start, i32(SEEK_SET)), LlvmType.I32),
             LlvmInstruction.BinaryOp(BinaryOperator.SUB, rest, end, start),
-            if (cLong == sizeT) null else LlvmInstruction.Cast(CastOperator.SEXT, size as LlvmValue.Local, rest, sizeT),
+            if (fileOffset == sizeT) null else LlvmInstruction.Cast(CastOperator.SEXT, size as LlvmValue.Local, rest, sizeT),
             LlvmInstruction.Call(count, libc(Libc.FREAD), listOf(address, LlvmValue.IntConstant(1, sizeT), size, file), sizeT),
             LlvmInstruction.GetElementPtr(next, LlvmType.I8, address, listOf(count), inBounds = false),
             // reading on at the end sets the error flag for a directory, as reading it did before
@@ -1059,7 +1091,7 @@ private fun LlvmFunctionBuilder.saveHelper(): LlvmFunction {
 private fun LlvmFunctionBuilder.listDirectoryHelper(nameOffset: Int): LlvmFunction {
     val profile = checkNotNull(profile)
     val sizeT = mapper.sizeT
-    val cLong = mapper.cLong
+    val fileOffset = mapper.fileOffset
     val pointerSize = LlvmValue.IntConstant((profile.pointerBits / 8).toLong(), sizeT)
     val opendir = LlvmValue.Global(externalFunction(profile.opendirSymbol, LlvmType.Ptr, listOf(LlvmType.Ptr)).name)
     val readdir = LlvmValue.Global(externalFunction(profile.readdirSymbol, LlvmType.Ptr, listOf(LlvmType.Ptr)).name)
@@ -1100,8 +1132,8 @@ private fun LlvmFunctionBuilder.listDirectoryHelper(nameOffset: Int): LlvmFuncti
     val wantFiles = local("want_files", LlvmType.I1)
     val stream = local("stream", LlvmType.Ptr)
     val opened = local("opened", LlvmType.I1)
-    val length = local("length", cLong)
-    val size = local("file_size", cLong)
+    val length = local("length", fileOffset)
+    val size = local("file_size", fileOffset)
     val next = local("next_index", sizeT)
     val zero = LlvmValue.IntConstant(0, sizeT)
     fun print(format: String, text: String, vararg values: LlvmValue) =
@@ -1177,13 +1209,13 @@ private fun LlvmFunctionBuilder.listDirectoryHelper(nameOffset: Int): LlvmFuncti
             LlvmInstruction.Icmp(IcmpCondition.NE, opened, stream, LlvmValue.NullPtr()),
             LlvmInstruction.CondBr(opened, "size", "print_file")),
         "size" to listOf(
-            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(stream, LlvmValue.IntConstant(0, cLong), i32(SEEK_END)), LlvmType.I32),
-            LlvmInstruction.Call(length, libc(Libc.FTELL), listOf(stream), cLong),
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(stream, LlvmValue.IntConstant(0, fileOffset), i32(SEEK_END)), LlvmType.I32),
+            LlvmInstruction.Call(length, libc(Libc.FTELL), listOf(stream), fileOffset),
             LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(stream), LlvmType.I32),
             LlvmInstruction.Br("print_file")),
         // an unreadable file shows size 0
         "print_file" to listOf(
-            LlvmInstruction.Phi(size, listOf(LlvmValue.IntConstant(0, cLong) to "measure", length to "size")),
+            LlvmInstruction.Phi(size, listOf(LlvmValue.IntConstant(0, fileOffset) to "measure", length to "size")),
             print(".diskio.format.file", "%ld\t%s\n", size, file),
             LlvmInstruction.Br("next")),
         "next" to listOf(

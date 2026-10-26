@@ -52,7 +52,7 @@ class TestLlvmToolchain: FunSpec({
         executable.exists() shouldBe false
     }
 
-    test("with a link command, clang compiles an object file that the command links into the executable, and the object file is removed").config(enabled = LlvmToolchain.clang() != null) {
+    test("with a link command, clang compiles an object file that the command links into the executable, and the object file is removed").config(enabled = LlvmToolchain.clang() != null && !System.getProperty("os.name").startsWith("Windows")) {
         val target = LlvmTarget()
         val copying = LlvmTripleProfile("link", target.targetTriple, target.dataLayout, 8, linkCommandTemplate = listOf("cp", "{object}", "{file}"))
         val llFile = dir.resolve("linked.ll").also { it.writeText(programExitingWith(0)) }
@@ -140,8 +140,10 @@ class TestLlvmToolchain: FunSpec({
 
     test("without a link command, clang gets the -Xcompile and -Xlink arguments of a native build").config(enabledOrReasonIf = requiresNativeHost) {
         val llFile = dir.resolve("extra.ll").also { it.writeText(programExitingWith(3)) }
-        val executable = dir.resolve("extra")
-        LlvmToolchain.compileToExecutable(llFile, executable, extraCompileArgs = listOf("-O0"), extraLinkArgs = listOf("-lm")) shouldBe true
+        val executable = LlvmToolchain.executableFor(llFile)
+        // the MSVC C library has no separate math library
+        val library = if (System.getProperty("os.name").startsWith("Windows")) "-lkernel32" else "-lm"
+        LlvmToolchain.compileToExecutable(llFile, executable, extraCompileArgs = listOf("-O0"), extraLinkArgs = listOf(library)) shouldBe true
         LlvmToolchain.runExecutable(executable, quiet = true) shouldBe 3
         val (compiled, compileMessages) = capturingStderr { LlvmToolchain.compileToExecutable(llFile, dir.resolve("badflag"), extraCompileArgs = listOf("-fprog8-no-such-flag")) }
         compiled shouldBe false
@@ -172,9 +174,9 @@ class TestLlvmToolchain: FunSpec({
     test("the runner builds the executable of a .ll file next to it, and a missing -o executable from its IR file").config(enabledOrReasonIf = requiresNativeHost) {
         val llFile = dir.resolve("runner.ll").also { it.writeText(programExitingWith(3)) }
         LlvmProgramRunner().buildAndRun(llFile, quiet = true) shouldBe 3
-        Files.isExecutable(dir.resolve("runner")) shouldBe true
+        Files.isExecutable(LlvmToolchain.executableFor(llFile)) shouldBe true
 
-        val executable = dir.resolve("named-runner")
+        val executable = LlvmToolchain.executableFor(dir.resolve("named-runner.ll"))
         dir.resolve("named-runner.ll").writeText(programExitingWith(5))
         LlvmProgramRunner().buildAndRun(executable, quiet = true) shouldBe 5
         Files.isExecutable(executable) shouldBe true

@@ -8,6 +8,7 @@ import prog8.intermediate.IRFileReader
 import prog8.vm.VmRunner
 import prog8.vm.VmVariableAllocator
 import prog8tests.helpers.compileText
+import kotlin.io.path.invariantSeparatorsPathString
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
@@ -36,7 +37,7 @@ main {
         found = strings.contains("hello", 'l')
         notfound = strings.contains("hello", 'z')
         crc = math.crc16("123456789", 9, 0, 0)
-        if diskio.f_open("$textFile") {
+        if diskio.f_open("${textFile.invariantSeparatorsPathString}") {
             ubyte i
             for i in 0 to 3
                 lengths[i], statuses[i] = diskio.f_readline(&line)

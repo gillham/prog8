@@ -6,6 +6,7 @@ import io.kotest.matchers.shouldBe
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmTripleProfile
 import prog8.intermediate.IMSyscall
 import prog8.intermediate.IRStSymbolicReference
 import prog8.intermediate.IRVariableInitializer
@@ -160,7 +161,7 @@ class TestLlvmSyscallLowering: FunSpec({
         withClue(output) { exitCode shouldBe 3 }
         val lines = output.lines()
         lines.take(4) shouldBe listOf("first", "second arg", "", "")
-        withClue("argument 0 is the program: ${lines[4]}") { lines[4].endsWith("/program") shouldBe true }
+        withClue("argument 0 is the program: ${lines[4]}") { lines[4].replace('\\', '/').substringAfterLast('/').removeSuffix(".exe") shouldBe "program" }
         lines.drop(5) shouldBe listOf("")
     }
 
@@ -191,7 +192,7 @@ class TestLlvmSyscallLowering: FunSpec({
     }
 
     test("the C library routines are declared with their 64-bit host signatures, and the streams start out as null pointers") {
-        val text = LlvmPrinter.print(TestProgram().apply { allFileSyscallsSub() }.module()).lines()
+        val text = LlvmPrinter.print(TestProgram(lp64Target).apply { allFileSyscallsSub() }.module()).lines()
         for (declaration in listOf("ptr @fopen(ptr, ptr)", "i32 @fclose(ptr)", "i32 @fgetc(ptr)", "i32 @fputc(i32, ptr)",
                 "i64 @fread(ptr, i64, i64, ptr)", "i64 @fwrite(ptr, i64, i64, ptr)", "i32 @fseek(ptr, i64, i32)", "i64 @ftell(ptr)",
                 "i32 @ferror(ptr)", "i32 @remove(ptr)", "i32 @rename(ptr, ptr)", "ptr @getcwd(ptr, i64)", "i32 @mkdir(ptr, i32)",
@@ -281,7 +282,7 @@ class TestLlvmSyscallLowering: FunSpec({
     }
 
     test("the file handle syscalls call the C library directly, with the handle as the FILE pointer") {
-        val lines = TestProgram().apply { allHandleSyscallsSub() }.module().function("main.handles").lines()
+        val lines = TestProgram(lp64Target).apply { allHandleSyscallsSub() }.module().function("main.handles").lines()
         lines shouldHave "  %file.1 = call ptr @fopen(ptr %r1.1, ptr %r2.1)"
         lines shouldHave "  store ptr %file.1, ptr %r3.slot"
         lines shouldHave "  %count.1 = zext i16 %r4.1 to i64"
@@ -290,7 +291,7 @@ class TestLlvmSyscallLowering: FunSpec({
         lines shouldHave "  store i16 %transferred.2, ptr %r5.slot"
         lines shouldHave "  %transferred.3 = call i64 @fwrite(ptr %r1.3, i64 1, i64 %count.2, ptr %r3.2)"
         lines shouldHave "  %origin.1 = zext i8 %r8.1 to i32"
-        lines shouldHave "  %status.1 = call i32 @fseek(ptr %r3.3, i64 %r7.1, i32 %origin.1)"
+        lines shouldHave "  %status.1 = call i32 @.file.fseek(ptr %r3.3, i64 %r7.1, i32 %origin.1)"
         lines shouldHave "  %ok.1 = icmp eq i32 %status.1, 0"
         lines shouldHave "  %position.1 = call i64 @ftell(ptr %r3.4)"
         lines shouldHave "  store i64 %position.1, ptr %r10.slot"
@@ -304,16 +305,24 @@ class TestLlvmSyscallLowering: FunSpec({
     }
 
     test("a long offset to seek to is sign extended") {
-        val lines = TestProgram().apply { longSeekSub() }.module().function("main.seek").lines()
+        val lines = TestProgram(lp64Target).apply { longSeekSub() }.module().function("main.seek").lines()
         lines shouldHave "  %offset.1 = sext i32 %r2.2 to i64"
-        lines shouldHave "  %status.1 = call i32 @fseek(ptr %r1.1, i64 %offset.1, i32 %origin.1)"
+        lines shouldHave "  %status.1 = call i32 @.file.fseek(ptr %r1.1, i64 %offset.1, i32 %origin.1)"
     }
 
     test("the file handle and file syscalls share their C library declarations, which add fflush() and feof()") {
-        val text = LlvmPrinter.print(TestProgram().apply { allFileSyscallsSub(); allHandleSyscallsSub() }.module()).lines()
+        val text = LlvmPrinter.print(TestProgram(lp64Target).apply { allFileSyscallsSub(); allHandleSyscallsSub() }.module()).lines()
         for (declaration in listOf("ptr @fopen(ptr, ptr)", "i32 @fclose(ptr)", "i64 @fread(ptr, i64, i64, ptr)", "i64 @fwrite(ptr, i64, i64, ptr)",
                 "i32 @fseek(ptr, i64, i32)", "i64 @ftell(ptr)", "i32 @fflush(ptr)", "i32 @feof(ptr)"))
             withClue(declaration) { text.count { it == "declare $declaration" } shouldBe 1 }
+    }
+
+    test("on Windows, where a C long has 32 bits, the file syscalls seek and tell with the 64-bit _fseeki64 and _ftelli64") {
+        val windows = LlvmTarget(8, LlvmTripleProfile.resolve("x86_64-pc-windows-msvc"))
+        val text = LlvmPrinter.print(TestProgram(windows).apply { allFileSyscallsSub(); allHandleSyscallsSub() }.module()).lines()
+        for (declaration in listOf("i32 @_fseeki64(ptr, i64, i32)", "i64 @_ftelli64(ptr)"))
+            withClue(declaration) { text.count { it == "declare $declaration" } shouldBe 1 }
+        text.none { it.startsWith("declare i32 @fseek(") || it.startsWith("declare i32 @ftell(") } shouldBe true
     }
 
     test("the file handle syscalls keep two files open, and seek and tell with 64-bit positions, in a native program for the host").config(enabledOrReasonIf = requiresNativeHost) {
@@ -367,12 +376,12 @@ class TestLlvmSyscallLowering: FunSpec({
         lines shouldHave "  %offset.2 = sext i32 %offset.1 to i64"
         lines shouldHave "  %fits.1 = icmp eq i64 %offset.2, %r7.1"
         lines shouldHave "  %origin.2 = select i1 %fits.1, i32 %origin.1, i32 -1"
-        lines shouldHave "  %status.1 = call i32 @fseek(ptr %r3.3, i32 %offset.1, i32 %origin.2)"
+        lines shouldHave "  %status.1 = call i32 @.file.fseek(ptr %r3.3, i32 %offset.1, i32 %origin.2)"
         lines shouldHave "  %position.1 = call i32 @ftell(ptr %r3.4)"
         lines shouldHave "  %position.2 = sext i32 %position.1 to i64"
         lines shouldHave "  store i64 %position.2, ptr %r10.slot"
         val seek = llvm32().apply { longSeekSub() }.module().function("main.seek").lines()
-        seek shouldHave "  %status.1 = call i32 @fseek(ptr %r1.1, i32 %r2.1, i32 %origin.1)"
+        seek shouldHave "  %status.1 = call i32 @.file.fseek(ptr %r1.1, i32 %r2.1, i32 %origin.1)"
     }
 
     test("on llvm32, the file helpers work with 32-bit positions, sizes and addresses, without truncating them") {
@@ -385,7 +394,10 @@ class TestLlvmSyscallLowering: FunSpec({
         val size = module.function(".file.size").lines()
         size shouldHave "  call i32 @fseek(ptr %file, i32 0, i32 2)"
         size shouldHave "  ret i32 %known"
-        module.function(".file.seek").lines() shouldHave "  %status = call i32 @fseek(ptr %file, i32 %position, i32 0)"
+        module.function(".file.seek").lines() shouldHave "  %status = call i32 @.file.fseek(ptr %file, i32 %position, i32 0)"
+        val restoring = module.function(".file.fseek").lines()
+        restoring shouldHave "  %before = call i32 @ftell(ptr %file)"
+        restoring shouldHave "  call i32 @fseek(ptr %file, i32 %before, i32 0)"
         module.function(".file.load").lines() shouldHave "  %count = call i32 @fread(ptr %address, i32 1, i32 %rest, ptr %file)"
         val save = module.function(".file.save").lines()
         save shouldHave "  %address = ptrtoint ptr %start to i32"
@@ -821,10 +833,10 @@ private fun TestProgram.handleSyscallChecks(directory: Path, failedSeekKeepsPosi
         check("loadm.p ra.p,[main.files]; syscall 207 (ra.p): rb.q; syscall 209 (ra.p): rc.b; load.p rd.p,#main.dst; load.w re.w,#1.w; " +
             "syscall 204 (ra.p, rd.p, re.w): rf.w; loadm.b rg.b,[main.dst]",
             Is("rb.q", 3), Is("rc.b", 0), Is("rf.w", 1), Is("rg.b", 4))
-        // seeking before the start fails and keeps the position; past 4 GB works, with nothing to read there, where the C long has 64 bits
+        // seeking before the start fails and keeps the position; past 4 GB works, with nothing to read there, where the file offset has 64 bits
         check("loadm.p ra.p,[main.files]; load.q rb.q,#-1.q; load.b rc.b,#0.b; syscall 206 (ra.p, rb.q, rc.b): rd.b; syscall 207 (ra.p): re.q",
             *if (failedSeekKeepsPosition) arrayOf(Is("rd.b", 0), Is("re.q", 4)) else arrayOf(Is("rd.b", 0)))
-        val past4GB = if (target.profile.cLongSize == 8) arrayOf(Is("rd.b", 1), Is("re.q", 4294967297), Is("rh.w", 0))
+        val past4GB = if (target.profile.fileOffsetSize == 8) arrayOf(Is("rd.b", 1), Is("re.q", 4294967297), Is("rh.w", 0))
             else if (failedSeekKeepsPosition) arrayOf(Is("rd.b", 0), Is("re.q", 4), Is("rh.w", 1)) else arrayOf(Is("rd.b", 0))
         check("loadm.p ra.p,[main.files]; load.q rb.q,#4294967297.q; load.b rc.b,#0.b; syscall 206 (ra.p, rb.q, rc.b): rd.b; syscall 207 (ra.p): re.q; " +
             "load.p rf.p,#main.dst; load.w rg.w,#1.w; syscall 204 (ra.p, rf.p, rg.w): rh.w", *past4GB)

@@ -322,6 +322,10 @@ These are the keys of a profile; an unknown key is an error:
 ``opendir_symbol``, ``readdir_symbol``
     The C library's names of ``opendir()`` and ``readdir()`` for that struct, when they differ from those, such as
     ``readdir$INODE64`` on Intel macOS and ``readdir64`` on 32-bit ARM Linux.
+``fseek_symbol``, ``ftell_symbol``, ``file_offset_size``
+    The C library routines that the file routines seek and tell the position in a file with, and the size in bytes of
+    their offset. The defaults are ``fseek()`` and ``ftell()``, whose offset is a C ``long``. The Windows profiles name
+    ``_fseeki64`` and ``_ftelli64`` with 8 bytes, because a C ``long`` has only 32 bits there.
 
 The ``-Xcompile`` and ``-Xlink`` options add arguments to a single build without a profile of your own:
 ``-Xcompile`` arguments come after ``clang_args``, ``-Xlink`` arguments at the end of the ``link_command``, or at the

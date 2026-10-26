@@ -29,10 +29,12 @@ import prog8.code.target.C128Target
 import prog8.code.target.C64Target
 import prog8.code.target.Cx16Target
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmToolLocator
 import prog8.code.target.LlvmTripleProfile
 import prog8.code.target.PETTarget
 import prog8.code.target.Qemu68kTarget
 import prog8.code.target.VMTarget
+import prog8.codegen.llvm.LlvmProgramRunner
 import prog8.code.target.getCompilationTargetByName
 import prog8.compiler.CompilationResult
 import prog8.intermediate.IRFileReader
@@ -171,14 +173,14 @@ main {
     }
 
     test("-Xlink links an extra static library into a native executable").config(enabledOrReasonIf = requiresNativeLlvmAndAr) {
-        val ar = checkNotNull(llvmBin).resolve("llvm-ar")
+        val ar = checkNotNull(llvmBin).resolve(LlvmToolLocator.executableName("llvm-ar"))
         linksExtraLibrary(outputDir, hostLlvmTarget, "native-library", ar) { source, objectFile ->
             listOf(checkNotNull(llvmBin).resolve("clang").toString(), "-c", source.toString(), "-o", objectFile.toString())
         }
     }
 
     test("-Xlink links an extra static library into an llvm32 wasm32 program").config(enabledOrReasonIf = requiresWasmAndAr) {
-        val ar = checkNotNull(llvmBin).resolve("llvm-ar")
+        val ar = checkNotNull(llvmBin).resolve(LlvmToolLocator.executableName("llvm-ar"))
         val sysroot = System.getenv("WASI_SYSROOT") ?: "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot"
         linksExtraLibrary(outputDir, LlvmTarget(4), "wasm-library", ar) { source, objectFile ->
             listOf(checkNotNull(llvmBin).resolve("clang").toString(), "--target=wasm32-wasip1", "--sysroot=$sysroot", "-c", source.toString(), "-o", objectFile.toString())
@@ -449,7 +451,7 @@ main {
     test("launchEmulator builds a native executable next to the .ll file and runs it").config(enabledOrReasonIf = requiresNativeLlvm) {
         val dir = outputDir.resolve("launched").createDirectories()
         val llFile = compiledLlFile(compileText(hostLlvmTarget, false, nativeHello.source, dir))
-        val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll"))
+        val executable = hostExecutable(llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll")))
         withClue("a compile without -o only writes the LLVM IR") { executable.exists() shouldBe false }
         val printed = printedOnStdout { hostLlvmTarget.launchEmulator(1, llFile, quiet = false) }
         printed shouldContain "Building $executable from $llFile with clang..."
@@ -486,6 +488,8 @@ main {
     test("%link libraries of all modules reach the link of -o and of launchEmulator, once each, with files relative to their module")
         .config(enabledOrReasonIf = requiresNativeLlvm) {
         val dir = outputDir.resolve("link-directive").createDirectories()
+        // the Microsoft C library has no separate math library
+        val system = if (checkNotNull(hostLlvmProfile).triple.endsWith("-windows-msvc")) "kernel32" else "m"
         val libraryDir = dir.resolve("lib dir").createDirectories()
         val source = libraryDir.resolve("tripler.c").also { it.writeText("int p8test_triple(int x) { return x * 3; }\n") }
         val objectFile = libraryDir.resolve("tripler.o")
@@ -493,14 +497,14 @@ main {
             execute(checkNotNull(llvmBin).resolve("clang").toString(), "-c", source.toString(), "-o", objectFile.toString()).first shouldBe 0
         }
         dir.resolve("tripler.p8").writeText("""
-            %link "lib dir/tripler.o", "m"
+            %link "lib dir/tripler.o", "$system"
             tripler {
                 extsub p8test_triple(word x) -> word
             }""")
         val program = """
             %import tripler
             %zeropage basicsafe
-            %link "m"
+            %link "$system"
             main {
                 sub start() {
                     word @shared x = 14
@@ -508,7 +512,7 @@ main {
                 }
             }"""
         val result = compileText(hostLlvmTarget, false, program, dir).shouldNotBeNull()
-        result.compilationOptions.linkLibraries shouldBe listOf(objectFile.toRealPath().toString(), "-lm")
+        result.compilationOptions.linkLibraries shouldBe listOf(objectFile.toRealPath().toString(), "-l$system")
         val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
         withClue("kept in the .p8ir file") { IRFileReader().read(irFile).options.linkLibraries shouldBe result.compilationOptions.linkLibraries }
         val llFile = compiledLlFile(result)
@@ -516,9 +520,8 @@ main {
             printedOnStdout { hostLlvmTarget.launchEmulator(1, llFile, quiet = false, emptyList(), result.compilationOptions.linkLibraries) } shouldContain
                 "Program exited with status 42"
         }
-        val executable = dir.resolve("linked")
-        compileText(hostLlvmTarget, false, program, dir, outputFile = executable).shouldNotBeNull()
-        execute(executable.toString()).first shouldBe 42
+        compileText(hostLlvmTarget, false, program, dir, outputFile = dir.resolve("linked")).shouldNotBeNull()
+        execute(hostExecutable(dir.resolve("linked")).toString()).first shouldBe 42
     }
 
     test("%link takes library names and existing files, at module level, on the llvm targets only") {
@@ -548,8 +551,8 @@ main {
 
     test("-o without .ll builds a native executable with the LLVM IR next to it").config(enabledOrReasonIf = requiresNativeLlvm) {
         val dir = outputDir.resolve("named").createDirectories()
-        val executable = dir.resolve("hello-native")
-        compileText(hostLlvmTarget, false, nativeHello.source, dir, outputFile = executable).shouldNotBeNull()
+        val executable = hostExecutable(dir.resolve("hello-native"))
+        compileText(hostLlvmTarget, false, nativeHello.source, dir, outputFile = dir.resolve("hello-native")).shouldNotBeNull()
         withClue("the LLVM IR next to the executable") { dir.resolve("hello-native.ll").exists() shouldBe true }
         withClue("$executable should be executable") { Files.isExecutable(executable) shouldBe true }
         execute(executable.toString()) shouldBe (nativeHello.exitCode to nativeHello.output)
@@ -624,9 +627,11 @@ main {
     }
 
     test("the quad programs give the same results on the virtual machine") {
+        // the llvm tests compile the same sources, to a file of the same name, which also writes a .p8ir
+        val vmDir = outputDir.resolve("vm-quad").createDirectories()
         for (name in quadProgramsForTheVm) {
             for (optimize in listOf(false, true)) {
-                val result = compileText(VMTarget(), optimize, programs.getValue(name), outputDir).shouldNotBeNull()
+                val result = compileText(VMTarget(), optimize, programs.getValue(name), vmDir).shouldNotBeNull()
                 val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
                 withClue("$name optimize=$optimize: exit status = the number of the failed check") { exitStatusOnVirtualMachine(irFile) shouldBe 0 }
             }
@@ -639,7 +644,7 @@ main {
             // the VM prints with Double.toString, which only gives the shortest digits from JDK 19 on (JDK-4511638)
             val expected = if (Runtime.version().feature() < 19) program.output.replace("\n1.0E23 true\n", "\n9.999999999999999E22 true\n") else program.output
             for (optimize in listOf(false, true)) {
-                val result = compileText(VMTarget(), optimize, program.source, outputDir).shouldNotBeNull()
+                val result = compileText(VMTarget(), optimize, program.source, outputDir.resolve("vm-output").createDirectories()).shouldNotBeNull()
                 val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
                 // after the line in which the IR file reader names the file
                 withClue("$name optimize=$optimize") { printedOnStdout { exitStatusOnVirtualMachine(irFile) } shouldEndWith "\n" + expected }
@@ -660,7 +665,7 @@ main {
             val llFile = compiledLlFile(compileText(hostLlvmTarget, true, program, outputDir))
             buildAndRun(llFile).first shouldBe 0
             val started = System.nanoTime()
-            execute(llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll")).toString()).first shouldBe 0
+            execute(hostExecutable(llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll"))).toString()).first shouldBe 0
             return (System.nanoTime() - started) / 1_000_000
         }
         withClue("milliseconds of sys.wait(30)") { (runTime("sys.wait(jiffies)") in 490L..5000L) shouldBe true }
@@ -1199,8 +1204,7 @@ private fun stdioBindingsProgram(fileType: String, extra: String) = """
         }
     }"""
 
-private val python3OnThePath: Boolean = System.getenv("PATH").orEmpty().split(File.pathSeparator)
-    .any { try { Files.isExecutable(Path(it).resolve("python3")) } catch (_: InvalidPathException) { false } }
+private val python3OnThePath: Boolean = LlvmToolLocator.find("python3") != null
 
 private val requiresNativeLlvmAndPython: (TestCase) -> Enabled = {
     if (!python3OnThePath) Enabled.disabled("python3 not found on the PATH") else requiresNativeLlvm(it)
@@ -1221,7 +1225,9 @@ private fun linksExtraLibrary(outputDir: Path, target: LlvmTarget, dirName: Stri
     val source = libraryDir.resolve("p8test.c").also { it.writeText("int p8test_answer(void) { return 42; }\n") }
     val objectFile = libraryDir.resolve("p8test.o")
     withClue("compiling the library") { execute(*compileLibrary(source, objectFile).toTypedArray()).first shouldBe 0 }
-    withClue("archiving the library") { execute(ar.toString(), "rcs", libraryDir.resolve("libp8test.a").toString(), objectFile.toString()).first shouldBe 0 }
+    // the Microsoft linker finds -lp8test as p8test.lib
+    val archive = if (target.profile.triple.endsWith("-windows-msvc")) "p8test.lib" else "libp8test.a"
+    withClue("archiving the library") { execute(ar.toString(), "rcs", libraryDir.resolve(archive).toString(), objectFile.toString()).first shouldBe 0 }
     val linking = LlvmTarget(target.pointerSize, target.profile, extraLinkArgs = listOf("-L$libraryDir", "-lp8test"))
     val program = """
         %zeropage basicsafe
@@ -1243,43 +1249,41 @@ private fun compiledLlFile(result: CompilationResult?): Path {
 }
 
 // llvm-as and clang of one LLVM installation; Homebrew installs LLVM keg-only, outside the PATH
-private val llvmBin: Path? = (System.getenv("PATH").orEmpty().split(File.pathSeparator) + "/opt/homebrew/opt/llvm/bin")
-    .mapNotNull { try { Path(it) } catch (_: InvalidPathException) { null } }
-    .firstOrNull { Files.isExecutable(it.resolve("llvm-as")) && Files.isExecutable(it.resolve("clang")) }
+// the directory of the clang that prog8c uses, which is the one next to llvm-as if there is one
+private val llvmBin: Path? = LlvmToolLocator.clang()?.parent
 
 private val requiresNativeLlvm: (TestCase) -> Enabled = {
     when {
         noHostLlvmProfileReason != null -> Enabled.disabled(noHostLlvmProfileReason!!)
-        llvmBin == null -> Enabled.disabled("llvm-as and clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        llvmBin == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         else -> Enabled.enabled
     }
 }
 
 private val requiresNativeLlvmAndAr: (TestCase) -> Enabled = {
-    if (llvmBin?.resolve("llvm-ar")?.let { Files.isExecutable(it) } != true) Enabled.disabled("llvm-ar not found next to llvm-as") else requiresNativeLlvm(it)
+    if (llvmBin?.resolve(LlvmToolLocator.executableName("llvm-ar"))?.let { Files.isExecutable(it) } != true) Enabled.disabled("llvm-ar not found next to clang") else requiresNativeLlvm(it)
 }
 
+/** [file] with the output extension of the host's triple profile, such as .exe on Windows. */
+private fun hostExecutable(file: Path): Path = file.resolveSibling(file.fileName.toString() + checkNotNull(hostLlvmProfile).outputExtension)
+
 /**
- * Builds the .ll file, compiled for [hostLlvmTarget], into an executable with clang -O2 and the host's profile, and runs it with [input]
+ * Builds the .ll file, compiled for [hostLlvmTarget], into an executable as the compiler does with the host's profile, and runs it with [input]
  * on stdin and the command line [args], in the working [directory] if there is one; returns its exit code and output, or clang's if that failed.
  */
 private fun buildAndRun(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
-    val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll"))
-    val profile = checkNotNull(hostLlvmProfile)
-    val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *profile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module",
-        llFile.toString(), "-o", executable.toString(), *profile.linkArgs.toTypedArray())
-    if (compiled.first != 0)
-        return compiled
+    val executable = hostExecutable(llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll")))
+    if (!LlvmProgramRunner().build(llFile, executable, hostLlvmProfile))
+        return 1 to "building $executable failed, see the messages on stderr"
     val stdin = executable.resolveSibling("${executable.fileName}.stdin").also { it.writeText(input) }
     return execute(executable.toString(), *args.toTypedArray(), stdin = stdin, directory = directory)
 }
 
 private val requiresWasm: (TestCase) -> Enabled = {
     val sysroot = System.getenv("WASI_SYSROOT") ?: "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot"
-    fun onPath(tool: String) = System.getenv("PATH").orEmpty().split(File.pathSeparator)
-        .any { try { Files.isExecutable(Path(it).resolve(tool)) } catch (_: InvalidPathException) { false } }
+    fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
-        llvmBin == null -> Enabled.disabled("llvm-as and clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        llvmBin == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         !Files.isDirectory(Path(sysroot)) -> Enabled.disabled("no WASI sysroot in WASI_SYSROOT or $sysroot")
         !onPath("wasm-ld") -> Enabled.disabled("wasm-ld (from lld) not found on the PATH")
         !onPath("wasmtime") -> Enabled.disabled("wasmtime not found on the PATH")
@@ -1305,7 +1309,7 @@ private fun buildAndRunWasm(llFile: Path, input: String = "", args: List<String>
 }
 
 private val requiresWasmAndAr: (TestCase) -> Enabled = {
-    if (llvmBin?.resolve("llvm-ar")?.let { Files.isExecutable(it) } != true) Enabled.disabled("llvm-ar not found next to llvm-as") else requiresWasm(it)
+    if (llvmBin?.resolve(LlvmToolLocator.executableName("llvm-ar"))?.let { Files.isExecutable(it) } != true) Enabled.disabled("llvm-ar not found next to clang") else requiresWasm(it)
 }
 
 private val armProfile = LlvmTripleProfile.resolve("armv7a-none-eabihf")
@@ -1313,11 +1317,10 @@ private val armProfile = LlvmTripleProfile.resolve("armv7a-none-eabihf")
 private fun armTarget() = LlvmTarget(4, armProfile)
 
 private val requiresArm: (TestCase) -> Enabled = {
-    val linker = try { armProfile.linkCommand?.first()?.let { Path(it) } } catch (_: IllegalArgumentException) { null } catch (_: InvalidPathException) { null }
-    fun onPath(tool: String) = System.getenv("PATH").orEmpty().split(File.pathSeparator)
-        .any { try { Files.isExecutable(Path(it).resolve(tool)) } catch (_: InvalidPathException) { false } }
+    val linker = try { armProfile.linkCommand?.first()?.let { Path(LlvmToolLocator.executableName(it)) } } catch (_: IllegalArgumentException) { null } catch (_: InvalidPathException) { null }
+    fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
-        llvmBin == null -> Enabled.disabled("llvm-as and clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        llvmBin == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         linker == null || !Files.isExecutable(linker) -> Enabled.disabled("arm-none-eabi-gcc of the Arm GNU Toolchain not found in ARM_GNU_TOOLCHAIN or its default location")
         !onPath("qemu-system-arm") -> Enabled.disabled("qemu-system-arm not found on the PATH")
         else -> Enabled.enabled
@@ -1344,16 +1347,14 @@ private fun riscvTarget() = LlvmTarget(4, riscvProfile)
 
 // riscv-none-elf-gcc from RISCV_NONE_ELF_GCC, the PATH, or the default install location of the xPack toolchain
 private val riscvGcc: Path? = System.getenv("RISCV_NONE_ELF_GCC")?.let { try { Path(it) } catch (_: InvalidPathException) { null } }
-    ?: System.getenv("PATH").orEmpty().split(File.pathSeparator)
-        .mapNotNull { try { Path(it).resolve("riscv-none-elf-gcc") } catch (_: InvalidPathException) { null } }.firstOrNull { Files.isExecutable(it) }
+    ?: LlvmToolLocator.find("riscv-none-elf-gcc")
     ?: Path(System.getProperty("user.home"), "Library/xPacks/@xpack-dev-tools/riscv-none-elf-gcc").toFile().listFiles().orEmpty()
         .sortedDescending().map { it.toPath().resolve(".content/bin/riscv-none-elf-gcc") }.firstOrNull { Files.isExecutable(it) }
 
 private val requiresRiscv: (TestCase) -> Enabled = {
-    fun onPath(tool: String) = System.getenv("PATH").orEmpty().split(File.pathSeparator)
-        .any { try { Files.isExecutable(Path(it).resolve(tool)) } catch (_: InvalidPathException) { false } }
+    fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
-        llvmBin == null -> Enabled.disabled("llvm-as and clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        llvmBin == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         riscvGcc == null -> Enabled.disabled("riscv-none-elf-gcc not found in RISCV_NONE_ELF_GCC, on the PATH or in ~/Library/xPacks")
         !onPath("qemu-system-riscv32") -> Enabled.disabled("qemu-system-riscv32 not found on the PATH")
         else -> Enabled.enabled
@@ -1363,8 +1364,7 @@ private val requiresRiscv: (TestCase) -> Enabled = {
 // launchEmulator links with the profile's own link command, which finds riscv-none-elf-gcc only through RISCV_NONE_ELF_GCC or the PATH
 private val requiresRiscvOnThePath: (TestCase) -> Enabled = {
     val linker = riscvProfile.linkCommand?.first()
-    val found = linker != null && System.getenv("PATH").orEmpty().split(File.pathSeparator)
-        .any { try { Files.isExecutable(Path(it).resolve(linker)) } catch (_: InvalidPathException) { false } } || System.getenv("RISCV_NONE_ELF_GCC") != null
+    val found = linker != null && LlvmToolLocator.find(linker) != null || System.getenv("RISCV_NONE_ELF_GCC") != null
     if (!found) Enabled.disabled("riscv-none-elf-gcc is not in RISCV_NONE_ELF_GCC or on the PATH") else requiresRiscv(it)
 }
 
@@ -1407,10 +1407,9 @@ private val emcc: Path? = System.getenv("EMCC")?.let { try { Path(it) } catch (_
         .mapNotNull { try { Path(it).resolve("emcc") } catch (_: InvalidPathException) { null } }.firstOrNull { Files.isExecutable(it) }
 
 private val requiresEmscripten: (TestCase) -> Enabled = {
-    fun onPath(tool: String) = System.getenv("PATH").orEmpty().split(File.pathSeparator)
-        .any { try { Files.isExecutable(Path(it).resolve(tool)) } catch (_: InvalidPathException) { false } }
+    fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
-        llvmBin == null -> Enabled.disabled("llvm-as and clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        llvmBin == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         emcc == null -> Enabled.disabled("emcc not found in EMCC or on the PATH")
         !onPath("node") -> Enabled.disabled("node not found on the PATH")
         else -> Enabled.enabled

@@ -9,6 +9,7 @@ import prog8.intermediate.IRFileReader
 import prog8.vm.VmRunner
 import prog8.vm.VmVariableAllocator
 import prog8tests.helpers.compileText
+import kotlin.io.path.invariantSeparatorsPathString
 import kotlin.io.path.readBytes
 import kotlin.io.path.readText
 
@@ -39,7 +40,7 @@ main {
         highbuffer[1] = 'x'
         highbuffer[2] = 'y'
         highbuffer[3] = 'z'
-        if diskio.f_open_w("$dataFile") {
+        if diskio.f_open_w("${dataFile.invariantSeparatorsPathString}") {
             void diskio.f_write(highbuffer, 4)
             diskio.f_close_w()
         }

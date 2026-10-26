@@ -155,6 +155,9 @@ internal object LlvmToolchain {
  * The llvm targets load this class by name, with its no-argument constructor.
  */
 class LlvmProgramRunner : ILlvmProgramRunner {
+    /** Builds [executable] from the LLVM IR in [llFile] as the compiler does, with the clang arguments, startup sources and link command of [profile]. */
+    fun build(llFile: Path, executable: Path, profile: LlvmTripleProfile?): Boolean = LlvmToolchain.compileToExecutable(llFile, executable, profile)
+
     override fun buildAndRun(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile?,
                              extraCompileArgs: List<String>, extraLinkArgs: List<String>, programArgs: List<String>, linkLibraries: List<String>): Int? {
         val executable = executableOf(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, linkLibraries) ?: return null
