@@ -80,7 +80,7 @@ def build_and_run(source, target, optimize, work, opts, stdin):
         status, text, _ = run([str(executable)], out, opts.timeout, stdin)
     else:
         status, text, _ = run([str(opts.prog8c), "-vm", str(out / f"{name}.p8ir")], out, opts.timeout, stdin)
-        text = vm_output(text)
+        text = vm_output(text.replace("\r\n", "\n"))
     return status, text.replace("\r\n", "\n").rstrip("\n")
 
 
