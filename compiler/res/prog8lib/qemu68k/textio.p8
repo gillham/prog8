@@ -100,6 +100,13 @@ txt {
             print("false")
     }
 
+    bool eof_exit = true      ; for code compatibility: qemu never reports the end of the input
+
+    sub eof() -> bool {
+        ; ---- always false: qemu never reports the end of the input
+        return false
+    }
+
     sub  input_chars  (str buffer) -> ubyte  {
         ; Input a string (max. 80 chars) from the keyboard. Returns length of input.
         ; User entered EOL is trimmed, and the string is terminated with a 0 byte.

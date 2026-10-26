@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA2 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 6c86bd67 in branch llvm
+Prerelease version from git commit 7a2ed905 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 
 Compiling program import-all-amiga1200.p8
@@ -9,7 +9,7 @@ Compiler target: amiga1200
 
 BUILTIN FUNCTIONS
 -----------------
-abs  (ubyte|byte|uword|word|long|float value) -> undefined
+abs  (ubyte|byte|uword|word|long|float|quad|uquad value) -> undefined
 call  (pointer address) -> uword
 callfar  (ubyte bank, pointer address, uword arg) -> uword
 callfar2  (ubyte bank, pointer address, ubyte argA, ubyte argX, ubyte argY, bool argC) -> uword
@@ -65,9 +65,9 @@ rrestore  ()
 rsave  ()
 setlsb  (word|uword|long variable, byte|ubyte value)
 setmsb  (word|uword|long variable, byte|ubyte value)
-sgn  (ubyte|byte|uword|word|long|float value) -> byte
+sgn  (ubyte|byte|uword|word|long|float|quad|uquad value) -> byte
 sizeof  (ubyte|byte|uword|word|long|quad|uquad|float|bool|str|array|array_splitw|pointer|undefined object) -> ubyte
-sqrt  (ubyte|byte|uword|word|long|float value) -> undefined
+sqrt  (ubyte|byte|uword|word|long|float|uquad value) -> undefined
 
 
 LIBRARY MODULE NAME: adpcm
@@ -4844,6 +4844,8 @@ LIBRARY MODULE NAME: textio
 ---------------------------
 
 txt  {
+    bool  eof_exit
+    bool  eof_flag
     bell  ()
     bold  ()
     chrout  (ubyte char @D0) clobbers (D0,D1,D2,A0,A6)
@@ -4853,6 +4855,7 @@ txt  {
     cursor_off  ()
     cursor_on  ()
     dim  ()
+    eof  () -> bool
     flush  ()
     height  () -> ubyte
     home  ()

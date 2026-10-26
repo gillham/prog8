@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA2 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 6c86bd67 in branch llvm
+Prerelease version from git commit 7a2ed905 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 
 Compiling program import-all-cx16.p8
@@ -9,7 +9,7 @@ Compiler target: cx16
 
 BUILTIN FUNCTIONS
 -----------------
-abs  (ubyte|byte|uword|word|long|float value) -> undefined
+abs  (ubyte|byte|uword|word|long|float|quad|uquad value) -> undefined
 call  (pointer address) -> uword
 callfar  (ubyte bank, pointer address, uword arg) -> uword
 callfar2  (ubyte bank, pointer address, ubyte argA, ubyte argX, ubyte argY, bool argC) -> uword
@@ -65,9 +65,9 @@ rrestore  ()
 rsave  ()
 setlsb  (word|uword|long variable, byte|ubyte value)
 setmsb  (word|uword|long variable, byte|ubyte value)
-sgn  (ubyte|byte|uword|word|long|float value) -> byte
+sgn  (ubyte|byte|uword|word|long|float|quad|uquad value) -> byte
 sizeof  (ubyte|byte|uword|word|long|quad|uquad|float|bool|str|array|array_splitw|pointer|undefined object) -> ubyte
-sqrt  (ubyte|byte|uword|word|long|float value) -> undefined
+sqrt  (ubyte|byte|uword|word|long|float|uquad value) -> undefined
 
 
 LIBRARY MODULE NAME: adpcm
@@ -1580,6 +1580,7 @@ txt  {
     const ubyte  DEFAULT_WIDTH
     const long  VERA_TEXTMATRIX
     ubyte[]  color_to_charcode
+    bool  eof_exit
     bell  ()
     chrout  (ubyte character @A) = $ffd2
     chrout_lit  (ubyte character @A)
@@ -1591,6 +1592,7 @@ txt  {
     color2  (ubyte txtcol, ubyte bgcol)
     column  (ubyte col @A) clobbers (A,X,Y)
     cp437  ()
+    eof  () -> bool
     fill_screen  (ubyte character @A, ubyte color @Y) clobbers (A,X)
     get_column  () -> ubyte @Y
     get_cursor  () -> ubyte @X, ubyte @Y

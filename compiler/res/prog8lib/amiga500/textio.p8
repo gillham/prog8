@@ -180,15 +180,26 @@ _msg:
             print("false")
     }
 
+    bool eof_exit = true      ; for code compatibility: input_chars never ends the program here
+    bool eof_flag = false
+
+    sub eof() -> bool {
+        ; ---- true when the last input_chars found the end of the input
+        return eof_flag
+    }
+
     sub input_chars(str buffer) -> ubyte {
         ; Input a string (max. 80 chars) from the keyboard. Returns length of input.
         ; User entered EOL is trimmed, and the string is terminated with a 0 byte.
         ; Uses line-buffered input (stdin stays in its default line mode).
+        ; At the end of the input it returns 0 and eof() is true.
+        eof_flag = false
         pointer fh = dos.Input()
         if fh == 0
             return 0
         long actual = dos.Read(fh, buffer, 80)
         if actual <= 0 {
+            eof_flag = actual == 0
             buffer[0] = 0
             return 0
         }

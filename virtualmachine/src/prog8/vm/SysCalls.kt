@@ -17,7 +17,7 @@ SYSCALLS:     DO NOT RENUMBER THESE OR YOU WILL BREAK EXISTING CODE
 3 = print_s ; print 0-terminated string from memory
 4 = print_u8 ; print unsigned int byte
 5 = print_u16 ; print unsigned int word
-6 = input ; reads a line of text entered by the user, r0.w = memory buffer, r1.b = maxlength (0-255, 0=unlimited).  Zero-terminates the string. Returns length in r0.w
+6 = input ; reads a line of text entered by the user, r0.w = memory buffer, r1.b = maxlength (0-255, 0=unlimited).  Zero-terminates the string. Returns length in r0.w, 255 at the end of the input
 7 = sleep ; sleep amount of milliseconds
 8 = gfx_enable  ; enable graphics window  r0.b = 0 -> lores 320x240,  r0.b = 1 -> hires 640x480
 9 = gfx_clear   ; clear graphics window with shade in r0.b
@@ -267,7 +267,7 @@ object SysCalls {
             }
             Syscall.INPUT -> {
                 val (address, maxlen) = getArgValues(callspec.arguments, vm)
-                var input = readlnOrNull() ?: return vm.exit(1)
+                var input = readlnOrNull() ?: return returnValue(callspec.results.single(), 255, vm)
                 val maxlenvalue = (maxlen as UByte).toInt()
                 if(maxlenvalue>0)
                     input = input.take(min(input.length, maxlenvalue))

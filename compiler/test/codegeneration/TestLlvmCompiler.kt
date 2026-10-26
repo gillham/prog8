@@ -5015,6 +5015,28 @@ main {
     }
 }""", "3\n0\n4\n", input = "abc\n\nlast", exitCode = 1),
 
+    "line input reports the end of the input with eof_exit false" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    ubyte[81] buffer
+
+    sub start() {
+        txt.eof_exit = false
+        repeat {
+            ubyte length = txt.input_chars(buffer)
+            if txt.eof()
+                break
+            txt.print_ub(length)
+            txt.nl()
+        }
+        txt.print_ub(txt.input_chars(buffer))
+        txt.print_bool(txt.eof())
+        txt.nl()
+    }
+}""", "3\n0\n4\n0true\n", input = "abc\n\nlast"),
+
     "command line arguments" to OutputProgram("""
 %import textio
 %zeropage basicsafe

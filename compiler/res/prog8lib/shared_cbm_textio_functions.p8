@@ -176,6 +176,13 @@ _allzero    lda  #'0'
         print(conv.str_l(value))
     }
 
+    bool eof_exit = true      ; for code compatibility: the keyboard input never ends
+
+    sub eof() -> bool {
+        ; ---- always false: the keyboard input never ends
+        return false
+    }
+
     asmsub  input_chars  (^^ubyte buffer @ AY) clobbers(A) -> ubyte @ Y  {
         ; ---- Input a string (max. 80 chars) from the keyboard, in PETSCII encoding.
         ;      Returns length in Y. (string is terminated with a 0 byte as well)

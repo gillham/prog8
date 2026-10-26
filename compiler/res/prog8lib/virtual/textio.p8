@@ -181,16 +181,37 @@ sub  print_l  (long value) {
     }}
 }
 
+bool @shared eof_exit = true      ; input_chars at the end of the input ends the program with exit status 1; false: it returns 0 and eof() is true
+bool eof_flag = false
+
+sub eof() -> bool {
+    ; ---- true when the last input_chars found the end of the input (only when eof_exit is false)
+    return eof_flag
+}
+
 sub  input_chars  (str buffer) -> ubyte  {
     ; ---- Input a string (max. 80 chars) from the keyboard. Returns length of input. (string is terminated with a 0 byte as well)
     ;      It assumes the keyboard is selected as I/O channel!
-    ;      When the input has already ended, the program ends with exit status 1.
-    %ir {{
-        loadm.l r99200.l,[txt.input_chars.buffer]
-        load.b r99100.b,#80.b
-        syscall 6 (r99200.l, r99100.b): r99101.b
-        returnr.b r99101.b
-    }}
+    ;      When the input has already ended, the program ends with exit status 1, or with eof_exit false, returns 0 and eof() is true.
+    eof_flag = false
+    ubyte count = read_line(buffer)
+    if count != 255
+        return count
+    if eof_exit
+        sys.exit(1)
+    eof_flag = true
+    buffer[0] = 0
+    return 0
+
+    sub read_line(str line) -> ubyte {
+        ; 255 at the end of the input
+        %ir {{
+            loadm.l r99200.l,[txt.input_chars.read_line.line]
+            load.b r99100.b,#80.b
+            syscall 6 (r99200.l, r99100.b): r99101.b
+            returnr.b r99101.b
+        }}
+    }
 }
 
 sub column(ubyte col) {

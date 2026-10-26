@@ -206,16 +206,29 @@ sub chrin() -> ubyte {
     }}
 }
 
+bool @shared eof_exit = true      ; line input at the end of the input ends the program with exit status 1; false: it returns 0 and eof() is true
+bool eof_flag = false
+
+sub eof() -> bool {
+    ; ---- true when the last line input found the end of the input (only when eof_exit is false)
+    return eof_flag
+}
+
 sub  input_line  (str buffer, ubyte maxlength) -> ubyte  {
     ; ---- read a line from stdin into the buffer, which needs room for maxlength chars and the terminating 0 byte.
     ;      Returns the length. The line end is not stored, and the rest of a longer line is skipped.
-    ;      When the input has already ended, the program ends with exit status 1.
+    ;      When the input has already ended, the program ends with exit status 1, or with eof_exit false, returns 0 and eof() is true.
     ubyte count = 0
     bool started = false
+    eof_flag = false
     repeat {
         ubyte char = chrin()
-        if char == 0 and not started
-            sys.exit(1)
+        if char == 0 and not started {
+            if eof_exit
+                sys.exit(1)
+            eof_flag = true
+            break
+        }
         if char == 0 or char == '\n'
             break
         started = true
