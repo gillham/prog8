@@ -7,7 +7,8 @@
 ; Prog8 adaptation of the Text-Elite galaxy system trading simulation engine.
 ; Original C-version obtained from: http://www.elitehomepage.org/text/index.htm
 
-; Note: this program can be compiled for multiple target systems, including the virtual machine.
+; Note: this program can be compiled for multiple target systems, including the virtual machine and the llvm targets.
+; Its addresses are pointers, whose size depends on the target, rather than uwords.
 
 main {
 
@@ -738,7 +739,7 @@ planet {
     str[] @nosplit wordsA3 = ["ice", "mud", "Zero-G", "vacuum", "\xB1 ultra"]
     str[] @nosplit wordsA4 = ["hockey", "cricket", "karate", "polo", "tennis"]
 
-    uword[] @shared wordlists = [
+    pointer[] @shared wordlists = [
         words81, words82, words83, words84, words85, words86, words87, words88,
         words89, words8A, words8B, words8C, words8D, words8E, words8F, words90,
         words91, words92, words93, words94, words95, words96, words97, words98,
@@ -835,11 +836,11 @@ planet {
 
     sub soup() -> str {
         str planet_result = " " * 160
-        uword[6] source_stack
+        ^^ubyte[6] source_stack
         ubyte stack_ptr = 0
         str start_source = "\x8F is \x97."
-        uword source_ptr = &start_source
-        uword result_ptr = &planet_result
+        ^^ubyte source_ptr = &start_source
+        ^^ubyte result_ptr = &planet_result
 
         reset_rnd()
         recursive_soup()
@@ -991,9 +992,9 @@ planet {
             txt.chrout(strings.upperchar(cx16.r0L))
     }
 
-    sub getword(ubyte listnum, ubyte wordidx) -> uword {
-        uword list = wordlists[listnum-$81]
-        return peekw(list + wordidx*2)      ; this depends on the word list itself to be @nosplit !
+    sub getword(ubyte listnum, ubyte wordidx) -> ^^ubyte {
+        pointer list = wordlists[listnum-$81]
+        return peekp(list + wordidx*sizeof(pointer))      ; this depends on the word list itself to be @nosplit !
     }
 }
 

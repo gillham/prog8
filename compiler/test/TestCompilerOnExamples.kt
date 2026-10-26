@@ -293,7 +293,7 @@ class TestCompilerOnExamplesBothC64andCx16: FunSpec({
             ExampleSizes("swirl", c64SizeOptimized=1010, c64SizeUnoptimized=2273, cx16SizeOptimized=1039, cx16SizeUnoptimized=2584),
             ExampleSizes("swirl-float", c64SizeOptimized=664, c64SizeUnoptimized=690, cx16SizeOptimized=528, cx16SizeUnoptimized=838),
             ExampleSizes("tehtriz", c64SizeOptimized=4325, c64SizeUnoptimized=6349, cx16SizeOptimized=6154, cx16SizeUnoptimized=8438),
-            ExampleSizes("textelite", c64SizeOptimized=11227, c64SizeUnoptimized=12146, cx16SizeOptimized=10746, cx16SizeUnoptimized=12788),
+            ExampleSizes("textelite", c64SizeOptimized=11217, c64SizeUnoptimized=12227, cx16SizeOptimized=10746, cx16SizeUnoptimized=12788),
             ExampleSizes("pointers/animalgame", c64SizeOptimized=1965, c64SizeUnoptimized=2521, cx16SizeOptimized=1991, cx16SizeUnoptimized=2801),
             ExampleSizes("pointers/binarytree", c64SizeOptimized=2672, c64SizeUnoptimized=2735, cx16SizeOptimized=2175, cx16SizeUnoptimized=2487),
             ExampleSizes("pointers/hashtable", c64SizeOptimized=3388, c64SizeUnoptimized=4207, cx16SizeOptimized=2911, cx16SizeUnoptimized=3782),
@@ -340,7 +340,8 @@ class TestCompilerOnExamplesVirtual: FunSpec({
             ExampleSizes("pointers/hashtable", virtualInstrCountOptimized=692, virtualInstrCountUnoptimized=2256, virtualRegCountOptimized=290, virtualRegCountUnoptimized=995),
             ExampleSizes("pointers/sortedlist", virtualInstrCountOptimized=415, virtualInstrCountUnoptimized=2440, virtualRegCountOptimized=133, virtualRegCountUnoptimized=1056),
             ExampleSizes("pointers/fountain-virtual", virtualInstrCountOptimized=216, virtualInstrCountUnoptimized=768, virtualRegCountOptimized=88, virtualRegCountUnoptimized=336),
-            ExampleSizes("pointers/sorting", virtualInstrCountOptimized=498, virtualInstrCountUnoptimized=2210, virtualRegCountOptimized=167, virtualRegCountUnoptimized=941)
+            ExampleSizes("pointers/sorting", virtualInstrCountOptimized=498, virtualInstrCountUnoptimized=2210, virtualRegCountOptimized=167, virtualRegCountUnoptimized=941),
+            ExampleSizes("textelite")
         ),
         listOf(false, true)
     )
@@ -399,7 +400,7 @@ class TestCompilerOnExamplesLlvm: FunSpec({
     this.testExecutionMode = TestExecutionMode.LimitedConcurrency(kotlin.math.max(1, Runtime.getRuntime().availableProcessors()/2))
 
     // the LLVM IR has no fixed size to check; clib declares C's size_t as an uquad, so it is for llvm64 only
-    val portable = listOf("wordcount", "find", "hexdump", "hanoi", "fnv64", "ls")
+    val portable = listOf("wordcount", "find", "hexdump", "hanoi", "fnv64", "ls", "textelite")
     val programs = cartesianProduct(portable.map { it to LlvmTarget(4) } + (portable + "clib").map { it to LlvmTarget(8) }, listOf(false, true))
 
     programs.forEach { (program, optimize) ->
