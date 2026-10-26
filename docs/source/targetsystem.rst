@@ -284,6 +284,11 @@ as ``\r\n``, and adds the routines that the Microsoft C library lacks: ``usleep`
 directory routines for ``diskio.directory``. It is the default llvm64 triple on a 64-bit Windows host.
 ``x86_64-w64-windows-gnu`` builds with `llvm-mingw <https://github.com/mstorsjo/llvm-mingw>`_, whose clang must be the
 ``clang`` on the PATH; its startup code switches to binary mode and adds ``roundeven``, as mingw-w64 has the other routines.
+On a Windows host, the compiler also needs the LLVM tools next to clang: the official LLVM installer leaves out
+``llvm-as`` and some other tools, which the archive (``.tar.xz``) of an LLVM release has. A ``-o name`` without an extension
+gets the extension ``.exe``. A wasm32 program needs clang's wasm32 runtime library, ``libclang_rt.builtins.a``, in
+``lib/clang/<version>/lib/wasm32-unknown-wasip1`` of the LLVM installation; the Windows LLVM archive that this was tested
+with didn't include it, so it had to be copied there from a build that has it.
 These are the keys of a profile; an unknown key is an error:
 
 ``triple`` (required)

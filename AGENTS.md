@@ -403,3 +403,15 @@ rm path/to/File.kt
 
 ## TODO Items
 The file `docs/source/todo.rst` contains a comprehensive list of things that still have to be fixed, implemented, or optimized. **Use this to understand what features are NOT yet available** in the compiler or Prog8 language: if a user asks for something that's on the TODO list, you'll know it's not implemented yet and can explain the limitation.
+
+## LLVM targets (llvm32 / llvm64)
+
+The `llvm32` and `llvm64` targets compile to LLVM IR and build native or wasm/bare-metal programs with clang. The backend is `codeGenLlvm` (see `docs/CODEBASE-KNOWLEDGE-GRAPH.md`, section 4.10b), the per-triple settings are the `.properties` files in `codeCore/res/prog8lib/llvm-triples`, and the target docs are in `docs/source/targetsystem.rst`.
+
+- **Tools for the llvm tests.** Without clang the native tests skip themselves; a skipped test is not a passed one, so say which were skipped. Optional tools, each enabling more tests: `llvm-as` and `llvm-ar` from the same LLVM installation as clang (the official Windows installer lacks `llvm-as` and some other tools, use the tar.xz archive); `wasmtime`, `wasm-ld` and a WASI sysroot (`WASI_SYSROOT`; on Windows clang also needs the wasm32 `libclang_rt.builtins.a` in `lib/clang/<version>/lib/wasm32-unknown-wasip1/`); `node` and `emcc` (`EMCC`); `qemu-system-arm` and the Arm GNU Toolchain (`ARM_GNU_TOOLCHAIN`); `qemu-system-riscv32` and the xPack `riscv-none-elf-gcc` (`RISCV_NONE_ELF_GCC` or the PATH); `python3` or `python`. Tools are found on the PATH, with `.exe` added on Windows.
+- **Windows hosts** build with `gradlew.bat`, and the full suite passes there when the tools above are installed. `-o name` gets the profile's extension (`.exe`).
+- **Scripts** (all need a built compiler, `gradle installdist installshadowdist`): `scripts/llvm-opt-check.py` compares llvm64 and the VM, optimized and `-noopt`, on the examples and test programs (run it after changing optimizers or the IR code generator); `scripts/llvm-remote-check.py` runs the llvm test programs on other hosts over ssh; `scripts/llvm-bench.py` times benchmarks. Scripts and docs in this repo must not contain host names, user names or private paths: hosts come from options and environment variables.
+- **New llvm test programs** go in the `programs` (self-checking, exit status 0) or `outputPrograms` (expected output) maps of `compiler/test/codegeneration/TestLlvmCompiler.kt`; they then run natively, as wasm, on ARM and RISC-V qemu where the tools exist, and in the remote check script.
+- **Syscalls**: those with the same meaning as on the virtual target keep its number; syscalls only the llvm targets have start at 200 (`InstrSyscall.kt`; the next free number is 213).
+- **Bugs found on `master` too** (not about llvm or quads) are logged in `docs/UPSTREAM-ISSUES.md`: add new ones at the end, remove one when its repro passes on `master`. Work that belongs to this branch only goes in `docs/source/todo.rst`.
+- `prog8c -quiet` hides the output of 64tass: check the exit status, not the printed text, when compiling for a 6502 target.

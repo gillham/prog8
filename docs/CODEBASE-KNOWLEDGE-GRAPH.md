@@ -30,6 +30,7 @@ The pipeline is linear and **frontend/backend separated**: the frontend produces
 | `codeGenCpu6502` | 6502/65C02 assembly backend (legacy) |
 | `codeGenNew6502` | New 6502 backend (reads IR) |
 | `codeGenM68k` | Motorola 68k backend (reads IR) |
+| `codeGenLlvm` | LLVM IR backend for the `llvm32` and `llvm64` targets (runs inside the compiler) |
 | `compiler` | Main CLI application |
 | `languageServer` | LSP implementation |
 
@@ -44,7 +45,7 @@ Note: the AGENTS.md describes `codeGenVirtual` as a module, but it has no build 
 ```
 compiler
   -> codeCore, simpleAst, codeOptimizers, compilerAst
-  -> codeGenCpu6502, codeGenNew6502, codeGenM68k, codeGenIntermediate, intermediate, virtualmachine
+  -> codeGenCpu6502, codeGenNew6502, codeGenM68k, codeGenLlvm, codeGenIntermediate, intermediate, virtualmachine
   -> clikt, kotlin-result, buildversion(gversion), ksim65(test)
 
 parser               (no module deps; ANTLR4)
@@ -57,6 +58,7 @@ codeGenIntermediate  -> codeCore, simpleAst, intermediate
 codeGenCpu6502       -> codeCore, simpleAst
 codeGenNew6502       -> codeCore, simpleAst, intermediate, codeGenIntermediate
 codeGenM68k          -> codeCore, simpleAst, intermediate, codeGenIntermediate
+codeGenLlvm          -> codeCore, simpleAst, intermediate, codeGenIntermediate
 languageServer       -> compilerAst, codeCore, parser
 codeCore             (self-contained, kotlin-result only)
 
@@ -258,6 +260,24 @@ Package `prog8.codegen.m68k.*`. Entry `Main.kt` -> `prog8-m68kgen`. Reads `.p8ir
 | `AsmGen`, `AssemblyProgramM68k`, `Instr*` (Arithmetic/Bitwise/Branch/Control/LoadStore/Syscall) | Opcode emission |
 | `AsmOptimizer` | Peephole/selection optimization |
 
+### 4.10b `codeGenLlvm` (LLVM IR backend - `llvm32` and `llvm64`)
+Package `prog8.codegen.llvm.*`. Unlike the 6502 and M68K backends it is not a standalone binary: `LlvmCodeGenerator` runs inside the compiler, runs `IRCodeGen` for the IR, lowers that to an LLVM module, writes `<name>.ll`, and with `-o <name>` also builds a native executable with clang. The targets themselves (`LlvmTarget`, 4- or 8-byte pointers), the per-triple settings (`LlvmTripleProfile`, from `.properties` files in `codeCore/res/prog8lib/llvm-triples`) and the tool lookup (`LlvmToolLocator`) are in `codeCore/.../code/target`.
+| Entity | Purpose |
+|--------|---------|
+| `LlvmCodeGenerator`, `AssemblyProgramLlvm` | Orchestration; validates the IR with llvm-as or clang, builds the executable |
+| `StackLocals` | Decides which subroutine variables become `alloca`s (see below) and finds recursive subroutines that keep static state |
+| `LlvmFunctionBuilder` / `FunctionLowering` | One LLVM function per IR subroutine, one block per chunk; virtual registers are `alloca` slots that mem2reg turns into SSA values |
+| `LlvmGlobalEmitter` | Globals for the IR symbol table, symbol address map |
+| `lower/Instr*.kt` | Lowering by instruction group; `InstrSyscall.kt` has the VM syscalls and the llvm-only ones (numbers from 200; the next free one is 213) |
+| `LlvmToolchain`, `LlvmProgramRunner` | Building the executable with clang and the profile's link command, running it (`-emu`) |
+| `model/`, `LlvmPrinter`, `types/LlvmTypeMapper` | A small LLVM IR model, its text printer, and the IR-to-LLVM type mapping |
+
+Design decisions worth knowing:
+- Status flags: the IR sets them only for `CMP`, `CMPI`, `SGN`, `BITTST`, `SEC`, `CLC` and carry from shifts and rotates, and the lowering tracks them per block; the frontend warns for `if_xx` after other statements.
+- A scalar variable or parameter that only its own subroutine uses, never by address and not `@dirty` or `@shared`, lives in a stack slot (`StackLocals`); the rest, including all arrays, stays a global. `StackFrameLayout` (M68K) is not reused: its frame slots are specific to that backend.
+- Inline `%asm` is an error (`AstChecker`); `%ir` is the way to write low-level code. `asmsub` bodies in `%asm` fall under the same rule.
+- Library code is in `compiler/res/prog8lib/llvm32` and `llvm64` (hosted: stdin/stdout, files and directories through the C library); `docs/import-all-llvm*.p8` list the modules for the symbol dumps.
+
 ### 4.11 `virtualmachine` (IR executor)
 Package `prog8.vm.*`.
 | Entity | Purpose |
@@ -333,6 +353,7 @@ Tests are KoTest (FunSpec) based, run with JUnit5, parallel execution (50% of co
 - `codeGenCpu6502/test` - asm optimizer, codegen.
 - `codeGenNew6502/test` - asmsub returns, inline asm, register file, zeropage allocator.
 - `codeGenM68k/test` - instruction selection optimizations.
+- `codeGenLlvm/test` - LLVM IR emission and lowering per instruction group (`TestLlvm*`), plus native, wasm, ARM and RISC-V runs that skip themselves when their tools are missing (`NativeToolchain.kt`). The programs that run on every llvm platform are in `compiler/test/codegeneration/TestLlvmCompiler.kt` (maps `programs`, `outputPrograms`); `TestCompilerOnExamplesLlvm` compiles `examples/llvm`.
 - `codeGenIntermediate/test` - IR peephole, register packer, symbol prefixer, VM codegen.
 - `simpleAst/test` - `SymbolTableConstruction`, `PtBuilders`, comparison optimizers.
 - `intermediate/test` - IR file in/out, instructions.
@@ -348,6 +369,7 @@ Tests are KoTest (FunSpec) based, run with JUnit5, parallel execution (50% of co
 - **zipping pipeline split**: AST optimizations (`codeOptimizers`) run before simplified AST; the simplified-AST optimizations (`simpleAst/code/optimize/*`) run after `SimplifiedAstMaker`. These are two distinct optimizer groups with the same goal at different AST levels.
 - **`-noopt`** disables both optimization groups; use it to isolate optimizer bugs.
 - **`-compareir` / `-vmtrace`** help debug IR/VM issues.
+- **llvm checks**: `scripts/llvm-opt-check.py` runs programs for llvm64 and the VM, optimized and `-noopt`, and compares them; `scripts/llvm-remote-check.py` runs the llvm test programs on other hosts over ssh; `scripts/llvm-bench.py` times benchmarks built with and without `-noopt`. `docs/UPSTREAM-ISSUES.md` lists bugs found on the way that are also on `master`.
 
 ---
 
