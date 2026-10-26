@@ -47,15 +47,22 @@ static int line_length, line_taken;
 static int input_ended;
 static int terminal = -1;
 
-/* the console handle always claims to be a terminal, so this asks about the host's own stdin */
+/*
+ * The console handle claims to be a terminal on a Unix host, so this asks about the host's own stdin. A Windows host
+ * has no /dev/stdin, but there the console handle tells the truth; a Windows terminal answers 64 instead of 1.
+ */
 static int stdin_is_terminal(void) {
     unsigned long open_args[3] = { (unsigned long)"/dev/stdin", 0, 10 };
     int handle = prog8_semihosting(SYS_OPEN, open_args);
-    if (handle < 0)
-        return 0;
-    int result = prog8_semihosting(SYS_ISTTY, &handle) == 1;
-    prog8_semihosting(SYS_CLOSE, &handle);
-    return result;
+    if (handle >= 0) {
+        int result = prog8_semihosting(SYS_ISTTY, &handle) == 1;
+        prog8_semihosting(SYS_CLOSE, &handle);
+        return result;
+    }
+    /* left open, as closing it might close qemu's own stdin */
+    unsigned long console_args[3] = { (unsigned long)":tt", 0, 3 };
+    handle = prog8_semihosting(SYS_OPEN, console_args);
+    return handle >= 0 && prog8_semihosting(SYS_ISTTY, &handle) > 0;
 }
 
 static void echo(char c) {

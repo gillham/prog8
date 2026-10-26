@@ -12,7 +12,6 @@ Future Things and Ideas
 - the c64 sprite multiplexer still needs adjustments to make it smooth, it lacks a proper raster event scheduler.
 - support typed pointer arrays as struct fields, curretly requires untyped pointers arrays.
 - constant addresses wider than 32 bits are rejected with an error on llvm64 (pointer literals are LONG); only computed 64-bit addresses work.
-- llvm32 bare-metal console input: on a Windows host ``/dev/stdin`` doesn't exist, so the semihosting console code can't tell a terminal from piped input and never echoes typing.
 - llvm: pointer variables are ``i64`` in the LLVM IR, which weakens LLVM's alias analysis, and every non-byte memory access is ``align 1``.
 - llvm: evaluate which examples to add for the llvm32/llvm64 work, for instance a stdin filter that uses ``txt.eof_exit`` and ``txt.eof()`` in a pipe, command line arguments, file I/O, and quads.
 - llvm: compare ``-noopt`` output run through LLVM's optimizer alone (``opt -S -passes="default<O2>"``) with the Prog8-optimized path, for code size, speed and differences in program output; the Prog8 AST/IR optimizations may introduce bugs, or work that LLVM already does better (as with the ``when`` jump tables).
