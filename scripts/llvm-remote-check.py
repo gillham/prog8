@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 Runs the llvm test programs of compiler/test/codegeneration/TestLlvmCompiler.kt on other hosts over ssh.
 
 The compiler's own tests only run the programs natively on the build machine. This script checks the triple profiles of
@@ -16,6 +16,7 @@ A triple with 4-byte pointers is compiled for the llvm32 target, without the pro
 can also run the programs of another CPU: --clang names its clang, --clang-arg adds the sysroot and other arguments for
 remote linking, and --run-prefix the emulator that runs each program, such as qemu-riscv32 -L <sysroot>. For local
 linking, --link-arg adds a clang link argument, such as the --gcc-install-dir that a Buildroot sysroot needs.
+These options and --link apply to the --host they follow, or to every host when they come before the first --host.
 
 Examples:
     export PROG8_REMOTE_HOSTS="linuxbox=x86_64-unknown-linux-gnu pi=aarch64-unknown-linux-gnu oldmac=x86_64-apple-macosx"
@@ -26,6 +27,8 @@ Examples:
     scripts/llvm-remote-check.py --host linuxbox=riscv32-unknown-linux-gnu --clang clang-19 --clang-arg=--sysroot=<dir> \
         --clang-arg=--gcc-install-dir=<dir> --clang-arg=-fuse-ld=lld --run-prefix "qemu-riscv32 -L <dir>"
     scripts/llvm-remote-check.py --host rv32vm=riscv32-unknown-linux-gnu --link local --link-arg=--gcc-install-dir=<dir>
+    scripts/llvm-remote-check.py --host linuxbox=x86_64-unknown-linux-gnu \
+        --host rv32vm=riscv32-unknown-linux-gnu --link local --link-arg=--gcc-install-dir=<dir>
 
 Needs a built compiler: gradle installdist installshadowdist
 """
@@ -413,20 +416,44 @@ def compare(program: Program, reference: Result, actual: Result):
     return problems
 
 
+HOST_OPTIONS = {"link": "remote", "clang": "clang", "clang_arg": [], "link_arg": [], "run_prefix": ""}
+
+
+class HostOption(argparse.Action):
+    """Records the option for the last --host before it, or for every host (index -1) before the first --host."""
+    def __call__(self, parser, namespace, values, option_string=None):
+        index = len(namespace.host or []) - 1
+        namespace.host_options.append((index, self.dest, values))
+
+
+def host_settings(index, recorded):
+    """The options of the host with this index: its own on top of those for every host; arguments add up."""
+    settings = {key: list(value) if isinstance(value, list) else value for key, value in HOST_OPTIONS.items()}
+    for applies_to in (-1, index):
+        for i, key, value in recorded:
+            if i == applies_to:
+                if isinstance(settings[key], list):
+                    settings[key].append(value)
+                else:
+                    settings[key] = value
+    return argparse.Namespace(**settings)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     parser.add_argument("--host", action="append", help="host=triple to run on (repeatable); default: the PROG8_REMOTE_HOSTS environment variable")
-    parser.add_argument("--link", choices=["remote", "local", "both"], default="remote",
+    parser.add_argument("--link", choices=["remote", "local", "both"], action=HostOption,
                         help="build with clang on the host, here with a copied sysroot, or both (default: remote)")
     parser.add_argument("--fetch-sysroots", action="store_true", help="copy the sysroots of the Linux hosts to " + str(SYSROOTS) + " and stop")
     parser.add_argument("--filter", help="only the programs whose name matches this regular expression")
     parser.add_argument("--noopt-only", action="store_true", help="only compile without optimizations")
     parser.add_argument("--keep", action="store_true", help=f"leave the ~/{REMOTE_DIR} directory on the hosts")
-    parser.add_argument("--clang", default="clang", help="the clang command on the hosts, for remote linking (default: clang)")
-    parser.add_argument("--clang-arg", action="append", default=[], help="an extra argument for clang on the hosts, such as --sysroot=<dir> (repeatable)")
-    parser.add_argument("--link-arg", action="append", default=[], help="an extra clang link argument for local linking (repeatable)")
-    parser.add_argument("--run-prefix", default="", help="a command that runs each program on the hosts, such as an emulator")
+    parser.add_argument("--clang", action=HostOption, help="the clang command on the hosts, for remote linking (default: clang)")
+    parser.add_argument("--clang-arg", action=HostOption, help="an extra argument for clang on the hosts, such as --sysroot=<dir> (repeatable)")
+    parser.add_argument("--link-arg", action=HostOption, help="an extra clang link argument for local linking (repeatable)")
+    parser.add_argument("--run-prefix", action=HostOption, help="a command that runs each program on the hosts, such as an emulator")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4, help="parallel compiler runs")
+    parser.set_defaults(host_options=[])
     options = parser.parse_args()
 
     host_specs = options.host or os.environ.get("PROG8_REMOTE_HOSTS", "").split()
@@ -447,8 +474,7 @@ def main():
     if options.filter:
         programs = [p for p in programs if re.search(options.filter, p.name)]
     optimizations = [True] if options.noopt_only else [True, False]
-    links = ["remote", "local"] if options.link == "both" else [options.link]
-    print(f"{len(programs)} programs, {len(hosts)} hosts, linking: {', '.join(links)}")
+    print(f"{len(programs)} programs, {len(hosts)} hosts")
 
     if WORK.joinpath("cases").exists():
         shutil.rmtree(WORK / "cases")
@@ -469,11 +495,12 @@ def main():
         print(f"warning: '{program.name}' {'-noopt ' if noopt else ''}fails natively: {describe(result)}")
 
     failures = 0
-    for host, triple in hosts:
-        for link in links:
+    for index, (host, triple) in enumerate(hosts):
+        settings = host_settings(index if options.host else -1, options.host_options)
+        for link in ["remote", "local"] if settings.link == "both" else [settings.link]:
             if link == "local":
                 try:
-                    extra = sysroot_args(triple) + [x for a in options.link_arg for x in ("-Xlink", a)]
+                    extra = sysroot_args(triple) + [x for a in settings.link_arg for x in ("-Xlink", a)]
                 except RuntimeError as x:
                     print(f"\n{host} ({triple}), local linking: skipped, {x}")
                     continue
@@ -488,7 +515,7 @@ def main():
                 target = staged / case_dir.name
                 target.mkdir(parents=True)
                 shutil.copy(case_dir / "input.txt", target)
-                (target / "run.sh").write_text(run_script(program, options.run_prefix))
+                (target / "run.sh").write_text(run_script(program, settings.run_prefix))
                 common = ["-target", target_name, "-triple", triple] + (["-noopt"] if noopt else [])
                 if link == "remote":
                     prog8c(common + ["-out", str(target), str(case_dir / "prog.p8")], target)
@@ -501,7 +528,7 @@ def main():
                 with concurrent.futures.ThreadPoolExecutor(options.jobs) as pool:
                     list(pool.map(stage, host_cases))
                 print(f"{host} ({triple}), {link} linking: running...", flush=True)
-                run_on_host(host, triple, staged, options.keep, options.clang, options.clang_arg)
+                run_on_host(host, triple, staged, options.keep, settings.clang, settings.clang_arg)
             except RuntimeError as x:
                 print(f"  FAILED: {x}")
                 failures += len(host_cases)
