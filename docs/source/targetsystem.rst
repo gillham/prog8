@@ -269,7 +269,9 @@ So you can add a platform, or change the settings of a built-in one, without reb
 The Linux profiles and a triple from clang build on a host of that platform; cross compiling needs a sysroot and
 a linker for it, given with ``-Xcompile`` and ``-Xlink`` or in a profile file, for example
 ``-Xcompile --sysroot=<dir> -Xlink -fuse-ld=lld``. The ``scripts/llvm-remote-check.py`` script runs the compiler's
-llvm64 test programs on other hosts over ssh, built there or cross linked with a sysroot copied from them. ``x86_64-apple-macosx`` builds on any
+llvm64 test programs on other hosts over ssh, built there or cross linked with a sysroot copied from them. The
+``scripts/llvm-opt-check.py`` script runs the examples and test programs for llvm64 and on the virtual machine, each
+optimized and with ``-noopt``, and reports the programs whose builds don't all give the same output. ``x86_64-apple-macosx`` builds on any
 Mac, and runs on Apple Silicon under Rosetta 2. ``x86_64-pc-windows-msvc`` builds with clang and the Microsoft C library,
 where a C ``long`` has 4 bytes; its startup code switches the console and files to binary mode, so ``\n`` isn't written
 as ``\r\n``, and adds the routines that the Microsoft C library lacks: ``usleep`` for ``sys.wait``, ``roundeven``, and the
