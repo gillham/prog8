@@ -2761,6 +2761,8 @@ internal class AstChecker(private val program: Program,
     override fun visit(inlineAssembly: InlineAssembly) {
         if(inlineAssembly.isIR && options.compTarget.name != VMTarget.NAME && !options.compTarget.cpu.isLlvm)
             errors.err("%asm containing IR code cannot be translated to 6502 assembly", inlineAssembly.position)
+        if(!inlineAssembly.isIR && options.compTarget.cpu.isLlvm)
+            errors.err("%asm with native assembly code can't be used on the llvm targets, use %ir instead", inlineAssembly.position)
     }
 
     override fun visit(struct: StructDecl) {

@@ -565,18 +565,26 @@ main {
         withClue("prog8c -emu exits with the status that launchEmulator returns") { hostLlvmTarget.launchEmulator(1, executable, quiet = true, emptyList()) shouldBe 42 }
     }
 
-    test("code that has no LLVM translation is a compilation error") {
+    test("native inline assembly, also as the body of an asmsub, is a compilation error") {
         val src = """
 main {
     sub start() {
         %asm {{
             nop
         }}
+        foo()
+    }
+
+    asmsub foo() {
+        %asm {{
+            rts
+        }}
     }
 }"""
         val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
         compileText(LlvmTarget(), false, src, outputDir, errors = errors) shouldBe null
-        errors.errors.single() shouldContain "main.start has inline assembly, which can't be translated to LLVM IR"
+        errors.errors.size shouldBe 2
+        errors.errors.forEach { it shouldContain "%asm with native assembly code can't be used on the llvm targets, use %ir instead" }
     }
 
     test("quad and uquad are rejected on every retro target, and go through code generation on llvm64 and virtual") {
@@ -5065,6 +5073,43 @@ one:
     sub beta() { txt.print("b ") }
     sub gamma() { txt.print("g ") }
 }""", "a b zero b g one a else past else past else past \n"),
+
+    "a signed right shift of an array element at a constant index, and repeat 1" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    byte[3] barray
+    word[3] warray
+    word[3] @nosplit narray
+
+    sub start() {
+        byte @shared b = -128
+        word @shared w = -32766
+        barray[1] = b
+        barray[1] >>= 1
+        barray[2] = b
+        barray[2] >>= 3
+        warray[1] = w
+        warray[1] >>= 1
+        narray[1] = w
+        narray[1] >>= 2
+        txt.print_b(barray[1])
+        txt.spc()
+        txt.print_b(barray[2])
+        txt.spc()
+        txt.print_w(warray[1])
+        txt.spc()
+        txt.print_w(narray[1])
+        txt.nl()
+        ubyte @shared count = 0
+        repeat 1 {
+            count++
+        }
+        txt.print_ub(count)
+        txt.nl()
+    }
+}""", "-64 -16 -16383 -8192\n1\n"),
 
     "when with case bodies and an else body" to OutputProgram("""
 %import textio

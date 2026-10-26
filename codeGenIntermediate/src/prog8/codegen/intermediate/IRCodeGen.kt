@@ -1756,7 +1756,7 @@ class IRCodeGen(
         if(constRepeats!=null) {
             when(constRepeats) {
                 0 -> return emptyList()
-                1 -> return translateGroup(repeat.children)
+                1 -> return translateNode(repeat.statements)
             }
             require(constRepeats in 1..65536) { "repeat count out of range 1..65536: $constRepeats" }
             val repeatLabel = createLabelName()

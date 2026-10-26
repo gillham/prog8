@@ -15,8 +15,8 @@ Future Things and Ideas
 - llvm32 bare-metal console input: on a Windows host ``/dev/stdin`` doesn't exist, so the semihosting console code can't tell a terminal from piped input and never echoes typing.
 - llvm: pointer variables are ``i64`` in the LLVM IR, which weakens LLVM's alias analysis, and every non-byte memory access is ``align 1``.
 - llvm: evaluate which examples to add for the llvm32/llvm64 work, for instance a stdin filter that uses ``txt.eof_exit`` and ``txt.eof()`` in a pipe, command line arguments, file I/O, and quads.
+- llvm: compare ``-noopt`` output run through LLVM's optimizer alone (``opt -S -passes="default<O2>"``) with the Prog8-optimized path, for code size, speed and differences in program output; the Prog8 AST/IR optimizations may introduce bugs, or work that LLVM already does better (as with the ``when`` jump tables).
 - llvm/virtual: consider a more generic way for programs to handle signals (SIGINT, SIGPIPE, SIGTERM) and conditions such as end of input, which overlaps with ``txt.eof_exit``/``txt.eof()``.
-- the ``prog8-coder`` skill (``.agents/skills/prog8-coder/SKILL.md``) gives the ``pointer`` sizes without llvm32 (32 bits) and llvm64 (64 bits).
 - evaluated the feature suggestions in ideas/c16-banked-data.md (cx16 banked data): evaluated Sep 2026, the plan is not worth implementing as written. Banked data already works via ``-varshigh <bank>`` / ``%varsaddress`` + ``cx16.rambank()``, and the ``cx16.fetch``/``cx16.stash`` kernal primitives turn out to be neither IRQ-safe nor reentrant, and ~5x slower than a bank switch. Cheapest useful follow-up is documentation plus small ``asmsub`` wrappers in ``syslib.p8``; see the Recommendation section in that file.
 
 Won't do's or deferred

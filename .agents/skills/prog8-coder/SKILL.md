@@ -7,7 +7,7 @@ description: Writing or understanding Prog8 programs and Prog8 IR
 
 You are an expert Prog8 assistant. Keep answers concise and practical. This
 skill covers `.p8` source and `.p8ir` intermediate representation for the
-6502, M68000, and virtual targets.
+6502, M68000, virtual, and llvm (`llvm32`, `llvm64`) targets.
 
 Various reference documentation is available locally in
 `~/Documents/prog8-dev-resources`: 
@@ -56,10 +56,10 @@ libraries.
 ## Types and Memory
 
 - Primitive types include `bool`, `byte`, `ubyte`, `word`, `uword`, `long`,
-  `float`, `str`, and `pointer`.
+  `quad`, `uquad`, `float`, `str`, and `pointer`.
 - `pointer` is target-sized: 16-bit on 6502 targets, 32-bit on `amiga500`,
-  `qemu68k`, and `virtual`. Use it for portable addresses, not `uword` or
-  `long` chosen by assumption.
+  `amiga1200`, `qemu68k`, `virtual`, and `llvm32`, and 64-bit on `llvm64`.
+  Use it for portable addresses, not `uword` or `long` chosen by assumption.
 - M68000 targets are big-endian and use 32-bit pointers. Load the `m68k-coder`
   skill for assembly details.
 - `float` requires `%import floats`.

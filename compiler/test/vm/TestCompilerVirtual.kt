@@ -2535,6 +2535,45 @@ main {
         }
     }
 
+    test("a signed right shift of an array element at a constant index, and repeat 1") {
+        val src = """
+main {
+    byte[3] barray
+    word[3] warray
+    word[3] @nosplit narray
+    ubyte @shared count
+    sub start() {
+        byte @shared b = -128
+        word @shared w = -32766
+        barray[1] = b
+        barray[1] >>= 1
+        barray[2] = b
+        barray[2] >>= 3
+        warray[1] = w
+        warray[1] >>= 1
+        narray[1] = w
+        narray[1] >>= 2
+        repeat 1 {
+            count++
+        }
+    }
+}"""
+        for(optimize in listOf(false, true)) {
+            val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+            val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+            val irContent = virtfile.readText()
+            val irProgram = IRFileReader().read(irContent)
+            irProgram.st.stripAllPrefixes()
+            val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+            VmRunner().runAndTestProgram(irContent) { vm ->
+                vm.memory.getUB(allocations["main.barray"]!! + 1u).toByte() shouldBe (-64).toByte()
+                vm.memory.getUB(allocations["main.barray"]!! + 2u).toByte() shouldBe (-16).toByte()
+                vm.memory.getUW(allocations["main.narray"]!! + 2u).toShort() shouldBe (-8192).toShort()
+                vm.memory.getUB(allocations["main.count"]!!).toInt() shouldBe 1
+            }
+        }
+    }
+
     test("when with case bodies and an else body that ends normally doesn't fall into the case bodies") {
         val src = """
 main {

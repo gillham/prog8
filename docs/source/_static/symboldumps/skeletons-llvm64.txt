@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA2 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 7a2ed905 in branch llvm
+Prerelease version from git commit 7fec7785 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 
 Compiling program import-all-llvm64.p8
@@ -638,6 +638,14 @@ cx16  {
     &word  r9s
     &byte  r9sH
     &byte  r9sL
+}
+
+
+LIBRARY MODULE NAME: test_stack
+-------------------------------
+
+test_stack  {
+    test  ()
 }
 
 

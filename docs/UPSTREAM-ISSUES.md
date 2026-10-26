@@ -158,3 +158,16 @@ Keeping the list: add new items at the end with the next number, and remove an i
   `CodeDesugarer` puts the generated label array (and the temporary for a computed index) in the nearest scope, which
   is the loop body.
 - Branch: fixed, both declarations go in the subroutine.
+
+**U25. `repeat 1` crashes the IR code generator without optimizations**
+- Repro: `repeat 1 { count++ }` (or a variable that is folded to 1) compiled with `-noopt` for virtual stops with an
+  internal error, "defer should have been transformed". `IRCodeGen.translate(PtRepeatLoop)` translates all children
+  of the loop for a count of 1, which includes the count itself.
+- Branch: fixed, it translates only the loop body.
+
+**U26. A signed right shift of an array element at a constant index is a logical shift on the VM**
+- Repro: `byte[3] barray`, `barray[1] = -128`, `barray[1] >>= 1` gives 64 instead of -64 on virtual; the same for
+  `word` arrays, split or not. `compiler/test/arithmetic/bitshift2.p8` reports it as ">> b array error". With a
+  variable index the result is right. `AssignmentGen.operatorShiftRightInplace` always uses `LSRM`/`LSRNM` for a
+  constant index.
+- Branch: fixed, it uses `ASRM`/`ASRNM` for signed elements.

@@ -2435,7 +2435,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                 if(array.splitWords) {
                     repeat(constValue) {
                         result += IRCodeChunk(null, null).also {
-                            it += IRInstructions.memoryOp(Opcode.LSRM, IRDataType.BYTE, IRMemory.direct(arrayVariableName+"_msb", constIndex))
+                            it += IRInstructions.memoryOp(if(signed) Opcode.ASRM else Opcode.LSRM, IRDataType.BYTE, IRMemory.direct(arrayVariableName+"_msb", constIndex))
                             it += IRInstructions.memoryOp(Opcode.ROXRM, IRDataType.BYTE, IRMemory.direct(arrayVariableName+"_lsb", constIndex))
                         }
                     }
@@ -2443,13 +2443,13 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                     val eltSize = codeGen.program.memsizer.memorySize(array.type, null)
                     if(constValue==1) {
                         result += IRCodeChunk(null, null).also {
-                            it += IRInstructions.memoryOp(Opcode.LSRM, vmDt, IRMemory.direct(arrayVariableName, constIndex*eltSize))
+                            it += IRInstructions.memoryOp(if(signed) Opcode.ASRM else Opcode.LSRM, vmDt, IRMemory.direct(arrayVariableName, constIndex*eltSize))
                         }
                     } else {
                         val valueReg = codeGen.registers.next(IRDataType.BYTE)
                         result += IRCodeChunk(null, null).also {
                             it += IRInstructions.load(IRDataType.BYTE, valueReg, constValue and 255)
-                            it += IRInstructions.memoryOp(Opcode.LSRNM, vmDt, IRMemory.direct(arrayVariableName, constIndex*eltSize), valueReg)
+                            it += IRInstructions.memoryOp(if(signed) Opcode.ASRNM else Opcode.LSRNM, vmDt, IRMemory.direct(arrayVariableName, constIndex*eltSize), valueReg)
                         }
                     }
                 }

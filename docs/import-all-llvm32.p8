@@ -14,5 +14,6 @@
 %import sorting
 %import strings
 %import syslib
+%import test_stack
 %import textio
 %import wavfile
