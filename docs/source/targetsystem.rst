@@ -253,6 +253,10 @@ variables, arrays, strings, and variables that another subroutine (such as a nes
 A recursive subroutine that has only stack slots works; for one that keeps static storage, which its recursive
 calls share, the compiler gives a warning that names those variables.
 
+The ``examples/llvm`` directory has programs that use what these targets offer: input from a pipe with
+``txt.eof()``, the command line, files and directories, recursion, ``uquad`` arithmetic, and calls of C library
+functions through ``extsub``.
+
 A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in this order:
 
 1. the given file path, when that file exists

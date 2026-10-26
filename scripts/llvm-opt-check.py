@@ -9,7 +9,8 @@ in the llvm code generator or the VM. Programs that don't compile for llvm64, su
 are skipped. The exit status is 1 when any program differs.
 
 By default the programs are the examples and the test programs in compiler/test that print their results, except
-those that can't give comparable output (see EXCLUDED). The input is empty lines, so programs that wait for Enter
+those that can't give comparable output (see EXCLUDED). A program that only compiles for llvm64, such as one that uses
+the command line, only has its two llvm64 builds compared. The input is empty lines, so programs that wait for Enter
 continue; --input gives a file instead.
 
 Examples:
@@ -37,13 +38,15 @@ REPO = Path(__file__).resolve().parent.parent
 WINDOWS = os.name == "nt"
 PROG8C = REPO / "compiler" / "build" / "install" / "prog8c" / "bin" / ("prog8c.bat" if WINDOWS else "prog8c")
 
-DEFAULT_PROGRAMS = ["examples/*.p8", "examples/virtual/*.p8", "examples/pointers/*.p8", "examples/qemu68k/*.p8",
+DEFAULT_PROGRAMS = ["examples/*.p8", "examples/llvm/*.p8", "examples/virtual/*.p8", "examples/pointers/*.p8", "examples/qemu68k/*.p8",
                     "compiler/test/arithmetic/*.p8", "compiler/test/comparisons/*.p8"]
 EXCLUDED = {
     "compiler/test/arithmetic/bitshift2.p8": "writes to the absolute address $8000, which a hosted program doesn't own",
     "examples/balls.p8": "animates forever",
     "examples/swirl.p8": "animates forever",
     "examples/swirl-float.p8": "animates forever",
+    "examples/llvm/clib.p8": "prints the time",
+    "examples/llvm/ls.p8": "lists the directory it runs in, which differs per build",
 }
 VARIANTS = [("llvm64", True), ("llvm64", False), ("virtual", True), ("virtual", False)]
 
@@ -101,11 +104,15 @@ def report(source, results):
     if llvm is None or llvm[0] == "compile-fail" or results.get(("llvm64", False), ("compile-fail",))[0] == "compile-fail":
         print(f"SKIP  {name}: doesn't compile for llvm64")
         return False
+    note = ""
+    if all(results.get(("virtual", optimize), ("compile-fail",))[0] == "compile-fail" for optimize in (True, False)):
+        results = {variant: result for variant, result in results.items() if variant[0] != "virtual"}
+        note = ", llvm64 only: doesn't compile for the virtual target"
     groups = {}
     for variant, result in results.items():
         groups.setdefault(json.dumps(result), []).append(variant)
     if len(groups) == 1:
-        print(f"SAME  {name}: exit {llvm[0]}")
+        print(f"SAME  {name}: exit {llvm[0]}{note}")
         return False
     outcomes = [(json.loads(key), variants) for key, variants in groups.items()]
     print(f"DIFF  {name}: " + " | ".join(f"{', '.join(label(*v) for v in variants)}: exit {result[0]}" for result, variants in outcomes))

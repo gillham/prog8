@@ -2184,4 +2184,21 @@ main {
         errors.errors[0] shouldContain "value has incompatible type (float[]) for the variable (^^ubyte[])"
         errors.errors[0] shouldNotContain "split word array"
     }
+
+    test("comparing a str with 0 is a type error, not a crash, with == and !=") {
+        val text = """
+            main {
+                sub start() {
+                    str name = "hello"
+                    if name != 0
+                        cx16.r0L++
+                    if name == 0
+                        cx16.r0L++
+                }
+            }"""
+        val errors = ErrorReporterForTests()
+        compileText(Cx16Target(), false, text, outputDir, writeAssembly = false, errors = errors) shouldBe null
+        errors.errors.size shouldBe 2
+        errors.errors.forEach { it shouldContain "left and right operands aren't the same type: str vs ubyte" }
+    }
 })

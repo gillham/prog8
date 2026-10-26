@@ -171,3 +171,10 @@ Keeping the list: add new items at the end with the next number, and remove an i
   variable index the result is right. `AssignmentGen.operatorShiftRightInplace` always uses `LSRM`/`LSRNM` for a
   constant index.
 - Branch: fixed, it uses `ASRM`/`ASRNM` for signed elements.
+
+**U27. Comparing a `str` with 0 using `!=` crashes the compiler**
+- Repro: `str name = "hello"` and `if name != 0 ...` stops with an internal error, "numeric literal type should be
+  numeric or bool: STR"; `name == 0` gives the expected error, "left and right operands aren't the same type".
+  `VariousCleanups` retypes the 0 to the type of the left operand, and only its `==` branch checks that this is a
+  numeric type.
+- Branch: fixed, the `!=` branch has the same check, so both give the type error.

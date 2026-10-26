@@ -91,6 +91,7 @@ private fun prepareTestFiles(source: String, optimize: Boolean, target: ICompila
         is VMTarget -> searchIn.add(0, assumeDirectory(examplesDir, "virtual"))
         is C128Target -> searchIn.add(0, assumeDirectory(examplesDir, "c128"))
         is PETTarget -> searchIn.add(0, assumeDirectory(examplesDir, "pet"))
+        is LlvmTarget -> searchIn.add(0, assumeDirectory(examplesDir, "llvm"))
     }
     val filepath = searchIn.asSequence()
         .map { it.resolve("$source.p8") }
@@ -388,6 +389,24 @@ class TestCompilerOnExamplesPET32: FunSpec({
             if (expectedSize > 0) {
                 verifyOutputFileSize(result!!, expectedSize)
             }
+        }
+    }
+})
+
+class TestCompilerOnExamplesLlvm: FunSpec({
+
+    this.blockingTest = true
+    this.testExecutionMode = TestExecutionMode.LimitedConcurrency(kotlin.math.max(1, Runtime.getRuntime().availableProcessors()/2))
+
+    // the LLVM IR has no fixed size to check; clib declares C's size_t as an uquad, so it is for llvm64 only
+    val portable = listOf("wordcount", "find", "hexdump", "hanoi", "fnv64", "ls")
+    val programs = cartesianProduct(portable.map { it to LlvmTarget(4) } + (portable + "clib").map { it to LlvmTarget(8) }, listOf(false, true))
+
+    programs.forEach { (program, optimize) ->
+        val (name, target) = program
+        val prep = prepareTestFiles(name, optimize, target)
+        test(prep.first) {
+            compileTheThing(prep.second, optimize, target, tempdir().toPath()) shouldNotBe null
         }
     }
 })
