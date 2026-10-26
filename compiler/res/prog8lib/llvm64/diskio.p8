@@ -30,7 +30,7 @@ diskio {
     sub internal_list(ubyte kind) -> bool {
         %ir {{
             loadm.b r99100.b,[diskio.internal_list.kind]
-            syscall 83 (r99100.b): r99101.b
+            syscall 212 (r99100.b): r99101.b
             returnr.b r99101.b
         }}
     }

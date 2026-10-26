@@ -80,7 +80,7 @@ sub tostr(float value) -> str {
     %ir {{
         load.p r99200.p,#floats.tostr.digits
         loadm.f fr99000.f,[floats.tostr.value]
-        syscall 81 (r99200.p, fr99000.f)
+        syscall 210 (r99200.p, fr99000.f)
     }}
     while digits[index] != 'e' {
         if digits[index] != '.' {
@@ -185,7 +185,7 @@ sub parse(str value) -> float {
     buffer[length] = 0
     %ir {{
         load.p r99200.p,#floats.parse.buffer
-        syscall 82 (r99200.p): fr99000.f
+        syscall 211 (r99200.p): fr99000.f
         returnr.f fr99000.f
     }}
 }

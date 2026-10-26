@@ -15,7 +15,7 @@ fileio {
         %ir {{
             loadm.p r99200.p,[fileio.open.path]
             loadm.p r99201.p,[fileio.open.mode]
-            syscall 73 (r99200.p, r99201.p): r99202.p
+            syscall 202 (r99200.p, r99201.p): r99202.p
             returnr.p r99202.p
         }}
     }
@@ -26,7 +26,7 @@ fileio {
             return false
         %ir {{
             loadm.p r99200.p,[fileio.close.handle]
-            syscall 74 (r99200.p): r99100.b
+            syscall 203 (r99200.p): r99100.b
             returnr.b r99100.b
         }}
     }
@@ -39,7 +39,7 @@ fileio {
             loadm.p r99200.p,[fileio.read.handle]
             loadm.p r99201.p,[fileio.read.buf]
             loadm.w r99000.w,[fileio.read.count]
-            syscall 75 (r99200.p, r99201.p, r99000.w): r99001.w
+            syscall 204 (r99200.p, r99201.p, r99000.w): r99001.w
             returnr.w r99001.w
         }}
     }
@@ -52,7 +52,7 @@ fileio {
             loadm.p r99200.p,[fileio.write.handle]
             loadm.p r99201.p,[fileio.write.buf]
             loadm.w r99000.w,[fileio.write.count]
-            syscall 76 (r99200.p, r99201.p, r99000.w): r99001.w
+            syscall 205 (r99200.p, r99201.p, r99000.w): r99001.w
             returnr.w r99001.w
         }}
     }
@@ -65,7 +65,7 @@ fileio {
             loadm.p r99200.p,[fileio.seek.handle]
             loadm.q r99300.q,[fileio.seek.offset]
             loadm.b r99100.b,[fileio.seek.whence]
-            syscall 77 (r99200.p, r99300.q, r99100.b): r99101.b
+            syscall 206 (r99200.p, r99300.q, r99100.b): r99101.b
             returnr.b r99101.b
         }}
     }
@@ -76,7 +76,7 @@ fileio {
             return -1
         %ir {{
             loadm.p r99200.p,[fileio.tell.handle]
-            syscall 78 (r99200.p): r99300.q
+            syscall 207 (r99200.p): r99300.q
             returnr.q r99300.q
         }}
     }
@@ -85,7 +85,7 @@ fileio {
         ; -- writes what is still buffered for the file, or for every file for a 0 handle: returns false when that fails
         %ir {{
             loadm.p r99200.p,[fileio.flush.handle]
-            syscall 79 (r99200.p): r99100.b
+            syscall 208 (r99200.p): r99100.b
             returnr.b r99100.b
         }}
     }
@@ -96,7 +96,7 @@ fileio {
             return true
         %ir {{
             loadm.p r99200.p,[fileio.eof.handle]
-            syscall 80 (r99200.p): r99100.b
+            syscall 209 (r99200.p): r99100.b
             returnr.b r99100.b
         }}
     }

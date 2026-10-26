@@ -48,20 +48,20 @@ private const val VM_SEEK_FILE = 63
 private const val VM_TELL_FILE_POS = 64
 private const val VM_TELL_FILE_SIZE = 65
 private const val VM_GET_C = 69
-// the llvm libraries' own syscalls, numbered after the last one of the VM
-private const val VM_GET_ARGC = 71
-private const val VM_GET_ARGV = 72
-private const val VM_FOPEN = 73
-private const val VM_FCLOSE = 74
-private const val VM_FREAD = 75
-private const val VM_FWRITE = 76
-private const val VM_FSEEK = 77
-private const val VM_FTELL = 78
-private const val VM_FFLUSH = 79
-private const val VM_FEOF = 80
-private const val VM_FLOAT_DIGITS = 81
-private const val VM_PARSE_FLOAT = 82
-private const val VM_LIST_DIRECTORY = 83
+// the llvm libraries' own syscalls start at 200, which leaves the numbers below it to the VM
+private const val VM_GET_ARGC = 200
+private const val VM_GET_ARGV = 201
+private const val VM_FOPEN = 202
+private const val VM_FCLOSE = 203
+private const val VM_FREAD = 204
+private const val VM_FWRITE = 205
+private const val VM_FSEEK = 206
+private const val VM_FTELL = 207
+private const val VM_FFLUSH = 208
+private const val VM_FEOF = 209
+private const val VM_FLOAT_DIGITS = 210
+private const val VM_PARSE_FLOAT = 211
+private const val VM_LIST_DIRECTORY = 212
 
 /**
  * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory, file and filesystem

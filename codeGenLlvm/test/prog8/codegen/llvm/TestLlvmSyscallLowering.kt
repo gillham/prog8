@@ -115,7 +115,7 @@ class TestLlvmSyscallLowering: FunSpec({
         text shouldHave "@.sys.argv = internal global ptr null"
     }
 
-    test("syscall 71 gives argc saturated to a word, syscall 72 the argument at an index through the .sys.argv.at helper") {
+    test("syscall 200 gives argc saturated to a word, syscall 201 the argument at an index through the .sys.argv.at helper") {
         val module = TestProgram().apply { argumentLookupSub() }.programModule()
         val lines = module.function("main.start").lines()
         lines shouldHave "  %argc.1 = load i32, ptr @.sys.argc"
@@ -601,8 +601,8 @@ private fun TestProgram.emptyStartSub() = sub("main.start", code = """
 
 private fun TestProgram.argumentLookupSub() = sub("main.start", code = """
     _main.start:
-    syscall 71 (): r1.w
-    syscall 72 (r1.w): r2.p
+    syscall 200 (): r1.w
+    syscall 201 (r1.w): r2.p
     syscall 3 (r2.p)
     return
     """)
@@ -610,25 +610,25 @@ private fun TestProgram.argumentLookupSub() = sub("main.start", code = """
 /** Prints arguments 1 and 2, those at index argc and 65535, and argument 0, each on a line; exits with argc as the status. */
 private fun TestProgram.argumentsOutputSub() = sub("main.start", code = """
     _main.start:
-    syscall 71 (): r1.w
+    syscall 200 (): r1.w
     load.b r9.b,#10.b
     load.w r2.w,#1.w
-    syscall 72 (r2.w): r3.p
+    syscall 201 (r2.w): r3.p
     syscall 3 (r3.p)
     syscall 2 (r9.b)
     load.w r4.w,#2.w
-    syscall 72 (r4.w): r5.p
+    syscall 201 (r4.w): r5.p
     syscall 3 (r5.p)
     syscall 2 (r9.b)
-    syscall 72 (r1.w): r6.p
+    syscall 201 (r1.w): r6.p
     syscall 3 (r6.p)
     syscall 2 (r9.b)
     load.w r7.w,#65535.w
-    syscall 72 (r7.w): r8.p
+    syscall 201 (r7.w): r8.p
     syscall 3 (r8.p)
     syscall 2 (r9.b)
     load.w r10.w,#0.w
-    syscall 72 (r10.w): r11.p
+    syscall 201 (r10.w): r11.p
     syscall 3 (r11.p)
     syscall 2 (r9.b)
     lsigb.w r12.b,r1.w
@@ -677,17 +677,17 @@ private fun TestProgram.allHandleSyscallsSub() {
         _main.handles:
         load.p r1.p,#main.path
         load.p r2.p,#main.mode
-        syscall 73 (r1.p, r2.p): r3.p
+        syscall 202 (r1.p, r2.p): r3.p
         load.w r4.w,#8.w
-        syscall 75 (r3.p, r1.p, r4.w): r5.w
-        syscall 76 (r3.p, r1.p, r4.w): r6.w
+        syscall 204 (r3.p, r1.p, r4.w): r5.w
+        syscall 205 (r3.p, r1.p, r4.w): r6.w
         load.q r7.q,#-2.q
         load.b r8.b,#2.b
-        syscall 77 (r3.p, r7.q, r8.b): r9.b
-        syscall 78 (r3.p): r10.q
-        syscall 79 (r3.p): r11.b
-        syscall 80 (r3.p): r12.b
-        syscall 74 (r3.p): r13.b
+        syscall 206 (r3.p, r7.q, r8.b): r9.b
+        syscall 207 (r3.p): r10.q
+        syscall 208 (r3.p): r11.b
+        syscall 209 (r3.p): r12.b
+        syscall 203 (r3.p): r13.b
         return
         """)
 }
@@ -697,7 +697,7 @@ private fun TestProgram.longSeekSub() = sub("main.seek", code = """
     load.p r1.p,#0.p
     load.l r2.l,#-2.l
     load.b r3.b,#0.b
-    syscall 77 (r1.p, r2.l, r3.b): r4.b
+    syscall 206 (r1.p, r2.l, r3.b): r4.b
     return
     """)
 
@@ -797,37 +797,37 @@ private fun TestProgram.handleSyscallChecks(directory: Path, failedSeekKeepsPosi
     variable("main.dst", DataType.arrayFor(BaseDataType.UBYTE, target), length = 8u)
     variable("main.files", DataType.arrayFor(BaseDataType.UBYTE, target), length = 16u)
     sub("main.check", returns = listOf(DataType.UBYTE), code = Checks().apply {
-        check("load.p ra.p,#main.missing; load.p rb.p,#main.rb; syscall 73 (ra.p, rb.p): rc.p", Is("rc.p", 0))
-        check("load.p ra.p,#main.out; load.p rb.p,#main.wb; syscall 73 (ra.p, rb.p): rc.p; storem.p rc.p,[main.files]; cmpi.p rc.p,#0.p", ZeroIs(false))
-        check("loadm.p ra.p,[main.files]; load.p rb.p,#main.bytes; load.w rc.w,#8.w; syscall 76 (ra.p, rb.p, rc.w): rd.w; syscall 78 (ra.p): re.q; " +
-            "syscall 79 (ra.p): rf.b; syscall 74 (ra.p): rg.b",
+        check("load.p ra.p,#main.missing; load.p rb.p,#main.rb; syscall 202 (ra.p, rb.p): rc.p", Is("rc.p", 0))
+        check("load.p ra.p,#main.out; load.p rb.p,#main.wb; syscall 202 (ra.p, rb.p): rc.p; storem.p rc.p,[main.files]; cmpi.p rc.p,#0.p", ZeroIs(false))
+        check("loadm.p ra.p,[main.files]; load.p rb.p,#main.bytes; load.w rc.w,#8.w; syscall 205 (ra.p, rb.p, rc.w): rd.w; syscall 207 (ra.p): re.q; " +
+            "syscall 208 (ra.p): rf.b; syscall 203 (ra.p): rg.b",
             Is("rd.w", 8), Is("re.q", 8), Is("rf.b", 1), Is("rg.b", 1))
         // a null handle flushes every stream
-        check("load.p ra.p,#0.p; syscall 79 (ra.p): rb.b", Is("rb.b", 1))
+        check("load.p ra.p,#0.p; syscall 208 (ra.p): rb.b", Is("rb.b", 1))
         // two files open at once, to copy the first 5 bytes of one to the other
-        check("load.p ra.p,#main.out; load.p rb.p,#main.rb; syscall 73 (ra.p, rb.p): rc.p; storem.p rc.p,[main.files]; cmpi.p rc.p,#0.p", ZeroIs(false))
-        check("load.p ra.p,#main.copy; load.p rb.p,#main.wb; syscall 73 (ra.p, rb.p): rc.p; storem.p rc.p,[main.files+8]; cmpi.p rc.p,#0.p", ZeroIs(false))
-        check("loadm.p ra.p,[main.files]; loadm.p rb.p,[main.files+8]; load.p rc.p,#main.dst; load.w rd.w,#5.w; syscall 75 (ra.p, rc.p, rd.w): re.w; " +
-            "syscall 80 (ra.p): rf.b; syscall 76 (rb.p, rc.p, re.w): rg.w",
+        check("load.p ra.p,#main.out; load.p rb.p,#main.rb; syscall 202 (ra.p, rb.p): rc.p; storem.p rc.p,[main.files]; cmpi.p rc.p,#0.p", ZeroIs(false))
+        check("load.p ra.p,#main.copy; load.p rb.p,#main.wb; syscall 202 (ra.p, rb.p): rc.p; storem.p rc.p,[main.files+8]; cmpi.p rc.p,#0.p", ZeroIs(false))
+        check("loadm.p ra.p,[main.files]; loadm.p rb.p,[main.files+8]; load.p rc.p,#main.dst; load.w rd.w,#5.w; syscall 204 (ra.p, rc.p, rd.w): re.w; " +
+            "syscall 209 (ra.p): rf.b; syscall 205 (rb.p, rc.p, re.w): rg.w",
             Is("re.w", 5), Is("rf.b", 0), Is("rg.w", 5))
         // only 3 of the next 5 bytes are there, and reading past them sets the end of the file
-        check("loadm.p ra.p,[main.files]; load.p rb.p,#main.dst; load.w rc.w,#5.w; syscall 75 (ra.p, rb.p, rc.w): rd.w; syscall 80 (ra.p): re.b; " +
-            "syscall 78 (ra.p): rf.q; loadm.b rg.b,[main.dst]; loadm.b rh.b,[main.dst+2]",
+        check("loadm.p ra.p,[main.files]; load.p rb.p,#main.dst; load.w rc.w,#5.w; syscall 204 (ra.p, rb.p, rc.w): rd.w; syscall 209 (ra.p): re.b; " +
+            "syscall 207 (ra.p): rf.q; loadm.b rg.b,[main.dst]; loadm.b rh.b,[main.dst+2]",
             Is("rd.w", 3), Is("re.b", 1), Is("rf.q", 8), Is("rg.b", 6), Is("rh.b", 8))
         // negative offsets from the end and from the position; seeking clears the end of the file
-        check("loadm.p ra.p,[main.files]; load.q rb.q,#-2.q; load.b rc.b,#2.b; syscall 77 (ra.p, rb.q, rc.b): rd.b; syscall 78 (ra.p): re.q; " +
-            "load.q rf.q,#-3.q; load.b rg.b,#1.b; syscall 77 (ra.p, rf.q, rg.b): rh.b",
+        check("loadm.p ra.p,[main.files]; load.q rb.q,#-2.q; load.b rc.b,#2.b; syscall 206 (ra.p, rb.q, rc.b): rd.b; syscall 207 (ra.p): re.q; " +
+            "load.q rf.q,#-3.q; load.b rg.b,#1.b; syscall 206 (ra.p, rf.q, rg.b): rh.b",
             Is("rd.b", 1), Is("re.q", 6), Is("rh.b", 1))
-        check("loadm.p ra.p,[main.files]; syscall 78 (ra.p): rb.q; syscall 80 (ra.p): rc.b; load.p rd.p,#main.dst; load.w re.w,#1.w; " +
-            "syscall 75 (ra.p, rd.p, re.w): rf.w; loadm.b rg.b,[main.dst]",
+        check("loadm.p ra.p,[main.files]; syscall 207 (ra.p): rb.q; syscall 209 (ra.p): rc.b; load.p rd.p,#main.dst; load.w re.w,#1.w; " +
+            "syscall 204 (ra.p, rd.p, re.w): rf.w; loadm.b rg.b,[main.dst]",
             Is("rb.q", 3), Is("rc.b", 0), Is("rf.w", 1), Is("rg.b", 4))
         // seeking before the start fails and keeps the position; past 4 GB works, with nothing to read there, where the C long has 64 bits
-        check("loadm.p ra.p,[main.files]; load.q rb.q,#-1.q; load.b rc.b,#0.b; syscall 77 (ra.p, rb.q, rc.b): rd.b; syscall 78 (ra.p): re.q",
+        check("loadm.p ra.p,[main.files]; load.q rb.q,#-1.q; load.b rc.b,#0.b; syscall 206 (ra.p, rb.q, rc.b): rd.b; syscall 207 (ra.p): re.q",
             *if (failedSeekKeepsPosition) arrayOf(Is("rd.b", 0), Is("re.q", 4)) else arrayOf(Is("rd.b", 0)))
         val past4GB = if (target.profile.cLongSize == 8) arrayOf(Is("rd.b", 1), Is("re.q", 4294967297), Is("rh.w", 0))
             else if (failedSeekKeepsPosition) arrayOf(Is("rd.b", 0), Is("re.q", 4), Is("rh.w", 1)) else arrayOf(Is("rd.b", 0))
-        check("loadm.p ra.p,[main.files]; load.q rb.q,#4294967297.q; load.b rc.b,#0.b; syscall 77 (ra.p, rb.q, rc.b): rd.b; syscall 78 (ra.p): re.q; " +
-            "load.p rf.p,#main.dst; load.w rg.w,#1.w; syscall 75 (ra.p, rf.p, rg.w): rh.w", *past4GB)
-        check("loadm.p ra.p,[main.files]; loadm.p rb.p,[main.files+8]; syscall 74 (ra.p): rc.b; syscall 74 (rb.p): rd.b", Is("rc.b", 1), Is("rd.b", 1))
+        check("loadm.p ra.p,[main.files]; load.q rb.q,#4294967297.q; load.b rc.b,#0.b; syscall 206 (ra.p, rb.q, rc.b): rd.b; syscall 207 (ra.p): re.q; " +
+            "load.p rf.p,#main.dst; load.w rg.w,#1.w; syscall 204 (ra.p, rf.p, rg.w): rh.w", *past4GB)
+        check("loadm.p ra.p,[main.files]; loadm.p rb.p,[main.files+8]; syscall 203 (ra.p): rc.b; syscall 203 (rb.p): rd.b", Is("rc.b", 1), Is("rd.b", 1))
     }.subroutine())
 }

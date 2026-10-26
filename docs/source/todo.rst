@@ -16,7 +16,6 @@ Future Things and Ideas
 - llvm64: an in-place update of an element of an address array with a variable index (``uquad[2] arr = [&buf, 0]``, ``arr[i] += 2``) fails with "index scale 1 doesn't address whole elements"; ``PointerArrayAccess`` in codeGenLlvm could divide the byte offset by the element size.
 - llvm: a ``when`` jump table can only dispatch to subroutines, so ``StatementOptimizer`` doesn't turn a ``when`` that needs labels inside the subroutine into one there; that needs ``blockaddress``/``indirectbr`` lowering.
 - quads: shifting a quad by a ``uword`` variable crashes the IR codegen ("register r2 given multiple types! QUAD and BYTE"); ``abs``, ``min``, ``max``, ``sgn`` and the like reject quads; ``p[-2]`` on a ``uquad`` address is rejected ("no implicit cast available from BYTE to UQUAD").
-- llvm: syscalls 71-83 only exist on the llvm targets, right above the VM's last one (70); a new VM syscall must not reuse those numbers.
 - llvm: pointer variables are ``i64`` in the LLVM IR, which weakens LLVM's alias analysis, and every non-byte memory access is ``align 1``.
 - ``TestQuadVirtualMachine`` has four ``xtest`` cases (typed quad pointers, quad struct fields above 64K, quad literals between 2^31 and 2^32, unsigned uquad comparison); re-run them and re-enable the ones that pass.
 - the ``prog8-coder`` skill (``.agents/skills/prog8-coder/SKILL.md``) gives the ``pointer`` sizes without llvm32 (32 bits) and llvm64 (64 bits).
