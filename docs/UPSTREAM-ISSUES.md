@@ -109,3 +109,11 @@ Keeping the list: add new items at the end with the next number, and remove an i
 **U19. Docs: `popf` says the value was pushed by `pushl`**
 - Where: `docs/source/libraries.rst`, the `popf` entry.
 - Branch: not fixed.
+
+**U20. Shifting a long by a word or long variable crashes the IR codegen**
+- Repro: `long @shared q = 1`, `uword @shared n = 3`, `q <<= n` (or `q = q << n`, `q >>= n`) on virtual:
+  `IllegalArgumentException: register r2 given multiple types! LONG and BYTE`. `TypecastsAdder` widens the count to
+  the left operand's type, while the IR shift instructions take a byte count. The 6502 code compiles it and uses the
+  count's low byte.
+- Branch: fixed, `ExpressionGen.translateShiftCount` narrows a wider count to its low byte (`LSIGB`), for the
+  in-place and the expression shifts.

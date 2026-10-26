@@ -1572,6 +1572,18 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
         return resultReg
     }
 
+    /** The shift count in a byte register: as in the 6502 code, a wider count only uses its low byte. */
+    internal fun translateShiftCount(count: PtExpression): ExpressionCodeResult {
+        val tr = translateExpression(count)
+        if(tr.dt == IRDataType.BYTE)
+            return tr
+        val result = mutableListOf<IRCodeChunkBase>()
+        addToResult(result, tr, tr.resultReg, -1)
+        val byteReg = codeGen.registers.next(IRDataType.BYTE)
+        addInstr(result, IRInstructions.binary(Opcode.LSIGB, tr.dt, byteReg, tr.resultReg), null)
+        return ExpressionCodeResult(result, IRDataType.BYTE, byteReg, -1)
+    }
+
     private fun operatorShiftRight(binExpr: PtBinaryExpression, vmDt: IRDataType, signed: Boolean): ExpressionCodeResult {
         val result = mutableListOf<IRCodeChunkBase>()
         return if(codeGen.isOne(binExpr.right)) {
@@ -1595,8 +1607,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
             } else {
                 val leftTr = translateExpression(binExpr.left)
                 addToResult(result, leftTr, leftTr.resultReg, -1)
-                val rightTr = translateExpression(binExpr.right)
-                require(rightTr.dt== IRDataType.BYTE) { "can only shift by 0-255" }
+                val rightTr = translateShiftCount(binExpr.right)
                 addToResult(result, rightTr, rightTr.resultReg, -1)
                 val opc = if (signed) Opcode.ASRN else Opcode.LSRN
                 addInstr(result, IRInstructions.binary(opc, vmDt, leftTr.resultReg, rightTr.resultReg), null)
@@ -1622,8 +1633,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
             } else {
                 val leftTr = translateExpression(binExpr.left)
                 addToResult(result, leftTr, leftTr.resultReg, -1)
-                val rightTr = translateExpression(binExpr.right)
-                require(rightTr.dt== IRDataType.BYTE) { "can only shift by 0-255" }
+                val rightTr = translateShiftCount(binExpr.right)
                 addToResult(result, rightTr, rightTr.resultReg, -1)
                 addInstr(result, IRInstructions.binary(Opcode.LSLN, vmDt, leftTr.resultReg, rightTr.resultReg), null)
                 ExpressionCodeResult(result, vmDt, leftTr.resultReg, -1)

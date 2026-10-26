@@ -1270,8 +1270,7 @@ main {
         }
     }
 
-    // known issue: CodeDesugarer has no peekq/pokeq rewrite, so ap[i] += x updates the pointer variable itself
-    xtest("typed quad pointers: dereference and indexed element updates") {
+    test("typed quad pointers: dereference and indexed element updates") {
         val src = $$"""
 main {
     quad @shared g7 = 5
@@ -1301,8 +1300,7 @@ main {
         }
     }
 
-    // known issue (not quad specific): AssignmentGen truncates a constant assigned to a pointer to 16 bits
-    xtest("struct with quad fields through a pointer above 64K") {
+    test("struct with quad fields through a pointer above 64K") {
         val src = $$"""
 main {
     struct Item {
@@ -1353,8 +1351,7 @@ main {
         }
     }
 
-    // known issue: the parser still types these literals as long and wraps them to a negative value
-    xtest("quad literals between 2^31 and 2^32 keep their value") {
+    test("quad literals between 2^31 and 2^32 keep their value") {
         val src = $$"""
 main {
     quad @shared q1 = 4294967295
@@ -1387,8 +1384,7 @@ main {
         }
     }
 
-    // known issue: commonDatatype turns uquad versus a positive quad literal into a signed quad comparison
-    xtest("uquad compared with a large positive literal compares unsigned") {
+    test("uquad compared with a large positive literal compares unsigned") {
         val src = $$"""
 main {
     uquad @shared um1 = $ffff_ffff_ffff_ffff

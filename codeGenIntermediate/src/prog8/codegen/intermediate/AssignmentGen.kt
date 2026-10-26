@@ -2486,7 +2486,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                         }
                     }
                 } else {
-                    val shiftTr = exprGen.translateExpression(operand)
+                    val shiftTr = exprGen.translateShiftCount(operand)
                     addToResult(resultVar, shiftTr, shiftTr.resultReg, -1)
                     resultVar += IRCodeChunk(null, null).also {
                         val opc = if(signed) Opcode.ASRN else Opcode.LSRN
@@ -2524,7 +2524,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                     }
                 }
             } else {
-                val shiftTr = exprGen.translateExpression(operand)
+                val shiftTr = exprGen.translateShiftCount(operand)
                 addToResult(resultVar, shiftTr, shiftTr.resultReg, -1)
                 resultVar += IRCodeChunk(null, null).also {
                     val opc = if(signed) Opcode.ASRN else Opcode.LSRN
@@ -2546,7 +2546,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                 IRInstructions.memoryOp(opc, vmDt, IRMemory.direct(symbol!!))
             addInstr(result, ins, null)
         } else {
-            val shiftTr = exprGen.translateExpression(operand)
+            val shiftTr = exprGen.translateShiftCount(operand)
             addToResult(result, shiftTr, shiftTr.resultReg, -1)
             val shiftReg = shiftTr.resultReg
             val opc = if (signed) Opcode.ASRNM else Opcode.LSRNM
@@ -2619,7 +2619,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                         }
                     }
                 } else {
-                    val shiftTr = exprGen.translateExpression(operand)
+                    val shiftTr = exprGen.translateShiftCount(operand)
                     addToResult(resultVar, shiftTr, shiftTr.resultReg, -1)
                     resultVar += IRCodeChunk(null, null).also {
                         it += IRInstructions.binary(Opcode.LSLN, vmDt, loadReg, shiftTr.resultReg)
@@ -2653,7 +2653,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                     }
                 }
             } else {
-                val shiftTr = exprGen.translateExpression(operand)
+                val shiftTr = exprGen.translateShiftCount(operand)
                 addToResult(resultVar, shiftTr, shiftTr.resultReg, -1)
                 resultVar += IRCodeChunk(null, null).also {
                     it += IRInstructions.binary(Opcode.LSLN, vmDt, loadReg, shiftTr.resultReg)
@@ -2673,7 +2673,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                 IRInstructions.memoryOp(Opcode.LSLM, vmDt, IRMemory.direct(symbol!!))
                 , null)
         } else {
-            val shiftTr = exprGen.translateExpression(operand)
+            val shiftTr = exprGen.translateShiftCount(operand)
             addToResult(result, shiftTr, shiftTr.resultReg, -1)
             val shiftReg = shiftTr.resultReg
             addInstr(result, if(constAddress!=null)

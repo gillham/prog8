@@ -298,9 +298,12 @@ class Antlr2KotlinVisitor(val source: SourceCode, private val target: ICompilati
             }
         }
         val identifiers = ctx.identifierlist().identifier().map { getname(it) }
-        val actualValue = if(initialvalue is NumericLiteral && datatype.base.largerSizeThan(initialvalue.type))
-                NumericLiteral(datatype.base, initialvalue.number, initialvalue.position)
-            else
+        val actualValue = if(initialvalue is NumericLiteral && datatype.base.largerSizeThan(initialvalue.type)) {
+                if(datatype.isQuad && initialvalue.hasWiderValue)
+                    NumericLiteral.fromQuadBits(datatype.base, initialvalue.integerBits, initialvalue.position)
+                else
+                    NumericLiteral(datatype.base, initialvalue.number, initialvalue.position)
+            } else
                 initialvalue
 
         return VarDecl.builder(datatype, ctx.toPosition())

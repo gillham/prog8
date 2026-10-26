@@ -121,6 +121,46 @@ main {
         }
     }
 
+    test("a long or quad shifted by a word or long variable uses the low byte of the count") {
+        val src = """
+main {
+    sub start() {
+        long @shared l1 = 1
+        long @shared l2 = 64
+        long @shared l3 = 1
+        quad @shared q1 = 1
+        quad @shared q2 = 64
+        uword @shared count = 3
+        long @shared lcount = 259
+        l1 <<= count
+        l2 = l2 >> lcount
+        l3 = l3 << lcount
+        q1 <<= count
+        q2 >>= lcount
+    }
+}"""
+        compileText(LlvmTarget(8), false, src, outputDir, writeAssembly = true) shouldNotBe null
+        compileText(LlvmTarget(4), false, src.lines().filterNot { "quad" in it || "q1" in it || "q2" in it }.joinToString("\n"),
+            outputDir, writeAssembly = true) shouldNotBe null
+        for(optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+                val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+                val irProgram = IRFileReader().read(virtfile)
+                val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+                VmRunner().runAndTestProgram(virtfile.readText(), true) { vm ->
+                    fun long(name: String) = vm.memory.getSL(allocations.getValue("main.start.$name"))
+                    fun quad(name: String) = vm.memory.getSQ(allocations.getValue("main.start.$name"))
+                    long("l1") shouldBe 8
+                    long("l2") shouldBe 8
+                    long("l3") shouldBe 8
+                    quad("q1") shouldBe 8L
+                    quad("q2") shouldBe 8L
+                }
+            }
+        }
+    }
+
     test("a constant address that doesn't fit a 2-byte pointer is an error, with or without a cast") {
         for(value in listOf($$"$12345 as ^^ubyte", $$"$12345")) {
             val src = """
