@@ -628,7 +628,6 @@ private fun argumentHelper(count: LlvmValue.Global, arguments: LlvmValue.Global,
 
 // PATH_MAX of Linux; that of macOS is 1024
 private const val CURDIR_BUFFER_SIZE = 4096
-private const val LOAD_CHUNK_SIZE = 4096L
 private const val SEEK_SET = 0L
 private const val SEEK_END = 2L
 
@@ -949,11 +948,15 @@ private fun LlvmFunctionBuilder.loadHelper(): LlvmFunction {
     val failed = LlvmValue.Local("failed", LlvmType.I1)
     val second = LlvmValue.Local("second", LlvmType.I32)
     val truncated = LlvmValue.Local("truncated", LlvmType.I1)
-    val at = LlvmValue.Local("at", LlvmType.Ptr)
     val sizeT = mapper.sizeT
+    val cLong = mapper.cLong
+    val start = LlvmValue.Local("start", cLong)
+    val end = LlvmValue.Local("end", cLong)
+    val rest = LlvmValue.Local("rest", cLong)
+    val size = if (cLong == sizeT) rest else LlvmValue.Local("size", sizeT)
     val count = LlvmValue.Local("count", sizeT)
     val next = LlvmValue.Local("next", LlvmType.Ptr)
-    val more = LlvmValue.Local("more", LlvmType.I1)
+    val unknown = LlvmValue.Local("unknown", LlvmType.I1)
     val error = LlvmValue.Local("error", LlvmType.I32)
     val broken = LlvmValue.Local("broken", LlvmType.I1)
     return helper(".file.load", LlvmType.Ptr, listOf(name, address, raw),
@@ -971,12 +974,22 @@ private fun LlvmFunctionBuilder.loadHelper(): LlvmFunction {
             LlvmInstruction.Call(second, libc(Libc.FGETC), listOf(file), LlvmType.I32),
             LlvmInstruction.Icmp(IcmpCondition.SLT, truncated, second, i32(0)),
             LlvmInstruction.CondBr(truncated, "unloaded", "read")),
-        "read" to listOf(
-            LlvmInstruction.Phi(at, listOf(address to "header", address to "skip", next to "read")),
-            LlvmInstruction.Call(count, libc(Libc.FREAD), listOf(at, LlvmValue.IntConstant(1, sizeT), LlvmValue.IntConstant(LOAD_CHUNK_SIZE, sizeT), file), sizeT),
-            LlvmInstruction.GetElementPtr(next, LlvmType.I8, at, listOf(count), inBounds = false),
-            LlvmInstruction.Icmp(IcmpCondition.EQ, more, count, LlvmValue.IntConstant(LOAD_CHUNK_SIZE, sizeT)),
-            LlvmInstruction.CondBr(more, "read", "done")),
+        // exactly the rest of the file: Windows' fread fails when its count goes past writable memory, even when the file is shorter
+        "read" to listOfNotNull(
+            LlvmInstruction.Call(start, libc(Libc.FTELL), listOf(file), cLong),
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, LlvmValue.IntConstant(0, cLong), i32(SEEK_END)), LlvmType.I32),
+            LlvmInstruction.Call(end, libc(Libc.FTELL), listOf(file), cLong),
+            LlvmInstruction.Icmp(IcmpCondition.SLT, unknown, end, start),
+            LlvmInstruction.CondBr(unknown, "unloaded", "measured")),
+        "measured" to listOfNotNull(
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, start, i32(SEEK_SET)), LlvmType.I32),
+            LlvmInstruction.BinaryOp(BinaryOperator.SUB, rest, end, start),
+            if (cLong == sizeT) null else LlvmInstruction.Cast(CastOperator.SEXT, size as LlvmValue.Local, rest, sizeT),
+            LlvmInstruction.Call(count, libc(Libc.FREAD), listOf(address, LlvmValue.IntConstant(1, sizeT), size, file), sizeT),
+            LlvmInstruction.GetElementPtr(next, LlvmType.I8, address, listOf(count), inBounds = false),
+            // reading on at the end sets the error flag for a directory, as reading it did before
+            LlvmInstruction.Call(null, libc(Libc.FGETC), listOf(file), LlvmType.I32),
+            LlvmInstruction.Br("done")),
         "done" to listOf(
             LlvmInstruction.Call(error, libc(Libc.FERROR), listOf(file), LlvmType.I32),
             LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(file), LlvmType.I32),

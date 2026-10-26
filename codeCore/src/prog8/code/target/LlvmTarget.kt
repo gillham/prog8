@@ -60,6 +60,7 @@ class LlvmTarget(
             return when {
                 osName.startsWith("Mac") -> if (arch == "aarch64") "arm64-apple-macosx" else if (arch == "x86_64") "x86_64-apple-macosx" else null
                 osName.startsWith("Linux") -> "$arch-unknown-linux-gnu"
+                osName.startsWith("Windows") -> if (arch == "x86_64") "x86_64-pc-windows-msvc" else null
                 else -> null
             }
         }

@@ -5231,10 +5231,10 @@ main {
     }
 
     sub last_name(pointer path) -> pointer {
-        ; the part of the path after its last '/'
+        ; the part of the path after its last '/' (or '\\' on Windows)
         pointer name = path
         while @(path) != 0 {
-            if @(path) == '/'
+            if @(path) == '/' or @(path) == '\\'
                 name = path + 1
             path++
         }

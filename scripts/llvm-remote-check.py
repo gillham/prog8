@@ -18,6 +18,9 @@ remote linking, and --run-prefix the emulator that runs each program, such as qe
 linking, --link-arg adds a clang link argument, such as the --gcc-install-dir that a Buildroot sysroot needs.
 These options and --link apply to the --host they follow, or to every host when they come before the first --host.
 
+A Windows host (a *-windows-* triple) needs OpenSSH, clang, PowerShell and cwRsync, whose paths start with
+/cygdrive/<drive>/: give the work directory with --remote-dir /cygdrive/c/users/<name>/<dir>.
+
 Examples:
     export PROG8_REMOTE_HOSTS="linuxbox=x86_64-unknown-linux-gnu pi=aarch64-unknown-linux-gnu oldmac=x86_64-apple-macosx"
     scripts/llvm-remote-check.py                                 # those hosts, remote linking
@@ -29,6 +32,7 @@ Examples:
     scripts/llvm-remote-check.py --host rv32vm=riscv32-unknown-linux-gnu --link local --link-arg=--gcc-install-dir=<dir>
     scripts/llvm-remote-check.py --host linuxbox=x86_64-unknown-linux-gnu \
         --host rv32vm=riscv32-unknown-linux-gnu --link local --link-arg=--gcc-install-dir=<dir>
+    scripts/llvm-remote-check.py --host winbox=x86_64-pc-windows-msvc --remote-dir /cygdrive/c/users/<name>/prog8-check
 
 Needs a built compiler: gradle installdist installshadowdist
 """
@@ -288,7 +292,7 @@ def sysroot_args(triple):
 def ssh_tool(command, retries=3):
     """Runs ssh, scp or rsync, retrying when the connection fails (exit status 255)."""
     for attempt in range(retries):
-        done = subprocess.run(command, capture_output=True, text=True)
+        done = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL)
         if done.returncode != 255:
             return done
         time.sleep(2 * (attempt + 1))
@@ -342,6 +346,57 @@ done
 """
 
 
+WINDOWS_DRIVER = r"""# builds (when there's a prog.ll) and runs every case directory, writing status, out.txt and leftovers.txt
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+function Write-Text($path, $text) { [IO.File]::WriteAllText($path, $text, $utf8) }
+foreach ($case in Get-ChildItem -Path $root -Directory) {
+    $dir = $case.FullName
+    if (Test-Path "$dir\prog.ll") {
+        $build = & __CLANG__ __CLANG_ARGS__ -O2 -Wno-override-module "$dir\prog.ll" __STARTUP__ -o "$dir\prog.exe" __LINK_ARGS__ 2>&1
+        Write-Text "$dir\build.txt" ($build | Out-String)
+        if ($LASTEXITCODE -ne 0) { Write-Text "$dir\status" "build"; continue }
+    }
+    $run = "$dir\run"
+    if (Test-Path $run) { Remove-Item -Recurse -Force $run }
+    New-Item -ItemType Directory $run | Out-Null
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = "$dir\prog.exe"
+    $info.Arguments = ([IO.File]::ReadAllLines("$dir\args.txt") | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join " "
+    $info.WorkingDirectory = $run
+    $info.UseShellExecute = $false
+    $info.RedirectStandardInput = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($info)
+    $out = New-Object IO.FileStream("$dir\out.txt", [IO.FileMode]::Create)
+    $copy = $process.StandardOutput.BaseStream.CopyToAsync($out)
+    $errors = $process.StandardError.ReadToEndAsync()
+    $input = [IO.File]::ReadAllBytes("$dir\input.txt")
+    try { $process.StandardInput.BaseStream.Write($input, 0, $input.Length); $process.StandardInput.Close() } catch {}
+    if ($process.WaitForExit(__TIMEOUT__ * 1000)) { $process.WaitForExit(); $status = $process.ExitCode }
+    else { $process.Kill(); $status = 142 }
+    $copy.Wait()
+    $out.Close()
+    Write-Text "$dir\err.txt" $errors.Result
+    Write-Text "$dir\status" "$status"
+    Write-Text "$dir\leftovers.txt" ((@(Get-ChildItem -Force -Name $run)) -join "`n")
+}
+"""
+
+
+def is_windows(triple):
+    return "windows" in triple
+
+
+def windows_path(path):
+    """C:\\users\\name\\dir for the /cygdrive/c/users/name/dir that cwRsync uses."""
+    match = re.match(r"/cygdrive/([a-zA-Z])/(.*)", path)
+    if not match:
+        raise RuntimeError(f"a Windows host needs --remote-dir /cygdrive/<drive>/<path>, not {path}")
+    return match.group(1).upper() + ":\\" + match.group(2).replace("/", "\\")
+
+
 def profile_property(triple, key):
     """A property of the compiler's built-in profile for the triple, as the compiler reads it."""
     for line in (PROFILES / f"{triple}.properties").read_text().splitlines():
@@ -356,19 +411,46 @@ def pointer_bytes(triple):
     return 4 if re.search(r"(^|-)p:32:", profile_property(triple, "datalayout")) else 8
 
 
-def run_on_host(host, triple, staged: Path, keep: bool, clang="clang", clang_args=()):
+def run_on_host(host, triple, staged: Path, keep: bool, clang="clang", clang_args=(), remote_dir=REMOTE_DIR):
     """Copies the staged case directories to the host, builds and runs them there, and copies the results back."""
+    if is_windows(triple):
+        return run_on_windows_host(host, triple, staged, keep, clang, clang_args, remote_dir)
     # the same clang command as the compiler's own build: clang_args, the optimization level, the file, then link_args
     args = " ".join([profile_property(triple, "clang_args")] + [shlex.quote(a) for a in clang_args])
     driver = DRIVER.replace("__CLANG__", clang).replace("__CLANG_ARGS__", args)
     driver = driver.replace("__LINK_ARGS__", profile_property(triple, "link_args")).replace("__TIMEOUT__", str(RUN_TIMEOUT))
     (staged / "driver.sh").write_text(driver)
     steps = [
-        SSH + [host, f"rm -rf {REMOTE_DIR}"],
-        RSYNC + ["-a", str(staged) + "/", f"{host}:{REMOTE_DIR}/"],
-        SSH + [host, f"sh {REMOTE_DIR}/driver.sh"],
-        RSYNC + ["-a", "--exclude=prog", "--exclude=prog.ll", "--exclude=run", f"{host}:{REMOTE_DIR}/", str(staged) + "/"],
-    ] + ([] if keep else [SSH + [host, f"rm -rf {REMOTE_DIR}"]])
+        SSH + [host, f"rm -rf {remote_dir}"],
+        RSYNC + ["-a", str(staged) + "/", f"{host}:{remote_dir}/"],
+        SSH + [host, f"sh {remote_dir}/driver.sh"],
+        RSYNC + ["-a", "--exclude=prog", "--exclude=prog.ll", "--exclude=run", f"{host}:{remote_dir}/", str(staged) + "/"],
+    ] + ([] if keep else [SSH + [host, f"rm -rf {remote_dir}"]])
+    run_steps(steps)
+
+
+def run_on_windows_host(host, triple, staged: Path, keep: bool, clang, clang_args, remote_dir):
+    """As run_on_host, with a PowerShell driver, and the profile's startup sources built along with each program."""
+    startup = []
+    for source in profile_property(triple, "startup_source").split():
+        shutil.copy(PROFILES / source, staged / source)
+        startup.append(f'"$root\\{source}"')
+    args = " ".join(f"'{a}'" for a in profile_property(triple, "clang_args").split() + list(clang_args))
+    driver = WINDOWS_DRIVER.replace("__CLANG__", clang).replace("__CLANG_ARGS__", args).replace("__STARTUP__", " ".join(startup))
+    driver = driver.replace("__LINK_ARGS__", profile_property(triple, "link_args")).replace("__TIMEOUT__", str(RUN_TIMEOUT))
+    (staged / "driver.ps1").write_text(driver)
+    directory = windows_path(remote_dir)
+    remove = SSH + [host, f'if exist "{directory}" rmdir /s /q "{directory}"']
+    steps = [
+        remove,
+        RSYNC + ["-a", str(staged) + "/", f"{host}:{remote_dir}/"],
+        SSH + [host, f'powershell -NoProfile -ExecutionPolicy Bypass -File "{directory}\\driver.ps1"'],
+        RSYNC + ["-a", "--exclude=prog.exe", "--exclude=prog.ll", "--exclude=run", f"{host}:{remote_dir}/", str(staged) + "/"],
+    ] + ([] if keep else [remove])
+    run_steps(steps)
+
+
+def run_steps(steps):
     for command in steps:
         done = ssh_tool(command)
         if done.returncode != 0:
@@ -385,7 +467,7 @@ def remote_result(case_dir: Path) -> Result:
     if status == 142:              # perl's alarm: SIGALRM
         status = -1
     output = (case_dir / "out.txt").read_text(errors="replace")
-    leftovers = (case_dir / "leftovers.txt").read_text().split()
+    leftovers = sorted((case_dir / "leftovers.txt").read_text().split())
     return Result(status, output, leftovers)
 
 
@@ -416,7 +498,7 @@ def compare(program: Program, reference: Result, actual: Result):
     return problems
 
 
-HOST_OPTIONS = {"link": "remote", "clang": "clang", "clang_arg": [], "link_arg": [], "run_prefix": ""}
+HOST_OPTIONS = {"link": "remote", "clang": "clang", "clang_arg": [], "link_arg": [], "run_prefix": "", "remote_dir": REMOTE_DIR}
 
 
 class HostOption(argparse.Action):
@@ -452,6 +534,7 @@ def main():
     parser.add_argument("--clang-arg", action=HostOption, help="an extra argument for clang on the hosts, such as --sysroot=<dir> (repeatable)")
     parser.add_argument("--link-arg", action=HostOption, help="an extra clang link argument for local linking (repeatable)")
     parser.add_argument("--run-prefix", action=HostOption, help="a command that runs each program on the hosts, such as an emulator")
+    parser.add_argument("--remote-dir", action=HostOption, help=f"the work directory on the hosts (default: ~/{REMOTE_DIR}); on Windows /cygdrive/<drive>/<path>")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4, help="parallel compiler runs")
     parser.set_defaults(host_options=[])
     options = parser.parse_args()
@@ -516,6 +599,7 @@ def main():
                 target.mkdir(parents=True)
                 shutil.copy(case_dir / "input.txt", target)
                 (target / "run.sh").write_text(run_script(program, settings.run_prefix))
+                (target / "args.txt").write_text("".join(a + "\n" for a in program.args))
                 common = ["-target", target_name, "-triple", triple] + (["-noopt"] if noopt else [])
                 if link == "remote":
                     prog8c(common + ["-out", str(target), str(case_dir / "prog.p8")], target)
@@ -528,7 +612,7 @@ def main():
                 with concurrent.futures.ThreadPoolExecutor(options.jobs) as pool:
                     list(pool.map(stage, host_cases))
                 print(f"{host} ({triple}), {link} linking: running...", flush=True)
-                run_on_host(host, triple, staged, options.keep, settings.clang, settings.clang_arg)
+                run_on_host(host, triple, staged, options.keep, settings.clang, settings.clang_arg, settings.remote_dir)
             except RuntimeError as x:
                 print(f"  FAILED: {x}")
                 failures += len(host_cases)

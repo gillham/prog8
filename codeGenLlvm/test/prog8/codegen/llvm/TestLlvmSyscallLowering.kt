@@ -386,7 +386,7 @@ class TestLlvmSyscallLowering: FunSpec({
         size shouldHave "  call i32 @fseek(ptr %file, i32 0, i32 2)"
         size shouldHave "  ret i32 %known"
         module.function(".file.seek").lines() shouldHave "  %status = call i32 @fseek(ptr %file, i32 %position, i32 0)"
-        module.function(".file.load").lines() shouldHave "  %count = call i32 @fread(ptr %at, i32 1, i32 4096, ptr %file)"
+        module.function(".file.load").lines() shouldHave "  %count = call i32 @fread(ptr %address, i32 1, i32 %rest, ptr %file)"
         val save = module.function(".file.save").lines()
         save shouldHave "  %address = ptrtoint ptr %start to i32"
         save shouldHave "  %lsb = and i32 %address, 255"

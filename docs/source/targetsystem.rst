@@ -252,7 +252,8 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
 2. ``~/.prog8/llvm/<name>.properties``
 3. a profile built into the compiler: ``wasm32-wasip1``, ``wasm32-unknown-emscripten``, ``armv7a-none-eabihf``, ``riscv32-unknown-elf``,
    ``arm64-apple-macosx``, ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``,
-   ``riscv64-unknown-linux-gnu``, ``riscv32-unknown-linux-gnu`` and ``armv7-unknown-linux-gnueabihf``
+   ``riscv64-unknown-linux-gnu``, ``riscv32-unknown-linux-gnu``, ``armv7-unknown-linux-gnueabihf``, ``x86_64-pc-windows-msvc``
+   and ``x86_64-w64-windows-gnu``
 4. any other triple that clang knows, such as ``aarch64-linux-musl`` or ``i686-unknown-linux-gnu``: the compiler asks
    clang for its normalized name, data layout and C ``long`` size, and builds with ``--target=<name>``.
    Run, link and startup settings need a profile file.
@@ -262,7 +263,12 @@ The Linux profiles and a triple from clang build on a host of that platform; cro
 a linker for it, given with ``-Xcompile`` and ``-Xlink`` or in a profile file, for example
 ``-Xcompile --sysroot=<dir> -Xlink -fuse-ld=lld``. The ``scripts/llvm-remote-check.py`` script runs the compiler's
 llvm64 test programs on other hosts over ssh, built there or cross linked with a sysroot copied from them. ``x86_64-apple-macosx`` builds on any
-Mac, and runs on Apple Silicon under Rosetta 2. On 64-bit Windows a C ``long`` has 4 bytes; that triple is not tested.
+Mac, and runs on Apple Silicon under Rosetta 2. ``x86_64-pc-windows-msvc`` builds with clang and the Microsoft C library,
+where a C ``long`` has 4 bytes; its startup code switches the console and files to binary mode, so ``\n`` isn't written
+as ``\r\n``, and adds the routines that the Microsoft C library lacks: ``usleep`` for ``sys.wait``, ``roundeven``, and the
+directory routines for ``diskio.directory``. It is the default llvm64 triple on a 64-bit Windows host.
+``x86_64-w64-windows-gnu`` builds with `llvm-mingw <https://github.com/mstorsjo/llvm-mingw>`_, whose clang must be the
+``clang`` on the PATH; its startup code switches to binary mode and adds ``roundeven``, as mingw-w64 has the other routines.
 These are the keys of a profile; an unknown key is an error:
 
 ``triple`` (required)

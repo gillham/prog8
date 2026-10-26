@@ -41,6 +41,8 @@ class TestLlvmTripleProfile: FunSpec({
         "riscv64-unknown-linux-gnu" to Triple("riscv64-unknown-linux-gnu", 64, 8),
         "riscv32-unknown-linux-gnu" to Triple("riscv32-unknown-linux-gnu", 32, 4),
         "armv7-unknown-linux-gnueabihf" to Triple("armv7-unknown-linux-gnueabihf", 32, 4),
+        "x86_64-pc-windows-msvc" to Triple("x86_64-pc-windows-msvc", 64, 4),
+        "x86_64-w64-windows-gnu" to Triple("x86_64-w64-windows-gnu", 64, 4),
         "riscv32-unknown-elf" to Triple("riscv32-unknown-unknown-elf", 32, 4),
         "armv7a-none-eabihf" to Triple("armv7-unknown-none-eabihf", 32, 4),
     )
@@ -72,9 +74,10 @@ class TestLlvmTripleProfile: FunSpec({
         LlvmTarget.hostTriple64("Linux", "aarch64") shouldBe "aarch64-unknown-linux-gnu"
         LlvmTarget.hostTriple64("Linux", "riscv64") shouldBe "riscv64-unknown-linux-gnu"
         LlvmTarget.hostTriple64("Linux", "arm") shouldBe null
-        LlvmTarget.hostTriple64("Windows 11", "amd64") shouldBe null
+        LlvmTarget.hostTriple64("Windows 11", "amd64") shouldBe "x86_64-pc-windows-msvc"
+        LlvmTarget.hostTriple64("Windows 11", "aarch64") shouldBe null
         for (name in listOfNotNull(LlvmTarget.hostTriple64("Mac OS X", "aarch64"), LlvmTarget.hostTriple64("Mac OS X", "x86_64"), LlvmTarget.hostTriple64("Linux", "amd64"),
-                LlvmTarget.hostTriple64("Linux", "aarch64"), LlvmTarget.hostTriple64("Linux", "riscv64")))
+                LlvmTarget.hostTriple64("Linux", "aarch64"), LlvmTarget.hostTriple64("Linux", "riscv64"), LlvmTarget.hostTriple64("Windows 11", "amd64")))
             withClue(name) { LlvmTripleProfile.resolve(name).pointerBits shouldBe 64 }
     }
 

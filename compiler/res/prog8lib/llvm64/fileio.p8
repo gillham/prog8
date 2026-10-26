@@ -59,7 +59,8 @@ fileio {
 
     sub seek(pointer handle, quad offset, ubyte whence) -> bool {
         ; -- moves to the offset from where whence says (SEEK_SET, SEEK_CUR or SEEK_END): returns false when that fails, or for a 0 handle
-        if handle == 0
+        ;    A negative SEEK_SET offset fails here already: some C libraries move to the start of the file when it fails there.
+        if handle == 0 or (whence == SEEK_SET and offset < 0)
             return false
         %ir {{
             loadm.p r99200.p,[fileio.seek.handle]
