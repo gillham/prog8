@@ -564,7 +564,7 @@ object OpcodeSchemas {
                 reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE)
             )
         }
-        define(Opcode.SGN, "BWLF", statusEffect = StatusEffect.SETS) { t ->
+        define(Opcode.SGN, "BWLQF", statusEffect = StatusEffect.SETS) { t ->
             listOf(
                 ireg(InstructionSlot.DEST, OperandRole.RESULT, OperandDirection.DEF, TypeRule.Fixed(IRDataType.BYTE)),
                 reg(fileOf(t), InstructionSlot.SRC_A, OperandRole.VALUE, OperandDirection.USE)

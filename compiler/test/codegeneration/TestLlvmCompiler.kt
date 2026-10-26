@@ -1508,7 +1508,9 @@ private val programsWith64BitAddresses = setOf(
     "uquad constants folded with signed operands as at runtime, and typed pointers compared with negative numbers",
     "the untyped pointer is a uquad in variables, constants, parameters, return values, struct fields and arrays",
     "a goto through a uquad address variable ends a subroutine that returns a value",
-    "in-place updates of uquad and pointer address array elements with a variable index"
+    "in-place updates of uquad and pointer address array elements with a variable index",
+    "negative and signed indexes on a uquad address",
+    "abs, min, max, clamp and sgn with quads and uquads, and sgn of unsigned values"
 )
 
 // these declare C functions with the 64-bit size_t of LP64 hosts, so they only link and run right where pointers have 8 bytes
@@ -4244,6 +4246,67 @@ main {
             return 2
         if arr[0] != (&buf as uquad) or arr[1] != 0
             return 3
+        return 0
+    }
+}""",
+    "negative and signed indexes on a uquad address" to """
+main {
+    ubyte[10] buf
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        uquad @shared p = &buf[5]
+        byte @shared bi = -3
+        word @shared wi = -4
+        ubyte @shared ui = 2
+        buf[3] = 7
+        buf[2] = 8
+        buf[1] = 9
+        buf[7] = 6
+        if p[-2] != 7
+            return 1
+        if p[bi] != 8
+            return 2
+        if p[wi] != 9
+            return 3
+        if p[ui] != 6
+            return 4
+        p[-1] = 42
+        if buf[4] != 42
+            return 5
+        return 0
+    }
+}""",
+    "abs, min, max, clamp and sgn with quads and uquads, and sgn of unsigned values" to $$"""
+main {
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        quad @shared q = -5000000000
+        quad @shared r = 3
+        quad @shared z = 0
+        uquad @shared uq = $9000_0000_0000_0000
+        uquad @shared ur = 4
+        long @shared l = -7
+        uword @shared uw = 40000
+        ubyte @shared ub = 200
+        if abs(q) != 5000000000 or abs(uq) != $9000_0000_0000_0000
+            return 1
+        if min(q, r) != q or max(q, r) != r or min(q, l) != q
+            return 2
+        if min(uq, ur) != ur or max(uq, ur) != uq
+            return 3
+        if clamp(q, r, 10) != r or clamp(r * 5, 0, 10) != 10 or clamp(r, 0, 10) != r or clamp(uq, ur, 100) != 100
+            return 4
+        if sgn(q) != -1 or sgn(r) != 1 or sgn(z) != 0 or sgn(uq) != 1
+            return 5
+        if sgn(uw) != 1 or sgn(ub) != 1
+            return 6
         return 0
     }
 }""",

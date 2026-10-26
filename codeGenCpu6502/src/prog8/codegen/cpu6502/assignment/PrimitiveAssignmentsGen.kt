@@ -689,16 +689,15 @@ internal class PrimitiveAssignmentsGen(
                 storeRegisterAInMemoryAddress(target.memory!!)
             }
             TargetStorageKind.ARRAY -> {
+                if(target.array!!.pointerderef!=null) {
+                    pointergen.assignByteVar(IndexedPtrTarget(target), varName, false, false)
+                    return
+                }
                 if (target.constArrayIndexValue!=null) {
                     val scaledIdx = program.memsizer.memorySize(target.datatype, target.constArrayIndexValue!!.toInt())
                     asmgen.out(" lda  $varName  | sta  ${target.asmVarname}+$scaledIdx")
                 }
                 else {
-                    val deref = target.array!!.pointerderef
-                    if(deref!=null) {
-                        pointergen.assignByteVar(IndexedPtrTarget(target), varName, false, false)
-                        return
-                    }
                     asmgen.loadScaledArrayIndexIntoRegister(target.array, CpuRegister.Y)
                     asmgen.out(" lda  $varName |  sta  ${target.asmVarname},y")
                 }

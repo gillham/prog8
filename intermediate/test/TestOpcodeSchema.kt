@@ -152,9 +152,9 @@ class TestOpcodeSchema: FunSpec({
         val quadOpcodes = listOf(Opcode.LOAD, Opcode.LOADM, Opcode.LOADX, Opcode.LOADI, Opcode.STOREM, Opcode.STOREI,
             Opcode.STOREIM, Opcode.ADDR, Opcode.SUB, Opcode.MULSR, Opcode.DIV, Opcode.MODS, Opcode.ADDM, Opcode.AND,
             Opcode.XORR, Opcode.INV, Opcode.NEG, Opcode.LSLN, Opcode.ASRI, Opcode.LSR, Opcode.CMP, Opcode.CMPI,
-            Opcode.BGTS, Opcode.BGER, Opcode.RETURNI, Opcode.BITTST, Opcode.PUSH, Opcode.POP)
+            Opcode.BGTS, Opcode.BGER, Opcode.RETURNI, Opcode.BITTST, Opcode.PUSH, Opcode.POP, Opcode.SGN)
         quadOpcodes.filter { IRDataType.QUAD !in OpcodeSchemas.typesFor(it) } shouldBe emptyList()
-        val noQuadOpcodes = listOf(Opcode.SQRT, Opcode.SQUARE, Opcode.SGN, Opcode.ROL, Opcode.ROXR, Opcode.CONCAT,
+        val noQuadOpcodes = listOf(Opcode.SQRT, Opcode.SQUARE, Opcode.ROL, Opcode.ROXR, Opcode.CONCAT,
             Opcode.MSIGW, Opcode.LOADP_INC, Opcode.DIVMOD)
         noQuadOpcodes.filter { IRDataType.QUAD in OpcodeSchemas.typesFor(it) } shouldBe emptyList()
     }

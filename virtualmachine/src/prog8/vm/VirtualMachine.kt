@@ -1866,7 +1866,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         val dest = i.requireDest().registerNumber
         val src = i.requireSrcA().registerNumber
         val sign: Int = when (i.type!!) {
-            IRDataType.QUAD -> throw IllegalArgumentException("invalid quad type for this instruction $i")
+            IRDataType.QUAD -> registers.getSQ(src).sign
             IRDataType.BYTE -> registers.getSB(src).toInt().sign
             IRDataType.WORD -> registers.getSW(src).toInt().sign
             IRDataType.POINTER -> registers.getSL(src).sign

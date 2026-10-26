@@ -14,7 +14,7 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
     fun translate(call: PtFunctionCall): ExpressionCodeResult {
         require(call.builtin)
         return when(call.name) {
-            "abs__byte", "abs__word", "abs__long", "abs__float" -> funcAbs(call)
+            "abs__byte", "abs__word", "abs__long", "abs__quad", "abs__float" -> funcAbs(call)
             "cmp" -> funcCmp(call)
             "sgn" -> funcSgn(call)
             "sqrt__ubyte", "sqrt__uword", "sqrt__long", "sqrt__float" -> funcSqrt(call)
@@ -49,9 +49,9 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
             "pokemon" -> funcPokemon(call)
             "mkword" -> funcMkword(call)
             "mklong", "mklong2" -> funcMklong(call)
-            "clamp__byte", "clamp__ubyte", "clamp__word", "clamp__uword", "clamp__long" -> funcClamp(call)
-            "min__byte", "min__ubyte", "min__word", "min__uword", "min__long" -> funcMin(call)
-            "max__byte", "max__ubyte", "max__word", "max__uword", "max__long" -> funcMax(call)
+            "clamp__byte", "clamp__ubyte", "clamp__word", "clamp__uword", "clamp__long", "clamp__quad", "clamp__uquad" -> funcClamp(call)
+            "min__byte", "min__ubyte", "min__word", "min__uword", "min__long", "min__quad", "min__uquad" -> funcMin(call)
+            "max__byte", "max__ubyte", "max__word", "max__uword", "max__long", "max__quad", "max__uquad" -> funcMax(call)
             "setlsb" -> funcSetLsbMsb(call, false)
             "setmsb" -> funcSetLsbMsb(call, true)
             "rol" -> funcRolRor(call)
@@ -379,18 +379,19 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
                 result += IRCodeChunk(notNegativeLabel, null)
                 return ExpressionCodeResult(result, IRDataType.WORD, tr.resultReg, -1)
             }
-            BaseDataType.LONG -> {
+            BaseDataType.LONG, BaseDataType.QUAD -> {
+                val type = codeGen.irType(sourceDt)
                 val notNegativeLabel = codeGen.createLabelName()
-                val compareReg = codeGen.registers.next(IRDataType.LONG)
+                val compareReg = codeGen.registers.next(type)
                 result += IRCodeChunk(null, null).also {
-                    it += IRInstructions.move(IRDataType.LONG, compareReg, tr.resultReg)
+                    it += IRInstructions.move(type, compareReg, tr.resultReg)
                     if(needsExplicitCmpi)
-                        it += IRInstructions.compareImmediate(IRDataType.LONG, compareReg, 0)
+                        it += IRInstructions.compareImmediate(type, compareReg, 0)
                     it += IRInstructions.branch(Opcode.BSTPOS, codeLabel(notNegativeLabel))
-                    it += IRInstructions.unary(Opcode.NEG, IRDataType.LONG, tr.resultReg)
+                    it += IRInstructions.unary(Opcode.NEG, type, tr.resultReg)
                 }
                 result += IRCodeChunk(notNegativeLabel, null)
-                return ExpressionCodeResult(result, IRDataType.LONG, tr.resultReg, -1)
+                return ExpressionCodeResult(result, type, tr.resultReg, -1)
             }
             BaseDataType.FLOAT -> {
                 val resultFpReg = codeGen.registers.next(IRDataType.FLOAT)
@@ -409,6 +410,23 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         val result = mutableListOf<IRCodeChunkBase>()
         val tr = exprGen.translateExpression(call.args.single())
         val resultReg = codeGen.registers.next(IRDataType.BYTE)
+
+        if(call.args.single().type.isUnsignedInteger) {
+            // SGN reads its operand as signed, so an unsigned value is compared with 0 instead
+            addToResult(result, tr, tr.resultReg, -1)
+            val positiveLabel = codeGen.createLabelName()
+            val doneLabel = codeGen.createLabelName()
+            result += IRCodeChunk(null, null).also {
+                it += IRInstructions.branchImmediate(Opcode.BGT, tr.dt, tr.resultReg, 0, codeLabel(positiveLabel))
+                it += IRInstructions.load(IRDataType.BYTE, resultReg, 0)
+                it += IRInstructions.jump(codeLabel(doneLabel))
+            }
+            result += IRCodeChunk(positiveLabel, null).also {
+                it += IRInstructions.load(IRDataType.BYTE, resultReg, 1)
+            }
+            result += IRCodeChunk(doneLabel, null)
+            return ExpressionCodeResult(result, IRDataType.BYTE, resultReg, -1)
+        }
 
         if(tr.dt==IRDataType.FLOAT) {
             addToResult(result, tr, -1, tr.resultFpReg)
@@ -537,6 +555,27 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         result += valueTr.chunks
         result += minimumTr.chunks
         result += maximumTr.chunks
+        if(type == IRDataType.QUAD) {
+            // there's no clamp syscall for quads
+            val greater = if(call.type.isSigned) Opcode.BGTSR else Opcode.BGTR
+            val belowMinimum = codeGen.createLabelName()
+            val aboveMaximum = codeGen.createLabelName()
+            val done = codeGen.createLabelName()
+            result += IRCodeChunk(null, null).also {
+                it += IRInstructions.branchRegister(greater, type, minimumTr.resultReg, valueTr.resultReg, codeLabel(belowMinimum))
+                it += IRInstructions.branchRegister(greater, type, valueTr.resultReg, maximumTr.resultReg, codeLabel(aboveMaximum))
+                it += IRInstructions.jump(codeLabel(done))
+            }
+            result += IRCodeChunk(belowMinimum, null).also {
+                it += IRInstructions.move(type, valueTr.resultReg, minimumTr.resultReg)
+                it += IRInstructions.jump(codeLabel(done))
+            }
+            result += IRCodeChunk(aboveMaximum, null).also {
+                it += IRInstructions.move(type, valueTr.resultReg, maximumTr.resultReg)
+            }
+            result += IRCodeChunk(done, null)
+            return ExpressionCodeResult(result, type, valueTr.resultReg, -1)
+        }
         val syscall = when(call.type.base) {
             BaseDataType.UBYTE -> IMSyscall.CLAMP_UBYTE
             BaseDataType.BYTE -> IMSyscall.CLAMP_BYTE

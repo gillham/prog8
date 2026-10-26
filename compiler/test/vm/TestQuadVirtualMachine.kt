@@ -1416,4 +1416,66 @@ main {
             )
         }
     }
+
+    test("abs, min, max, clamp and sgn take quads and uquads, and sgn of an unsigned value is 0 or 1") {
+        val src = $$"""
+main {
+    quad @shared q = -5000000000
+    quad @shared r = 3
+    quad @shared z = 0
+    uquad @shared uq = $9000_0000_0000_0000
+    uquad @shared ur = 4
+    long @shared l = -7
+    uword @shared uw = 40000
+    quad @shared absq
+    uquad @shared absuq
+    quad @shared minq
+    quad @shared maxq
+    uquad @shared minuq
+    uquad @shared maxuq
+    quad @shared minmixed
+    quad @shared clampq1
+    quad @shared clampq2
+    uquad @shared clampuq
+    byte @shared sgnq
+    byte @shared sgnz
+    byte @shared sgnuq
+    byte @shared sgnuw
+
+    sub start() {
+        absq = abs(q)
+        absuq = abs(uq)
+        minq = min(q, r)
+        maxq = max(q, r)
+        minuq = min(uq, ur)
+        maxuq = max(uq, ur)
+        minmixed = min(q, l)
+        clampq1 = clamp(q, r, 10)
+        clampq2 = clamp(r * 5, 0, 10)
+        clampuq = clamp(uq, ur, 100)
+        sgnq = sgn(q)
+        sgnz = sgn(z)
+        sgnuq = sgn(uq)
+        sgnuw = sgn(uw)
+    }
+}"""
+        runOptimizedAndUnoptimized(src) {
+            shouldHave(
+                "absq" to 5_000_000_000L,
+                "absuq" to 0x9000_0000_0000_0000uL,
+                "minq" to -5_000_000_000L,
+                "maxq" to 3L,
+                "minuq" to 4uL,
+                "maxuq" to 0x9000_0000_0000_0000uL,
+                "minmixed" to -5_000_000_000L,
+                "clampq1" to 3L,
+                "clampq2" to 10L,
+                "clampuq" to 100uL,
+                "sgnq" to (-1).toByte(),
+                "sgnz" to 0.toByte(),
+                "sgnuq" to 1.toByte(),
+                "sgnuw" to 1.toByte(),
+            )
+        }
+    }
 })

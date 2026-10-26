@@ -45,11 +45,14 @@ Keeping the list: add new items at the end with the next number, and remove an i
   should have been resolved at the compiler Ast level`.
 - Branch: fixed.
 
-**U7. 6502: indexed write through a `uword` struct field crashes**
+**U7. 6502: indexing a uword or pointer struct field uses the field's own address**
 - Repro: `struct Node { ubyte kind  uword data }`, `^^Node n = ^^Node : [1, &buf]`, `ubyte v = 5`, `n.data[2] = v`
-  on cx16: `NotImplementedError: asmVarname for array with pointer`. An x16emu run in an earlier session (not
-  re-checked) showed that a constant value instead writes into the struct's own `data` field.
-- Branch: not fixed.
+  on cx16: `NotImplementedError: asmVarname for array with pointer`. The other forms compile, but read and write at
+  `n + offset(data) + index`, inside the struct, instead of at the address `data` holds plus the index:
+  `n.data[2]`, `n.data[i]`, `n.data[3] = 99` and the same through a `^^ubyte` field all give wrong results.
+- Branch: fixed in `PointerAssignmentsGen.deref` (a uword field is loaded like a pointer field),
+  `AssignmentAsmGen` (constant-index reads), and `PrimitiveAssignmentsGen.assignVariableByte` (checks for the
+  pointer target before the constant index); checked with ksim65 and x16emu.
 
 **U8. A constant address above `$7fff_ffff` reads address 0 on the VM**
 - Repro: `ubyte @shared x = @($ffff_ffff)` or `peek($ffff_ffff)` on virtual compiles to `loadm.b r1.b,[$0]`. The
@@ -133,4 +136,17 @@ Keeping the list: add new items at the end with the next number, and remove an i
   pointer array into a `uword` array, whatever the target's pointer size.
 - Branch: fixed, it becomes an array of the target's pointer-sized integer (`pointerBaseType`), so `long` on the VM
   and `uword` on 6502.
+
+**U22. `&` of a split word array in a struct initializer refers to an undefined symbol**
+- Repro (cx16): `uword[4] words` (split), `^^Node n = ^^Node : [1, &buf, &buf, &words]` in a larger program: the
+  struct data line is `.dstruct p8b_main.p8t_Node, 1,p8b_main.p8v_buf,p8b_main.p8v_buf,p8b_main.p8v_words`, but a
+  split array only defines `p8v_words_lsb`/`_msb`, so 64tass reports `not defined symbol 'p8v_words'`. Small
+  programs with the same line still assemble, so the trigger isn't pinned down yet; `@nosplit` avoids it.
+- Branch: not fixed.
+
+**U23. `sgn` of an unsigned value gives -1 on the VM**
+- Repro: `uword uw = 40000`, `ubyte ub = 200`, `txt.print_b(sgn(uw))` and `txt.print_b(sgn(ub))` on virtual print -1 -1;
+  the compiler's own warning says the result for an unsigned type "is always 0 or 1", and cx16 gives 1 1. The IR's
+  `SGN` instruction reads its operand as signed.
+- Branch: fixed, `BuiltinFuncGen.funcSgn` compares an unsigned value with 0 instead of using `SGN`.
 

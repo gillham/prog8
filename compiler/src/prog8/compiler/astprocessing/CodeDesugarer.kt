@@ -514,7 +514,9 @@ _after:
         val isPointerHolder = arrayVar!=null && arrayVar.datatype == target.pointerType
         if(arrayVar!=null && (isPointerHolder || arrayVar.datatype.isPointer)) {
             val indexType = target.pointerType
-            val wordIndex = TypecastExpression(indexExpr, indexType, true, indexExpr.position)
+            // a signed index such as -2 can't be cast to uquad; the addition sign extends it instead (see isSignedAddressOperand)
+            val signedIndexForUquad = indexType.isUnsignedQuad && indexExpr.inferType(program).getOrUndef().isSigned
+            val wordIndex = if(signedIndexForUquad) indexExpr else TypecastExpression(indexExpr, indexType, true, indexExpr.position)
             val address = BinaryExpression(
                 arrayIndexedExpression.plainarrayvar!!.copy(),
                 "+",

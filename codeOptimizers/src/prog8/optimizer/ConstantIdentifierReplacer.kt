@@ -201,8 +201,7 @@ class VarConstantValueTypeAdjuster(
                 val replaceFunc = if(t1.isBytes) {
                     if(t1 issimpletype BaseDataType.BYTE) "clamp__byte" else "clamp__ubyte"
                 } else if(t1.isQuad) {
-                    errors.err("clamp builtin not supported for quad and uquad yet", functionCallExpr.position)
-                    return noModifications
+                    if(t1 issimpletype BaseDataType.UQUAD) "clamp__uquad" else "clamp__quad"
                 } else if(t1.isInteger) {
                     when {
                         t1 issimpletype BaseDataType.WORD -> "clamp__word"
@@ -230,9 +229,10 @@ class VarConstantValueTypeAdjuster(
                         "${funcName}__byte"
                     else
                         "${funcName}__ubyte"
-                } else if(t1.isQuad || t2.isQuad) {
-                    errors.err("min/max not supported for quad and uquad yet", functionCallExpr.position)
-                    return noModifications
+                } else if((t1.isQuad || t2.isQuad) && t1.isInteger && t2.isInteger) {
+                    // like a uquad with a positive quad literal, the pair is only unsigned when both are
+                    val unsigned = (t1 issimpletype BaseDataType.UQUAD || !t1.isQuad) && (t2 issimpletype BaseDataType.UQUAD || !t2.isQuad)
+                    replaceFunc = if(unsigned) "${funcName}__uquad" else "${funcName}__quad"
                 } else if(t1.isInteger && t2.isInteger) {
                     replaceFunc = when {
                         t1 issimpletype BaseDataType.LONG || t2 issimpletype BaseDataType.LONG -> "${funcName}__long"
@@ -264,10 +264,10 @@ class VarConstantValueTypeAdjuster(
                     dt.isUnsignedByte || dt.isUnsignedWord -> {
                         return listOf(AstReplaceNode(functionCallExpr, functionCallExpr.args[0], parent))
                     }
-                    dt.isQuad -> {
-                        errors.err("abs builtin not supported for quad and uquad yet", functionCallExpr.position)
-                        return noModifications
+                    dt.isUnsignedQuad -> {
+                        return listOf(AstReplaceNode(functionCallExpr, functionCallExpr.args[0], parent))
                     }
+                    dt.isQuad -> "abs__quad"
                     else -> {
                         errors.err("expected numeric argument", functionCallExpr.args[0].position)
                         return noModifications

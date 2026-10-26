@@ -259,7 +259,12 @@ internal class AssignmentAsmGen(
                     val eltSize = program.memsizer.memorySize(elementDt, null)
 
                     if(constIndex != null) {
-                        val (zpPtrVar, structOffset) = pointergen.deref(pointerDeref, false)
+                        // a pointer or uword field is indexed from the address it holds, not from where it is in the struct
+                        val holdsAddress = pointerDeref.type.isPointer || pointerDeref.type.isUnsignedWord
+                        val (zpPtrVar, structOffset) = if(holdsAddress)
+                            pointergen.deref(pointerDeref, addOffsetToPointer = true, loadPointerFieldValue = true)
+                        else
+                            pointergen.deref(pointerDeref, false)
                         val totalOffset = eltSize * constIndex + structOffset.toInt()
 
                         when {

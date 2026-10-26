@@ -84,6 +84,7 @@ Math
 :index:`sgn` (x)
     Get the sign of the value (integer or floating point).
     The result is a byte: -1, 0 or 1 (negative, zero, positive).
+    For an unsigned value it is 0 or 1.
 
 :index:`sqrt` (x)
     Returns the square root of the number.

@@ -287,7 +287,7 @@ internal class PointerAssignmentsGen(private val asmgen: AsmGen6502Internal, pri
             if(addOffsetToPointer) {
                 asmgen.assignExpressionToVariable(pointer.startpointer, "P8ZP_SCRATCH_PTR", DataType.UWORD)
                 addFieldOffsetToScratchPointer(field.second.toUInt())
-                if(pointer.derefLast || (loadPointerFieldValue && field.first.isPointer))
+                if(pointer.derefLast || (loadPointerFieldValue && (field.first.isPointer || field.first.isUnsignedWord)))
                     updateScratchPointer()
                 return "P8ZP_SCRATCH_PTR" to 0u
             } else {
@@ -339,7 +339,7 @@ internal class PointerAssignmentsGen(private val asmgen: AsmGen6502Internal, pri
         } else {
             if(addOffsetToPointer) {
                 addFieldOffsetToScratchPointer(fieldinfo.second.toUInt())
-                if(loadPointerFieldValue && fieldinfo.first.isPointer)
+                if(loadPointerFieldValue && (fieldinfo.first.isPointer || fieldinfo.first.isUnsignedWord))
                     updateScratchPointer()
                 return "P8ZP_SCRATCH_PTR" to 0u
             } else
