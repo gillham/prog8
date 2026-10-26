@@ -568,6 +568,80 @@ main {
         withClue("prog8c -emu exits with the status that launchEmulator returns") { hostLlvmTarget.launchEmulator(1, executable, quiet = true, emptyList()) shouldBe 42 }
     }
 
+    test("subroutine locals that only their own subroutine uses live in stack slots, the others stay static") {
+        val src = """
+%zeropage basicsafe
+main {
+    sub start() {
+        void work(3)
+        outer()
+    }
+
+    sub work(ubyte n) -> uword {
+        uword total = 0
+        ubyte @dirty kept
+        ubyte[4] table
+        ubyte taken
+        ^^ubyte ptr = &taken
+        table[n] = n
+        kept += n
+        repeat n
+            total += table[n] + kept + @(ptr)
+        return total
+    }
+
+    sub outer() {
+        ubyte seen = 1
+        inner()
+        cx16.r0L = seen
+
+        sub inner() {
+            seen++
+        }
+    }
+}"""
+        val lines = compiledLlFile(compileText(LlvmTarget(), false, src, outputDir)).readLines()
+        for (local in listOf("n", "total", "ptr"))
+            withClue(local) {
+                lines.any { it.trim().startsWith("%local.$local = alloca") } shouldBe true
+                lines.none { it.startsWith("@main.work.$local ") } shouldBe true
+            }
+        for (static in listOf("main.work.kept", "main.work.table", "main.work.taken", "main.outer.seen"))
+            withClue(static) { lines.any { it.startsWith("@$static = internal global") } shouldBe true }
+    }
+
+    test("a recursive subroutine gets a warning on llvm only for the static storage its recursive calls share") {
+        val src = """
+%zeropage basicsafe
+main {
+    sub start() {
+        void fib(10)
+        void walk(3)
+    }
+
+    sub fib(ubyte n) -> uword {
+        if n < 2
+            return n
+        uword a = fib(n - 1)
+        return a + fib(n - 2)
+    }
+
+    sub walk(ubyte depth) -> uword {
+        ubyte[4] scratch
+        uword @dirty calls
+        calls++
+        scratch[0] = depth
+        if depth == 0
+            return 1
+        return walk(depth - 1) + scratch[0]
+    }
+}"""
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(LlvmTarget(), false, src, outputDir, errors = errors).shouldNotBeNull()
+        errors.warnings.filter { "recursive" in it }.map { it.substringAfter(": ") } shouldBe
+            listOf("recursive subroutine 'walk' keeps 'scratch', 'calls' in static storage, which its recursive calls share")
+    }
+
     test("native inline assembly, also as the body of an asmsub, is a compilation error") {
         val src = """
 main {
@@ -5134,6 +5208,35 @@ main {
         txt.nl()
     }
 }""", "-64 -16 -16383 -8192\n1\n"),
+
+    "recursive subroutines with only scalar locals and parameters" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.print_uw(fib(20))
+        txt.nl()
+        txt.print_uw(ackermann(2, 3))
+        txt.nl()
+    }
+
+    sub fib(ubyte n) -> uword {
+        if n < 2
+            return n
+        uword a = fib(n - 1)
+        uword b = fib(n - 2)
+        return a + b
+    }
+
+    sub ackermann(uword m, uword n) -> uword {
+        if m == 0
+            return n + 1
+        if n == 0
+            return ackermann(m - 1, 1)
+        return ackermann(m - 1, ackermann(m, n - 1))
+    }
+}""", "6765\n9\n"),
 
     "when with case bodies and an else body" to OutputProgram("""
 %import textio

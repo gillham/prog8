@@ -305,6 +305,8 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     private val registerSlots = mutableMapOf<VirtualRegister, LlvmValue.Local>()
     private val flags = mutableMapOf<Flag, FlagValue>()
     private val savedFlags = if (flagSlots) Flag.entries.associateWith { stackSlot("flag.${it.name.lowercase()}", LlvmType.I1) } else emptyMap()
+    private val locals = builder.symbols.stackLocals[sub.label].orEmpty()
+    private val localSlots = locals.associate { it.name to stackSlot("local.${it.name.substringAfterLast('.')}", it.type) }
     private lateinit var current: LlvmBlock
     private var endBlock: String? = null
     private val tailCalls = linkedMapOf<String, String>()
@@ -323,8 +325,9 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
             addAll(allocas)
             // PUSHST also reads flags that were never set; cleared slots keep undef out of the status byte
             savedFlags.values.forEach { add(LlvmInstruction.Store(LlvmValue.IntConstant(0, LlvmType.I1), it)) }
+            locals.forEach { add(LlvmInstruction.Store(it.initialValue, localSlots.getValue(it.name))) }
             sub.parameters.zip(params).forEach { (param, value) ->
-                val variable = requireNotNull(builder.symbols.addresses[param.name]) { "parameter ${param.name} of ${sub.label} has no variable" }
+                val variable = requireNotNull(localSlots[param.name] ?: builder.symbols.addresses[param.name]) { "parameter ${param.name} of ${sub.label} has no variable" }
                 add(LlvmInstruction.Store(value, variable))
             }
             add(first?.let { LlvmInstruction.Br(it) } ?: endOfFunction())
@@ -430,6 +433,10 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     }
 
     fun symbolAddress(name: String, offset: Int = 0): LlvmValue {
+        localSlots[name]?.let { slot ->
+            return if (offset == 0) slot
+            else derive("addr", LlvmType.Ptr) { LlvmInstruction.GetElementPtr(it, LlvmType.I8, slot, listOf(LlvmValue.IntConstant(offset.toLong(), builder.mapper.intPtr)), inBounds = true) }
+        }
         val base = builder.symbols.addresses[name]
             ?: builder.indirectEntry(name).takeIf { builder.subroutine(name) != null || builder.asmSubroutine(name) != null }
             ?: throw IllegalArgumentException("${sub.label} takes the address of unknown symbol $name")

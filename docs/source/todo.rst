@@ -12,7 +12,7 @@ Future Things and Ideas
 - the c64 sprite multiplexer still needs adjustments to make it smooth, it lacks a proper raster event scheduler.
 - support typed pointer arrays as struct fields, curretly requires untyped pointers arrays.
 - constant addresses wider than 32 bits are rejected with an error on llvm64 (pointer literals are LONG); only computed 64-bit addresses work.
-- llvm: pointer variables are ``i64`` in the LLVM IR, which weakens LLVM's alias analysis, and every non-byte memory access is ``align 1``.
+- llvm: a word or long access through a pointer is ``align 1``, as Prog8 structs are packed and a typed pointer may point anywhere; on a target without fast unaligned access, such as riscv32, that costs byte loads and stores.
 - llvm: evaluate which examples to add for the llvm32/llvm64 work, for instance a stdin filter that uses ``txt.eof_exit`` and ``txt.eof()`` in a pipe, command line arguments, file I/O, and quads.
 - llvm: compare ``-noopt`` output run through LLVM's optimizer alone (``opt -S -passes="default<O2>"``) with the Prog8-optimized path, for code size, speed and differences in program output; the Prog8 AST/IR optimizations may introduce bugs, or work that LLVM already does better (as with the ``when`` jump tables).
 - llvm/virtual: consider a more generic way for programs to handle signals (SIGINT, SIGPIPE, SIGTERM) and conditions such as end of input, which overlaps with ``txt.eof_exit``/``txt.eof()``.

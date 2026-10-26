@@ -247,6 +247,12 @@ A ``%breakpoint`` inside a subroutine stops the program with ``llvm.debugtrap``;
 and gives a warning. Native assembly code in ``%asm``, also as the body of an ``asmsub``, is an error: write the
 code in ``%ir`` instead, or call an external C routine through an ``extsub``.
 
+A scalar variable or parameter of a subroutine that only that subroutine uses, never by its address, lives in a
+stack slot of each call instead of static storage, so LLVM can keep it in a register. ``@dirty`` and ``@shared``
+variables, arrays, strings, and variables that another subroutine (such as a nested one) uses stay static.
+A recursive subroutine that has only stack slots works; for one that keeps static storage, which its recursive
+calls share, the compiler gives a warning that names those variables.
+
 A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in this order:
 
 1. the given file path, when that file exists

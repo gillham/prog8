@@ -36,7 +36,7 @@ private const val STARTUP_INITIALIZER = ".init.addresses"
  * Emits the module-level globals for the data symbols of an IRProgram, and maps each IR symbol name onto
  * the LLVM constant pointer that addresses its storage (used later to lower memory operands).
  */
-internal class LlvmGlobalEmitter(private val program: IRProgram) {
+internal class LlvmGlobalEmitter(private val program: IRProgram, private val stackLocals: Map<String, String> = emptyMap()) {
     private val st = program.st
     private val target = program.options.compTarget
     private val mapper = LlvmTypeMapper(st, target)
@@ -64,7 +64,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
     // built in one go: initializers may reference symbols whose globals are emitted later
     private val addresses: Map<String, LlvmValue> by lazy {
         buildMap {
-            st.allVariables().forEach { put(it.name, LlvmValue.Global(internedStringNames[it.name] ?: it.name)) }
+            st.allVariables().filter { it.name !in stackLocals }.forEach { put(it.name, LlvmValue.Global(internedStringNames[it.name] ?: it.name)) }
             st.allStructInstances().forEach { put(it.name, LlvmValue.Global(it.name)) }
             st.allMemorySlabs().forEach { put(it.name, LlvmValue.Global(it.name)) }
             memoryMappedClusters.forEach { cluster -> cluster.members.forEach { put(it.name, cluster.addressAt(it.address.toLong())) } }
@@ -91,7 +91,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
     fun emit(module: LlvmModule): LlvmDataSymbols {
         require(target.FLOAT_MEM_SIZE == 8u) { "the LLVM backend needs 8-byte floats" }
         val globals = buildList {
-            st.allVariables().mapTo(this) { variableGlobal(it) }
+            st.allVariables().filter { it.name !in stackLocals }.mapTo(this) { variableGlobal(it) }
             st.allStructInstances().mapTo(this) { structInstanceGlobal(it) }
             st.allMemorySlabs().mapTo(this) { memorySlabGlobal(it) }
             memoryMappedClusters.mapTo(this) { memoryMappedGlobal(it) }
@@ -101,7 +101,11 @@ internal class LlvmGlobalEmitter(private val program: IRProgram) {
         module.globals += globals.map { withStartupAddresses(it, startupStores) }
         if (startupStores.isNotEmpty())
             addStartupInitializer(module, startupStores)
-        return LlvmDataSymbols(addresses, memoryMappedClusters, pointerArrays, indirectEntries)
+        val locals = st.allVariables().filter { it.name in stackLocals }.map { variable ->
+            val type = mapper.storageType(variable.dt, variable.length)
+            StackLocal(variable.name, stackLocals.getValue(variable.name), type, initializer(variable, type))
+        }
+        return LlvmDataSymbols(addresses, memoryMappedClusters, pointerArrays, indirectEntries, locals.groupBy { it.subroutine })
     }
 
     /**
@@ -343,11 +347,16 @@ internal class LlvmDataSymbols(
     val addresses: Map<String, LlvmValue>,
     private val memoryMapped: List<MemoryMappedCluster>,
     val pointerArrays: Map<String, PointerArray>,
-    val indirectEntries: Set<String> = emptySet()
+    val indirectEntries: Set<String> = emptySet(),
+    /** The variables that live in a stack slot of their subroutine, by subroutine label. */
+    val stackLocals: Map<String, List<StackLocal>> = emptyMap()
 ) {
     /** The backing storage of absolute [address] when a memory-mapped variable covers it (the IR accesses those by address), else null. */
     fun memoryMappedAddress(address: Long): LlvmValue? = memoryMapped.addressOf(address)
 }
+
+/** A variable of [subroutine] that lives in a stack slot of type [type], which gets [initialValue] on every entry. */
+internal data class StackLocal(val name: String, val subroutine: String, val type: LlvmType, val initialValue: LlvmValue)
 
 /** The backing storage of absolute [address] when one of these memory-mapped clusters covers it, else null. */
 internal fun List<MemoryMappedCluster>.addressOf(address: Long): LlvmValue? =

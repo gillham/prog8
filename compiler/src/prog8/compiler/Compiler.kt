@@ -761,8 +761,8 @@ private fun postprocessAst(program: Program, errors: IErrorReporter, compilerOpt
     program.variousCleanups(errors, compilerOptions)
     val callGraph = CallGraph(program)
     // on a stack-frame target a recursive subroutine either gets per-activation storage or is
-    // rejected by StackFrameLayout, so there is nothing left to warn about here
-    if(!compilerOptions.compTarget.supportsStackFrames)
+    // rejected by StackFrameLayout, and the llvm code generator warns about the static storage it shares
+    if(!compilerOptions.compTarget.supportsStackFrames && !compilerOptions.compTarget.cpu.isLlvm)
         callGraph.checkRecursiveCalls(errors)
     if(compilerOptions.compTarget.cpu.is68k) {
         checkDeferInReentrantSubroutines(program, callGraph, errors)
