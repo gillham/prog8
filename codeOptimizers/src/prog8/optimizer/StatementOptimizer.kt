@@ -594,7 +594,8 @@ class StatementOptimizer(private val program: Program,
             }
         }
 
-        val indexOffset = whenStmt.onGotoIndexOffset(program, options)
+        // llvm turns the compare chain into a switch, and makes its own jump table from that
+        val indexOffset = if(options.compTarget.cpu.isLlvm) null else whenStmt.onGotoIndexOffset(program, options)
         if(indexOffset!=null) {
             // rewrite when into a on..goto , which is faster and also smaller for ~5+ cases
             var elseScope: AnonymousScope? = null
@@ -627,15 +628,10 @@ class StatementOptimizer(private val program: Program,
             val elseIsEmpty = elseScope?.statements?.isEmpty() ?: true
             fun AnonymousScope.endsWithReturnOrJump() = statements.lastOrNull().let { it is Return || it is Jump }
             // case bodies that all end in a return or goto never reach an end label, which would then be a dangling last statement
-            val needsEndLabel = (choiceLabels.isNotEmpty() && (elseIsEmpty || choiceLabels.keys.any { !it.statements.endsWithReturnOrJump() })) ||
+            // the generated case bodies follow the dispatch, so an else body that ends normally must jump over them
+            val elseNeedsEndJump = choiceLabels.isNotEmpty() && !elseIsEmpty && !requireNotNull(elseScope).endsWithReturnOrJump()
+            val needsEndLabel = (choiceLabels.isNotEmpty() && (elseIsEmpty || elseNeedsEndJump || choiceLabels.keys.any { !it.statements.endsWithReturnOrJump() })) ||
                     (span > jumps.size && elseIsEmpty && gapTarget==null)
-            // the llvm targets can only dispatch to routines, so no jump table that needs labels inside this subroutine
-            if(options.compTarget.cpu.isLlvm) {
-                val needsGapLabel = span > jumps.size && gapTarget==null && !elseIsEmpty
-                val dispatchTargets = whenStmt.choices.mapNotNull { (it.statements.statements.singleOrNull() as? Jump)?.target as? IdentifierReference }
-                if(choiceLabels.isNotEmpty() || needsEndLabel || needsGapLabel || dispatchTargets.any { it.targetStatement(program.builtinFunctions) !is Subroutine })
-                    return noModifications
-            }
             val endLabel = if(needsEndLabel) program.makeLabel("whenend", whenStmt.position) else null
             val gapLabel = if(span > jumps.size && gapTarget==null && !elseIsEmpty)
                 program.makeLabel("ongotogap", whenStmt.position)
@@ -668,6 +664,8 @@ class StatementOptimizer(private val program: Program,
                     s.statements
                 else
                     (listOf<Statement>(gapLabel) + s.statements).toMutableList()
+                if(elseNeedsEndJump)
+                    statements.add(program.jumpLabel(requireNotNull(endLabel)))
                 AnonymousScope(statements, s.position)
             }
             val onGoto = OnGoto(false, indexExpr, jumpLabels, elsePart, whenStmt.position)

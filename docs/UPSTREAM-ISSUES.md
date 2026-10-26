@@ -152,3 +152,9 @@ Keeping the list: add new items at the end with the next number, and remove an i
   `SGN` instruction reads its operand as signed.
 - Branch: fixed, `BuiltinFuncGen.funcSgn` compares an unsigned value with 0 instead of using `SGN`.
 
+**U24. `on..goto` inside a loop body crashes the compiler**
+- Repro: `for i in 0 to 4 { on i call (a, b, c) }` on any target stops with an internal error, "there are leftover
+  vardecls in the nested scope ... they should have been moved/placed in the declaration scope (subroutine) by now".
+  `CodeDesugarer` puts the generated label array (and the temporary for a computed index) in the nearest scope, which
+  is the loop body.
+- Branch: fixed, both declarations go in the subroutine.

@@ -938,6 +938,9 @@ _after:
                 errors.err("can't dispatch to a subroutine that takes parameters: ${dispatchTarget.name}", labelRef.position)
         }
 
+        if(target.cpu.isLlvm)
+            return listOf(AstReplaceNode(ongoto, ongotoAsWhen(ongoto), parent))
+
         val numlabels = ongoto.labels.size
         val elementDt = program.target.pointerBaseType
         val arrayDt = DataType.arrayFor(elementDt, program.target)
@@ -982,12 +985,30 @@ _after:
         val replacementScope = AnonymousScope(if(conditionVar==null)
                 mutableListOf(ifSt)
             else
-                mutableListOf(conditionVar, assignIndex!!, ifSt)
+                mutableListOf(assignIndex!!, ifSt)
             , ongoto.position)
-        return listOf(
+        // a nested scope such as a loop body can't keep declarations at this point
+        val declScope = ongoto.definingSubroutine ?: ongoto.definingScope
+        return listOfNotNull(
             AstReplaceNode(ongoto, replacementScope, parent),
-            AstInsert.first(ongoto.definingScope, jumplistArray)
+            AstInsert.first(declScope, jumplistArray),
+            conditionVar?.let { AstInsert.first(declScope, it) }
         )
+    }
+
+    /** LLVM can't take the address of a label, but it turns the compare chain of a when into a switch and its own jump table. */
+    private fun ongotoAsWhen(ongoto: OnGoto): When {
+        val choices = ongoto.labels.withIndex().groupBy({ it.value.nameInSource }, { it.index }).map { (name, indices) ->
+            val reference = IdentifierReference(name, ongoto.position)
+            val statement = if(ongoto.isCall)
+                FunctionCallStatement(reference, mutableListOf(), true, ongoto.position)
+            else
+                Jump(reference, ongoto.position)
+            val values = indices.map<Int, Expression> { NumericLiteral.optimalInteger(it, ongoto.position) }.toMutableList()
+            WhenChoice(values, AnonymousScope(mutableListOf(statement), ongoto.position), ongoto.position)
+        }.toMutableList()
+        ongoto.elsepart?.let { choices.add(WhenChoice(null, it, it.position)) }
+        return When(ongoto.index, choices, ongoto.position)
     }
 
     override fun after(deref: PtrDereference, parent: Node): Iterable<AstModification> {

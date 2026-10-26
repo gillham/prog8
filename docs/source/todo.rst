@@ -13,9 +13,9 @@ Future Things and Ideas
 - support typed pointer arrays as struct fields, curretly requires untyped pointers arrays.
 - constant addresses wider than 32 bits are rejected with an error on llvm64 (pointer literals are LONG); only computed 64-bit addresses work.
 - llvm32 bare-metal console input: on a Windows host ``/dev/stdin`` doesn't exist, so the semihosting console code can't tell a terminal from piped input and never echoes typing.
-- llvm: a ``when`` jump table can only dispatch to subroutines, so ``StatementOptimizer`` doesn't turn a ``when`` that needs labels inside the subroutine into one there; that needs ``blockaddress``/``indirectbr`` lowering.
 - llvm: pointer variables are ``i64`` in the LLVM IR, which weakens LLVM's alias analysis, and every non-byte memory access is ``align 1``.
 - llvm: evaluate which examples to add for the llvm32/llvm64 work, for instance a stdin filter that uses ``txt.eof_exit`` and ``txt.eof()`` in a pipe, command line arguments, file I/O, and quads.
+- llvm/virtual: consider a more generic way for programs to handle signals (SIGINT, SIGPIPE, SIGTERM) and conditions such as end of input, which overlaps with ``txt.eof_exit``/``txt.eof()``.
 - the ``prog8-coder`` skill (``.agents/skills/prog8-coder/SKILL.md``) gives the ``pointer`` sizes without llvm32 (32 bits) and llvm64 (64 bits).
 - evaluated the feature suggestions in ideas/c16-banked-data.md (cx16 banked data): evaluated Sep 2026, the plan is not worth implementing as written. Banked data already works via ``-varshigh <bank>`` / ``%varsaddress`` + ``cx16.rambank()``, and the ``cx16.fetch``/``cx16.stash`` kernal primitives turn out to be neither IRQ-safe nor reentrant, and ~5x slower than a bank switch. Cheapest useful follow-up is documentation plus small ``asmsub`` wrappers in ``syslib.p8``; see the Recommendation section in that file.
 

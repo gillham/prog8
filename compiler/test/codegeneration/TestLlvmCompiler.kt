@@ -4119,7 +4119,7 @@ main {
         return 4242
     }
 }""",
-    "when with goto choices to routines and with return choices, as jump tables on llvm64 only where the table holds routines" to """
+    "when with goto choices to routines and with return choices" to """
 main {
     ubyte @shared total
 
@@ -5036,6 +5036,66 @@ main {
         txt.nl()
     }
 }""", "3\n0\n4\n0true\n", input = "abc\n\nlast"),
+
+    "on..goto and on..call with labels and routines, also with a computed index in a loop" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        ubyte @shared i
+        for i in 0 to 4 {
+            on i call (alpha, beta, alpha)
+            on i+1 call (alpha, beta, gamma) else {
+                txt.print("else ")
+            }
+            on i goto (zero, one)
+            txt.print("past ")
+            continue
+zero:
+            txt.print("zero ")
+            continue
+one:
+            txt.print("one ")
+        }
+        txt.nl()
+    }
+
+    sub alpha() { txt.print("a ") }
+    sub beta() { txt.print("b ") }
+    sub gamma() { txt.print("g ") }
+}""", "a b zero b g one a else past else past else past \n"),
+
+    "when with case bodies and an else body" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        ubyte @shared i
+        for i in 0 to 9 {
+            txt.print_ub(classify(i))
+            txt.chrout(' ')
+        }
+        txt.nl()
+    }
+
+    sub classify(ubyte v) -> ubyte {
+        ubyte r = 0
+        when v {
+            1 -> r = 11
+            2 -> r = 23
+            3 -> r = 37
+            4 -> { r = 41  txt.chrout('!') }
+            5 -> r = 59
+            6 -> r = 61
+            7 -> r = 73
+            8 -> r = 89
+            else -> r = 99
+        }
+        return r
+    }
+}""", "99 11 23 37 !41 59 61 73 89 99 \n"),
 
     "command line arguments" to OutputProgram("""
 %import textio

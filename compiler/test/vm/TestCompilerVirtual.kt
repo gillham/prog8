@@ -2535,6 +2535,79 @@ main {
         }
     }
 
+    test("when with case bodies and an else body that ends normally doesn't fall into the case bodies") {
+        val src = """
+main {
+    ubyte @shared total
+    sub classify(ubyte v) -> ubyte {
+        ubyte r = 0
+        when v {
+            1 -> r = 11
+            2 -> r = 23
+            3 -> r = 37
+            4 -> r = 41
+            5 -> r = 59
+            6 -> r = 61
+            else -> r = 99
+        }
+        return r
+    }
+    sub start() {
+        total = classify(0) + classify(1) + classify(9)
+    }
+}"""
+        val result = compileText(VMTarget(), true, src, outputDir, writeAssembly = true)!!
+        val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        val irContent = virtfile.readText()
+        irContent.contains("jumpi") shouldBe true
+        val irProgram = IRFileReader().read(irContent)
+        irProgram.st.stripAllPrefixes()
+        val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+        VmRunner().runAndTestProgram(irContent) { vm ->
+            vm.memory.getUB(allocations["main.total"]!!) shouldBe 209u
+        }
+    }
+
+    test("on..goto and on..call with a computed index inside a loop body") {
+        val src = """
+main {
+    ubyte @shared total
+    sub start() {
+        ubyte @shared i
+        for i in 0 to 4 {
+            on i+1 call (one, two, three) else {
+                total += 50
+            }
+            on i*2 goto (zero, skip, two_) else {
+                total += 10
+            }
+            continue
+zero:
+            total += 1
+            continue
+two_:
+            total += 2
+            continue
+skip:
+        }
+    }
+    sub one() { total += 1 }
+    sub two() { total += 2 }
+    sub three() { total += 3 }
+}"""
+        for(optimize in listOf(false, true)) {
+            val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+            val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+            val irContent = virtfile.readText()
+            val irProgram = IRFileReader().read(irContent)
+            irProgram.st.stripAllPrefixes()
+            val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+            VmRunner().runAndTestProgram(irContent) { vm ->
+                vm.memory.getUB(allocations["main.total"]!!) shouldBe 188u
+            }
+        }
+    }
+
     test("when with assignment and call choice bodies uses a jump table") {
         val src = """
 main {
