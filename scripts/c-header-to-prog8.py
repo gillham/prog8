@@ -620,7 +620,8 @@ def read_macros(clang: Clang) -> tuple[list[tuple[str, str]], str | None]:
     for line in proc.stdout.splitlines():
         m = re.match(r'# \d+ "(.*)"( \d+)*', line)
         if m:
-            path = m.group(1)
+            # a line marker escapes the backslashes of a Windows path, which the JSON AST doesn't
+            path = re.sub(r"\\(.)", r"\1", m.group(1))
             flags = line[m.end(1) + 1:].split()
             if main_file is None and not path.startswith("<"):
                 main_file = path
@@ -668,7 +669,8 @@ def main():
     triple = opts.triple or host_triple()
     profile = read_profile(triple)
     pkg_cflags, pkg_libs, pkg_libdirs = pkg_config(opts.pkg_config)
-    clang_args = [a for a in shlex.split(expand_env(profile.get("clang_args", ""))) if not a.startswith(("-Wl,", "-l", "-L", "-fuse-ld"))]
+    # expanded after splitting, so that the backslashes of a Windows path in a variable stay
+    clang_args = [a for a in map(expand_env, shlex.split(profile.get("clang_args", ""))) if not a.startswith(("-Wl,", "-l", "-L", "-fuse-ld"))]
     args = clang_args + pkg_cflags + [f"-I{d}" for d in opts.include_dirs] + [f"-D{d}" for d in opts.defines] + opts.cflag
     clang = Clang(opts.clang, args, opts.header)
 
@@ -687,7 +689,7 @@ def main():
             return True
         if whole_dir:
             return os.path.dirname(file) == header_dir
-        return file.startswith(header_dir + "/") and stem in Path(file).name.lower()
+        return file.startswith(os.path.join(header_dir, "")) and stem in Path(file).name.lower()
 
     proc = clang.run(["-Xclang", "-ast-dump=json", "-fsyntax-only", "-w"], clang.source(""))
     if proc.returncode != 0:

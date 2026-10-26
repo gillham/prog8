@@ -328,7 +328,7 @@ class TestLlvmSyscallLowering: FunSpec({
     test("the file handle syscalls keep two files open, and seek and tell with 64-bit positions, in a native program for the host").config(enabledOrReasonIf = requiresNativeHost) {
         val directory = createTempDirectory("prog8-file-handles").toRealPath()
         try {
-            val module = TestProgram(hostLlvmTarget).apply { handleSyscallChecks(directory) }.module().withMainCalling("main.check")
+            val module = TestProgram(hostLlvmTarget).apply { handleSyscallChecks(directory.toString()) }.module().withMainCalling("main.check")
             val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
             withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
             directory.resolve("out.bin").readBytes().toList() shouldBe (1..8).map { it.toByte() }
@@ -342,7 +342,7 @@ class TestLlvmSyscallLowering: FunSpec({
     test("the file syscalls read, write and manage files like in the VM, in a native program for the host").config(enabledOrReasonIf = requiresNativeHost) {
         val directory = createTempDirectory("prog8-file-syscalls").toRealPath()
         try {
-            val module = TestProgram(hostLlvmTarget).apply { fileSyscallChecks(directory) }.module().withMainCalling("main.check")
+            val module = TestProgram(hostLlvmTarget).apply { fileSyscallChecks(directory.toString()) }.module().withMainCalling("main.check")
             val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
             withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
             val data = (1..8).map { it.toByte() }
@@ -451,14 +451,14 @@ class TestLlvmSyscallLowering: FunSpec({
     test("the llvm32 file and file handle syscalls work in a wasm32 program under wasmtime, with access to the directory").config(enabledOrReasonIf = requiresWasm) {
         val directory = createTempDirectory("prog8-wasm-files").toRealPath()
         try {
-            val files = llvm32().apply { fileSyscallChecks(directory) }.module().withMainCalling("main.check").withMainNamed(wasiMain)
-            compileAndRunWasm(LlvmPrinter.print(files), directories = listOf(directory)).let { (exitCode, output) ->
+            val files = llvm32().apply { fileSyscallChecks(WASM_DIRECTORY) }.module().withMainCalling("main.check").withMainNamed(wasiMain)
+            compileAndRunWasm(LlvmPrinter.print(files), directory = directory).let { (exitCode, output) ->
                 withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
             }
             directory.listDirectoryEntries().map { it.name }.sorted() shouldBe listOf("data.bin", "data.prg", "one.bin")
             directory.listDirectoryEntries().forEach { it.toFile().delete() }
-            val handles = llvm32().apply { handleSyscallChecks(directory) }.module().withMainCalling("main.check").withMainNamed(wasiMain)
-            compileAndRunWasm(LlvmPrinter.print(handles), directories = listOf(directory)).let { (exitCode, output) ->
+            val handles = llvm32().apply { handleSyscallChecks(WASM_DIRECTORY) }.module().withMainCalling("main.check").withMainNamed(wasiMain)
+            compileAndRunWasm(LlvmPrinter.print(handles), directory = directory).let { (exitCode, output) ->
                 withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
             }
             directory.resolve("out.bin").readBytes().toList() shouldBe (1..8).map { it.toByte() }
@@ -491,7 +491,7 @@ class TestLlvmSyscallLowering: FunSpec({
         }
         val directory = createTempDirectory("prog8-arm-files").toRealPath()
         try {
-            val handles = arm().apply { handleSyscallChecks(directory, failedSeekKeepsPosition = false) }.module().withMainCalling("main.check")
+            val handles = arm().apply { handleSyscallChecks(directory.toString(), failedSeekKeepsPosition = false) }.module().withMainCalling("main.check")
             compileAndRunArm(LlvmPrinter.print(handles), directory = directory).let { (exitCode, output) ->
                 withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
             }
@@ -524,7 +524,7 @@ class TestLlvmSyscallLowering: FunSpec({
         }
         val directory = createTempDirectory("prog8-riscv-files").toRealPath()
         try {
-            val handles = riscv().apply { handleSyscallChecks(directory) }.module().withMainCalling("main.check")
+            val handles = riscv().apply { handleSyscallChecks(directory.toString()) }.module().withMainCalling("main.check")
             compileAndRunRiscv(LlvmPrinter.print(handles), directory = directory).let { (exitCode, output) ->
                 withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
             }
@@ -728,8 +728,8 @@ private fun TestProgram.statusSub() {
  * main.check, which returns the number of the first check that fails, or 0. Its results are those of the VM (SysCalls.kt and
  * VmSystemHandler.kt); it changes to the [directory] first, and works on files in there.
  */
-private fun TestProgram.fileSyscallChecks(directory: Path) {
-    string("main.dir", directory.toString())
+private fun TestProgram.fileSyscallChecks(directory: String) {
+    string("main.dir", directory)
     string("main.nodir", "no such directory")
     string("main.unwritable", "no such directory/x.bin")
     string("main.missing", "missing.bin")
@@ -798,10 +798,10 @@ private fun TestProgram.fileSyscallChecks(directory: Path) {
  * main.check for the file handle syscalls on files in the [directory]; main.files keeps the handles of two open files.
  * Without [failedSeekKeepsPosition], as with newlib, only the status of a failed seek is checked.
  */
-private fun TestProgram.handleSyscallChecks(directory: Path, failedSeekKeepsPosition: Boolean = true) {
-    string("main.missing", directory.resolve("missing.bin").toString())
-    string("main.out", directory.resolve("out.bin").toString())
-    string("main.copy", directory.resolve("copy.bin").toString())
+private fun TestProgram.handleSyscallChecks(directory: String, failedSeekKeepsPosition: Boolean = true) {
+    string("main.missing", "$directory/missing.bin")
+    string("main.out", "$directory/out.bin")
+    string("main.copy", "$directory/copy.bin")
     string("main.rb", "rb")
     string("main.wb", "wb")
     variable("main.bytes", DataType.arrayFor(BaseDataType.UBYTE, target),

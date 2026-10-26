@@ -189,14 +189,14 @@ main {
 
     test("-Xlink links an extra static library into an llvm32 bare metal ARM program").config(enabledOrReasonIf = requiresArm) {
         val gcc = checkNotNull(armProfile.linkCommand).first()
-        linksExtraLibrary(outputDir, armTarget(), "arm-library", Path(gcc.removeSuffix("gcc") + "ar")) { source, objectFile ->
+        linksExtraLibrary(outputDir, armTarget(), "arm-library", archiverBeside(gcc)) { source, objectFile ->
             listOf(gcc, "-mcpu=cortex-a15", "-mfloat-abi=hard", "-mfpu=neon-vfpv4", "-c", source.toString(), "-o", objectFile.toString())
         }
     }
 
     test("-Xlink links an extra static library into an llvm32 bare metal RISC-V program").config(enabledOrReasonIf = requiresRiscvOnThePath) {
         val gcc = checkNotNull(riscvGcc).toString()
-        linksExtraLibrary(outputDir, riscvTarget(), "riscv-library", Path(gcc.removeSuffix("gcc") + "ar")) { source, objectFile ->
+        linksExtraLibrary(outputDir, riscvTarget(), "riscv-library", archiverBeside(gcc)) { source, objectFile ->
             listOf(gcc, "-march=rv32imafdc_zicsr", "-mabi=ilp32d", "-c", source.toString(), "-o", objectFile.toString())
         }
     }
@@ -1089,14 +1089,17 @@ other {
         lines.any { Regex("""extsub fopen\(str \w+, str \w+\) -> \^\^FILE""").matches(it) } shouldBe true
         lines.any { Regex("""extsub fread\(pointer \w+, uquad \w+, uquad \w+, \^\^FILE \w+\) -> uquad""").matches(it) } shouldBe true
         lines shouldContain "const byte EOF = -1"
-        lines.any { it.startsWith("; skipped, variadic:") && "printf," in it } shouldBe true
+        lines.any { it.startsWith("; skipped, variadic:") } shouldBe true
+        // variadic, and in the Microsoft C library also inline
+        lines.none { it.startsWith("extsub printf(") || it.startsWith("extsub fprintf(") } shouldBe true
         val sizeofFile = dir.resolve("sizeof_file.c").also {
             it.writeText("#include <stdio.h>\nint main(void) { printf(\"%zu\\n\", sizeof(FILE)); return 0; }\n")
         }
         val profile = checkNotNull(hostLlvmProfile)
-        val cProgram = dir.resolve("sizeof_file")
+        val cProgram = hostExecutable(dir.resolve("sizeof_file"))
         execute(checkNotNull(llvmBin).resolve("clang").toString(), *profile.clangArgs.toTypedArray(), sizeofFile.toString(), "-o", cProgram.toString()).first shouldBe 0
-        val cSize = execute(cProgram.toString()).second
+        // this C program writes its stdout in text mode, which ends a line with \r\n on Windows
+        val cSize = execute(cProgram.toString()).second.replace("\r\n", "\n")
         val program = stdioBindingsProgram("^^c_stdio.FILE", "txt.print_uw(sizeof(c_stdio.FILE))\ntxt.nl()")
         for (optimize in listOf(false, true)) {
             withClue("optimize=$optimize") {
@@ -1112,12 +1115,16 @@ other {
     test("c-header-to-prog8.py bindings of math.h work natively for the host, with the double functions and M_PI, and leave out the sqrt builtin")
         .config(enabledOrReasonIf = requiresNativeLlvmAndPython) {
         val dir = outputDir.resolve("bindings-libm").createDirectories()
-        val lines = generateBindings(dir, "libm.p8", checkNotNull(hostLlvmProfile).triple, "math.h", "--block", "libm").readLines().map { it.trim() }
+        // the Microsoft C library only defines M_PI and the other constants with _USE_MATH_DEFINES
+        val triple = checkNotNull(hostLlvmProfile).triple
+        val defines = if (triple.endsWith("-windows-msvc")) arrayOf("-D", "_USE_MATH_DEFINES") else emptyArray()
+        val lines = generateBindings(dir, "libm.p8", triple, "math.h", "--block", "libm", *defines).readLines().map { it.trim() }
         lines shouldContain "libm {"
         lines.any { Regex("""extsub pow\(float \w+, float \w+\) -> float""").matches(it) } shouldBe true
         lines shouldContain "const float M_PI = 3.141592653589793"
         lines.any { it.startsWith("; skipped, name is a Prog8 keyword or builtin function:") && "sqrt" in it } shouldBe true
-        lines.any { it.startsWith("; skipped, parameter type float:") && "sinf," in it } shouldBe true
+        lines.any { it.startsWith("; skipped, parameter type float:") } shouldBe true
+        lines.none { it.startsWith("extsub sinf(") } shouldBe true
         val program = """
             %import textio
             %import floats
@@ -1171,7 +1178,7 @@ other {
 /** Runs scripts/c-header-to-prog8.py for the [triple] profile, with the clang of the tests, writing the module [fileName] in [dir]. */
 private fun generateBindings(dir: Path, fileName: String, triple: String, vararg args: String): Path {
     val output = dir.resolve(fileName)
-    val (exitCode, messages) = execute("python3", Path("..", "scripts", "c-header-to-prog8.py").toAbsolutePath().normalize().toString(),
+    val (exitCode, messages) = execute(checkNotNull(python3), Path("..", "scripts", "c-header-to-prog8.py").toAbsolutePath().normalize().toString(),
         *args, "--triple", triple, "--clang", checkNotNull(llvmBin).resolve("clang").toString(), "-o", output.toString())
     withClue(messages) { exitCode shouldBe 0 }
     return output
@@ -1204,14 +1211,15 @@ private fun stdioBindingsProgram(fileType: String, extra: String) = """
         }
     }"""
 
-private val python3OnThePath: Boolean = LlvmToolLocator.find("python3") != null
+// a python.org install on Windows has no python3 command, and its python is Python 3
+private val python3: String? = listOf("python3", "python").firstOrNull { LlvmToolLocator.find(it) != null }
 
 private val requiresNativeLlvmAndPython: (TestCase) -> Enabled = {
-    if (!python3OnThePath) Enabled.disabled("python3 not found on the PATH") else requiresNativeLlvm(it)
+    if (python3 == null) Enabled.disabled("python3 not found on the PATH") else requiresNativeLlvm(it)
 }
 
 private val requiresWasmAndPython: (TestCase) -> Enabled = {
-    if (!python3OnThePath) Enabled.disabled("python3 not found on the PATH") else requiresWasm(it)
+    if (python3 == null) Enabled.disabled("python3 not found on the PATH") else requiresWasm(it)
 }
 
 
@@ -1262,6 +1270,23 @@ private val requiresNativeLlvm: (TestCase) -> Enabled = {
 
 private val requiresNativeLlvmAndAr: (TestCase) -> Enabled = {
     if (llvmBin?.resolve(LlvmToolLocator.executableName("llvm-ar"))?.let { Files.isExecutable(it) } != true) Enabled.disabled("llvm-ar not found next to clang") else requiresNativeLlvm(it)
+}
+
+/**
+ * Runs a bare metal program with qemu's [command]. On a Windows host, the double quotes of the semihosting arguments need
+ * backslashes, as LlvmToolchain.runExecutable gives them, and qemu writes the console output with \r\n line ends.
+ */
+private fun runOnQemu(command: List<String>, stdin: Path, directory: Path?): Pair<Int, String> {
+    val windows = System.getProperty("os.name").startsWith("Windows")
+    val words = if (windows) command.map { word -> Regex("""(\\*)"""").replace(word) { it.groupValues[1] + it.groupValues[1] + "\\\"" } } else command
+    val (exitCode, output) = execute(*words.toTypedArray(), stdin = stdin, directory = directory).also { Files.deleteIfExists(stdin) }
+    return exitCode to if (windows) output.replace("\r\n", "\n") else output
+}
+
+/** The ar of the gcc toolchain whose gcc is [gcc], which may have a .exe extension. */
+private fun archiverBeside(gcc: String): Path {
+    val extension = if (gcc.endsWith(".exe")) ".exe" else ""
+    return Path(gcc.removeSuffix(extension).removeSuffix("gcc") + "ar" + extension)
 }
 
 /** [file] with the output extension of the host's triple profile, such as .exe on Windows. */
@@ -1395,7 +1420,7 @@ private fun linkAndRunOnQemu(profile: LlvmTripleProfile, linkCommand: List<Strin
         return linked
     val stdin = elf.resolveSibling("${elf.fileName}.stdin").also { it.writeText(input + "\u0004") }
     val command = LlvmTripleProfile.runCommandFor(profile.runCommand, elf.toAbsolutePath().toString(), args)
-    return execute(*command.toTypedArray(), stdin = stdin, directory = directory).also { Files.deleteIfExists(stdin) }
+    return runOnQemu(command, stdin, directory)
 }
 
 private val emscriptenProfile = LlvmTripleProfile.resolve("wasm32-unknown-emscripten")

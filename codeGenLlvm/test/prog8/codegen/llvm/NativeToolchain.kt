@@ -55,10 +55,13 @@ internal val wasiMain: String = LlvmTripleProfile.resolve(LlvmTarget.DEFAULT_TRI
 
 /**
  * Builds [ir] into a wasm32-wasip1 program and runs it with wasmtime, giving it [input] on stdin, the command line [args]
- * and access to [directories]; returns the exit code and output of the run, or of clang if that failed.
+ * and access to [directory] as [WASM_DIRECTORY]; returns the exit code and output of the run, or of clang if that failed.
  * Uses the clang arguments of the llvm32 target's profile, which make wasm-ld warnings fatal.
  */
-internal fun compileAndRunWasm(ir: String, input: String = "", args: List<String> = emptyList(), directories: List<Path> = emptyList()): Pair<Int, String> {
+/** Where a wasm32 program finds the host directory it is given: a fixed path, as a Windows path isn't one for wasi-libc. */
+internal const val WASM_DIRECTORY = "/prog8-files"
+
+internal fun compileAndRunWasm(ir: String, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val dir = createTempDirectory("prog8-llvm-wasm")
     try {
         val source = dir.resolve("program.ll").also { it.writeText(ir) }
@@ -68,7 +71,7 @@ internal fun compileAndRunWasm(ir: String, input: String = "", args: List<String
         val compiled = execute(checkNotNull(clang).toString(), *clangArgs.toTypedArray(), "-O2", "-Wno-override-module", source.toString(), "-o", program.toString())
         if (compiled.first != 0)
             return compiled
-        val preopens = directories.map { "--dir=$it" }
+        val preopens = listOfNotNull(directory?.let { "--dir=$it::$WASM_DIRECTORY" })
         return execute(checkNotNull(wasmtime).toString(), *preopens.toTypedArray(), program.toString(), *args.toTypedArray(), stdin = stdin)
     } finally {
         dir.toFile().deleteRecursively()
@@ -114,7 +117,7 @@ internal fun compileAndRunArm(ir: String, input: String = "", args: List<String>
             return linked
         val stdin = dir.resolve("stdin.txt").also { it.writeText(input + END_OF_CONSOLE_INPUT) }
         val command = LlvmTripleProfile.runCommandFor(armProfile.runCommand, program.toAbsolutePath().toString(), args)
-        return execute(*command.toTypedArray(), stdin = stdin, directory = directory)
+        return runOnQemu(command, stdin, directory)
     } finally {
         dir.toFile().deleteRecursively()
     }
@@ -164,7 +167,7 @@ internal fun compileAndRunRiscv(ir: String, input: String = "", args: List<Strin
             return linked
         val stdin = dir.resolve("stdin.txt").also { it.writeText(input + END_OF_CONSOLE_INPUT) }
         val command = LlvmTripleProfile.runCommandFor(riscvProfile.runCommand, program.toAbsolutePath().toString(), args)
-        return execute(*command.toTypedArray(), stdin = stdin, directory = directory)
+        return runOnQemu(command, stdin, directory)
     } finally {
         dir.toFile().deleteRecursively()
     }
@@ -201,6 +204,17 @@ internal fun compileAndRun(ir: String, input: String = "", args: List<String> = 
     } finally {
         dir.toFile().deleteRecursively()
     }
+}
+
+/**
+ * Runs a bare metal program with qemu's [command]. On a Windows host, the double quotes of the semihosting arguments need
+ * backslashes, as LlvmToolchain.runExecutable gives them, and qemu writes the console output with \r\n line ends.
+ */
+private fun runOnQemu(command: List<String>, stdin: Path, directory: Path?): Pair<Int, String> {
+    val windows = System.getProperty("os.name").startsWith("Windows")
+    val words = if (windows) command.map { word -> Regex("""(\\*)"""").replace(word) { it.groupValues[1] + it.groupValues[1] + "\\\"" } } else command
+    val (exitCode, output) = execute(*words.toTypedArray(), stdin = stdin, directory = directory)
+    return exitCode to if (windows) output.replace("\r\n", "\n") else output
 }
 
 private fun execute(vararg command: String, stdin: Path? = null, directory: Path? = null): Pair<Int, String> {

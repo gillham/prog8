@@ -126,7 +126,7 @@ internal object LlvmToolchain {
         // absolute, because a name without a directory would be looked up on the PATH
         val file = executable.toAbsolutePath().toString()
         val command = LlvmTripleProfile.runCommandFor(runCommand, file, args)
-        val process = ProcessBuilder(command).inheritIO().start()
+        val process = ProcessBuilder(if (isWindows) command.map(::escapeQuotesForWindows) else command).inheritIO().start()
         if (timeoutSeconds == null)
             return process.waitFor()
         if (!process.waitFor(timeoutSeconds.toLong(), TimeUnit.SECONDS)) {
@@ -136,6 +136,15 @@ internal object LlvmToolchain {
         }
         return process.exitValue()
     }
+
+    private val isWindows = System.getProperty("os.name").orEmpty().startsWith("Windows")
+
+    /**
+     * Java quotes a Windows argument that has a space, but not the double quotes in it, such as those of a semihosting
+     * argument, so they get the backslashes that the C runtime's command line parsing expects.
+     */
+    private fun escapeQuotesForWindows(argument: String): String =
+        Regex("""(\\*)"""").replace(argument) { it.groupValues[1] + it.groupValues[1] + "\\\"" }
 
     /**
      * The LLVM IR file of [programFile]: the file itself when it is a .ll file, else `<stem>.ll` next to that native executable.
