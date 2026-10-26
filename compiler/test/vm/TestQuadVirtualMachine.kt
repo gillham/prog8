@@ -1478,4 +1478,37 @@ main {
             )
         }
     }
+
+    test("sqrt of a uquad is the exact integer square root, also near 2^64") {
+        val src = $$"""
+main {
+    uquad @shared v1 = 17
+    uquad @shared v2 = $ffff_fffe_0000_0001
+    uquad @shared v3 = $ffff_fffe_0000_0000
+    uquad @shared v4 = $ffff_ffff_ffff_ffff
+    uquad @shared v5 = 0
+    uquad @shared r1
+    uquad @shared r2
+    uquad @shared r3
+    uquad @shared r4
+    uquad @shared r5
+
+    sub start() {
+        r1 = sqrt(v1)
+        r2 = sqrt(v2)
+        r3 = sqrt(v3)
+        r4 = sqrt(v4)
+        r5 = sqrt(v5)
+    }
+}"""
+        runOptimizedAndUnoptimized(src) {
+            shouldHave(
+                "r1" to 4uL,
+                "r2" to 4_294_967_295uL,
+                "r3" to 4_294_967_294uL,
+                "r4" to 4_294_967_295uL,
+                "r5" to 0uL,
+            )
+        }
+    }
 })

@@ -285,6 +285,7 @@ class VarConstantValueTypeAdjuster(
                 val replaceFunc = when {
                     dt.isUnsignedByte -> "sqrt__ubyte"
                     dt.isUnsignedWord -> "sqrt__uword"
+                    dt.isUnsignedQuad -> "sqrt__uquad"
                     dt.isFloat -> "sqrt__float"
                     dt.isLong -> {
                         val value = functionCallExpr.args[0].constValue(program)?.number

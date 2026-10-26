@@ -114,6 +114,17 @@ internal class VerifyFunctionArgTypes(val program: Program, val options: Compila
         super.visit(decl)
     }
 
+    override fun visit(initializer: StaticStructInitializer) {
+        val struct = initializer.structname.targetStructDecl()
+        if(struct!=null && struct.fields.size==initializer.args.size) {
+            struct.fields.zip(initializer.args).forEach { (field, arg) ->
+                if(!field.isArray)
+                    warnArrayForPointer(field.type, arg, "the value is", "field '${field.name}'")
+            }
+        }
+        super.visit(initializer)
+    }
+
     override fun visit(assignment: Assignment) {
         val targetDt = assignment.target.inferType(program)
         if(targetDt.isKnown)

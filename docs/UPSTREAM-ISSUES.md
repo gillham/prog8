@@ -140,9 +140,11 @@ Keeping the list: add new items at the end with the next number, and remove an i
 **U22. `&` of a split word array in a struct initializer refers to an undefined symbol**
 - Repro (cx16): `uword[4] words` (split), `^^Node n = ^^Node : [1, &buf, &buf, &words]` in a larger program: the
   struct data line is `.dstruct p8b_main.p8t_Node, 1,p8b_main.p8v_buf,p8b_main.p8v_buf,p8b_main.p8v_words`, but a
-  split array only defines `p8v_words_lsb`/`_msb`, so 64tass reports `not defined symbol 'p8v_words'`. Small
-  programs with the same line still assemble, so the trigger isn't pinned down yet; `@nosplit` avoids it.
-- Branch: not fixed.
+  split array only defines `p8v_words_lsb`/`_msb`, so 64tass reports `not defined symbol 'p8v_words'` (in small
+  programs 64tass happens to accept the line). There is also no warning that a `^^uword` field then reads the split
+  array as consecutive words.
+- Branch: fixed, the struct data uses `_lsb` like array initializers and `&words` in code do, and a pointer field
+  given a split word array gets the same warning as a variable.
 
 **U23. `sgn` of an unsigned value gives -1 on the VM**
 - Repro: `uword uw = 40000`, `ubyte ub = 200`, `txt.print_b(sgn(uw))` and `txt.print_b(sgn(ub))` on virtual print -1 -1;

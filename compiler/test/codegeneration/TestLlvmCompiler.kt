@@ -1510,7 +1510,7 @@ private val programsWith64BitAddresses = setOf(
     "a goto through a uquad address variable ends a subroutine that returns a value",
     "in-place updates of uquad and pointer address array elements with a variable index",
     "negative and signed indexes on a uquad address",
-    "abs, min, max, clamp and sgn with quads and uquads, and sgn of unsigned values"
+    "abs, min, max, clamp, sgn and sqrt with quads and uquads, and sgn of unsigned values"
 )
 
 // these declare C functions with the 64-bit size_t of LP64 hosts, so they only link and run right where pointers have 8 bytes
@@ -4280,7 +4280,7 @@ main {
         return 0
     }
 }""",
-    "abs, min, max, clamp and sgn with quads and uquads, and sgn of unsigned values" to $$"""
+    "abs, min, max, clamp, sgn and sqrt with quads and uquads, and sgn of unsigned values" to $$"""
 main {
     sub start() {
         sys.exit(check())
@@ -4307,6 +4307,10 @@ main {
             return 5
         if sgn(uw) != 1 or sgn(ub) != 1
             return 6
+        uquad @shared big = $ffff_ffff_ffff_ffff
+        uquad @shared square = $ffff_fffe_0000_0001
+        if sqrt(big) != 4294967295 or sqrt(square) != 4294967295 or sqrt(square - 1) != 4294967294 or sqrt(ur) != 2
+            return 7
         return 0
     }
 }""",

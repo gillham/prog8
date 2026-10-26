@@ -18,6 +18,7 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
             "cmp" -> funcCmp(call)
             "sgn" -> funcSgn(call)
             "sqrt__ubyte", "sqrt__uword", "sqrt__long", "sqrt__float" -> funcSqrt(call)
+            "sqrt__uquad" -> funcSqrtUquad(call)
             "divmod__ubyte" -> funcDivmod(call, IRDataType.BYTE, false)
             "divmod__uword" -> funcDivmod(call, IRDataType.WORD, false)
             "divmod__byte" -> funcDivmod(call, IRDataType.BYTE, true)
@@ -440,6 +441,55 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
             }
         }
         return ExpressionCodeResult(result, IRDataType.BYTE, resultReg, -1)
+    }
+
+    /** The exact integer square root, bit by bit: the SQRT instruction goes through a Double, which can't hold every 64-bit value. */
+    private fun funcSqrtUquad(call: PtFunctionCall): ExpressionCodeResult {
+        val result = mutableListOf<IRCodeChunkBase>()
+        val tr = exprGen.translateExpression(call.args.single())
+        addToResult(result, tr, tr.resultReg, -1)
+        val type = IRDataType.QUAD
+        val number = codeGen.registers.next(type)
+        val root = codeGen.registers.next(type)
+        val bit = codeGen.registers.next(type)
+        val trial = codeGen.registers.next(type)
+        val findTopBit = codeGen.createLabelName()
+        val loop = codeGen.createLabelName()
+        val takeBit = codeGen.createLabelName()
+        val nextBit = codeGen.createLabelName()
+        val done = codeGen.createLabelName()
+        result += IRCodeChunk(null, null).also {
+            it += IRInstructions.move(type, number, tr.resultReg)
+            it += IRInstructions.load(type, root, 0)
+            it += IRInstructions.load(type, bit, 1L shl 62)
+        }
+        // the highest power of 4 that isn't larger than the number
+        result += IRCodeChunk(findTopBit, null).also {
+            it += IRInstructions.branchRegister(Opcode.BGER, type, number, bit, codeLabel(loop))
+            it += IRInstructions.binaryImmediate(Opcode.LSRI, type, bit, 2)
+            it += IRInstructions.compareImmediate(type, bit, 0)
+            it += IRInstructions.branch(Opcode.BSTEQ, codeLabel(done))
+            it += IRInstructions.jump(codeLabel(findTopBit))
+        }
+        result += IRCodeChunk(loop, null).also {
+            it += IRInstructions.compareImmediate(type, bit, 0)
+            it += IRInstructions.branch(Opcode.BSTEQ, codeLabel(done))
+            it += IRInstructions.move(type, trial, root)
+            it += IRInstructions.binary(Opcode.ADDR, type, trial, bit)
+            it += IRInstructions.unary(Opcode.LSR, type, root)
+            it += IRInstructions.branchRegister(Opcode.BGER, type, number, trial, codeLabel(takeBit))
+            it += IRInstructions.jump(codeLabel(nextBit))
+        }
+        result += IRCodeChunk(takeBit, null).also {
+            it += IRInstructions.binary(Opcode.SUBR, type, number, trial)
+            it += IRInstructions.binary(Opcode.ADDR, type, root, bit)
+        }
+        result += IRCodeChunk(nextBit, null).also {
+            it += IRInstructions.binaryImmediate(Opcode.LSRI, type, bit, 2)
+            it += IRInstructions.jump(codeLabel(loop))
+        }
+        result += IRCodeChunk(done, null)
+        return ExpressionCodeResult(result, type, root, -1)
     }
 
     private fun funcSqrt(call: PtFunctionCall): ExpressionCodeResult {

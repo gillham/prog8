@@ -375,7 +375,14 @@ internal class ProgramAndVarsGen(
                     else
                         value.value.toString()
                 }
-                is StArrayElement.AddressOf -> value.symbol
+                is StArrayElement.AddressOf -> {
+                    // as in an array initializer, a split word array's address is that of its lsb part
+                    val symbol = symboltable.lookup(value.symbol)
+                    if(symbol is StStaticVariable && symbol.dt.isSplitWordArray(compTarget))
+                        value.symbol + "_lsb"
+                    else
+                        value.symbol
+                }
                 is StArrayElement.MemorySlab -> "$StMemorySlabBlockName.${value.name}"
                 is StArrayElement.BoolValue -> if(value.value) "1" else "0"
                 is StArrayElement.StructInstance -> throw AssemblyError("struct instance in struct initializer")

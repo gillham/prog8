@@ -88,6 +88,7 @@ Math
 
 :index:`sqrt` (x)
     Returns the square root of the number.
+    Of a uquad it is the exact integer square root, also a uquad.
     (to do the reverse - squaring a number - just write ``x*x``).
     Accepts ubyte or uword value (result is ubyte). 
     Also accepts long (result is uword), but when the value is <0 the result is undefined and the program will crash or halt.

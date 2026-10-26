@@ -2,7 +2,9 @@ package prog8tests.codegeneration
 
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
+import io.kotest.matchers.string.shouldContain
 import prog8.code.target.Cx16Target
+import prog8tests.helpers.ErrorReporterForTests
 import prog8tests.helpers.compileText
 import prog8tests.helpers.simulate
 
@@ -53,5 +55,36 @@ class TestStructFieldIndexing6502 : FunSpec({
             machine.assertMemory(0x0205, 51)
             machine.assertMemory(0x0206, 77)
         }
+    }
+
+    test("the address of a split word array in a struct initializer is that of its lsb part") {
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        val machine = compileText(Cx16Target(), false, $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                &ubyte[2] results = $0200
+
+                struct Node {
+                    ubyte kind
+                    uword data
+                    ^^uword wptr
+                }
+                uword[4] words = [100, 200, 300, 400]
+
+                sub start() {
+                    ^^Node n = ^^Node : [1, &words, &words]
+                    results[0] = if n.data == &words then 1 else 0
+                    results[1] = lsb(words[2])
+                    poweroff = 1
+                }
+            }
+        """.trimIndent(), outputDir, errors)!!.simulate()
+        machine.assertMemory(0x0200, 1)
+        machine.assertMemory(0x0201, 44)
+        errors.warnings.single() shouldContain "the value is the address of a split word array, but the ^^uword field 'wptr' reads its elements as consecutive words"
     }
 })
