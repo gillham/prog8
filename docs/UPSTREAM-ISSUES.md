@@ -24,8 +24,8 @@ Keeping the list: add new items at the end with the next number, and remove an i
 
 **U3. A valid `(x / C1) / C2` gives a type error**
 - Repro: `uword x = 60000` then `x = x / 1000 / 600`: `value type long doesn't match target type uword`, with and
-  without optimization. The two divisions appear to be merged into one by 600000, which is a long.
-- Branch: not fixed.
+  without optimization. `ConstantFoldingOptimizer` merges the two divisions into one by 600000, which is a long.
+- Branch: fixed, the divisions are only merged when the product of the constants fits the operand's type.
 
 **U4. `pp[i] += 2` through a `^^pointer` crashes on cx16**
 - Repro: `^^pointer pp = &slots`, `pp[i] = &buf`, `pp[i] += 2`:
@@ -56,9 +56,13 @@ Keeping the list: add new items at the end with the next number, and remove an i
   long -1 and `Double.toUInt()` saturates to 0. Writes give "address out of range"; reads don't.
 - Branch: not fixed.
 
-**U9. `x = if c arr1 else arr2` is rejected, while the `return` form is accepted**
-- Repro: `uword s = if cx16.r0L==0 arr1 else arr2`: `invalid assignment value`.
-- Branch: not fixed.
+**U9. `return if c arr1 else arr2` crashes the 6502 codegen**
+- Repro: `sub f(ubyte c) -> uword { return if c==0 arr1 else arr2 }` on cx16:
+  `IllegalArgumentException: Failed requirement` at `IfExpressionAsmGen.assignIfExpression`. A returned array stands
+  for its address, but the requirement only allows a string or pointer if expression for a uword or pointer target.
+  (An assignment `uword s = if c arr1 else arr2` is rejected on purpose, as `uword s = arr1` is; `&arr1` gives the
+  address there.)
+- Branch: fixed, the requirement also allows an if expression of arrays; on x16emu it returns the right addresses.
 
 **U10. Misleading error for an address list in a `^^ubyte[N]`**
 - Repro: `^^ubyte[3] arr = [&&a, &&b, 0]` on cx16: `value has incompatible type (ubyte[]) for the variable

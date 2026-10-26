@@ -350,8 +350,8 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
             }
             else if(expr.operator=="/") {
                 val c2 = leftBinExpr.right.constValue(program)
-                if(c2!=null && leftBinExpr.operator=="/") {
-                    // (X / C1) / C2   -->  X / (C1*C2)
+                if(c2!=null && leftBinExpr.operator=="/" && fitsInType(c2.number * rightconst.number, expr.inferType(program).getOrUndef())) {
+                    // (X / C1) / C2   -->  X / (C1*C2), unless C1*C2 needs a larger type than X
                     // NOTE: do not optimize  (X * C1) / C2  for integers,  -->  X * (C1/C2)  because this causes precision loss on integers
                     val constants = BinaryExpression(c2, "*", rightconst, c2.position)
                     val newExpr = BinaryExpression(leftBinExpr.left, "/", constants, expr.position)
@@ -398,6 +398,15 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
         }
 
         return modifications
+    }
+
+    private fun fitsInType(value: Double, dt: DataType): Boolean = when(dt.base) {
+        BaseDataType.UBYTE -> value in 0.0..255.0
+        BaseDataType.BYTE -> value in -128.0..127.0
+        BaseDataType.UWORD -> value in 0.0..65535.0
+        BaseDataType.WORD -> value in -32768.0..32767.0
+        BaseDataType.LONG -> value in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble()
+        else -> true
     }
 
     // constants regrouped in a quad expression are combined in its 64 bits, not wrapped around in their own smaller type

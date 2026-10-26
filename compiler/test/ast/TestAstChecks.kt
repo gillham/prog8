@@ -2109,4 +2109,44 @@ main {
             }
         }
     }
+
+    test("chained divisions by constants whose product doesn't fit the operand type compile") {
+        val text = """
+            main {
+                sub start() {
+                    uword @shared x = 60000
+                    x = x / 1000 / 600
+                    ubyte @shared b = 250
+                    b = b / 5 / 100
+                }
+            }
+            """
+        for(target in listOf(Cx16Target(), VMTarget())) {
+            for(optimize in listOf(false, true)) {
+                withClue("${target.name} optimize=$optimize") {
+                    compileText(target, optimize, text, outputDir, writeAssembly = false) shouldNotBe null
+                }
+            }
+        }
+    }
+
+    test("an if expression of arrays returned as an address compiles for 6502") {
+        val text = """
+            main {
+                ubyte[3] arr1
+                ubyte[3] arr2
+                sub start() {
+                    uword @shared s = f(1)
+                }
+                sub f(ubyte c) -> uword {
+                    return if c==0 arr1 else arr2
+                }
+            }
+            """
+        for(optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                compileText(Cx16Target(), optimize, text, outputDir, writeAssembly = true) shouldNotBe null
+            }
+        }
+    }
 })
