@@ -6204,5 +6204,49 @@ main {
             sys.waitvsync()
         txt.print("waited\n")
     }
-}""", "true 8 8 true true true\nwaited\n")
+}""", "true 8 8 true true true\nwaited\n"),
+
+    "byte and word values loaded from memory and widened, signed and unsigned" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    ubyte[4] @shared ub = [200, 5, 255, 128]
+    byte[4] @shared sb = [-100, 5, -1, -128]
+    uword[3] @shared uw = [40000, 7, 65535]
+    word[3] @shared sw = [-30000, 7, -1]
+
+    sub start() {
+        ubyte @shared i = 2
+        ^^ubyte pu = &ub
+        ^^byte ps = &sb
+        ^^uword pw = &uw
+        ^^word psw = &sw
+        uword w1 = ub[i]
+        word w2 = sb[i]
+        long l1 = ub[i]
+        long l2 = sb[i]
+        long l3 = uw[i]
+        long l4 = sw[i]
+        txt.print_uw(w1) txt.spc() txt.print_w(w2) txt.spc() txt.print_l(l1) txt.spc() txt.print_l(l2) txt.spc() txt.print_l(l3) txt.spc() txt.print_l(l4) txt.nl()
+        w1 = pu[i] as uword
+        w2 = ps[i] as word
+        l1 = pu[3] as long
+        l2 = ps[3] as long
+        l3 = pw[0] as long
+        l4 = psw[0] as long
+        txt.print_uw(w1) txt.spc() txt.print_w(w2) txt.spc() txt.print_l(l1) txt.spc() txt.print_l(l2) txt.spc() txt.print_l(l3) txt.spc() txt.print_l(l4) txt.nl()
+        ubyte @shared b = ub[0]
+        byte @shared c = sb[0]
+        uword @shared x = uw[0]
+        word @shared y = sw[0]
+        l1 = b
+        l2 = c
+        l3 = x
+        l4 = y
+        w1 = b
+        w2 = c
+        txt.print_uw(w1) txt.spc() txt.print_w(w2) txt.spc() txt.print_l(l1) txt.spc() txt.print_l(l2) txt.spc() txt.print_l(l3) txt.spc() txt.print_l(l4) txt.nl()
+    }
+}""", "255 -1 255 -1 65535 -1\n255 -1 128 -128 40000 -30000\n200 -100 200 -100 40000 -30000\n")
 )
