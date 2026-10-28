@@ -4,6 +4,8 @@ import prog8.code.target.VMTarget
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+class MemoryAccessException(val address: UInt, val size: Int): Exception($$"access of $$size byte(s) at $$${address.toString(16)} is outside the VM's memory")
+
 /**
  * 16 MB of random access memory. Initialized to a repeating nonzero debug pattern.
  */
@@ -39,23 +41,29 @@ class Memory {
         mem.fill(0)
     }
 
-    fun getUB(address: UInt): UByte = mem[address.toInt()].toUByte()
-    fun getSB(address: UInt): Byte = mem[address.toInt()]
-    fun setUB(address: UInt, value: UByte) { mem[address.toInt()] = value.toByte() }
-    fun setSB(address: UInt, value: Byte) { mem[address.toInt()] = value }
+    private fun index(address: UInt, size: Int): Int {
+        if(address > (mem.size - size).toUInt())
+            throw MemoryAccessException(address, size)
+        return address.toInt()
+    }
+
+    fun getUB(address: UInt): UByte = mem[index(address, 1)].toUByte()
+    fun getSB(address: UInt): Byte = mem[index(address, 1)]
+    fun setUB(address: UInt, value: UByte) { mem[index(address, 1)] = value.toByte() }
+    fun setSB(address: UInt, value: Byte) { mem[index(address, 1)] = value }
 
     fun getUW(address: UInt): UShort {
-        val a = address.toInt()
+        val a = index(address, 2)
         return ((mem[a].toInt() and 0xFF) or ((mem[a+1].toInt() and 0xFF) shl 8)).toUShort()
     }
 
     fun getSW(address: UInt): Short {
-        val a = address.toInt()
+        val a = index(address, 2)
         return ((mem[a].toInt() and 0xFF) or ((mem[a+1].toInt() and 0xFF) shl 8)).toShort()
     }
 
     fun getSL(address: UInt): Int {
-        val a = address.toInt()
+        val a = index(address, 4)
         return (mem[a].toInt() and 0xFF) or
                ((mem[a+1].toInt() and 0xFF) shl 8) or
                ((mem[a+2].toInt() and 0xFF) shl 16) or
@@ -63,7 +71,7 @@ class Memory {
     }
 
     fun getUL(address: UInt): UInt {
-        val a = address.toInt()
+        val a = index(address, 4)
         return ((mem[a].toInt() and 0xFF) or
                ((mem[a+1].toInt() and 0xFF) shl 8) or
                ((mem[a+2].toInt() and 0xFF) shl 16) or
@@ -71,19 +79,19 @@ class Memory {
     }
 
     fun setUW(address: UInt, value: UShort) {
-        val a = address.toInt()
+        val a = index(address, 2)
         mem[a] = (value.toInt() and 0xFF).toByte()
         mem[a+1] = ((value.toInt() shr 8) and 0xFF).toByte()
     }
 
     fun setSW(address: UInt, value: Short) {
-        val a = address.toInt()
+        val a = index(address, 2)
         mem[a] = (value.toInt() and 0xFF).toByte()
         mem[a+1] = ((value.toInt() shr 8) and 0xFF).toByte()
     }
 
     fun setSL(address: UInt, value: Int) {
-        val a = address.toInt()
+        val a = index(address, 4)
         mem[a] = (value and 0xFF).toByte()
         mem[a+1] = ((value shr 8) and 0xFF).toByte()
         mem[a+2] = ((value shr 16) and 0xFF).toByte()
@@ -92,7 +100,7 @@ class Memory {
 
     fun setUL(address: UInt, value: UInt) {
         val v = value.toInt()
-        val a = address.toInt()
+        val a = index(address, 4)
         mem[a] = (v and 0xFF).toByte()
         mem[a+1] = ((v shr 8) and 0xFF).toByte()
         mem[a+2] = ((v shr 16) and 0xFF).toByte()
@@ -100,7 +108,7 @@ class Memory {
     }
 
     fun getSQ(address: UInt): Long {
-        val a = address.toInt()
+        val a = index(address, 8)
         return (mem[a].toLong() and 0xFF) or
             ((mem[a+1].toLong() and 0xFF) shl 8) or
             ((mem[a+2].toLong() and 0xFF) shl 16) or
@@ -114,7 +122,7 @@ class Memory {
     fun getUQ(address: UInt): ULong = getSQ(address).toULong()
 
     fun setSQ(address: UInt, value: Long) {
-        val a = address.toInt()
+        val a = index(address, 8)
         mem[a] = (value and 0xFF).toByte()
         mem[a+1] = ((value shr 8) and 0xFF).toByte()
         mem[a+2] = ((value shr 16) and 0xFF).toByte()
@@ -129,7 +137,7 @@ class Memory {
 
     fun setFloat(address: UInt, value: Double) {
         var bits = value.toBits()
-        val a = address.toInt()
+        val a = index(address, 8)
         mem[a] = (bits and 0xFF).toByte()
         bits = bits ushr 8
         mem[a+1] = (bits and 0xFF).toByte()
@@ -148,7 +156,7 @@ class Memory {
     }
 
     fun getFloat(address: UInt): Double {
-        val a = address.toInt()
+        val a = index(address, 8)
         val bits = (mem[a].toLong() and 0xFF) or
             ((mem[a+1].toLong() and 0xFF) shl 8) or
             ((mem[a+2].toLong() and 0xFF) shl 16) or
@@ -161,8 +169,8 @@ class Memory {
     }
 
     fun setString(address: UInt, string: String, zeroTerminated: Boolean) {
-        val a = address.toInt()
         val length = string.length
+        val a = index(address, if(zeroTerminated) length + 1 else length)
         if (length > 0)
             System.arraycopy(string.toByteArray(), 0, mem, a, length)
         if(zeroTerminated)
@@ -170,9 +178,9 @@ class Memory {
     }
 
     fun getString(address: UInt): String {
-        val a = address.toInt()
+        val a = index(address, 1)
         var length = 0
-        while (mem[a + length] != 0.toByte()) length++
+        while (mem[index(address + length.toUInt(), 1)] != 0.toByte()) length++
         return String(mem, a, length)
     }
 }

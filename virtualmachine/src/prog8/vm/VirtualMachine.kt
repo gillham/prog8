@@ -168,6 +168,11 @@ class VirtualMachine(private val irProgram: IRProgram) {
                 println("\nProgram exit! Statuscode=${hx.status} #steps=${stepCount}")
             gfx_close()
             return hx.status
+        } catch (mx: MemoryAccessException) {
+            val source = pcChunk.sourceLinesPositions.firstOrNull()?.let { " (near $it)" } ?: ""
+            System.err.println("\nVM error: ${mx.message}, in [${pcChunk.label ?: "?"}:$pcIndex] ${pcChunk.instructions.getOrNull(pcIndex) ?: ""}$source")
+            gfx_close()
+            return 1
         }
     }
 

@@ -308,7 +308,7 @@ $label .byte  0    ; modified"""
     private fun argumentViaVariable(sub: PtSub, parameter: PtSubroutineParameter, value: PtExpression) {
         // pass parameter via a regular variable (not via registers)
         if(!isArgumentTypeCompatible(value.type, parameter.type))
-            throw AssemblyError("argument type incompatible")
+            throw AssemblyError("argument type incompatible: ${value.type} for parameter ${parameter.name} of type ${parameter.type} ${value.position}")
 
         val reg = parameter.register
         if(reg!=null) {

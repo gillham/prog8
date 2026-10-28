@@ -9,6 +9,7 @@ import prog8.ast.walk.AstModification
 import prog8.ast.walk.AstReplaceNode
 import prog8.ast.walk.AstWalker
 import prog8.code.core.BaseDataType
+import prog8.code.core.DataType
 import prog8.code.core.IErrorReporter
 import prog8.code.core.isWord
 
@@ -90,12 +91,20 @@ internal class BeforeAsmTypecastCleaner(val program: Program,
         if(typecast.type.isUnsignedWord && sourceDt.isPointer && program.target.POINTER_MEM_SIZE <= 2u) {
             // remove all typecasts of pointers to unsigned words if they're not part of a pointer arithmetic expression.
             val expr = typecast.parent as? BinaryExpression
-            if(expr==null || (expr.operator!="+" && expr.operator!="-")) {
+            if((expr==null || (expr.operator!="+" && expr.operator!="-")) && !castNeededForArgument(typecast, sourceDt)) {
                 return listOf(AstReplaceNode(typecast, typecast.expression, parent))
             }
         }
 
         return noModifications
+    }
+
+    // a pointer passed as a uword to a parameter of another pointer type isn't assignable without the cast
+    private fun castNeededForArgument(typecast: TypecastExpression, sourceDt: DataType): Boolean {
+        val call = typecast.parent as? IFunctionCall ?: return false
+        val index = call.args.indexOfFirst { it === typecast }
+        val param = call.target.targetSubroutine()?.parameters?.getOrNull(index) ?: return false
+        return !(sourceDt isAssignableTo param.type)
     }
 
     override fun after(functionCallStatement: FunctionCallStatement, parent: Node): Iterable<AstModification> {

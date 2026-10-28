@@ -178,3 +178,16 @@ Keeping the list: add new items at the end with the next number, and remove an i
   `VariousCleanups` retypes the 0 to the type of the left operand, and only its `==` branch checks that this is a
   numeric type.
 - Branch: fixed, the `!=` branch has the same check, so both give the type error.
+
+**U28. A struct pointer cast to `pointer` and passed to a parameter of another struct pointer type crashes the 6502 codegen**
+- Repro: `struct A { ubyte x }`, `struct B { uword y }`, `sub show(^^B b)`, `^^A a = 1000`, `show(a as pointer)` on c64 or
+  cx16 with `-noopt`: `AssemblyError: argument type incompatible` (with optimization the call is inlined here, but not
+  in larger programs). `pointer` is `uword` on 6502, and `BeforeAsmTypecastCleaner` removes every pointer to uword
+  cast outside pointer arithmetic, so the codegen gets a `^^A` argument for a `^^B` parameter.
+- Branch: fixed, the cast stays on a call argument that isn't assignable to its parameter without it.
+
+**U29. A memory access outside the VM's memory ends with a Java stack trace**
+- Repro: `long @shared address = $efbeaddb`, `cx16.r0L = @(address)` on virtual (or following a garbage pointer):
+  `java.lang.ArrayIndexOutOfBoundsException` from `Memory.getUB` with a stack trace, which looks like a compiler crash.
+- Branch: fixed, `Memory` throws a `MemoryAccessException` with the address, and the VM reports it as a VM error with
+  the instruction and the nearest source line, and ends with exit status 1.

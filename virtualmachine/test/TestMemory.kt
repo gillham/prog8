@@ -2,7 +2,9 @@ import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
+import prog8.code.target.VMTarget
 import prog8.vm.Memory
+import prog8.vm.MemoryAccessException
 
 
 class TestMemory: FunSpec({
@@ -87,11 +89,22 @@ class TestMemory: FunSpec({
 
     test("illegal address") {
         val mem = Memory()
-        shouldThrow<ArrayIndexOutOfBoundsException> {
+        shouldThrow<MemoryAccessException> {
             mem.getUB(99999999u)
         }
-        shouldThrow<ArrayIndexOutOfBoundsException> {
+        shouldThrow<MemoryAccessException> {
             mem.setUB(99999999u, 0u)
         }
+    }
+
+    test("an access outside the memory throws a MemoryAccessException with its address") {
+        val mem = Memory()
+        val last = (VMTarget.RAM_SIZE - 1).toUInt()
+        mem.setUB(last, 7u)
+        mem.getUB(last) shouldBe 7u
+        shouldThrow<MemoryAccessException> { mem.getUW(last) }.address shouldBe last
+        shouldThrow<MemoryAccessException> { mem.setSL(last - 2u, 1) }.size shouldBe 4
+        shouldThrow<MemoryAccessException> { mem.getUB(0xefbeaddbu) }.message shouldBe $$"access of 1 byte(s) at $efbeaddb is outside the VM's memory"
+        shouldThrow<MemoryAccessException> { mem.getFloat(0xfffffffcu) }
     }
 })

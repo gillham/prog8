@@ -6,6 +6,7 @@ import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
+import prog8.code.target.C64Target
 import prog8.code.target.Cx16Target
 import prog8.code.target.LlvmTarget
 import prog8.code.target.VMTarget
@@ -247,5 +248,48 @@ main {
                 ll.lines().count { "llvm.debugtrap" in it } shouldBe 0
             }
         }
+    }
+
+    test("a struct pointer cast to pointer and passed to a parameter of another struct pointer type keeps its cast") {
+        val src = """
+main {
+    struct A { ubyte x }
+    struct B { uword y }
+    sub show(^^B b) {
+        cx16.r0 = b
+    }
+    sub start() {
+        ^^A @shared a = 1000
+        show(a as pointer)
+    }
+}"""
+        for (target in listOf(C64Target(), Cx16Target(), VMTarget())) {
+            for (optimize in listOf(false, true)) {
+                withClue("${target.name} optimize=$optimize") {
+                    compileText(target, optimize, src, outputDir, writeAssembly = true) shouldNotBe null
+                }
+            }
+        }
+    }
+
+    test("a memory access outside the VM's memory ends the program with a VM error and status 1") {
+        val src = $$"""
+main {
+    sub start() {
+        long @shared address = $efbeaddb
+        cx16.r0L = @(address)
+    }
+}"""
+        val result = compileText(VMTarget(), false, src, outputDir)!!
+        val irSource = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir").readText()
+        val stderr = java.io.ByteArrayOutputStream()
+        val originalErr = System.err
+        System.setErr(java.io.PrintStream(stderr, true))
+        try {
+            VmRunner().runProgram(irSource, true) shouldBe 1
+        } finally {
+            System.setErr(originalErr)
+        }
+        stderr.toString() shouldContain $$"VM error: access of 1 byte(s) at $efbeaddb is outside the VM's memory, in [main.start:"
     }
 })
