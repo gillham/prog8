@@ -725,6 +725,17 @@ internal class AstChecker(private val program: Program,
         if(subroutine.parent !is Block && subroutine.parent !is Subroutine)
             err("subroutines can only be defined in the scope of a block or within another subroutine")
 
+        val asmBody = subroutine.statements.filter { it !is Directive }
+        if(options.compTarget.cpu.is68k && !subroutine.definingBlock.isInLibrary && asmBody.isNotEmpty() && asmBody.all { it is InlineAssembly }) {
+            val body = asmBody.joinToString("\n") { (it as InlineAssembly).assembly }
+            val returns = subroutine.asmReturnvaluesRegisters.mapNotNull { it.registerOrPair?.name?.lowercase() }.toSet()
+            val unsaved = M68kSaveRules.unsavedWrites(body, returns)
+            if(unsaved.isNotEmpty())
+                errors.warn("'${subroutine.name}' changes ${unsaved.map { it.uppercase() }.sorted().joinToString(", ")} without saving it: " +
+                    "m68k subroutines must save and restore every D2-D7, A2-A5 and FP2-FP7 register they change (an OS call through A6 also changes D6)",
+                    subroutine.position)
+        }
+
         if(subroutine.isAsmSubroutine) {
             if(subroutine.asmParameterRegisters.size != subroutine.parameters.size)
                 err("number of asm parameter registers is not the isSameAs as number of parameters")
@@ -802,6 +813,11 @@ internal class AstChecker(private val program: Program,
             for(reg in subroutine.asmClobbers) {
                 if(regsUsed.contains(RegisterOrPair.fromCpuRegister(reg)))
                     err("a return register is also in the clobber list")
+            }
+
+            if(options.compTarget.cpu.is68k && subroutine.asmAddress == null && subroutine.asmClobbers.isNotEmpty()) {
+                err("an asmsub on m68k cannot declare clobbers(...): the subroutine itself must save/restore the " +
+                    "registers it uses (D2-D6/A2-A4/FP2-FP7) and must not destroy D7 or A5")
             }
 
             if(subroutine.statements.any{it !is InlineAssembly})
@@ -1980,6 +1996,9 @@ internal class AstChecker(private val program: Program,
         val leftDt = leftIDt.getOrUndef()
         val rightDt = rightIDt.getOrUndef()
 
+//        if (expr.operator == "*")
+//            warnAboutNarrowMultiplication(expr)
+
         // gate off nonsensical pointer arithmetic
         if (expr.operator !in arrayOf("+", "-") + ComparisonOperators) {
             if (leftDt.isPointer || leftDt.isPointerArray || rightDt.isPointer || rightDt.isPointerArray) {
@@ -2169,6 +2188,69 @@ internal class AstChecker(private val program: Program,
             errors.err("explicit typecast is needed to convert a non-long value to a pointer", typecast.position)
 
         super.visit(typecast)
+    }
+
+    private data class IntegerRange(val min: Long, val max: Long)
+
+/*
+    private fun warnAboutNarrowMultiplication(expr: BinaryExpression) {
+        val resultDt = expr.inferType(program).getOrUndef()
+        val resultWidth = integerWidth(resultDt) ?: return
+
+        var current: Node = expr.parent
+        while (current is BinaryExpression || current is PrefixExpression)
+            current = current.parent
+        val widening = current as? TypecastExpression ?: return
+        if (!widening.implicit)
+            return
+        val targetDt = widening.type
+        val targetWidth = integerWidth(targetDt) ?: return
+        if (targetWidth <= resultWidth)
+            return
+
+        val resultRange = integerRange(resultDt) ?: return
+        val leftRange = expressionRange(expr.left) ?: return
+        val rightRange = expressionRange(expr.right) ?: return
+        val products = longArrayOf(
+            leftRange.min * rightRange.min,
+            leftRange.min * rightRange.max,
+            leftRange.max * rightRange.min,
+            leftRange.max * rightRange.max
+        )
+        val minProduct = products.minOrNull() ?: return
+        val maxProduct = products.maxOrNull() ?: return
+        if (minProduct >= resultRange.min && maxProduct <= resultRange.max)
+            return
+
+        errors.info(
+            "multiplication is evaluated as $resultDt before widening to $targetDt; the intermediate result may overflow (cast an operand to $targetDt before multiplying to avoid this)",
+            expr.position
+        )
+    }*/
+    private fun expressionRange(expression: Expression): IntegerRange? {
+        val dt = expression.inferType(program).getOrUndef()
+        val constant = expression.constValue(program)?.number
+        if (constant != null && constant.isFinite() && constant == constant.toLong().toDouble()) {
+            val value = constant.toLong()
+            return IntegerRange(value, value)
+        }
+        return integerRange(dt)
+    }
+
+    private fun integerWidth(dt: DataType): Int? = when {
+        dt.isByte -> 1
+        dt.isWord -> 2
+        dt.isLong -> 4
+        else -> null
+    }
+
+    private fun integerRange(dt: DataType): IntegerRange? = when {
+        dt.isUnsignedByte -> IntegerRange(0, 255)
+        dt.isSignedByte -> IntegerRange(-128, 127)
+        dt.isUnsignedWord -> IntegerRange(0, 65535)
+        dt.isSignedWord -> IntegerRange(-32768, 32767)
+        dt.isLong -> IntegerRange(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong())
+        else -> null
     }
 
     override fun visit(range: RangeExpression) {

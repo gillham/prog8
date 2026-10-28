@@ -1,6 +1,6 @@
 
-Prog8 compiler v14.0-BETA2 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 7a2ed905 in branch llvm
+Prog8 compiler v14.0-BETA3 by Irmen de Jong (irmen@razorvine.net)
+Prerelease version from git commit 308bc645 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 
 Compiling program import-all-virtual.p8

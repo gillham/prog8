@@ -808,12 +808,12 @@ return
         val block = IRBlock("main", library = false, IRBlock.Options(), Position.DUMMY)
         val none = RegisterOrStatusflag(null, null)
         fun external(label: String, params: List<DataType>, returns: List<DataType>) = IRAsmSubroutine(
-            label, null, emptySet(), params.map { IRAsmSubroutine.IRAsmParam(none, it) }, returns.map { IRAsmSubroutine.IRAsmParam(none, it) },
+            label, null, emptySet(), false, params.map { IRAsmSubroutine.IRAsmParam(none, it) }, returns.map { IRAsmSubroutine.IRAsmParam(none, it) },
             IRInlineAsmChunk(label, "", false, null), Position("unittest", 3, 5, 9), isExternal = true)
         block += external("main.putchar", listOf(DataType.UBYTE), listOf(DataType.UBYTE))
         block += external("main.puts", listOf(DataType.pointer(BaseDataType.UBYTE)), listOf(DataType.UWORD))
         block += external("main.srand", listOf(DataType.UWORD, DataType.LONG, DataType.FLOAT), emptyList())
-        block += IRAsmSubroutine("main.plain", null, setOf(CpuRegister.A),
+        block += IRAsmSubroutine("main.plain", null, setOf(CpuRegister.A), false,
             listOf(IRAsmSubroutine.IRAsmParam(RegisterOrStatusflag(RegisterOrPair.A, null), DataType.UBYTE)),
             listOf(IRAsmSubroutine.IRAsmParam(RegisterOrStatusflag(null, Statusflag.Pc), DataType.BOOL)),
             IRInlineAsmChunk("main.plain", "rts", false, null), Position.DUMMY)
@@ -874,9 +874,71 @@ return
 
     test("an asmsub needs registers for its parameters and returns unless it is external") {
         val none = listOf(IRAsmSubroutine.IRAsmParam(RegisterOrStatusflag(null, null), DataType.UBYTE))
-        fun routine(external: Boolean) = IRAsmSubroutine("main.f", null, emptySet(), none, emptyList(), IRInlineAsmChunk("main.f", "", false, null), Position.DUMMY, isExternal = external)
+        fun routine(external: Boolean) = IRAsmSubroutine("main.f", null, emptySet(), false, none, emptyList(), IRInlineAsmChunk("main.f", "", false, null), Position.DUMMY, isExternal = external)
         shouldThrow<IllegalArgumentException> { routine(false) }.message shouldBe "asmsub main.f has a parameter or return value without register"
         routine(true).isEmpty() shouldBe false
-        IRAsmSubroutine("main.g", null, emptySet(), emptyList(), emptyList(), IRInlineAsmChunk("main.g", "", false, null), Position.DUMMY).isEmpty() shouldBe true
+        IRAsmSubroutine("main.g", null, emptySet(), false, emptyList(), emptyList(), IRInlineAsmChunk("main.g", "", false, null), Position.DUMMY).isEmpty() shouldBe true
+    }
+
+    test("asmsub clobbers declaration round-trips through IR") {
+        val target = VMTarget()
+        val options = CompilationOptions.builder(target)
+            .output(OutputType.RAW)
+            .zeropage(ZeropageType.DONTUSE)
+            .noSysInit(true)
+            .compilerVersion("99.99")
+            .loadAddress(target.PROGRAM_LOAD_ADDRESS)
+            .memtopAddress(0xffffu)
+            .outputDir(Path(""))
+            .build()
+        val program = IRProgram("unittest-clobbers", IRSymbolTable(), options, target)
+        val block = IRBlock("test", false, IRBlock.Options(), Position.DUMMY)
+
+        val declaredEmpty = IRAsmSubroutine(
+            "test.declared_empty", null, emptySet(), true,
+            emptyList(), emptyList(),
+            IRInlineAsmChunk("test.declared_empty", "rts", false, null),
+            Position.DUMMY
+        )
+        val declaredRegs = IRAsmSubroutine(
+            "test.declared_regs", null, setOf(CpuRegister.D2), true,
+            emptyList(), emptyList(),
+            IRInlineAsmChunk("test.declared_regs", "rts", false, null),
+            Position.DUMMY
+        )
+        val undeclared = IRAsmSubroutine(
+            "test.undeclared", null, emptySet(), false,
+            emptyList(), emptyList(),
+            IRInlineAsmChunk("test.undeclared", "rts", false, null),
+            Position.DUMMY
+        )
+        block.children += declaredEmpty
+        block.children += declaredRegs
+        block.children += undeclared
+        program.blocks += block
+
+        val file = IRFileWriter(program, Path("intermediate-clobbers-test-output.p8ir")).write()
+        try {
+            val text = file.readText()
+            text.contains("CLOBBERSDECLARED=\"true\"") shouldBe true
+
+            val readBack = IRFileReader().read(file)
+            val subs = readBack.blocks.first().children.filterIsInstance<IRAsmSubroutine>().associateBy { it.label }
+            subs["test.declared_empty"]!!.clobbersDeclared shouldBe true
+            subs["test.declared_empty"]!!.clobbers shouldBe emptySet()
+            subs["test.declared_regs"]!!.clobbersDeclared shouldBe true
+            subs["test.declared_regs"]!!.clobbers shouldBe setOf(CpuRegister.D2)
+            subs["test.undeclared"]!!.clobbersDeclared shouldBe false
+            subs["test.undeclared"]!!.clobbers shouldBe emptySet()
+
+            // Old IR files that predate the marker must be treated as undeclared, even if they
+            // happen to contain a CLOBBERS list.
+            val legacyText = text.replace(" CLOBBERSDECLARED=\"true\"", "")
+            val legacyRead = IRFileReader().read(legacyText)
+            val legacySubs = legacyRead.blocks.first().children.filterIsInstance<IRAsmSubroutine>().associateBy { it.label }
+            legacySubs.values.forEach { it.clobbersDeclared shouldBe false }
+        } finally {
+            file.deleteExisting()
+        }
     }
 })

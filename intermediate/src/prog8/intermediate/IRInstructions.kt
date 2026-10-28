@@ -1,34 +1,5 @@
 package prog8.intermediate
 
-/**
- * Inline value class representing a memory address (up to 32-bit).
- */
-@JvmInline
-value class MemoryAddress(val value: UInt) {
-    init { require(value <= 0xffffffffu) { "address out of range: $value" } }
-    override fun toString(): String = "$" + value.toString(16).padStart(2, '0')
-    fun toHex(): String = "$" + value.toString(16)
-    operator fun plus(other: UInt): MemoryAddress = MemoryAddress(value + other)
-    operator fun plus(other: Int): MemoryAddress = MemoryAddress(value + other.toUInt())
-    operator fun minus(other: UInt): MemoryAddress = MemoryAddress(value - other)
-    operator fun minus(other: Int): MemoryAddress = MemoryAddress(value - other.toUInt())
-}
-
-/** Convert a UInt to a MemoryAddress. */
-fun UInt.toAddress(): MemoryAddress = MemoryAddress(this)
-
-/**
- * Inline value class representing a virtual register number (0-99999).
- * Supports comparison with Int and other RegisterNum values.
- */
-@JvmInline
-value class RegisterNum(val value: Int): Comparable<RegisterNum> {
-    init { require(value in 0..99999) { "register number out of range: $value" } }
-    override fun toString(): String = "r$value"
-    override fun compareTo(other: RegisterNum): Int = value.compareTo(other.value)
-    operator fun compareTo(other: Int): Int = value.compareTo(other)
-}
-
 /*
  
 Intermediate Representation instructions for the IR Virtual machine.
@@ -135,6 +106,14 @@ loadhr      reg1, slot                - load cpu hardware register from calling 
 loadhfaczero       fpreg1             - load "cpu hardware register" fac0 into freg1.f
 loadhfacone        fpreg1             - load "cpu hardware register" fac1 into freg1.f
 loadp_inc   reg1,         address     - load reg1 with value in memory indirect via pointer variable at address, then post-increment the pointer variable by sizeof(type) (r1 = *a; a += sizeof(type), uses (a)+ on m68k)
+loadmz      reg1,         address     - load reg1 with the value at memory address, zero-extended (byte->word, or word->long)  (single step, fuses loadm + ext)
+loadms      reg1,         address     - load reg1 with the value at memory address, sign-extended (byte->word, or word->long)  (single step, fuses loadm + exts)
+loadmzl     reg1,         address     - load reg1 with the byte at memory address, zero-extended directly to long  (single step, fuses loadm + extl)
+loadmsl     reg1,         address     - load reg1 with the byte at memory address, sign-extended directly to long  (single step, fuses loadm + extls)
+loadiz      reg1, reg2,   value       - load reg1 with value in memory indirect (reg2 + offset), zero-extended (byte->word, or word->long)
+loadis      reg1, reg2,   value       - load reg1 with value in memory indirect (reg2 + offset), sign-extended (byte->word, or word->long)
+loadizl     reg1, reg2,   value       - load reg1 with byte in memory indirect (reg2 + offset), zero-extended directly to long
+loadisl     reg1, reg2,   value       - load reg1 with byte in memory indirect (reg2 + offset), sign-extended directly to long
 storep_inc  reg1,         address     - store reg1 to memory indirect via pointer variable at address, then post-increment the pointer variable by sizeof(type) (*a = r1; a += sizeof(type), uses (a)+ on m68k)
 storem      reg1,         address     - store reg1 at memory address
 storei      reg1, reg2,   value       - store reg1 in memory indirect, pointed to by reg2 + offsetvalue 0-65535 (often used to write a field from a pointer to a struct, or with offset=0 just straight to the pointer)
@@ -468,6 +447,15 @@ enum class Opcode {
     EXTQ,
     EXTQS,
 
+    LOADMZ,
+    LOADMS,
+    LOADMZL,
+    LOADMSL,
+    LOADIZ,
+    LOADIS,
+    LOADIZL,
+    LOADISL,
+
     ANDR,
     AND,
     ANDM,
@@ -647,6 +635,8 @@ val OpcodesThatSetZeroFlagOnM68k = OpcodesThatSetStatusbits + setOf(
     Opcode.ADDR, Opcode.ADD, Opcode.SUBR, Opcode.SUB,
     Opcode.ANDR, Opcode.AND, Opcode.ORR, Opcode.OR, Opcode.XORR, Opcode.XOR,
     Opcode.INV, Opcode.EXT, Opcode.EXTS, Opcode.EXTL, Opcode.EXTLS,
+    Opcode.LOADMZ, Opcode.LOADMS, Opcode.LOADMZL, Opcode.LOADMSL,
+    Opcode.LOADIZ, Opcode.LOADIS, Opcode.LOADIZL, Opcode.LOADISL,
     Opcode.MULR, Opcode.MUL, Opcode.MULSR, Opcode.MULS,
     Opcode.DIVR, Opcode.DIV, Opcode.DIVSR, Opcode.DIVS,
     Opcode.ASR, Opcode.LSR, Opcode.LSL,
@@ -674,7 +664,15 @@ val OpcodesThatLoad = setOf(
     Opcode.LOADHR,
     Opcode.LOADI,
     Opcode.LOADHFACZERO,
-    Opcode.LOADHFACONE
+    Opcode.LOADHFACONE,
+    Opcode.LOADMZ,
+    Opcode.LOADMS,
+    Opcode.LOADMZL,
+    Opcode.LOADMSL,
+    Opcode.LOADIZ,
+    Opcode.LOADIS,
+    Opcode.LOADIZL,
+    Opcode.LOADISL
 )
 
 val OpcodesWithSideEffects = OpcodesThatBranch + setOf(
@@ -823,4 +821,35 @@ data class IRInstruction(
     }
 
     override fun toString(): String = IRTextCodec.print(this)
+}
+
+
+
+/**
+ * Inline value class representing a memory address (up to 32-bit).
+ */
+@JvmInline
+value class MemoryAddress(val value: UInt) {
+    init { require(value <= 0xffffffffu) { "address out of range: $value" } }
+    override fun toString(): String = "$" + value.toString(16).padStart(2, '0')
+    fun toHex(): String = "$" + value.toString(16)
+    operator fun plus(other: UInt): MemoryAddress = MemoryAddress(value + other)
+    operator fun plus(other: Int): MemoryAddress = MemoryAddress(value + other.toUInt())
+    operator fun minus(other: UInt): MemoryAddress = MemoryAddress(value - other)
+    operator fun minus(other: Int): MemoryAddress = MemoryAddress(value - other.toUInt())
+}
+
+/** Convert a UInt to a MemoryAddress. */
+fun UInt.toAddress(): MemoryAddress = MemoryAddress(this)
+
+/**
+ * Inline value class representing a virtual register number (0-99999).
+ * Supports comparison with Int and other RegisterNum values.
+ */
+@JvmInline
+value class RegisterNum(val value: Int): Comparable<RegisterNum> {
+    init { require(value in 0..99999) { "register number out of range: $value" } }
+    override fun toString(): String = "r$value"
+    override fun compareTo(other: RegisterNum): Int = value.compareTo(other.value)
+    operator fun compareTo(other: Int): Int = value.compareTo(other)
 }

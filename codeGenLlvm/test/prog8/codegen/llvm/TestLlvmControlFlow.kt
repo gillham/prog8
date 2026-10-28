@@ -130,7 +130,7 @@ class TestLlvmControlFlow: FunSpec({
 
     test("asmsubs and extsubs are declared, a call to an extsub address uses its name, other routines are declared from the call") {
         val program = TestProgram()
-        program.asmsub(IRAsmSubroutine("cbm.CHROUT", 0xffd2u, emptySet(),
+        program.asmsub(IRAsmSubroutine("cbm.CHROUT", 0xffd2u, emptySet(), false,
             listOf(IRAsmSubroutine.IRAsmParam(RegisterOrStatusflag(RegisterOrPair.A, null), DataType.UBYTE)), emptyList(),
             IRInlineAsmChunk("cbm.CHROUT", "", false, null), Position.DUMMY))
         program.string("main.text", "hi")

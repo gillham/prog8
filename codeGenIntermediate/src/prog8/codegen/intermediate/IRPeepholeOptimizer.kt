@@ -6,13 +6,6 @@ import prog8.intermediate.*
 
 class IRPeepholeOptimizer(private val irprog: IRProgram, private val retainSSA: Boolean) {
     // NOTE: Several peephole ideas have been deliberately NOT enabled or were reverted:
-    // - foldStoremLoadmToLoadr: goal was to avoid redundant memory traffic for `storem rX,addr ; loadm rY,addr`
-    //   by replacing the load with `loadr rY,rX` (keep value in register). Removed because on m68k/amiga
-    //   the regfile is memory, so keeping the store's source register live for the loadr forces an extra
-    //   spill (move.b d0,regfile ; move.b regfile,mem ; move.b regfile,regfile2) vs the original 2 moves
-    //   via memory (move.b d0,mem ; move.b mem,regfile). This increased textelite by ~344 bytes and other
-    //   amiga examples by 20-230 bytes. Re-enable only with a cost model that proves it shrinks the m68k
-    //   output (e.g. when source is already in regfile and not a call result in d0).
     // - removeLoadrForwarding (goal: coalesce `load r1,#imm ; loadr r2,r1` chains and forward constants) was
     //   previously disabled (half-assed) because it ignored cross-chunk liveness, call side-effects, and
     //   indexRegType for LOADX/STOREX. It is now enabled with a conservative single-chunk
@@ -64,9 +57,11 @@ class IRPeepholeOptimizer(private val irprog: IRProgram, private val retainSSA: 
                                 || removeDoubleLoadsAndStores(chunk1, indexedInstructions)
                                 || removeDoubleLoadsAndStoresIndexed(chunk1, indexedInstructions)
                                 || foldLoadStoremToStoreim(chunk1, indexedInstructions)
-                                // foldStoremLoadmToLoadr (storem+loadm -> loadr) intentionally not called: see class comment
+                                || foldStoremLoadmToLoadr(chunk1, indexedInstructions)
                                 || collapseConversions(chunk1, indexedInstructions)
+                                // dedup matches the loadm+ext pairs that fuseLoadExtend removes, so it must run first
                                 || deduplicateAddressComputations(chunk1)
+                                || fuseLoadExtend(chunk1, indexedInstructions)
                                 || removeUselessArithmetic(chunk1, indexedInstructions)
                                 || removeNeedlessCompares(chunk1, indexedInstructions)
                                 || removeWeirdBranches(chunk1, chunk2, indexedInstructions)
@@ -955,6 +950,30 @@ jump p8_label_gen_2
         return changed
     }
 
+    private fun foldStoremLoadmToLoadr(chunk: IRCodeChunk, indexedInstructions: List<IndexedValue<IRInstruction>>): Boolean {
+        if(!irprog.options.compTarget.cpu.is68k)
+            return false
+        var changed = false
+        indexedInstructions.forEach { (idx, ins) ->
+            if (ins.opcode != Opcode.LOADM || idx == 0)
+                return@forEach
+            val prev = indexedInstructions[idx - 1].value
+            if (prev.opcode != Opcode.STOREM || prev.type != ins.type || prev.memory != ins.memory)
+                return@forEach
+            val memory = ins.memory
+            if (memory !is MemoryReference.Direct)
+                return@forEach
+            val absoluteAddress = memory.absoluteAddress
+            if (absoluteAddress != null && irprog.options.compTarget.isIOAddress(absoluteAddress.value + memory.displacement.toUInt()))
+                return@forEach
+            val source = prev.srcA ?: return@forEach
+            val destination = ins.dest ?: return@forEach
+            chunk.instructions[idx] = IRInstructions.move(destination, source)
+            changed = true
+        }
+        return changed
+    }
+
     private fun removeDoubleLoadsAndStores(chunk: IRCodeChunk, indexedInstructions: List<IndexedValue<IRInstruction>>): Boolean {
         var changed = false
         indexedInstructions.forEach { (idx, ins) ->
@@ -1192,6 +1211,69 @@ jump p8_label_gen_2
         return changed
     }
 
+    private fun fuseLoadExtend(chunk: IRCodeChunk, indexedInstructions: List<IndexedValue<IRInstruction>>): Boolean {
+        // Fuse an extending load:  loadm.b rA, mem  followed by  ext* rB, rA  (rA used only here)
+        // becomes a single extending load (loadmz/loadms/loadmzl/loadmsl, or the loadi forms), removing
+        // the intermediate register and the separate conversion. Covers zero/sign extension for byte/word sources.
+        if (chunk.instructions.size < 2) return false
+        val readCounts = chunk.usedRegisters().readRegs.withDefault { 0 }
+        class Mod(val idx: Int, val replacement: IRInstruction?)   // null = delete
+        val mods = mutableListOf<Mod>()
+        val claimed = mutableSetOf<Int>()
+
+        for (k in 0 until indexedInstructions.size - 1) {
+            val (i, inner) = indexedInstructions[k]
+            val (_, outer) = indexedInstructions[k + 1]
+            if (i in claimed || i + 1 in claimed) continue
+            val mid = inner.dest?.register
+            if (mid == null || mid != outer.srcA?.register) continue
+            if (readCounts.getValue(mid) != 1) continue
+            if (inner.memory == null || outer.dest == null) continue
+
+            val isMem = inner.opcode == Opcode.LOADM
+            val isInd = inner.opcode == Opcode.LOADI
+            if (!isMem && !isInd) continue
+            val innerType = inner.type ?: continue
+            if (innerType != IRDataType.BYTE && innerType != IRDataType.WORD) continue
+            if (outer.type != innerType) continue
+
+            val extOp = outer.opcode
+            val isSign = extOp in setOf(Opcode.EXTS, Opcode.EXTLS)
+            val isLong = extOp in setOf(Opcode.EXTL, Opcode.EXTLS)
+            if (extOp !in setOf(Opcode.EXT, Opcode.EXTS, Opcode.EXTL, Opcode.EXTLS)) continue
+
+            val newOpcode = when {
+                isMem && !isSign && !isLong -> Opcode.LOADMZ
+                isMem && isSign && !isLong -> Opcode.LOADMS
+                isMem && !isSign && isLong -> Opcode.LOADMZL
+                isMem && isSign && isLong -> Opcode.LOADMSL
+                !isMem && !isSign && !isLong -> Opcode.LOADIZ
+                !isMem && isSign && !isLong -> Opcode.LOADIS
+                !isMem && !isSign && isLong -> Opcode.LOADIZL
+                else -> Opcode.LOADISL
+            }
+
+            val destReg = outer.requireDest().registerNumber
+            val fused = IRInstructions.loadMemory(newOpcode, innerType, destReg, inner.requireMemory())
+            mods.add(Mod(i, fused))
+            mods.add(Mod(i + 1, null))
+            claimed.add(i)
+            claimed.add(i + 1)
+        }
+
+        if (mods.isEmpty()) return false
+        // apply mods in reverse index order
+        val byIdx = mods.sortedByDescending { it.idx }
+        for (m in byIdx) {
+            if (m.replacement == null) {
+                if (m.idx < chunk.instructions.size) chunk.instructions.removeAt(m.idx)
+            } else {
+                if (m.idx < chunk.instructions.size) chunk.instructions[m.idx] = m.replacement
+            }
+        }
+        return true
+    }
+
     private fun deduplicateAddressComputations(chunk: IRCodeChunk): Boolean {
         // IR3: collapse repeated buf+i address computations inside one chunk.
         // Looks for the 4-instruction pattern that computes buf+i into a pointer:
@@ -1245,6 +1327,13 @@ jump p8_label_gen_2
                 if(destOk) {
                     val bufKey = memKey(a)
                     val idxKey = memKey(b)
+                    // Never deduplicate memory-mapped I/O: its value can change without a store
+                    // (VIC/SID/CIA on 6502, hardware registers), so reusing a stale pointer is unsound.
+                    // Regular absolute-addressed RAM is still dedupable.
+                    if (bufKey != null && bufKey.base is AddressBase.Absolute) {
+                        val absAddr = (bufKey.base.address.value + bufKey.displacement.toUInt())
+                        if (irprog.options.compTarget.isIOAddress(absAddr)) continue
+                    }
                     if(bufKey != null && idxKey != null) {
                         groups.add(AddrGroup(i, ptrReg.num, b.requireDest().registerNumber, extReg.num, d1.num, bufKey, idxKey))
                         i += 4
@@ -1269,12 +1358,15 @@ jump p8_label_gen_2
                 val gk = groups[k]
                 if(gk.startIdx in claimed) continue  // don't use a replaced group as source; keep earliest non-replaced
                 if(gk.bufKey != gj.bufKey || gk.idxKey != gj.idxKey) continue
-                // barrier check between gk and gj
+                // barrier check between gk and gj. Treat any memory write as a barrier, not just writes to
+                // the same variable: a store through an aliasing pointer can change the data the reused
+                // address points at, and we cannot prove aliasing here.
                 var barrier = false
                 for(t in gk.startIdx + 4 until gj.startIdx) {
-                    if(t in claimed) continue // already slated for removal, ignore? but we haven't applied mods yet
+                    if(t in claimed) continue
                     val ins = chunk.instructions[t]
                     if(VirtualRegister.int(gk.destReg) in ins.definitions) { barrier = true; break }
+                    if(ins.memoryEffect == MemoryEffect.WRITE || ins.memoryEffect == MemoryEffect.READ_WRITE) { barrier = true; break }
                     if(writesMem(ins, gk.bufKey) || writesMem(ins, gk.idxKey)) { barrier = true; break }
                     // a call, or a write through a pointer, can change buf or the index variable too
                     if(ins.opcode in OpcodesWithSideEffects) { barrier = true; break }

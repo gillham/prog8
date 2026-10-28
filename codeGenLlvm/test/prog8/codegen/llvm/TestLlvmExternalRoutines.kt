@@ -144,7 +144,7 @@ class TestLlvmExternalRoutines: FunSpec({
 
     test("asmsubs that are not external keep their scoped name and their register based declaration") {
         val program = TestProgram()
-        program.asmsub(IRAsmSubroutine("cbm.CHROUT", null, emptySet(),
+        program.asmsub(IRAsmSubroutine("cbm.CHROUT", null, emptySet(), false,
             listOf(IRAsmSubroutine.IRAsmParam(RegisterOrStatusflag(RegisterOrPair.A, null), DataType.UBYTE)), emptyList(),
             IRInlineAsmChunk("cbm.CHROUT", "rts", false, null), Position.DUMMY))
         program.sub("main.start", code = "_main.start:\nload.b r1.b,#65.b\ncall cbm.CHROUT(r1.b@s10)\nreturn")
@@ -163,7 +163,7 @@ class TestLlvmExternalRoutines: FunSpec({
 
 private fun external(label: String, params: List<DataType>, returns: List<DataType>, position: Position = Position.DUMMY): IRAsmSubroutine {
     val none = RegisterOrStatusflag(null, null)
-    return IRAsmSubroutine(label, null, emptySet(), params.map { IRAsmSubroutine.IRAsmParam(none, it) }, returns.map { IRAsmSubroutine.IRAsmParam(none, it) },
+    return IRAsmSubroutine(label, null, emptySet(), false, params.map { IRAsmSubroutine.IRAsmParam(none, it) }, returns.map { IRAsmSubroutine.IRAsmParam(none, it) },
         IRInlineAsmChunk(label, "", false, null), position, isExternal = true)
 }
 

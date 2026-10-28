@@ -592,6 +592,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
             Opcode.LOAD, Opcode.LOADM, Opcode.LOADX, Opcode.LOADR, Opcode.LOADHR, Opcode.LOADI, Opcode.LOADHFACZERO, Opcode.LOADHFACONE,
             Opcode.STOREM, Opcode.STOREX, Opcode.STOREZM, Opcode.STOREZI, Opcode.STOREIM, Opcode.STOREZX, Opcode.STOREHR, Opcode.STOREI,
             Opcode.STOREHFACZERO, Opcode.STOREHFACONE, Opcode.LOADP_INC, Opcode.STOREP_INC,
+            Opcode.LOADMZ, Opcode.LOADMS, Opcode.LOADMZL, Opcode.LOADMSL, Opcode.LOADIZ, Opcode.LOADIS, Opcode.LOADIZL, Opcode.LOADISL,
             Opcode.PUSH, Opcode.POP, Opcode.PUSHST, Opcode.POPST -> lowerMemory(ins)
             Opcode.INC, Opcode.INCM, Opcode.DEC, Opcode.DECM, Opcode.NEG, Opcode.NEGM,
             Opcode.ADDR, Opcode.ADD, Opcode.ADDM, Opcode.ADDIM, Opcode.SUBR, Opcode.SUB, Opcode.SUBM, Opcode.SUBIM,

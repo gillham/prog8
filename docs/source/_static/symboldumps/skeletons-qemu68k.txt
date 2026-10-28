@@ -1,6 +1,6 @@
 
-Prog8 compiler v14.0-BETA2 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 7a2ed905 in branch llvm
+Prog8 compiler v14.0-BETA3 by Irmen de Jong (irmen@razorvine.net)
+Prerelease version from git commit 308bc645 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 
 Compiling program import-all-qemu68k.p8
@@ -149,7 +149,7 @@ LIBRARY MODULE NAME: compression
 --------------------------------
 
 compression  {
-    decode_rle  (^^ubyte compressed @A0, ^^ubyte target @A1, uword maxsize @D0) clobbers (D0,D1,D2,A1) -> ^^ubyte @A0
+    decode_rle  (^^ubyte compressed @A0, ^^ubyte target @A1, uword maxsize @D0) -> ^^ubyte @A0
     unZX0  (long compressed @A0, long output @A1)
 }
 

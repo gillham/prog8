@@ -27,6 +27,7 @@ class PtAsmSub(
     name: String,
     val address: Address?,
     val clobbers: Set<CpuRegister>,
+    val clobbersDeclared: Boolean,
     val parameters: List<Pair<RegisterOrStatusflag, PtSubroutineParameter>>,
     val returns: List<Pair<RegisterOrStatusflag, DataType>>,
     val inline: Boolean,
@@ -43,13 +44,18 @@ class PtAsmSub(
     class Builder(val name: String, val position: Position) {
         private var address: Address? = null
         private var clobbers: Set<CpuRegister> = emptySet()
+        private var clobbersDeclared: Boolean = false
         private var parameters: MutableList<Pair<RegisterOrStatusflag, PtSubroutineParameter>> = mutableListOf()
         private var returns: MutableList<Pair<RegisterOrStatusflag, DataType>> = mutableListOf()
         private var inline: Boolean = false
         private var isExternal: Boolean = false
 
         fun address(a: Address?) = apply { address = a }
-        fun clobbers(c: Set<CpuRegister>) = apply { clobbers = c }
+        fun clobbers(c: Set<CpuRegister>) = apply {
+            clobbers = c
+            clobbersDeclared = true
+        }
+        fun clobbersDeclared(declared: Boolean) = apply { clobbersDeclared = declared }
         fun parameters(p: Iterable<Pair<RegisterOrStatusflag, PtSubroutineParameter>>) = apply { parameters = p.toMutableList() }
         fun parameters(vararg p: Pair<RegisterOrStatusflag, PtSubroutineParameter>) = apply { parameters = p.toMutableList() }
         fun addParameter(reg: RegisterOrStatusflag, param: PtSubroutineParameter) = apply { parameters.add(reg to param) }
@@ -59,7 +65,7 @@ class PtAsmSub(
         fun inline(i: Boolean) = apply { inline = i }
         fun isExternal(e: Boolean) = apply { isExternal = e }
 
-        fun build() = PtAsmSub(name, address, clobbers, parameters, returns, inline, position, isExternal)
+        fun build() = PtAsmSub(name, address, clobbers, clobbersDeclared, parameters, returns, inline, position, isExternal)
     }
 }
 
@@ -541,4 +547,3 @@ class PtSwap(position: Position): PtNode(position) {
     val target2: PtAssignTarget
         get() = children[1] as PtAssignTarget
 }
-

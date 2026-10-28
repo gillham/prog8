@@ -40,6 +40,11 @@ internal fun FunctionLowering.lowerMemory(ins: IRInstruction) {
         }
         Opcode.LOADR -> write(ins.requireDest(), readWide(ins.requireSrcA()))
         Opcode.LOADM, Opcode.LOADX, Opcode.LOADI -> ins.requireDest().let { write(it, loadMemory(ins, it.register.toString())) }
+        Opcode.LOADMZ, Opcode.LOADMS, Opcode.LOADMZL, Opcode.LOADMSL, Opcode.LOADIZ, Opcode.LOADIS, Opcode.LOADIZL, Opcode.LOADISL -> {
+            val dest = ins.requireDest()
+            val signed = ins.opcode in setOf(Opcode.LOADMS, Opcode.LOADMSL, Opcode.LOADIS, Opcode.LOADISL)
+            write(dest, widen(loadMemory(ins, "mem"), typeOf(dest.type), signed, dest.register.toString()))
+        }
         Opcode.STOREM, Opcode.STOREX, Opcode.STOREI -> storeMemory(ins, readWide(ins.requireSrcA()))
         Opcode.STOREIM -> storeMemory(ins, immediate(ins, typeOf(checkNotNull(ins.type))))
         Opcode.STOREZM, Opcode.STOREZX, Opcode.STOREZI -> storeMemory(ins, LlvmValue.ZeroInitializer(typeOf(checkNotNull(ins.type))))

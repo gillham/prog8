@@ -36,7 +36,7 @@ import java.io.PrintStream
 class TestAstChecks: FunSpec({
 
     val outputDir = tempdir().toPath()
-    
+
     test("conditional expression w/float works") {
         val text = """
             %import floats
@@ -2200,5 +2200,54 @@ main {
         compileText(Cx16Target(), false, text, outputDir, writeAssembly = false, errors = errors) shouldBe null
         errors.errors.size shouldBe 2
         errors.errors.forEach { it shouldContain "left and right operands aren't the same type: str vs ubyte" }
+    }
+
+    test("m68k asmsub cannot declare clobbers") {
+        val text = """
+            main {
+                asmsub foo() clobbers(D2) {
+                    %asm {{ rts }}
+                }
+                sub start() {
+                    foo()
+                }
+            }
+            """
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(Qemu68kTarget(), false, text, outputDir, errors = errors, writeAssembly = false) shouldBe null
+        errors.errors.size shouldBe 1
+        errors.errors[0] shouldContain "cannot declare clobbers"
+    }
+
+    test("m68k asmsub without clobbers is accepted") {
+        val text = """
+            main {
+                asmsub foo() {
+                    %asm {{ rts }}
+                }
+                sub start() {
+                    foo()
+                }
+            }
+            """
+        val errors = ErrorReporterForTests()
+        compileText(Qemu68kTarget(), false, text, outputDir, errors = errors, writeAssembly = false) shouldNotBe null
+        errors.errors.size shouldBe 0
+    }
+
+    test("6502 asmsub may still declare clobbers") {
+        val text = """
+            main {
+                asmsub foo() clobbers(A,X) {
+                    %asm {{ rts }}
+                }
+                sub start() {
+                    foo()
+                }
+            }
+            """
+        val errors = ErrorReporterForTests()
+        compileText(C64Target(), false, text, outputDir, errors = errors, writeAssembly = false) shouldNotBe null
+        errors.errors.size shouldBe 0
     }
 })
