@@ -6248,5 +6248,27 @@ main {
         w2 = c
         txt.print_uw(w1) txt.spc() txt.print_w(w2) txt.spc() txt.print_l(l1) txt.spc() txt.print_l(l2) txt.spc() txt.print_l(l3) txt.spc() txt.print_l(l4) txt.nl()
     }
-}""", "255 -1 255 -1 65535 -1\n255 -1 128 -128 40000 -30000\n200 -100 200 -100 40000 -30000\n")
+}""", "255 -1 255 -1 65535 -1\n255 -1 128 -128 40000 -30000\n200 -100 200 -100 40000 -30000\n"),
+
+    "a pointer variable read twice before its increment" to OutputProgram($$"""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        scan("abc")
+    }
+
+    sub scan(^^ubyte stext) {
+        uword c
+        while stext^^ != 0 {
+            txt.chrout(stext^^)
+            c = stext^^ & $ff
+            txt.chrout(lsb(c))
+            txt.spc()
+            stext++
+        }
+        txt.nl()
+    }
+}""", "aa bb cc \n")
 )

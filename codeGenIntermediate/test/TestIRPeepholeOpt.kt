@@ -805,4 +805,37 @@ class TestIRPeepholeOpt: FunSpec({
             IRInstructions.storeZero(Opcode.STOREZI, IRDataType.BYTE, IRMemory.indirect(9))
         )) shouldBe 2
     }
+
+    fun pointerPostIncFusions(between: List<IRInstruction>): Int {
+        val irProg = makeIRProgram(listOf(
+            IRInstructions.loadMemory(Opcode.LOADM, IRDataType.POINTER, 1, IRMemory.direct("main.p")),
+            IRInstructions.loadMemory(Opcode.LOADI, IRDataType.BYTE, 2, IRMemory.indirect(1)),
+            IRInstructions.storeMemory(Opcode.STOREM, IRDataType.BYTE, 2, IRMemory.direct("main.a"))
+        ) + between + listOf(
+            IRInstructions.memoryOp(Opcode.INCM, IRDataType.POINTER, IRMemory.direct("main.p")),
+            IRInstructions.simple(Opcode.RETURN)
+        ))
+        IRPeepholeOptimizer(irProg, false).optimize(true, ErrorReporterForTests())
+        return irProg.chunks().flatMap { it.instructions }.count { it.opcode == Opcode.LOADP_INC }
+    }
+
+    test("a load through a pointer variable and its later increment are fused") {
+        pointerPostIncFusions(emptyList()) shouldBe 1
+    }
+
+    test("a load through a pointer variable is not fused with its increment when the variable is read again before it") {
+        pointerPostIncFusions(listOf(
+            IRInstructions.loadMemory(Opcode.LOADM, IRDataType.POINTER, 3, IRMemory.direct("main.p")),
+            IRInstructions.loadMemory(Opcode.LOADIZ, IRDataType.BYTE, 4, IRMemory.indirect(3)),
+            IRInstructions.storeMemory(Opcode.STOREM, IRDataType.WORD, 4, IRMemory.direct("main.c"))
+        )) shouldBe 0
+    }
+
+    test("a load through a pointer variable is not fused with its increment across a call or its address") {
+        pointerPostIncFusions(listOf(IRInstructions.syscall(0))) shouldBe 0
+        pointerPostIncFusions(listOf(
+            IRInstructions.loadAddress(IRDataType.POINTER, 3, "main.p"),
+            IRInstructions.storeMemory(Opcode.STOREM, IRDataType.POINTER, 3, IRMemory.direct("main.q"))
+        )) shouldBe 0
+    }
 })

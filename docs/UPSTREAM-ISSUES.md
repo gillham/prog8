@@ -191,3 +191,11 @@ Keeping the list: add new items at the end with the next number, and remove an i
   `java.lang.ArrayIndexOutOfBoundsException` from `Memory.getUB` with a stack trace, which looks like a compiler crash.
 - Branch: fixed, `Memory` throws a `MemoryAccessException` with the address, and the VM reports it as a VM error with
   the instruction and the nearest source line, and ends with exit status 1.
+
+**U30. A load through a pointer variable is fused with its increment past a second read of the variable**
+- Repro: `sub scan(^^ubyte s)` with `while s^^ != 0 { txt.chrout(s^^)  c = s^^ & $ff  txt.chrout(lsb(c))  s++ }` and
+  `scan("abc")` prints `ab bc c` on virtual instead of `aa bb cc` (right with `-noopt`; verified on `master` 77d45b5e1).
+  `IRPeepholeOptimizer.fusePointerPostInc` turns the first load and the `incm` into `LOADP_INC`, which moves the
+  increment before the second read; `fuseLoadExtend` had made that read a `LOADIZ`, which the pass skips.
+- Branch: fixed, the fusion is skipped when an instruction or a call between the load and the `incm` can access the
+  pointer variable.

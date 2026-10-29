@@ -878,6 +878,11 @@ jump p8_label_gen_2
                     }
                 }
                 if(foundIdx == null || foundIns == null) continue
+                // the fused increment moves up to foundIdx: nothing up to incm may access the pointer variable
+                val accessed = ((loadmIdx + 1)..<incIdx).any { idx ->
+                    idx != foundIdx && accessesVariable(chunk.instructions[idx], addr)
+                }
+                if(accessed) continue
                 // Also ensure no other use of baseReg between loadm and incm besides this one
                 // Already ensured readCounts==1, but also ensure no other loadm defines same reg
                 // Fuse
@@ -906,6 +911,12 @@ jump p8_label_gen_2
         }
         return true
     }
+
+    // a call may reach the variable by name, for instance in a recursive call
+    private fun accessesVariable(ins: IRInstruction, symbol: String): Boolean =
+        ins.memory?.symbolName == symbol
+                || (ins.immediate as? ImmediateOperand.SymbolAddress)?.symbol == symbol
+                || ins.callSite != null && ins.memoryEffect != MemoryEffect.NONE
 
     private fun removeNops(chunk: IRCodeChunk, indexedInstructions: List<IndexedValue<IRInstruction>>): Boolean {
         var changed = false
