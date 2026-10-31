@@ -4,6 +4,32 @@
 custom {
     %option merge, no_symbol_prefixing, ignore_unused
 
+    enum CHIPSET {
+        OCS,
+        ECS,
+        AGA
+    }
+
+    sub detect_chipset() -> ubyte {
+        ; returns the custom chipset in this Amiga (OCS, ECS or AGA)
+        ubyte denise_id = lsb(DENISEID)
+        bool stable = true
+        repeat 31 {
+            if lsb(DENISEID)!=denise_id {
+                stable = false
+                break
+            }
+        }
+        if stable and denise_id==$f8
+            return CHIPSET::AGA
+        if stable and denise_id==$fc
+            return CHIPSET::ECS
+
+        ubyte agnus_id = ((VPOSR >> 8) as ubyte) & $7f
+        if (agnus_id & $70)>=$20
+            return CHIPSET::ECS
+        return CHIPSET::OCS
+    }
 
     asmsub grab_system() {
         ; take over the whole OS and system, to run hardware banging programs (games, demos, etc)
@@ -251,6 +277,161 @@ IRQ7 = $7C
             bset    #1,custom.CIAA_PRA       ; Set Bit 1 to HIGH -> Filter OFF
             rts
         }}
+    }
+
+    ; Bit masks; combine these flags with |.
+    const ubyte JOY_UP = %00000001
+    const ubyte JOY_DOWN = %00000010
+    const ubyte JOY_LEFT = %00000100
+    const ubyte JOY_RIGHT = %00001000
+    const ubyte JOY_FIRE = %00010000
+    const ubyte JOY_FIRE2 = %00100000
+
+    private uword[2] mouse_previous
+    private bool[2] mouse_initialized
+    private word[2] mouse_x_remainder
+    private word[2] mouse_y_remainder
+    private ubyte[2] mouse_delta_divisor
+
+    sub joystick_axes(ubyte port) -> byte, byte {
+        ; Return screen axes in -1..1: x right, y down.
+        if port>1
+            return 0, 0
+        uword state = ~read_joydat(port) ; JOYxDAT direction signals are active low.
+        byte x = 0
+        byte y = 0
+        if (state & $0002)!=0
+            x = -1
+        if (state & $0200)!=0
+            x += 1
+        state = ~(state ^ (state << 1)) ; Decode vertical direction from its quadrature pair.
+        if (state & $0002)!=0
+            y = -1
+        if (state & $0200)!=0
+            y += 1
+        return x, y
+    }
+
+    sub joystick_fire(ubyte port) -> bool {
+        ; Fire switches are active low on CIA-A PRA bits 6 and 7.
+        when port {
+            0 -> return (CIAA_PRA & $40)==0
+            1 -> return (CIAA_PRA & $80)==0
+            else -> return false
+        }
+    }
+
+    sub joystick_fire2(ubyte port) -> bool {
+        ; Second fire is active low on pin 9: POTGOR bit 10 or 14.
+        when port {
+            0 -> return (POTGOR & $0400)==0
+            1 -> return (POTGOR & $4000)==0
+            else -> return false
+        }
+    }
+
+    sub joystick_state(ubyte port) -> ubyte {
+        ; Read directions directly; opposite switches cancel like joystick_axes().
+        if port>1
+            return 0
+        uword directions = ~read_joydat(port)
+        uword vertical = ~(directions ^ (directions << 1))
+        ubyte state = 0
+        if (vertical & $0002)!=0 and (vertical & $0200)==0
+            state |= JOY_UP
+        if (vertical & $0200)!=0 and (vertical & $0002)==0
+            state |= JOY_DOWN
+        if (directions & $0002)!=0 and (directions & $0200)==0
+            state |= JOY_LEFT
+        if (directions & $0200)!=0 and (directions & $0002)==0
+            state |= JOY_RIGHT
+        if joystick_fire(port)
+            state |= JOY_FIRE
+        if joystick_fire2(port)
+            state |= JOY_FIRE2
+        return state
+    }
+
+    sub mouse_init(ubyte port, ubyte scale_divisor) {
+        ; Set the starting counter values and sensitivity used by mouse_delta().
+        if port>1
+            return
+        ; Only power-of-two divisors are supported; invalid values mean raw counts.
+        if scale_divisor!=1 and scale_divisor!=2 and scale_divisor!=4 and scale_divisor!=8
+            scale_divisor = 1
+        mouse_previous[port] = read_joydat(port)
+        mouse_initialized[port] = true
+        mouse_delta_divisor[port] = scale_divisor
+        mouse_x_remainder[port] = 0
+        mouse_y_remainder[port] = 0
+    }
+
+    private inline sub scale_mouse_delta(word total, ubyte divisor) -> byte, word {
+        ; The supported divisors are powers of two, so scale with constant shifts.
+        ; Divide the magnitude first to make negative results truncate toward zero.
+        bool negative = total<0
+        word magnitude = total
+        if negative
+            magnitude = -total
+        word pixels = 0
+        word remainder = 0
+        when divisor {
+            1 -> pixels = magnitude
+            2 -> {
+                pixels = magnitude >> 1
+                remainder = magnitude & 1
+            }
+            4 -> {
+                pixels = magnitude >> 2
+                remainder = magnitude & 3
+            }
+            8 -> {
+                pixels = magnitude >> 3
+                remainder = magnitude & 7
+            }
+            else -> pixels = magnitude
+        }
+        if negative {
+            pixels = -pixels
+            remainder = -remainder
+        }
+        return pixels as byte, remainder
+    }
+
+    sub mouse_delta(ubyte port) -> byte, byte {
+        ; Poll once per frame; each 8-bit counter wraps independently.
+        ; Scale by the divisor selected by mouse_init(), retaining fractions.
+        if port>1
+            return 0, 0
+        uword current = read_joydat(port)
+        if not mouse_initialized[port] {
+            mouse_previous[port] = current
+            mouse_initialized[port] = true
+            mouse_delta_divisor[port] = 1
+            mouse_x_remainder[port] = 0
+            mouse_y_remainder[port] = 0
+            return 0, 0
+        }
+        uword previous = mouse_previous[port]
+        mouse_previous[port] = current
+        byte raw_dx = (lsb(current)-lsb(previous)) as byte
+        byte raw_dy = (msb(current)-msb(previous)) as byte
+        word total_x = mouse_x_remainder[port] + (raw_dx as word)
+        word total_y = mouse_y_remainder[port] + (raw_dy as word)
+        byte dx
+        byte dy
+        word remainder_x
+        word remainder_y
+        dx, remainder_x = scale_mouse_delta(total_x, mouse_delta_divisor[port])
+        dy, remainder_y = scale_mouse_delta(total_y, mouse_delta_divisor[port])
+        mouse_x_remainder[port] = remainder_x
+        mouse_y_remainder[port] = remainder_y
+        return dx, dy
+    }
+
+    private inline sub read_joydat(ubyte port) -> uword {
+        ; Read the custom-chip data register for the selected port.
+        return if port==0 then JOY0DAT else JOY1DAT
     }
 
     ; ========== mouse button status ==========
@@ -716,4 +897,215 @@ IRQ7 = $7C
     &ubyte  CIAB_ICR     = $bfdd00   ; CIA-B interrupt control
     &ubyte  CIAB_CRA     = $bfde00   ; CIA-B control A
     &ubyte  CIAB_CRB     = $bfdf00   ; CIA-B control B
+
+    ; ========== Amiga raw keyboard ==========
+    ; Raw keyboard programming sources:
+    ; - Amiga Bootcamp keyboard guide
+    ;   https://github.com/alfishe/amiga-bootcamp/blob/main/10_devices/keyboard.md
+    ; - Hardware Reference Manual, keyboard appendix
+    ;   https://www.amigarealm.com/computing/knowledge/hardref/aph.htm
+    ; - Amiga 500 direct keyboard access
+    ;   https://bumbershootsoft.wordpress.com/2024/08/17/amiga-500-direct-keyboard-access/
+
+    enum KeyCode {
+        GRAVE           = $00,
+        KEY_1           = $01,
+        KEY_2           = $02,
+        KEY_3           = $03,
+        KEY_4           = $04,
+        KEY_5           = $05,
+        KEY_6           = $06,
+        KEY_7           = $07,
+        KEY_8           = $08,
+        KEY_9           = $09,
+        KEY_0           = $0a,
+        MINUS           = $0b,
+        EQUALS          = $0c,
+        INTL_3          = $0d,
+        UNDEFINED_0E    = $0e,
+        NP_0            = $0f,
+        Q               = $10,
+        W               = $11,
+        E               = $12,
+        R               = $13,
+        T               = $14,
+        Y               = $15,
+        U               = $16,
+        I               = $17,
+        O               = $18,
+        P               = $19,
+        LBRACKET        = $1a,
+        RBRACKET        = $1b,
+        UNDEFINED_1C    = $1c,
+        NP_1            = $1d,
+        NP_2            = $1e,
+        NP_3            = $1f,
+        A               = $20,
+        S               = $21,
+        D               = $22,
+        F               = $23,
+        G               = $24,
+        H               = $25,
+        J               = $26,
+        K               = $27,
+        L               = $28,
+        SEMICOLON       = $29,
+        QUOTE           = $2a,
+        INTL_1          = $2b,
+        UNDEFINED_2C    = $2c,
+        NP_4            = $2d,
+        NP_5            = $2e,
+        NP_6            = $2f,
+        INTL_2          = $30,
+        Z               = $31,
+        X               = $32,
+        C               = $33,
+        V               = $34,
+        B               = $35,
+        N               = $36,
+        M               = $37,
+        COMMA           = $38,
+        PERIOD          = $39,
+        SLASH           = $3a,
+        BRAZIL_SLASH    = $3b,
+        NP_PERIOD       = $3c,
+        NP_7            = $3d,
+        NP_8            = $3e,
+        NP_9            = $3f,
+        SPACE           = $40,
+        BACKSPACE       = $41,
+        TAB             = $42,
+        NP_ENTER        = $43,
+        RETURN          = $44,
+        ESC             = $45,
+        DELETE          = $46,
+        INSERT          = $47,
+        PAGE_UP         = $48,
+        PAGE_DOWN       = $49,
+        NP_MINUS        = $4a,
+        F11             = $4b,
+        CURSOR_UP       = $4c,
+        CURSOR_DOWN     = $4d,
+        CURSOR_RIGHT    = $4e,
+        CURSOR_LEFT     = $4f,
+        F1              = $50,
+        F2              = $51,
+        F3              = $52,
+        F4              = $53,
+        F5              = $54,
+        F6              = $55,
+        F7              = $56,
+        F8              = $57,
+        F9              = $58,
+        F10             = $59,
+        NP_LPAREN       = $5a,
+        NP_RPAREN       = $5b,
+        NP_SLASH        = $5c,
+        NP_ASTERISK     = $5d,
+        NP_PLUS         = $5e,
+        HELP            = $5f,
+        LSHIFT          = $60,
+        RSHIFT          = $61,
+        CAPSLOCK        = $62,
+        CONTROL         = $63,
+        LALT            = $64,
+        RALT            = $65,
+        LAMIGA          = $66,
+        RAMIGA          = $67,
+        LMOUSE          = $68,
+        RMOUSE          = $69,
+        MMOUSE          = $6a,
+        MENU            = $6b,
+        NP_COMMA        = $6c,
+        PRINTSCREEN     = $6d,
+        BREAK           = $6e,
+        F12             = $6f,
+        HOME            = $70,
+        END             = $71,
+        AUD_STOP        = $72,
+        AUD_PLAY_PAUSE  = $73,
+        AUD_PREV_TRACK  = $74,
+        AUD_NEXT_TRACK  = $75,
+        AUD_SHUFFLE     = $76,
+        AUD_REPEAT      = $77,
+        RESET_WARNING   = $78,
+        UNDEFINED_79    = $79,
+        UNDEFINED_7A    = $7a,
+        UNDEFINED_7B    = $7b,
+        UNDEFINED_7C    = $7c,
+        UNDEFINED_7D    = $7d,
+        UNDEFINED_7E    = $7e,
+        UNDEFINED_7F    = $7f,
+        KEYCODE_BAD     = $f9,
+        KEYBOARD_OVERFLOW = $fa,
+        SELFTEST_FAILED = $fc,
+        POWERUP_START   = $fd,
+        POWERUP_END     = $fe,
+    }
+
+    ; 128-key state matrix: one bit per Amiga raw key code (0-127).
+    ; Bit 7 of a received code means key-up (release); bit 7 clear means key-down.
+    ; Read with custom.key_pressed(code), or directly: byte = code >> 3, bit = code & 7.
+    ubyte[16] key_state = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+    sub raw_keyboard_poll() -> bool, ubyte {
+        ; Poll CIA-A for a new raw key event and update key_state.
+        ; On a real event, acknowledge by holding KDAT low using CIA-A
+        ; Timer A in one-shot mode (~107 us), so timing is CPU-speed independent.
+        if (CIAA_ICR & $08)==0
+            return false, 0
+        ubyte inverted = ~CIAA_SDR
+        ubyte keycode = ((inverted >> 1) | (inverted << 7)) as ubyte
+        ubyte code = keycode & $7f
+        bool released = (keycode & $80) != 0
+        ubyte byte_index = code >> 3
+        ubyte bit_index = code & 7
+        ubyte mask = 1 << bit_index
+        if released
+            key_state[byte_index] &= ~mask
+        else
+            key_state[byte_index] |= mask
+        if keycode!=KeyCode::SELFTEST_FAILED {
+            ubyte ciaa_cra = CIAA_CRA
+            ubyte ciaa_talo = CIAA_TALO
+            ubyte ciaa_tahi = CIAA_TAHI
+            CIAA_ICR = $01
+            CIAA_CRA = $48
+            CIAA_SDR = 0
+            CIAA_TALO = 75
+            CIAA_TAHI = 0
+            repeat {
+                if (CIAA_ICR & $01)!=0
+                    break
+            }
+            CIAA_CRA = ciaa_cra
+            CIAA_TALO = ciaa_talo
+            CIAA_TAHI = ciaa_tahi
+        }
+        return true, keycode
+    }
+
+    sub key_pressed(ubyte code) -> bool {
+        ; Query the 128-key state matrix for the given 7-bit key code.
+        ; code is 0-127; byte index = code >> 3, bit index = code & 7.
+        ubyte byte_index = code >> 3
+        ubyte bit_index = code & 7
+        return (key_state[byte_index] & (1 << bit_index)) != 0
+    }
+
+    asmsub any_key_pressed() -> bool @D0 {
+        ; True if any of the 128 tracked keys is currently held down.
+        %asm {{
+            lea     custom.key_state,a0
+            moveq   #15,d0
+1$:         tst.b   (a0)+
+            bne.s   2$
+            dbra    d0,1$
+            moveq   #0,d0
+            rts
+2$:         moveq   #1,d0
+            rts
+        }}
+    }
 }
+

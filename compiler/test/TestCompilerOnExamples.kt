@@ -338,7 +338,7 @@ class TestCompilerOnExamplesVirtual: FunSpec({
             ExampleSizes("pointers/animalgame", virtualInstrCountOptimized=452, virtualInstrCountUnoptimized=2091, virtualRegCountOptimized=164, virtualRegCountUnoptimized=891),
             ExampleSizes("pointers/binarytree", virtualInstrCountOptimized=670, virtualInstrCountUnoptimized=2258, virtualRegCountOptimized=268, virtualRegCountUnoptimized=975),
             ExampleSizes("pointers/hashtable", virtualInstrCountOptimized=683, virtualInstrCountUnoptimized=2256, virtualRegCountOptimized=286, virtualRegCountUnoptimized=995),
-            ExampleSizes("pointers/sortedlist", virtualInstrCountOptimized=415, virtualInstrCountUnoptimized=2440, virtualRegCountOptimized=136, virtualRegCountUnoptimized=1056),
+            ExampleSizes("pointers/sortedlist", virtualInstrCountOptimized=415, virtualInstrCountUnoptimized=2446, virtualRegCountOptimized=136, virtualRegCountUnoptimized=1056),
             ExampleSizes("pointers/fountain-virtual", virtualInstrCountOptimized=211, virtualInstrCountUnoptimized=768, virtualRegCountOptimized=83, virtualRegCountUnoptimized=336),
             ExampleSizes("pointers/sorting", virtualInstrCountOptimized=498, virtualInstrCountUnoptimized=2210, virtualRegCountOptimized=167, virtualRegCountUnoptimized=941),
             ExampleSizes("textelite")

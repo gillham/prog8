@@ -130,7 +130,8 @@ fun compileProgram(args: CompilerArguments): CompilationResult? {
                     args.cwd,
                     args.quietAll,
                     args.printCompileInfo,
-                    args.traceImports
+                    args.traceImports,
+                    args.dumpSymbols
                  )
             }
 
@@ -497,7 +498,8 @@ fun parseMainModule(filepath: Path,
                     cwd: Path,
                     quiet: Boolean,
                     printCompileInfo: Boolean = true,
-                     traceImports: Boolean = false): Triple<Program, CompilationOptions, List<Path>> {
+                    traceImports: Boolean = false,
+                    dumpSymbols: Boolean = false): Triple<Program, CompilationOptions, List<Path>> {
     val bf = BuiltinFunctionsFacade(BuiltinFunctions)
     val program = Program(filepath.nameWithoutExtension, bf, compTarget)
     bf.program = program
@@ -512,7 +514,7 @@ fun parseMainModule(filepath: Path,
         .map { Path(it.origin) }
     val compilerOptions = determineCompilationOptions(program, compTarget)
 
-    if(compTarget.name == Amiga500Target.NAME && compilerOptions.floats) {
+    if(!dumpSymbols && compTarget.name == Amiga500Target.NAME && compilerOptions.floats) {
         errors.warn(
             "floating-point code requires a 68020 or better CPU with an 68881/68882 FPU; assembler options set to -m68020 -m68881. This program will NOT run on an Amiga 500/600 or 1200 without fp coprocessor!",
             program.toplevelModule.position
@@ -628,7 +630,7 @@ internal fun determineCompilationOptions(program: Program, compTarget: ICompilat
         .floats(floatsEnabled)
         .noSysInit(noSysInit)
         .romable(romable)
-        .compilerVersion(VERSION)
+        .compilerVersion(CompilerVersionInfo(VERSION, prog8.buildversion.GIT_SHA, prog8.buildversion.GIT_DATE))
         .build()
         .apply {
             this.privateSymbols = privateSymbols
@@ -688,6 +690,7 @@ private fun processAst(program: Program, errors: IErrorReporter, compilerOptions
     errors.report()
     program.changeNotExpressionAndIfComparisonExpr(errors, compilerOptions.compTarget)
     errors.report()
+    program.addDefaultReturnAfterFinalWhen()
     program.addTypecasts(errors, compilerOptions)
     errors.report()
     program.variousCleanups(errors, compilerOptions)

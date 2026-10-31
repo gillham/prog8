@@ -1,16 +1,15 @@
 main {
-    sub start() {
-        alias gfx = gfx_hires
-        gfx.graphics_mode()
-        gfx.somevar = 42
-        cx16.r0 = gfx.somevar
-        cx16.r1 = gfx.MODE
+    sub rotate_90_left(ubyte dir) -> ubyte {
+        when dir {
+            1 -> return 11
+            2 -> return 22
+            3 -> return 33
+            4 -> return 44
+            else -> cx16.r0++
+        }
     }
-}
-gfx_hires {
-    ubyte @shared somevar
-    const ubyte MODE = 2
-    sub graphics_mode() {
-        cx16.r2++
+
+    sub start() {
+        cx16.r0L = rotate_90_left(22)
     }
 }

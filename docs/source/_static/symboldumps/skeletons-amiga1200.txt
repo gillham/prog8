@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA3 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 308bc645 in branch llvm
+Prerelease version from git commit 158bf2d5 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 
 Compiling program import-all-amiga1200.p8
@@ -470,22 +470,6 @@ conv  {
 }
 
 
-LIBRARY MODULE NAME: copper
----------------------------
-
-copper  {
-    long @shared  _copper_pos
-    append_raster_colors  (ubyte vpos_start, ^^uword colors, ubyte num_lines)
-    end  ()
-    get_pos  () -> long @A0
-    init  (long list_ptr @A0)
-    move  (uword reg_addr @D0, uword value @D1)
-    skip  (ubyte vpos @D0, ubyte hpos @D1, uword compare_mask @D2)
-    start  (long list_ptr @A0)
-    wait  (ubyte vpos @D0, ubyte hpos @D1, uword compare_mask @D2)
-}
-
-
 LIBRARY MODULE NAME: coroutines
 -------------------------------
 
@@ -654,6 +638,9 @@ custom  {
     &uword  BPLCON4
     &uword  BPLHSTOP
     &uword  BPLHSTRT
+    const ubyte  CHIPSET::AGA
+    const ubyte  CHIPSET::ECS
+    const ubyte  CHIPSET::OCS
     &ubyte  CIAA_CRA
     &ubyte  CIAA_CRB
     &ubyte  CIAA_DDRA
@@ -791,6 +778,145 @@ custom  {
     &uword  JOY0DAT
     &uword  JOY1DAT
     &uword  JOYTEST
+    const ubyte  JOY_DOWN
+    const ubyte  JOY_FIRE
+    const ubyte  JOY_FIRE2
+    const ubyte  JOY_LEFT
+    const ubyte  JOY_RIGHT
+    const ubyte  JOY_UP
+    const ubyte  KeyCode::A
+    const ubyte  KeyCode::AUD_NEXT_TRACK
+    const ubyte  KeyCode::AUD_PLAY_PAUSE
+    const ubyte  KeyCode::AUD_PREV_TRACK
+    const ubyte  KeyCode::AUD_REPEAT
+    const ubyte  KeyCode::AUD_SHUFFLE
+    const ubyte  KeyCode::AUD_STOP
+    const ubyte  KeyCode::B
+    const ubyte  KeyCode::BACKSPACE
+    const ubyte  KeyCode::BRAZIL_SLASH
+    const ubyte  KeyCode::BREAK
+    const ubyte  KeyCode::C
+    const ubyte  KeyCode::CAPSLOCK
+    const ubyte  KeyCode::COMMA
+    const ubyte  KeyCode::CONTROL
+    const ubyte  KeyCode::CURSOR_DOWN
+    const ubyte  KeyCode::CURSOR_LEFT
+    const ubyte  KeyCode::CURSOR_RIGHT
+    const ubyte  KeyCode::CURSOR_UP
+    const ubyte  KeyCode::D
+    const ubyte  KeyCode::DELETE
+    const ubyte  KeyCode::E
+    const ubyte  KeyCode::END
+    const ubyte  KeyCode::EQUALS
+    const ubyte  KeyCode::ESC
+    const ubyte  KeyCode::F
+    const ubyte  KeyCode::F1
+    const ubyte  KeyCode::F10
+    const ubyte  KeyCode::F11
+    const ubyte  KeyCode::F12
+    const ubyte  KeyCode::F2
+    const ubyte  KeyCode::F3
+    const ubyte  KeyCode::F4
+    const ubyte  KeyCode::F5
+    const ubyte  KeyCode::F6
+    const ubyte  KeyCode::F7
+    const ubyte  KeyCode::F8
+    const ubyte  KeyCode::F9
+    const ubyte  KeyCode::G
+    const ubyte  KeyCode::GRAVE
+    const ubyte  KeyCode::H
+    const ubyte  KeyCode::HELP
+    const ubyte  KeyCode::HOME
+    const ubyte  KeyCode::I
+    const ubyte  KeyCode::INSERT
+    const ubyte  KeyCode::INTL_1
+    const ubyte  KeyCode::INTL_2
+    const ubyte  KeyCode::INTL_3
+    const ubyte  KeyCode::J
+    const ubyte  KeyCode::K
+    const ubyte  KeyCode::KEYBOARD_OVERFLOW
+    const ubyte  KeyCode::KEYCODE_BAD
+    const ubyte  KeyCode::KEY_0
+    const ubyte  KeyCode::KEY_1
+    const ubyte  KeyCode::KEY_2
+    const ubyte  KeyCode::KEY_3
+    const ubyte  KeyCode::KEY_4
+    const ubyte  KeyCode::KEY_5
+    const ubyte  KeyCode::KEY_6
+    const ubyte  KeyCode::KEY_7
+    const ubyte  KeyCode::KEY_8
+    const ubyte  KeyCode::KEY_9
+    const ubyte  KeyCode::L
+    const ubyte  KeyCode::LALT
+    const ubyte  KeyCode::LAMIGA
+    const ubyte  KeyCode::LBRACKET
+    const ubyte  KeyCode::LMOUSE
+    const ubyte  KeyCode::LSHIFT
+    const ubyte  KeyCode::M
+    const ubyte  KeyCode::MENU
+    const ubyte  KeyCode::MINUS
+    const ubyte  KeyCode::MMOUSE
+    const ubyte  KeyCode::N
+    const ubyte  KeyCode::NP_0
+    const ubyte  KeyCode::NP_1
+    const ubyte  KeyCode::NP_2
+    const ubyte  KeyCode::NP_3
+    const ubyte  KeyCode::NP_4
+    const ubyte  KeyCode::NP_5
+    const ubyte  KeyCode::NP_6
+    const ubyte  KeyCode::NP_7
+    const ubyte  KeyCode::NP_8
+    const ubyte  KeyCode::NP_9
+    const ubyte  KeyCode::NP_ASTERISK
+    const ubyte  KeyCode::NP_COMMA
+    const ubyte  KeyCode::NP_ENTER
+    const ubyte  KeyCode::NP_LPAREN
+    const ubyte  KeyCode::NP_MINUS
+    const ubyte  KeyCode::NP_PERIOD
+    const ubyte  KeyCode::NP_PLUS
+    const ubyte  KeyCode::NP_RPAREN
+    const ubyte  KeyCode::NP_SLASH
+    const ubyte  KeyCode::O
+    const ubyte  KeyCode::P
+    const ubyte  KeyCode::PAGE_DOWN
+    const ubyte  KeyCode::PAGE_UP
+    const ubyte  KeyCode::PERIOD
+    const ubyte  KeyCode::POWERUP_END
+    const ubyte  KeyCode::POWERUP_START
+    const ubyte  KeyCode::PRINTSCREEN
+    const ubyte  KeyCode::Q
+    const ubyte  KeyCode::QUOTE
+    const ubyte  KeyCode::R
+    const ubyte  KeyCode::RALT
+    const ubyte  KeyCode::RAMIGA
+    const ubyte  KeyCode::RBRACKET
+    const ubyte  KeyCode::RESET_WARNING
+    const ubyte  KeyCode::RETURN
+    const ubyte  KeyCode::RMOUSE
+    const ubyte  KeyCode::RSHIFT
+    const ubyte  KeyCode::S
+    const ubyte  KeyCode::SELFTEST_FAILED
+    const ubyte  KeyCode::SEMICOLON
+    const ubyte  KeyCode::SLASH
+    const ubyte  KeyCode::SPACE
+    const ubyte  KeyCode::T
+    const ubyte  KeyCode::TAB
+    const ubyte  KeyCode::U
+    const ubyte  KeyCode::UNDEFINED_0E
+    const ubyte  KeyCode::UNDEFINED_1C
+    const ubyte  KeyCode::UNDEFINED_2C
+    const ubyte  KeyCode::UNDEFINED_79
+    const ubyte  KeyCode::UNDEFINED_7A
+    const ubyte  KeyCode::UNDEFINED_7B
+    const ubyte  KeyCode::UNDEFINED_7C
+    const ubyte  KeyCode::UNDEFINED_7D
+    const ubyte  KeyCode::UNDEFINED_7E
+    const ubyte  KeyCode::UNDEFINED_7F
+    const ubyte  KeyCode::V
+    const ubyte  KeyCode::W
+    const ubyte  KeyCode::X
+    const ubyte  KeyCode::Y
+    const ubyte  KeyCode::Z
     const uword  MINTERM_AND
     const uword  MINTERM_CLEAR
     const uword  MINTERM_COPY
@@ -884,11 +1010,22 @@ custom  {
     &uword  VTOTAL
     long @shared  cpuVBR
     bool @shared  isPAL
+    ubyte[]  key_state
+    any_key_pressed  () -> bool @D0
+    detect_chipset  () -> ubyte
     filter_off  ()
     filter_on  ()
     grab_system  ()
+    joystick_axes  (ubyte port) -> byte, byte
+    joystick_fire  (ubyte port) -> bool
+    joystick_fire2  (ubyte port) -> bool
+    joystick_state  (ubyte port) -> ubyte
+    key_pressed  (ubyte code) -> bool
     left_button  () -> bool
     middle_button  () -> bool
+    mouse_delta  (ubyte port) -> byte, byte
+    mouse_init  (ubyte port, ubyte scale_divisor)
+    raw_keyboard_poll  () -> bool, ubyte
     restore_system  ()
     right_button  () -> bool
     set_aga_color  (ubyte color_index @D0, long rgb24 @D1)
@@ -4763,6 +4900,43 @@ ptplayer  {
     remove  ()
     songname  () -> long @A0
     volumes  () -> ubyte @D0, ubyte @D1, ubyte @D2, ubyte @D3
+}
+
+
+LIBRARY MODULE NAME: sound
+--------------------------
+
+sound  {
+    const uword  ADKF_LEDFILTER_OFF
+    const long  CLOCK_PAL
+    const ubyte  Channel::C0
+    const ubyte  Channel::C1
+    const ubyte  Channel::C2
+    const ubyte  Channel::C3
+    const ubyte  MODE_FREE
+    const ubyte  MODE_LOOP
+    const ubyte  MODE_ONESHOT
+    const ubyte  MODE_STREAM
+    const uword  PERIOD_MIN
+    const ubyte  VOL_MAX
+    const ubyte  VOL_MUTE
+    closedown  ()
+    init  ()
+    is_playing  (ubyte channel) -> bool
+    loop  (ubyte channel, long sample, uword len_words, uword period, ubyte volume)
+    play  (ubyte channel, long sample, uword len_words, uword period, ubyte volume)
+    play_14bit  (ubyte hi_channel, long sample_hi, long sample_lo, uword len_words, uword period, ubyte volume)
+    set_freqvol  (ubyte channel, uword samplerate, ubyte volume)
+    set_period  (ubyte channel, uword period)
+    set_volume  (ubyte channel, ubyte volume)
+    start  ()
+    stop  (ubyte channel)
+    stop_all  ()
+    stream_ready  () -> byte
+    stream_start  (ubyte channel, long buf_a, long buf_b, uword len_words, uword period, ubyte volume)
+    stream_stop  (ubyte channel)
+    wait_all  ()
+    wait_channel  (ubyte channel)
 }
 
 

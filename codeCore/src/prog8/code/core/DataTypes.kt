@@ -1,8 +1,6 @@
 package prog8.code.core
 
-import java.util.Objects
-
-
+import java.util.*
 
 
 /**
@@ -491,6 +489,8 @@ class DataType private constructor(
      */
     fun size(memsizer: IMemSizer): Int = when {
         base == BaseDataType.ARRAY && sub == BaseDataType.POINTER -> memsizer.memorySize(BaseDataType.POINTER)
+        sub == BaseDataType.STRUCT_INSTANCE -> subType?.memsize(memsizer)
+            ?: throw IllegalArgumentException("struct instance has unresolved subtype")
         sub!=null -> memsizer.memorySize(sub)
         subType!=null -> subType!!.memsize(memsizer)
         base == BaseDataType.POINTER && subTypeFromAntlr == null -> throw IllegalArgumentException("a pointer without an element type has no element size")

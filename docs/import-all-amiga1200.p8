@@ -5,7 +5,6 @@
 %import asyncio
 %import buffers
 %import blitter
-%import copper
 %import iffparse
 %import icon
 %import compression
@@ -32,4 +31,5 @@
 %import timer
 %import audio
 %import ptplayer
+%import sound
 %import trackdisk

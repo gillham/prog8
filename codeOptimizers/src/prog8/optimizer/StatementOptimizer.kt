@@ -660,10 +660,7 @@ class StatementOptimizer(private val program: Program,
                     null
             } else {
                 val s = requireNotNull(elseScope)
-                val statements = if(gapLabel==null)
-                    s.statements
-                else
-                    (listOf<Statement>(gapLabel) + s.statements).toMutableList()
+                val statements = (if(gapLabel==null) s.statements else listOf<Statement>(gapLabel) + s.statements).toMutableList()
                 if(elseNeedsEndJump)
                     statements.add(program.jumpLabel(requireNotNull(endLabel)))
                 AnonymousScope(statements, s.position)

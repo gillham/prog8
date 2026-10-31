@@ -556,13 +556,42 @@ modules. Import them the same way as any other library::
     Direct access to the custom chipset, with no library involved. Contains
     ``grab_system()``/``restore_system()`` to take over the whole system and interrupt
     handlers for hardware banging programs (games, demos), ``waitvsync()``, AGA colour
-    register writes, and the CIA mouse buttons.
+    register writes, and controller input routines. ``detect_chipset()`` returns
+    ``custom.CHIPSET::OCS``, ``custom.CHIPSET::ECS`` or
+    ``custom.CHIPSET::AGA`` using the Denise ID and VPOSR hardware registers.
+    ``joystick_axes(port)`` returns signed x/y values in -1..1.
+    ``joystick_fire(port)`` and
+    ``joystick_fire2(port)`` return the two fire-button states;
+    ``joystick_state(port)`` combines directions and fire buttons into bit flags
+    such as ``custom.JOY_UP`` and ``custom.JOY_FIRE2``. These flags can be
+    combined with bitwise OR.
+    ``mouse_delta(port)`` returns signed, scaled x/y movement since its previous call.
+    ``left_button()``, ``middle_button()`` and ``right_button()`` read the three
+    mouse buttons on connector 1. The first joystick fire input is read from CIA-A;
+    the second is on pin 9 via POTGOR.
+    Ports are zero-based: 0 is JOY0DAT / connector 1, 1 is JOY1DAT / connector 2.
+    Use the joystick routines with a digital joystick and the mouse routines with
+    a mouse or trackball; these are direct hardware readers, not gameport.device calls.
+    Call ``mouse_init(port, scale_divisor)`` before polling to set the sensitivity:
+    a divisor of 4 returns about one movement unit per four hardware counts, with
+    fractional counts accumulated between calls. Supported divisors are 1, 2, 4 and 8;
+    1 returns raw counts, and other values are treated as 1.
+    If ``mouse_init`` is not called, the first ``mouse_delta`` call initializes
+    with a divisor of 1 and returns zero.
+    Poll mouse deltas once per frame because each hardware counter is 8-bit.
 
 ``blitter``
     Blitter operations and the ``MINTERM`` logic modes.
 
-``copper``
-    Copper list builder and manager.
+``sound``
+    Direct Paula audio: hardware-banging 4-channel 8-bit PCM playback with no
+    OS involved, to be used after ``custom.grab_system()``. Plays samples once,
+    looped, as 14-bit channel pairs, or as double-buffered gapless streams.
+    All sample data must be in CHIP RAM. One-shot samples must start with a
+    single zero word; after the sample ends Paula loops on that word, so the
+    channel falls silent. ``is_playing`` and ``stream_ready`` poll the audio
+    interrupt request flag to notice the end, so no interrupt handler is
+    installed.
 
 ``easygfx``
     Friendly OS graphics wrapper in the style of the ``gfx_*`` pixel modules:
@@ -2303,6 +2332,11 @@ wavfile
 
 .. note::
     the sample rate in hertz can be converted to a vera rate value via::
+
+        vera_rate = (wavfile.sample_rate as long * 65536 / 25000000) as ubyte + 1
+        vera_rate_hz = (vera_rate as uword * 25000000 / 65536) as uword
+
+        ; floating-point alternative::
 
         const float vera_freq_factor = 25e6 / 65536.0
         vera_rate = (wavfile.sample_rate as float / vera_freq_factor) + 1.0 as ubyte

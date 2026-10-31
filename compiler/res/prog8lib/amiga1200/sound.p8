@@ -1,5 +1,5 @@
-%import shared_amiga_copper
+%import shared_amiga_sound
 
-copper {
+sound {
     %option no_symbol_prefixing, ignore_unused
 }

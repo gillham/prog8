@@ -22,6 +22,10 @@ Search in this folder first before looking online!
 
 - A program normally has a `main` block with a parameterless `start` entry
   subroutine. Other blocks and subroutines may be added.
+- Built-in targets are `c64`, `c128`, `cx16`, `pet32`, `virtual`, `amiga500`,
+  `amiga1200`, and `qemu68k`. The first four are 6502-family targets;
+  `amiga500` uses a 68000, while `amiga1200` and `qemu68k` use a 68020.
+  Custom target configuration files can also be passed to `-target`.
 - `%import modulename` imports a module without aliases. Use its defined prefix,
   such as `%import textio` followed by `txt.print(...)`.
 - `sys` is always available and needs no import.
@@ -103,15 +107,21 @@ registers survive calls. Long operations may clobber `R12-R15`.
 ## Syntax Pitfalls
 
 - Hex uses `$FF`, binary uses `%1010`, and casts use `expression as type`.
-- There is no automatic type widening in expression results: `byte * byte`
-  remains a byte. Cast explicitly when a wider result is needed. Assignments,
-  call arguments, and mixed-type expressions do widen implicitly
-  (`ubyte`/`byte` to `word`/`uword` to `long`); only same-width signedness
-  reinterpretation (`uword` to `word` and back) needs an explicit `as` cast.
+- There is no automatic type widening in expression results: the result keeps
+  the operands' type. `byte * byte`, `ubyte * ubyte`, `word * word` and
+  `uword * uword` all stay in their own type and can overflow/truncate. Cast
+  an operand explicitly (e.g. `(a as uword) * b`) when a wider result is
+  needed. Assignments, call arguments, and mixed-type expressions do widen
+  implicitly (`ubyte`/`byte` to `word`/`uword` to `long`); only same-width
+  signedness reinterpretation (`uword` to `word` and back) needs an explicit
+  `as` cast.
 - `&` is an untyped address and `&&` is a typed pointer. Complex pointer field
   assignments may require `ptr^^.field`.
 - `and`, `or`, `xor`, and `not` are logical operators. Use `&`, `|`, `^`, and
   `~` for bitwise operations.
+- Augmented assignments are supported: `+=`, `-=`, `*=`, `/=`, `&=`, `|=`,
+  `^=`, `<<=`, and `>>=`. They are useful for concise updates, including
+  accumulating bit flags (for example, `state |= JOY_FIRE2`).
 - `and` and `or` short-circuit, so the right operand may not be evaluated.
 - There is no `elif`, bare block, or semicolon statement separator. Semicolon
   starts a comment. Prefer one statement per line and four-space indentation.
