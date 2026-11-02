@@ -1147,7 +1147,7 @@ internal class IfExpressionAsmGen(private val asmgen: AsmGen6502Internal, privat
         } else {
             val e = asmgen.unwrapCasts(expr)
             when (e) {
-                is PtIdentifier -> {
+                is PtIdentifier if !e.type.isByteOrBool && !e.type.isFloat -> {
                     val varname = asmgen.asmVariableName(e)
                     block(varname, "$varname+1")
                 }

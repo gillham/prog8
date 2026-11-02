@@ -211,7 +211,9 @@ Keeping the list: add new items at the end with the next number, and remove an i
 **U33. Comparing a uword array element with a ubyte variable reads the next byte as the high byte on 6502**
 - Repro: `arr[s] == id` with `uword[4] arr` and a ubyte `id` generates `cmp p8v_id` and `cpy p8v_id+1`, also with
   `-noopt` (`master` bcc9ba5ee); a match is only found when the byte after `id` is 0. `arr[s] == id as uword` works.
-- Branch: not fixed.
+  `w == id` with a uword variable `w`, `!=`, and the if-expression forms fail the same way: `getWordOperands` in
+  `IfElseAsmGen` and `IfExpressionAsmGen` unwraps the cast and uses the byte variable as a word.
+- Branch: fixed.
 
 **U34. Comparing two constant-index elements of a split word array doesn't assemble**
 - Repro: `uword[2] a = [5, 3]`, `if a[0] < a[1] ...` on c64: `not defined symbol 'p8v_a'` (`master` bcc9ba5ee). It fails

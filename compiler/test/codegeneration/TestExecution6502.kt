@@ -1217,4 +1217,51 @@ class TestExecution6502 : FunSpec({
             }
         }
     }
+
+    test("word compared with a ubyte variable doesn't read the byte after it") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                &ubyte id = $10
+                &ubyte guard = $11
+                &ubyte eqSplit = $02
+                &ubyte eqNosplit = $03
+                &ubyte neSplit = $04
+                &ubyte exprEq = $05
+                &ubyte exprNe = $06
+                &ubyte varEq = $07
+                uword[4] arr = [5, 6, 3, 9]
+                uword[4] @nosplit arrn = [5, 6, 3, 9]
+                sub start() {
+                    ubyte @shared s = 2
+                    uword @shared w = 3
+                    id = 3
+                    guard = 255
+                    eqSplit = 0
+                    if arr[s] == id  eqSplit = 1
+                    eqNosplit = 0
+                    if arrn[s] == id  eqNosplit = 1
+                    neSplit = 1
+                    if arr[s] != id  neSplit = 0
+                    exprEq = if arr[s] == id  1 else 0
+                    exprNe = if arr[s] != id  0 else 1
+                    varEq = 0
+                    if w == id  varEq = 1
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for(optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+                for(address in 0x02..0x07)
+                    withClue("address $address") { machine.assertMemory(address, 1) }
+            }
+        }
+    }
 })
