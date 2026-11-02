@@ -54,7 +54,7 @@ TEST_SOURCE = ROOT / "compiler/test/codegeneration/TestLlvmCompiler.kt"
 PROG8C = ROOT / "compiler/build/install/prog8c/bin/prog8c"
 PROFILES = ROOT / "codeCore/res/prog8lib/llvm-triples"
 WORK = ROOT / "build/llvm-remote-check"
-SYSROOTS = WORK / "sysroots"
+SYSROOTS = ROOT / "temp/llvm-sysroots"   # kept out of build/, which a clean removes
 REMOTE_DIR = "prog8-remote-check"          # relative to the remote home directory
 RUN_TIMEOUT = 60
 # without a connect timeout, ssh on macOS can fail to connect with "Undefined error: 0"
