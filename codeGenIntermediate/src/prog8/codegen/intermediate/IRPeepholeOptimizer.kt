@@ -833,8 +833,8 @@ jump p8_label_gen_2
         val loadmByAddr = mutableMapOf<String, MutableList<Int>>() // address string -> list of loadm indices
         val loadmRegByIdx = mutableMapOf<Int, VirtualRegister>() // loadm idx -> rX
         for((idx, ins) in indexedInstructions) {
-            if(ins.opcode == Opcode.LOADM && ins.type != IRDataType.FLOAT) {
-                // only integer loadm (float uses a float register, not fusible into a pointer)
+            if(ins.opcode == Opcode.LOADM && (ins.type == IRDataType.POINTER || ins.type == IRDataType.LONG)) {
+                // the VM's LOADP_INC/STOREP_INC read and write the pointer variable as 4 bytes
                 val addr = ins.memory?.symbolName ?: continue
                 loadmByAddr.getOrPut(addr) { mutableListOf() }.add(idx)
                 loadmRegByIdx[idx] = ins.requireDest().register
@@ -844,7 +844,7 @@ jump p8_label_gen_2
         val toRemove = mutableSetOf<Int>()
         val toReplace = mutableMapOf<Int, IRInstruction>()
         for((incIdx, incIns) in indexedInstructions) {
-            if(incIns.opcode != Opcode.INCM) continue
+            if(incIns.opcode != Opcode.INCM || (incIns.type != IRDataType.POINTER && incIns.type != IRDataType.LONG)) continue
             val addr = incIns.memory?.symbolName ?: continue
             val loadmIndices = loadmByAddr[addr] ?: continue
             // Find the latest loadm before incm that has a matching loadi/storei using its reg

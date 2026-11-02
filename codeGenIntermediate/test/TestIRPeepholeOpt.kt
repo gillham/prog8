@@ -806,17 +806,21 @@ class TestIRPeepholeOpt: FunSpec({
         )) shouldBe 2
     }
 
-    fun pointerPostIncFusions(between: List<IRInstruction>): Int {
+    fun pointerPostIncFusions(between: List<IRInstruction>, pointerType: IRDataType = IRDataType.POINTER): Int {
         val irProg = makeIRProgram(listOf(
-            IRInstructions.loadMemory(Opcode.LOADM, IRDataType.POINTER, 1, IRMemory.direct("main.p")),
+            IRInstructions.loadMemory(Opcode.LOADM, pointerType, 1, IRMemory.direct("main.p")),
             IRInstructions.loadMemory(Opcode.LOADI, IRDataType.BYTE, 2, IRMemory.indirect(1)),
             IRInstructions.storeMemory(Opcode.STOREM, IRDataType.BYTE, 2, IRMemory.direct("main.a"))
         ) + between + listOf(
-            IRInstructions.memoryOp(Opcode.INCM, IRDataType.POINTER, IRMemory.direct("main.p")),
+            IRInstructions.memoryOp(Opcode.INCM, pointerType, IRMemory.direct("main.p")),
             IRInstructions.simple(Opcode.RETURN)
         ))
         IRPeepholeOptimizer(irProg, false).optimize(true, ErrorReporterForTests())
         return irProg.chunks().flatMap { it.instructions }.count { it.opcode == Opcode.LOADP_INC }
+    }
+
+    test("a load through a uword variable is not fused with its increment, the VM reads a 4 byte pointer") {
+        pointerPostIncFusions(emptyList(), IRDataType.WORD) shouldBe 0
     }
 
     test("a load through a pointer variable and its later increment are fused") {

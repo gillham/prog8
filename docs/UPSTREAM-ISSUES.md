@@ -241,7 +241,7 @@ Keeping the list: add new items at the end with the next number, and remove an i
   `1 2 3 4 5 6 7 8` instead of `2 3 4 5 6 6 7 8` on virtual; `-noopt` is right, and `pointer` parameters are right
   (`master` bcc9ba5ee). `IRPeepholeOptimizer.fusePointerPostInc` also fuses a word-sized variable, and the VM's
   `InsLOADP_INC` always reads the variable with `getSL`.
-- Branch: not fixed.
+- Branch: fixed; the fusion only applies to 4-byte (`.p` or `.l`) pointer variables.
 
 **U38. `diskio.exists()` of a missing file can hang a true-drive 1541**
 - Repro: 50 calls of `diskio.exists("nofile")` on VICE x64sc with `-drive8type 1541 -drive8truedrive`: the program hit
