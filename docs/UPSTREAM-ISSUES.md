@@ -234,7 +234,7 @@ Keeping the list: add new items at the end with the next number, and remove an i
   from the assembler of another module: `not defined symbol 'p8b_settings'` with optimization, on either side of the
   import (`master` bcc9ba5ee); `-noopt` builds. Likely `UnusedCodeRemover.before(module)`, which removes an unused
   module without checking its blocks for `force_output`.
-- Branch: not fixed.
+- Branch: fixed; `UnusedCodeRemover.before(module)` keeps a module that has a `force_output` block.
 
 **U37. The VM reads a `uword` pointer variable as 4 bytes after `LOADP_INC`/`STOREP_INC` fusion**
 - Repro: `sub mb(uword src, uword dest, uword count)` with `@(dest) = @(src)`, `src++`, `dest++` in a loop prints

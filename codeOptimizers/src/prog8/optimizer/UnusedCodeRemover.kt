@@ -48,7 +48,8 @@ class UnusedCodeRemover(private val program: Program,
     }
 
     override fun before(module: Module, parent: Node): Iterable<AstModification> {
-        return if (!module.isLibrary && (module.containsNoCodeNorVars || callgraph.unused(module)))
+        val forcedOutput = module.statements.any { it is Block && "force_output" in it.options() }
+        return if (!module.isLibrary && !forcedOutput && (module.containsNoCodeNorVars || callgraph.unused(module)))
             listOf(AstRemove(module, parent as IStatementContainer))
         else
             noModifications

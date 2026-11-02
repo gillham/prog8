@@ -15,6 +15,7 @@ import prog8.code.target.VMTarget
 import prog8.compiler.determineCompilationOptions
 import prog8.compiler.parseMainModule
 import prog8tests.helpers.ErrorReporterForTests
+import prog8tests.helpers.compileFile
 import prog8tests.helpers.compileText
 import java.nio.file.Path
 
@@ -335,5 +336,44 @@ sub start() {
 
         compileText(VMTarget(), optimize=false, src, outputDir, writeAssembly=false) shouldNotBe null
         compileText(Cx16Target(), optimize=false, src, outputDir, writeAssembly=false) shouldNotBe null
+    }
+
+    test("force_output keeps a const-only block in a module of its own") {
+        val settingsBlock = """
+settings {
+    %option force_output
+    const ubyte LEVEL = 7
+    %asm {{
+LEVEL = 7
+    }}
+}
+"""
+        val mainBlock = """
+main {
+    sub start() {
+        @($0400) = level()
+    }
+
+    asmsub level() -> ubyte @A {
+        %asm {{
+            lda  #p8b_settings.LEVEL
+            rts
+        }}
+    }
+}
+"""
+        val dir = outputDir.resolve("force_output_module")
+        dir.toFile().mkdirs()
+        dir.resolve("fo_settings_imported.p8").toFile().writeText(settingsBlock)
+        dir.resolve("fo_settings_main.p8").toFile().writeText("%import fo_settings_imported\n%zeropage basicsafe\n$mainBlock")
+        dir.resolve("fo_main_imported.p8").toFile().writeText(mainBlock)
+        dir.resolve("fo_main_main.p8").toFile().writeText("%import fo_main_imported\n%zeropage basicsafe\n$settingsBlock")
+        for(file in listOf("fo_settings_main.p8", "fo_main_main.p8")) {
+            for(optimize in listOf(false, true)) {
+                withClue("$file optimize=$optimize") {
+                    compileFile(C64Target(), optimize, dir, file, outputDir) shouldNotBe null
+                }
+            }
+        }
     }
 })
