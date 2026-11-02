@@ -1051,6 +1051,11 @@ no directory routines.
     PET support is limited, not all routines are available for this system.
     Also there are some weird cases in CBM dos when dealing with empty (0-byte) files. It's best to avoid such files altogether.
 
+.. note::
+    On the C64 and C128, repeated ``exists()`` or ``f_open()`` calls on a file that doesn't exist have hung an emulated
+    1541 (VICE with true drive emulation) after a few dozen calls; this hasn't been checked on real hardware.
+    To replace a file, ``delete()`` it unconditionally before writing, instead of calling ``exists()`` first.
+
 
 .. _library-emudbg:
 

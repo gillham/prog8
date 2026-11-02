@@ -247,5 +247,8 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Repro: 50 calls of `diskio.exists("nofile")` on VICE x64sc with `-drive8type 1541 -drive8truedrive`: the program hit
   the cycle limit in 3 of 4 runs on `master` bcc9ba5ee. Opening the file and reading the status from the command channel,
   without `CHKIN` on the file's channel, finished in 4 of 4 runs. `f_open` does `CHKIN` on a channel the drive never
-  opened. Not checked on real hardware, and the root cause isn't proven.
+  opened. Not checked on real hardware, and the root cause isn't proven. Later runs on the branch: hung 4 of 4; adding
+  `CLRCHN` before the failure path's `CLOSE` still hung 3 of 3; reading the status before `CHKIN` finished 3 of 3. That
+  last approach can't go into `f_open` as is: closing the command channel makes the drive close all its channels, so
+  the file just opened can't be read (and a file open for writing would be closed too).
 - Branch: not fixed.
