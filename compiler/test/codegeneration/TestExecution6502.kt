@@ -7,7 +7,10 @@ import io.kotest.matchers.collections.shouldNotBeEmpty
 import io.kotest.matchers.longs.shouldBeLessThan
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
+import prog8.code.target.C128Target
+import prog8.code.target.C64Target
 import prog8.code.target.Cx16Target
+import prog8.code.target.PETTarget
 import prog8tests.helpers.CapturingSerialIO
 import prog8tests.helpers.ErrorReporterForTests
 import prog8tests.helpers.compileText
@@ -1306,6 +1309,66 @@ class TestExecution6502 : FunSpec({
                 val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
                 for(address in 0x02..0x08)
                     withClue("address $address") { machine.assertMemory(address, 1) }
+            }
+        }
+    }
+
+    test("sys.memcmp across page boundaries, and it assembles with basicsafe on c64, c128 and pet32") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+            %zeropage basicsafe
+
+            main {
+                &ubyte poweroff = $f203
+                &byte[10] results = $0400
+                const uword A = $4000
+                const uword B = $5000
+
+                sub reset() {
+                    sys.memset(A, 700, $33)
+                    sys.memset(B, 700, $33)
+                }
+
+                sub start() {
+                    reset()
+                    results[0] = sys.memcmp(A, B, 0)
+                    results[1] = sys.memcmp(A, B, 600)
+                    @(B+599) = $40
+                    results[2] = sys.memcmp(A, B, 600)
+                    results[3] = sys.memcmp(A, B, 599)
+                    reset()
+                    @(A+300) = $40
+                    results[4] = sys.memcmp(A, B, 600)
+                    results[5] = sys.memcmp(A, B, 300)
+                    reset()
+                    @(A+10) = $20
+                    results[6] = sys.memcmp(A, B, 100)
+                    reset()
+                    @(A+255) = $40
+                    results[7] = sys.memcmp(A, B, 256)
+                    results[8] = sys.memcmp(A, B, 255)
+                    reset()
+                    @(B+256) = $20
+                    results[9] = sys.memcmp(A, B, 257)
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for(target in listOf(C64Target(), C128Target(), PETTarget())) {
+            withClue(target.name) {
+                compileText(target, true, src, outputDir) shouldNotBe null
+            }
+        }
+        val expected = listOf(0, 0, -1, 0, 1, 0, -1, 1, 0, 1)
+        for(optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate(maxCycles = 500000L)
+                expected.forEachIndexed { index, value ->
+                    withClue("result $index") { machine.assertMemory(0x0400 + index, value.toByte().toUByte().toInt()) }
+                }
             }
         }
     }

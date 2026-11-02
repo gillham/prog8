@@ -225,8 +225,9 @@ Keeping the list: add new items at the end with the next number, and remove an i
 **U35. `sys.memcmp` doesn't assemble with basicsafe on c64**
 - Repro: `sys.memcmp(a, b, 4)` with `%zeropage basicsafe` on c64: `not a direct page address bits '$cfe0'`
   (`master` bcc9ba5ee). It also fails to build on c128 and pet32. `shared_sys_functions.p8` uses `(cx16.r0),y`, but
-  the virtual registers are outside zero page there; `%zeropage kernalsafe` builds.
-- Branch: not fixed.
+  the virtual registers are outside zero page there; `%zeropage kernalsafe` builds. No other library routine for
+  these targets uses a virtual register as an assembly pointer.
+- Branch: fixed; memcmp copies the two addresses to `P8ZP_SCRATCH_W2` and `P8ZP_SCRATCH_PTR`.
 
 **U36. `%option force_output` doesn't keep a const-only block in a module of its own**
 - Repro: a module holding only `settings { %option force_output  const ubyte LEVEL = 7  %asm {{ ... }} }`, used only

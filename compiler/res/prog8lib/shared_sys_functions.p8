@@ -146,13 +146,22 @@ _longcopy
         %asm {{
             sta  P8ZP_SCRATCH_W1
             sty  P8ZP_SCRATCH_W1+1
+            ; cx16.r0 and r1 aren't in zero page on every target
+            lda  cx16.r0
+            sta  P8ZP_SCRATCH_W2
+            lda  cx16.r0+1
+            sta  P8ZP_SCRATCH_W2+1
+            lda  cx16.r1
+            sta  P8ZP_SCRATCH_PTR
+            lda  cx16.r1+1
+            sta  P8ZP_SCRATCH_PTR+1
             ldx  P8ZP_SCRATCH_W1+1
             beq  _no_msb_size
 
 _loop_msb_size
             ldy  #0
--           lda  (cx16.r0),y
-            cmp  (cx16.r1),y
+-           lda  (P8ZP_SCRATCH_W2),y
+            cmp  (P8ZP_SCRATCH_PTR),y
             bcs  +
             lda  #-1
             rts
@@ -161,8 +170,8 @@ _loop_msb_size
             rts
 +           iny
             bne  -
-            inc  cx16.r0+1
-            inc  cx16.r1+1
+            inc  P8ZP_SCRATCH_W2+1
+            inc  P8ZP_SCRATCH_PTR+1
             dec  P8ZP_SCRATCH_W1+1
             dex
             bne  _loop_msb_size
@@ -173,8 +182,8 @@ _no_msb_size
             rts
 
 +           ldy  #0
--           lda  (cx16.r0),y
-            cmp  (cx16.r1),y
+-           lda  (P8ZP_SCRATCH_W2),y
+            cmp  (P8ZP_SCRATCH_PTR),y
             bcs  +
             lda  #-1
             rts
