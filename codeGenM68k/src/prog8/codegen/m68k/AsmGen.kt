@@ -2,6 +2,7 @@ package prog8.codegen.m68k
 
 import prog8.code.assembly.assemblerCommandComment
 import prog8.code.core.*
+import prog8.code.sanitize
 import prog8.intermediate.*
 import kotlin.math.max
 
@@ -1018,7 +1019,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                     is IRLoopChunk -> translateLoopChunk(element)
                     is IRInlineAsmChunk -> emitRaw(element.assembly)
                     is IRInlineBinaryChunk -> {
-                        emitInlineBinaryData(element.data)
+                        emitInlineBinaryData(element)
                     }
                 }
             }
@@ -1091,7 +1092,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                 is IRInlineBinaryChunk -> {
                     val cl = chunk.label?.let { fixNameSymbols(it) }
                     if (cl != null) emitLabel(cl)
-                    emitInlineBinaryData(chunk.data)
+                    emitInlineBinaryData(chunk)
                 }
             }
         }
@@ -1180,7 +1181,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                 is IRInlineBinaryChunk -> {
                     val cl = chunk.label?.let { fixNameSymbols(it) }
                     if(cl!=null) emitLabel(cl)
-                    emitInlineBinaryData(chunk.data)
+                    emitInlineBinaryData(chunk)
                 }
             }
         }
@@ -1595,8 +1596,25 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         }
     }
 
-    private fun emitInlineBinaryData(data: Collection<UByte>) {
-        val hexBytes = data.map { "$${it.toString(16).padStart(2, '0')}" }
+    private fun emitInlineBinaryData(chunk: IRInlineBinaryChunk) {
+        // mimic the 64tass backend: reference the file via vasm's incbin instead of
+        // embedding every byte as dc.b (keeps huge binaries out of the .asm)
+        val sourceFile = chunk.sourceFile
+        if(sourceFile != null) {
+            try {
+                val outputDir = program.options.outputDir.sanitize()
+                val pathForAssembler = outputDir.relativize(sourceFile.sanitize())
+                    .normalize()
+                    .toString().replace('\\', '/')
+                val offset = if(chunk.sourceOffset!=null) ", ${chunk.sourceOffset}" else ""
+                val length = if(chunk.sourceLength!=null) ", ${chunk.sourceLength}" else ""
+                emitLine("incbin  \"$pathForAssembler\"$offset$length")
+                return
+            } catch(_: IllegalArgumentException) {
+                // different drive/volume than the output dir: fall through to embedding
+            }
+        }
+        val hexBytes = chunk.data.map { "$${it.toString(16).padStart(2, '0')}" }
         emitChunkedDc("dc.b", hexBytes)
     }
 

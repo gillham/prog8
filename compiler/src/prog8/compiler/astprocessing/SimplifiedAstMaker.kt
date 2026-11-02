@@ -736,25 +736,27 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
             asmAddr?.varbank?.parent = sub
 
         if(srcSub.asmAddress==null && !srcSub.isExternal) {
-            var combinedTrueAsm = ""
-            var combinedIrAsm = ""
-            for (asm in srcSub.statements) {
-                asm as InlineAssembly
-                if(asm.isIR)
-                    combinedIrAsm += asm.assembly.trimEnd() + "\n"
-                else
-                    combinedTrueAsm += asm.assembly.trimEnd() + "\n"
+            // regular asmsub: keep %asm, %asmbinary and %asminclude children in source order.
+            // consecutive %asm blocks of the same kind are still combined into one node.
+            for (stmt in srcSub.statements) {
+                val node: PtNode = when(stmt) {
+                    is InlineAssembly -> transform(stmt)
+                    is Directive -> {
+                        require(stmt.directive=="%asmbinary" || stmt.directive=="%asminclude") { "unexpected directive ${stmt.directive} in asmsub at ${stmt.position}" }
+                        transform(stmt)
+                    }
+                    else -> throw FatalAstException("asmsub can only contain inline assembly (%asm), binary blobs (%asmbinary) and assembly includes (%asminclude)")
+                }
+                val last = sub.children.lastOrNull()
+                if(node is PtInlineAssembly && last is PtInlineAssembly && last.isIR==node.isIR) {
+                    val merged = (last.assembly.trimEnd() + "\n" + node.assembly).trimEnd().trimStart('\r', '\n')
+                    sub.setChild(sub.children.size-1, PtInlineAssembly(merged, node.isIR, last.position))
+                } else {
+                    sub.add(node)
+                }
             }
 
-            if(combinedTrueAsm.isNotEmpty()) {
-                combinedTrueAsm = combinedTrueAsm.trimEnd().trimStart('\r', '\n')
-                sub.add(PtInlineAssembly(combinedTrueAsm, false, srcSub.statements[0].position))
-            }
-            if(combinedIrAsm.isNotEmpty()) {
-                combinedIrAsm = combinedIrAsm.trimEnd().trimStart('\r', '\n')
-                sub.add(PtInlineAssembly(combinedIrAsm, true, srcSub.statements[0].position))
-            }
-            if(combinedIrAsm.isEmpty() && combinedTrueAsm.isEmpty())
+            if(sub.children.isEmpty())
                 sub.add(PtInlineAssembly("", true, srcSub.position))
         }
 

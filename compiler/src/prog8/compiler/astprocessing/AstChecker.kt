@@ -607,6 +607,15 @@ internal class AstChecker(private val program: Program,
                 if(inlineAssembly.hasReturnOrRts())
                     count++
             }
+            override fun visit(directive: Directive) {
+                // an included assembly file may contain the return; scan it the same way
+                if(directive.directive=="%asminclude") {
+                    loadAsmIncludeText(directive)?.let {
+                        if(InlineAssembly(it, false, directive.position).hasReturnOrRts())
+                            count++
+                    }
+                }
+            }
         }
 
         val s=Searcher()
@@ -687,7 +696,10 @@ internal class AstChecker(private val program: Program,
         if(!hasReturnOrExternalJumpOrRts(subroutine)) {
             if (subroutine.returntypes.isNotEmpty()) {
                 // for asm subroutines with an address, no statement check is possible.
-                if (subroutine.asmAddress == null && !subroutine.inline && !subroutine.isExternal) {
+                // the same goes for a subroutine whose body is a binary blob (%asmbinary):
+                // opaque machine code is trusted to return properly.
+                val hasBlob = subroutine.statements.any { it is Directive && it.directive=="%asmbinary" }
+                if (subroutine.asmAddress == null && !subroutine.inline && !subroutine.isExternal && !hasBlob) {
                     err("non-inline subroutine has result value(s) and thus must have at least one 'return' or external 'goto' in it (or the assembler equivalent in case of %asm)")
                     haveReturnError = true
                 }
@@ -820,8 +832,8 @@ internal class AstChecker(private val program: Program,
                     "registers it uses (D2-D6/A2-A4/FP2-FP7) and must not destroy D7 or A5")
             }
 
-            if(subroutine.statements.any{it !is InlineAssembly})
-                err("asmsub can only contain inline assembly (%asm)")
+            if(subroutine.statements.any{it !is InlineAssembly && !(it is Directive && (it.directive=="%asmbinary" || it.directive=="%asminclude"))})
+                err("asmsub can only contain inline assembly (%asm), binary blobs (%asmbinary) and assembly includes (%asminclude)")
 
             val statusFlagsNoCarry = subroutine.asmParameterRegisters.mapNotNull { it.statusflag }.toSet() - Statusflag.Pc
             if(statusFlagsNoCarry.isNotEmpty())
@@ -1644,6 +1656,8 @@ internal class AstChecker(private val program: Program,
             "%asminclude" -> {
                 if(directive.parent !is INameScope || directive.parent is Module)
                     err("this directive can't be used here")
+                if(options.compTarget.cpu.isLlvm)
+                    err("%asminclude with native code can't be used on the llvm targets, use %ir instead")
                 if(directive.args.size!=1 || directive.args[0].string==null)
                     err("invalid asminclude directive, expected argument: \"filename\"")
                 checkFileExists(directive, directive.args[0].string!!)
@@ -1651,6 +1665,8 @@ internal class AstChecker(private val program: Program,
             "%asmbinary" -> {
                 if(directive.parent !is INameScope || directive.parent is Module)
                     err("this directive can't be used here")
+                if(options.compTarget.cpu.isLlvm)
+                    err("%asmbinary with native code can't be used on the llvm targets, use %ir instead")
                 val errormsg = "invalid asmbinary directive, expected arguments: \"filename\" [, offset [, length ] ]"
                 if(directive.args.isEmpty()) err(errormsg)
                 else if(directive.args[0].string==null) err(errormsg)
@@ -1884,6 +1900,15 @@ internal class AstChecker(private val program: Program,
             override fun visit(inlineAssembly: InlineAssembly) {
                 if(inlineAssembly.hasReturnOrRts())
                     count++
+            }
+            override fun visit(directive: Directive) {
+                // an included assembly file may contain a return; scan it the same way
+                if(directive.directive=="%asminclude") {
+                    loadAsmIncludeText(directive)?.let {
+                        if(InlineAssembly(it, false, directive.position).hasReturnOrRts())
+                            count++
+                    }
+                }
             }
         }
         val s = Searcher()

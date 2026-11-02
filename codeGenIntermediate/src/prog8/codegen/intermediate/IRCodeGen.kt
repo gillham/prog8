@@ -389,7 +389,7 @@ class IRCodeGen(
                                 replacement
                             }
                             is IRInlineAsmChunk -> IRInlineAsmChunk(sub.label, first.assembly, first.isIR, first.next)
-                            is IRInlineBinaryChunk -> IRInlineBinaryChunk(sub.label, first.data, first.next)
+                            is IRInlineBinaryChunk -> IRInlineBinaryChunk(sub.label, first.data, first.next, first.sourceFile, first.sourceOffset, first.sourceLength)
                             is IRLoopChunk -> IRLoopChunk(sub.label, first.trip, first.body, first.next)
                         }
                         sub.chunks.removeAt(0)
@@ -477,7 +477,7 @@ class IRCodeGen(
             is PtConditionalBranch -> translate(node)
             is PtSwap -> translate(node)
             is PtInlineAssembly -> listOf(IRInlineAsmChunk(null, node.assembly, node.isIR, null))
-            is PtIncludeBinary -> listOf(IRInlineBinaryChunk(null, readBinaryData(node), null))
+            is PtIncludeBinary -> listOf(binaryChunk(null, node))
             is PtAddressOf,
             is PtContainmentCheck,
             is PtMemoryByte,
@@ -507,6 +507,29 @@ class IRCodeGen(
         nonEmptyChunks.filterIsInstance<IRCodeChunk>().firstOrNull()?.appendSrcPosition(node.position)
 
         return nonEmptyChunks
+    }
+
+    private fun binaryChunk(label: String?, node: PtIncludeBinary): IRInlineBinaryChunk =
+        IRInlineBinaryChunk(label, readBinaryData(node), null, node.file, node.offset, node.length)
+
+    // Assembler directive that includes a binary blob, for use inside an asmsub body.
+    // Mirrors what the backends emit for a top-level %asmbinary (64tass .binary, vasm incbin);
+    // the path is relative to the generated .asm file, like the 6502 backend does.
+    private fun asmsubBinaryDirective(node: PtIncludeBinary): String {
+        val pathForAssembler = try {
+            options.outputDir.sanitize().relativize(node.file.sanitize())
+                .normalize()
+                .toString().replace('\\', '/')
+        } catch(_: IllegalArgumentException) {
+            errors.err("cannot determine relative path for %asmbinary file '${node.file}': it must be on the same drive/volume as the generated assembly in ${options.outputDir}", node.position)
+            node.file.toString().replace('\\', '/')
+        }
+        val offset = if(node.offset!=null) ", ${node.offset}" else ""
+        val length = if(node.length!=null) ", ${node.length}" else ""
+        return if(options.compTarget.cpu.is68k)
+            "    incbin  \"$pathForAssembler\"$offset$length"
+        else
+            "    .binary \"$pathForAssembler\" $offset$length"
     }
 
     private fun readBinaryData(node: PtIncludeBinary): Collection<UByte> {
@@ -633,7 +656,7 @@ class IRCodeGen(
                 IRInlineAsmChunk(label, first.assembly, first.isIR, first.next)
             }
             is IRInlineBinaryChunk -> {
-                IRInlineBinaryChunk(label, first.data, first.next)
+                IRInlineBinaryChunk(label, first.data, first.next, first.sourceFile, first.sourceOffset, first.sourceLength)
             }
             is IRLoopChunk -> {
                 // transplant label: create wrapper chunk that falls through to loop
@@ -2003,13 +2026,23 @@ class IRCodeGen(
                         val asm = "${child.name} = $addressStr$bank"
                         irBlock += IRInlineAsmChunk(null, asm, false, null)
                     } else {
-                        // regular asmsub
-                        if(child.children.mapTo(mutableSetOf()) { (it as PtInlineAssembly).isIR }.size>1)
+                        // regular asmsub: children are %asm (PtInlineAssembly) and/or
+                        // %asmbinary (PtIncludeBinary) blobs, in source order
+                        val asmKinds = child.children.filterIsInstance<PtInlineAssembly>().mapTo(mutableSetOf()) { it.isIR }
+                        if(asmKinds.size>1)
                             errors.err("asmsub mixes IR and non-IR assembly code (could be compiler-generated)", child.position)
-                        val asmblocks = child.children.map { (it as PtInlineAssembly).assembly.trimEnd() }
-                        val assembly = asmblocks.joinToString("\n")
+                        val asmblocks = mutableListOf<String>()
+                        for(subchild in child.children) {
+                            when(subchild) {
+                                is PtInlineAssembly -> asmblocks.add(subchild.assembly.trimEnd())
+                                is PtIncludeBinary -> asmblocks.add(asmsubBinaryDirective(subchild))
+                                else -> errors.err("asmsub can only contain inline assembly (%asm) and binary blobs (%asmbinary)", subchild.position)
+                            }
+                        }
+                        val assembly = asmblocks.joinToString("\n").trimEnd().trimStart('\r', '\n')
+                        val firstAsm = child.children.filterIsInstance<PtInlineAssembly>().firstOrNull()
                         val asmChunk = IRInlineAsmChunk(
-                            child.name, assembly, (child.children[0] as PtInlineAssembly).isIR , null
+                            child.name, assembly, firstAsm?.isIR ?: false , null
                         )
                         irBlock += IRAsmSubroutine(
                             child.name,
@@ -2028,7 +2061,7 @@ class IRCodeGen(
                     irBlock += IRInlineAsmChunk(null, child.assembly, child.isIR, null)
                 }
                 is PtIncludeBinary -> {
-                    irBlock += IRInlineBinaryChunk(null, readBinaryData(child), null)
+                    irBlock += binaryChunk(null, child)
                 }
                 is PtLabel -> {
                     irBlock += IRCodeChunk(child.name, null)

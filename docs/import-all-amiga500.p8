@@ -2,6 +2,7 @@
 
 %import adpcm
 %import arexx
+%import asllib
 %import asyncio
 %import buffers
 %import blitter
@@ -11,6 +12,7 @@
 %import coroutines
 %import custom
 %import conv
+%import copper
 %import emudbg
 %import floats
 %import lists
@@ -31,5 +33,6 @@
 %import timer
 %import audio
 %import ptplayer
+%import playfield
 %import sound
 %import trackdisk

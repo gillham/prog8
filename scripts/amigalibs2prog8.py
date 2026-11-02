@@ -5,11 +5,21 @@ Convert Amiga NDK LVO, SFD, and .i files to Prog8 definitions.
 Usage:
   python amigalibs2prog8.py <ndk_path> <output_dir> [--shared-prefix]
 
-  e.g. python scripts/amigalibs2prog8.py /path/to/AmigaNDK_headers compiler/res/prog8lib/amiga500
-
   With --shared-prefix the files are written as shared_amiga_<library>.p8 with
   %option merge, for regenerating the shared include modules in
   compiler/res/prog8lib that the per-target <library>.p8 wrappers import.
+
+IMPORTANT (do not get this wrong):
+  In this repository the amiga500/amiga1200/qemu68k targets all consume the
+  SHARED modules (shared_amiga_*.p8) via thin wrappers. Regenerate those with:
+
+      python scripts/amigalibs2prog8.py <ndk_path> compiler/res/prog8lib --shared-prefix
+
+  NDK headers location on this machine: ~/Documents/prog8-dev-resources/Amiga-NDK
+  Do NOT run without --shared-prefix into compiler/res/prog8lib/amiga500/ (or
+  amiga1200/): that overwrites the thin wrapper modules with full standalone
+  copies and breaks the shared setup. Standalone mode is only for producing a
+  self-contained copy in a separate directory.
 
 Self-contained single file, clearly separated into 6 sections:
   0. CONFIG      - AMIGA_LIBS, TYPE_MAP, STRUCT_NAME_MAP, LIB_STRUCT_TAGS, bank map
@@ -56,7 +66,7 @@ TYPE_MAP = {
 # Struct name mapping: assembly tag -> (C name, expected field prefix)
 # ---------------------------------------------------------------------------
 
-STRUCT_NAME_MAP = {
+STRUCT_NAME_MAP: dict[str, tuple[str, str] | tuple[str, str, tuple[str, int]]] = {
     # exec
     'LN':             ('Node',             'LN_'),
     'MLN':            ('MinNode',          'MLN_'),
@@ -86,6 +96,8 @@ STRUCT_NAME_MAP = {
     'ClipRect':       ('ClipRect',         'cr_'),
     'BitMap':         ('BitMap',           'bm_'),
     'View':           ('View',             'view_'),
+    'ViewPort':       ('ViewPort',         'vp_'),
+    'RasInfo':        ('RasInfo',          'ri_'),
     'TextFont':       ('TextFont',         'tf_'),
     'TextAttr':       ('TextAttr',         'ta_'),
     'ColorMap':       ('ColorMap',         'cm_'),
@@ -128,6 +140,10 @@ STRUCT_NAME_MAP = {
     'KeyQuery':       ('KeyQuery',         'kq_'),
     # workbench
     'DiskObject':     ('DiskObject',       'do_'),
+    # asl
+    'FileRequester':  ('FileRequester',    'fr_'),
+    'FontRequester':  ('FontRequester',    'fo_'),
+    'ScreenModeRequester': ('ScreenModeRequester', 'sm_'),
 }
 
 # Typed list link fields - keep in sync with exec.p8 hand edits and docs NDK reference
@@ -222,7 +238,7 @@ def _parse_one_i(filepath: str) -> dict:
             tag = m.group(1)
             base_offset_str = m.group(2)
             fields = []
-            labels = {'_names': []}
+            labels: dict = {'_names': []}
             i += 1
             offset = 0
             while i < len(lines):
@@ -418,7 +434,7 @@ def _flatten(tag: str, rs, all_raw: dict, prefix: str, visiting: frozenset, size
     if tag in visiting:
         return []           # guard against cycles
     new_visiting = visiting | {tag}
-    flat = []
+    flat: list = []
     offset = 0
     base_off = _parse_size_expr(rs['base_offset_str'], sizes)
     if base_off > 0:
@@ -554,7 +570,9 @@ def _unique_name(base: str, used: set) -> str:
     return f'{base}{suffix}'
 
 
-def _type_size(prog8_type: str) -> int:
+def _type_size(prog8_type: str | None) -> int:
+    if not prog8_type:
+        return 4
     if prog8_type.startswith('^^'):
         return 4
     return {
@@ -640,7 +658,7 @@ def _field_name(raw: str, prefix: str) -> str:
 # EQU / BITDEF parser
 # ---------------------------------------------------------------------------
 
-def parse_consts_i_files(i_dir: str, extra_dirs: list = None, extra_files: list = None) -> list:
+def parse_consts_i_files(i_dir: str, extra_dirs: list | None = None, extra_files: list | None = None) -> list:
     """Parse .i files for constants with cross-file symbol resolution.
 
     Collects all raw EQU definitions first, then iteratively resolves
@@ -795,7 +813,7 @@ _KNOWN_SYMBOLS = {
     'TAG_USER+33': 0x80000021,
 }
 
-def _eval_const(raw: str, symbols: dict = None) -> int | None:
+def _eval_const(raw: str, symbols: dict | None = None) -> int | None:
     raw = raw.strip()
     # Handle parentheses (must be before symbol lookups, as in:
     #   SELECTDOWN EQU (IECODE_LBUTTON)  -> strip to IECODE_LBUTTON)
@@ -1052,7 +1070,34 @@ LIBRARY_BANK_MAP = {
 # NOTE: diskfont is intentionally NOT auto-generated: shared_amiga_diskfont.p8 is
 # hand-maintained, trimmed to pre-2.0 content (the SFD contains post-2.0
 # outline-engine, diskfont-control and tagged-font APIs).
-AMIGA_LIBS = ["exec", "dos", "graphics", "intuition", "utility", "iffparse", "arexx", "icon", "lowlevel"]
+# NOTE: datatypes is intentionally NOT auto-generated: the hand-maintained
+# compiler/res/prog8lib/amiga1200/datatypes.p8 keeps a V39/V40 essentials
+# subset (object lifecycle, selected attribute/method/window calls and tags),
+# omitting later APIs, method tables, printing and drag selection.
+# Hand-maintained modules (NOT auto-generated by this script):
+#   shared_amiga_diskfont.p8   - trimmed to pre-2.0 content (outline engine etc. removed)
+#   amiga1200/datatypes.p8     - essentials subset (see note above)
+#   shared_amiga_audio.p8      - audio.device IO wrappers
+#   shared_amiga_blitter.p8    - blitter helpers + register constants
+#   shared_amiga_custom.p8     - custom chip registers, grab/restore, input helpers, AGA palette
+#   shared_amiga_easygfx.p8    - friendly OS graphics wrapper (NewScreen/NewWindow)
+#   shared_amiga_ptplayer.p8   - ProTracker music player
+#   shared_amiga_sound.p8      - Paula 4-channel PCM driver (hardware-banging)
+#   amiga1200/ahi.p8           - AHI audio (amiga1200 only)
+#   amiga*/adpcm.p8, wavfile.p8 - ADPCM/WAV helpers
+#   amiga*/timer.p8            - timer.device wrapper
+#   amiga*/trackdisk.p8        - trackdisk.device wrapper
+#   amiga*/math.p8, floats.p8  - math helpers
+#   amiga*/conv.p8, strings.p8, lists.p8, sorting.p8, compression.p8, coroutines.p8,
+#   buffers.p8, lineclip.p8, emudbg.p8 - general helpers
+AMIGA_LIBS = ["exec", "dos", "graphics", "intuition", "utility", "iffparse", "arexx", "icon", "lowlevel", "asl"]
+
+# Some library module names clash with CPU instruction mnemonics (e.g. "asl" is
+# a 68k shift instruction), so the generated Prog8 module/block name is
+# overridden here while the library is still resolved by its real name.
+LIB_MODULE_NAME = {
+    'asl': 'asllib',
+}
 
 # ---------------------------------------------------------------------------
 # Library-specific helper routines (not from NDK, hand-maintained)
@@ -1116,6 +1161,45 @@ LIBRARY_HELPERS = {
     const uword LORES = 0
     const ubyte LACE = $0004
     const ubyte SUPERHIRES = $20
+
+    ; Canonical $00RRGGBB palette loaders for Intuition ViewPorts. You only
+    ; ever deal in 24-bit longs; conversion happens inside and the ECS/AGA
+    ; path is picked at runtime, so one binary serves both chipsets.
+    sub load_palette(^^ViewPort vp, ^^long rgb24, uword count) {
+        ; Same visible result as LoadRGB32/LoadRGB4 with no caller-managed
+        ; table buffer. AGA: SetRGB32 loop ($xx000000 channels). ECS: SetRGB4
+        ; loop (top nibbles). Kickstart 1.3 compatible on the ECS path (AGA
+        ; hardware implies 3.0+, where the 32-bit calls exist).
+        if count == 0
+            return
+        if custom.detect_chipset()==custom.CHIPSET::AGA {
+            for n in 0 to count-1 {
+                long rgb = rgb24[n]
+                SetRGB32(vp, n as long, ((rgb >> 16) & $ff) << 24,
+                         ((rgb >> 8) & $ff) << 24, (rgb & $ff) << 24)
+            }
+        } else {
+            for n in 0 to count-1 {
+                long rgb32 = rgb24[n]
+                SetRGB4(vp, n as word, (((rgb32 >> 16) & $f0) >> 4) as ubyte,
+                        (((rgb32 >> 8) & $f0) >> 4) as ubyte, ((rgb32 & $f0) >> 4) as ubyte)
+            }
+        }
+    }
+
+    sub set_palette_color(^^ViewPort vp, uword index, long rgb24) {
+        ; Single canonical color into a ViewPort's colormap. Index above 31
+        ; is ignored on ECS.
+        if custom.detect_chipset()==custom.CHIPSET::AGA {
+            SetRGB32(vp, index as long, ((rgb24 >> 16) & $ff) << 24,
+                     ((rgb24 >> 8) & $ff) << 24, (rgb24 & $ff) << 24)
+        } else {
+            if index > 31
+                return
+            SetRGB4(vp, index as word, (((rgb24 >> 16) & $f0) >> 4) as ubyte,
+                    (((rgb24 >> 8) & $f0) >> 4) as ubyte, ((rgb24 & $f0) >> 4) as ubyte)
+        }
+    }
 ''',
     'exec': '''
     asmsub NewList(^^List list @A0) {
@@ -1191,6 +1275,21 @@ LIBRARY_HELPERS = {
         %asm {{
             lea     184(a0), a1
         }}
+    }
+''',
+    'asl': '''
+    sub openlib() -> bool {
+        ; not opened at startup: asl.library only exists on kickstart 2.0+,
+        ; so it must be opened on demand and may legitimately fail
+        sys.AslBase = exec.OpenLibrary("asl.library", 0)
+        return sys.AslBase!=0
+    }
+
+    sub closelib() {
+        if sys.AslBase!=0 {
+            exec.CloseLibrary(sys.AslBase)
+            sys.AslBase = 0
+        }
     }
 ''',
 }
@@ -1716,7 +1815,7 @@ def _inline_struct_fields(tag: str, ast: dict, typedef_map: dict,
     if record is None:
         return [], offset
 
-    fields_raw = []
+    fields_raw: list = []
     current_offset = offset
     pending_anon_record = None  # anonymous RecordDecl awaiting its FieldDecl
 
@@ -1724,7 +1823,7 @@ def _inline_struct_fields(tag: str, ast: dict, typedef_map: dict,
         """Check if a field name starts with the struct's prefix (lowercase).
         E.g. mp_Node starts with mp_ prefix, ViewPort does NOT start with sc_ prefix."""
         cp = prefix.lower().rstrip('_')
-        return cp and fname.lower().startswith(cp)
+        return bool(cp) and fname.lower().startswith(cp)
 
     # Iterate over all children; handle FieldDecl and anonymous RecordDecl (inline structs)
     for child in record.get('inner', []):
@@ -1828,6 +1927,8 @@ LIB_HEADERS = {
     'arexx': ['rexx/storage.h', 'rexx/rexxio.h', 'dos/dos.h'],
     'iffparse': ['libraries/iffparse.h'],
     'lowlevel': ['libraries/lowlevel.h', 'devices/timer.h', 'utility/tagitem.h'],
+    'asl': ['libraries/asl.h', 'utility/tagitem.h', 'graphics/text.h', 'graphics/displayinfo.h'],
+    'datatypes': ['datatypes/datatypes.h', 'datatypes/datatypesclass.h', 'datatypes/pictureclass.h', 'datatypes/soundclass.h', 'datatypes/textclass.h', 'datatypes/animationclass.h', 'utility/tagitem.h', 'intuition/intuition.h', 'intuition/classes.h'],
 }
 
 # Which struct tags belong to which library (to avoid cross-library duplication)
@@ -1835,7 +1936,7 @@ LIB_STRUCT_TAGS = {
     'exec': {'LN', 'MLN', 'LH', 'MLH', 'MP', 'MN', 'IO', 'IS', 'LIB', 'TC_Struct'},
     'dos': {'FileHandle', 'FileLock', 'Process', 'DosPacket', 'StandardPacket',
             'DateStamp', 'FileInfoBlock', 'InfoData', 'ErrorString', 'ExAllData', 'ExAllControl'},
-    'graphics': {'RastPort', 'Layer', 'ClipRect', 'BitMap', 'View', 'TextFont',
+    'graphics': {'RastPort', 'Layer', 'ClipRect', 'BitMap', 'View', 'ViewPort', 'RasInfo', 'TextFont',
                  'TextAttr', 'ColorMap', 'TmpRas', 'AreaInfo', 'TextExtent'},
     'intuition': {'Window', 'Screen', 'IntuiMessage', 'Gadget', 'Image', 'Border',
                   'IntuiText', 'MenuItem', 'Requester', 'NewScreen', 'NewWindow',
@@ -1847,6 +1948,8 @@ LIB_STRUCT_TAGS = {
                  'StoredProperty', 'CollectionItem'},
     'lowlevel': {'KeyQuery'},
     'icon': {'DiskObject'},
+    'asl': {'FileRequester', 'FontRequester', 'ScreenModeRequester'},
+    'datatypes': set(),
 }
 
 # Additional .i files holding a library's structs/consts that live outside its
@@ -1855,6 +1958,7 @@ LIB_EXTRA_I_FILES = {
     'iffparse': ('libraries', 'iffparse.i'),
     'icon':     ('workbench', 'workbench.i'),
     'lowlevel': ('libraries', 'lowlevel.i'),
+    'asl': ('libraries', 'asl.i'),
 }
 
 
@@ -1874,7 +1978,7 @@ def _library_struct_tags(lib_name: str) -> set:
     return tags
 
 
-def parse_structs_from_clang(ndk_path: str, lib_name: str) -> dict:
+def parse_structs_from_clang(ndk_path: str, lib_name: str) -> dict | None:
     """Parse struct definitions from C headers via clang JSON AST dump.
 
     Returns dict in the same raw_structs format as parse_struct_i_files().
@@ -1939,7 +2043,7 @@ def parse_structs_from_clang(ndk_path: str, lib_name: str) -> dict:
             t = record.get('type', {})
             size_info = t.get('size', 0)
             # Not all AST versions provide size in RecordDecl
-        used_names = set()
+        used_names: set = set()
         fields_raw, total_size = _inline_struct_fields(tag, ast, typedef_map,
                                                        used_names, 0)
 
@@ -2117,9 +2221,9 @@ def _collect_raw_for_lib(ndk: str, lib: str) -> dict:
 
 
 # Track current lib and global map for typer callbacks (used by field helpers)
-_CURRENT_LIB_FOR_TYPER = None
-_GLOBAL_MAP_FOR_TYPER = {}
-_TYPEDEF_MAP_FOR_TYPER = {}
+_CURRENT_LIB_FOR_TYPER: str | None = None
+_GLOBAL_MAP_FOR_TYPER: dict = {}
+_TYPEDEF_MAP_FOR_TYPER: dict = {}
 
 
 # ---------------------------------------------------------------------------
@@ -2163,6 +2267,7 @@ def main():
     # Phase 2: Generate each lib with cross-lib typed pointers
     for lib in AMIGA_LIBS:
         arexx_alias = (lib == 'arexx')
+        modname = LIB_MODULE_NAME.get(lib, lib)
         lvo_lib = 'rexxsyslib' if arexx_alias else lib
         lvo_p = os.path.join(ndk, 'Include_I', 'lvo', f'{lvo_lib}_lib.i')
         sfd_p = os.path.join(ndk, 'SFD', f'{lvo_lib}_lib.sfd')
@@ -2262,6 +2367,8 @@ def main():
             needed_imports.add('exec')
         if helper and 'graphics.' in helper:
             needed_imports.add('graphics')
+        if helper and 'custom.' in helper:
+            needed_imports.add('custom')
 
         # Build output string
         out_lines = []
@@ -2279,7 +2386,7 @@ def main():
         if needed_imports:
             out_lines.append("")
 
-        out_lines.append(f"{lib} {{")
+        out_lines.append(f"{modname} {{")
         # The shared_amiga_*.p8 files are included by a thin <lib>.p8 wrapper
         # that re-declares the same block, so they must merge instead of
         # redefining it.
@@ -2350,7 +2457,7 @@ def main():
         content = "\n".join(out_lines) + "\n"
 
         # Write transactionally only if changed
-        out_path = os.path.join(out_dir, f"{name_prefix}{lib}.p8")
+        out_path = os.path.join(out_dir, f"{name_prefix}{modname}.p8")
         existing = None
         if os.path.exists(out_path):
             with open(out_path, 'r', encoding='utf-8') as f:

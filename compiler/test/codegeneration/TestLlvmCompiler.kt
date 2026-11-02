@@ -58,6 +58,7 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readLines
+import kotlin.io.path.writeBytes
 import kotlin.io.path.writeText
 
 
@@ -662,6 +663,30 @@ main {
         compileText(LlvmTarget(), false, src, outputDir, errors = errors) shouldBe null
         errors.errors.size shouldBe 2
         errors.errors.forEach { it shouldContain "%asm with native assembly code can't be used on the llvm targets, use %ir instead" }
+    }
+
+    test("%asmbinary and %asminclude in an asmsub body are a compilation error") {
+        val binary = outputDir.resolve("native-blob.bin").also { it.writeBytes(byteArrayOf(0x60)) }
+        val include = outputDir.resolve("native-include.asm").also { it.writeText("    rts\n") }
+        val src = """
+main {
+    sub start() {
+        foo()
+        bar()
+    }
+
+    asmsub foo() {
+        %asmbinary "$binary"
+    }
+
+    asmsub bar() {
+        %asminclude "$include"
+    }
+}"""
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(LlvmTarget(), false, src, outputDir, errors = errors) shouldBe null
+        errors.errors.count { "%asmbinary with native code can't be used on the llvm targets" in it } shouldBe 1
+        errors.errors.count { "%asminclude with native code can't be used on the llvm targets" in it } shouldBe 1
     }
 
     test("quad and uquad are rejected on every retro target, and go through code generation on llvm64 and virtual") {

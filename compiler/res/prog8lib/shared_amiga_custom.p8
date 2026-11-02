@@ -4,6 +4,25 @@
 custom {
     %option merge, no_symbol_prefixing, ignore_unused
 
+    ; OS-interaction note:
+    ;   The read-only helpers below (joystick_*, mouse_*, key_pressed,
+    ;   raw_keyboard_poll reads) only read hardware registers and are safe
+    ;   to use while the OS is running. However:
+    ;     - For keyboard, do NOT run raw_keyboard_poll() at the same time as
+    ;       OS keyboard input (IDCMP/input.device): both acknowledge the same
+    ;       CIAA_SDR event and will race, causing missed/duplicated keys.
+    ;       Use either OS input or custom hardware polling, not both.
+    ;     - raw_keyboard_poll() uses CIA-A Timer A (one-shot) for the key
+    ;       acknowledge; do not use that timer from elsewhere at the same time.
+    ;     - grab_system()/restore_system() and direct writes to DMACON,
+    ;       INTENA, BLTCON0, AUDxPER, COP1LC, etc. must NOT be used while the
+    ;       OS is running - they take over or conflict with OS drivers.
+    ;   Rule of thumb: use custom for input reading alongside the OS for
+    ;   joystick/mouse, but for keyboard and timers pick one owner (OS input
+    ;   or custom hardware polling), never both. Games that need raw keyboard
+    ;   input usually grab_system() and use custom exclusively; windowed apps
+    ;   should use IDCMP and leave raw_keyboard_poll() alone.
+
     enum CHIPSET {
         OCS,
         ECS,
@@ -31,8 +50,11 @@ custom {
         return CHIPSET::OCS
     }
 
-    asmsub grab_system() {
+    asmsub grab_system(bool replace_view @D0) {
         ; take over the whole OS and system, to run hardware banging programs (games, demos, etc)
+        ; if replace_view is true, a blank NULL view is loaded first and all DMA is
+        ; disabled; otherwise the currently active View (and its copper list) is left
+        ; untouched and display DMA (copper, raster) is kept running so it stays visible.
         %asm {{
 
 exec_AttnFlags = 296
@@ -52,6 +74,7 @@ IRQ7 = $7C
 
             move.l  d6,-(sp)        ; OS calls do not preserve d6
             move.l  a5,-(sp)        ; a5 is the frame pointer register, but it is needed below for Supervisor()
+            move.l  d0,-(sp)        ; stash replace_view (d0 is clobbered by the Supervisor/OS calls below)
             move.l  4.w,a6
             jsr     exec.Forbid(a6)        ; Do not run other tasks
             btst.b  #0,exec_AttnFlags+1(a6)    ; Check if > 68000 processor
@@ -65,10 +88,18 @@ IRQ7 = $7C
 
             move.l  sys.GfxBase,a6     ; A6 = Graphics base
             move.l  gfx_ActiView(a6),custom.savedView    ; Store current View pointer
+            tst.b   3(sp)              ; replace the current View?
+            bne.s   .replaceview
+            move.w  #$007F,d1        ; DMA mask: audio, disk, blitter and sprites only,
+                                     ; keep copper/raster so the View stays visible
+            bra.s   .havemask
+.replaceview:
             sub.l   a1,a1            ; NULL view = default settings
             jsr    GfxLoadView(a6)        ; Load the view
             jsr    GfxWaitTOF(a6)        ; Wait one screen refresh
             jsr    GfxWaitTOF(a6)        ; Wait a 2nd (in case of interlace)
+            move.w  #$01FF,d1        ; DMA mask: disable everything
+.havemask:
 
             move.w  #$8000,d0        ; Value
             move.w  custom.DMACONR,custom.savedDMACON    ; Store system DMA channels
@@ -81,7 +112,7 @@ IRQ7 = $7C
             btst.b  #14-8,custom.DMACONR    ; Dummy read
 3$          btst.b  #14-8,custom.DMACONR    ; Blitter still busy?
             bne.s   3$                      ; If yes, wait a bit
-            move.w  #$01FF,custom.DMACON    ; Disable all DMA
+            move.w  d1,custom.DMACON     ; Disable selected DMA channels
             move.w  #$3FFF,custom.INTENA    ; Disable all interrupts
 
             move.l  custom.cpuVBR,a0         ; A0 = Pointer to vector base
@@ -93,7 +124,8 @@ IRQ7 = $7C
 .getvbr:    dc.l    $4E7A0801            ; MOVEC VBR,d0  - privileged instruction
             rte
 
-.skip:      move.l  (sp)+,a5        ; restore the caller's frame pointer
+.skip:      addq.w  #4,sp         ; drop stashed replace_view
+            move.l  (sp)+,a5        ; restore the caller's frame pointer
             move.l  (sp)+,d6
             rts
 
@@ -162,6 +194,151 @@ IRQ7 = $7C
         }}
     }
 
+    struct DisplayRegs {  ; total size: 18
+        uword diwstrt     ; 0
+        uword diwstop     ; 2
+        uword ddfstrt     ; 4
+        uword ddfstop     ; 6
+        uword bplcon0     ; 8
+        uword bpl1mod     ; 12
+        uword bpl2mod     ; 14
+        uword fmode       ; 16
+    }
+
+    private ^^DisplayRegs regs = []
+
+    const uword DISPLAY_DEFAULT = $0000  ; lores, machine's own TV standard
+    const uword DISPLAY_HIRES   = $0001  ; 640-pixel mode (else 320-pixel)
+    const uword DISPLAY_EHB     = $0002  ; extra half-brite (needs depth 6)
+    const uword DISPLAY_HAM     = $0004  ; hold-and-modify (needs depth 6, or 8 on AGA)
+
+    sub compute_display(word view_width, word view_height, word bitmap_width, ubyte depth, uword mode, word vertical_offset) -> ^^DisplayRegs {
+        ; Compute the shadow display registers for a bare-metal playfield.
+        ; No hardware is touched; the caller writes the struct fields to the
+        ; custom registers itself (install BPLxPT every frame, the rest once).
+        ;
+        ; view_width/view_height describe the visible area. view_width and
+        ; bitmap_width are multiples of 16; the visible width is at least 32.
+        ; Centering rounds to whole 16-pixel words within the standard
+        ; 320-lores/640-hires display width.
+        ; mode is a combination of the DISPLAY_ flags.
+        ; bitmap_width is the backing bitmap width; its row pitch is bitmap_width / 8.
+        ; A wider bitmap allows horizontal scrolling; the caller can allocate
+        ; more rows than view_height for vertical scrolling.
+        ; vertical_offset is in scanlines; positive values move the display down.
+        ; view_height is the visible line count and must fit that
+        ; standard's frame. depth is 1-8 bitplanes (7-8 need AGA). Only
+        ; plain lores/hires (+EHB/HAM) are supported: no interlace, no
+        ; DBLPAL/DBLNTSC, no superhires, no dual playfield.
+        ;
+        ; Plane pointers are not part of the struct; the caller manages the
+        ; bitplanes and BPLxPT itself (usually an InitBitMap + AllocRaster
+        ; bitmap in CHIP RAM).
+        ;
+        ; Returns a pointer to the single statically allocated DisplayRegs
+        ; instance, or 0 if the mode is not supported (bad geometry, or more
+        ; than 6 planes on OCS/ECS). On AGA, 32-bit bitplane fetch is
+        ; selected with compensated DDF values; reset FMODE to $0000 before
+        ; handing the display back to the OS.
+        ; Setting up dual playfield (DBLPF) is not supported at this time.
+        bool hires = (mode & DISPLAY_HIRES) != 0
+        bool ehb = (mode & DISPLAY_EHB) != 0
+        bool ham = (mode & DISPLAY_HAM) != 0
+        if depth == 0 or depth > 8
+            return 0
+        if view_width < 32 or (view_width & 15) != 0
+            return 0
+        if bitmap_width < view_width or (bitmap_width & 15) != 0
+            return 0
+        if view_height <= 0 or view_height > 267
+            return 0
+        word vstart = $2c + vertical_offset
+        word vstop_unwrapped = vstart + view_height
+        if vstart < 0 or vstart > 255 or vstop_unwrapped > 511
+            return 0
+        if ehb and ham
+            return 0
+        if ehb and depth != 6
+            return 0
+        if ham and depth != 6 and depth != 8
+            return 0
+        bool is_aga = detect_chipset() == CHIPSET::AGA
+        if depth > 6 and not is_aga
+            return 0
+
+        uword wpl = ((view_width as uword) + 15) >> 4
+        uword rowBytes = (bitmap_width as uword) >> 3
+        word nominal_width = 320
+        word diw_word_step = 16
+        word ddf_word_step = 8
+        if hires {
+            nominal_width = 640
+            diw_word_step = 8
+            ddf_word_step = 4
+        }
+        word centered_words = (nominal_width - view_width) / 32
+        word diw_offset = centered_words * diw_word_step
+        word ddf_offset = centered_words * ddf_word_step
+
+        if is_aga {
+            ; AGA longword fetches cover 32 pixels (16 DDF units lores, 8 hires).
+            uword fetchLongwords = ((view_width as uword) + 31) >> 5
+            uword fetchedBytes = fetchLongwords * 4
+            regs.fmode = $0001
+            if hires {
+                regs.ddfstrt = $003c
+                regs.ddfstop = $003c + (fetchLongwords - 1) * 8
+            } else {
+                regs.ddfstrt = $0038
+                regs.ddfstop = $0038 + (fetchLongwords - 1) * 16
+            }
+            regs.bpl1mod = ((rowBytes as word) - (fetchedBytes as word)) as uword
+        } else {
+            regs.fmode = $0000
+            if hires {
+                regs.ddfstrt = $0038
+                regs.ddfstop = $00d8
+                regs.bpl1mod = ((rowBytes as word) - (((wpl + 2) as word) * 2)) as uword
+            } else {
+                regs.ddfstrt = $0038
+                regs.ddfstop = $0038 + wpl * 8
+                regs.bpl1mod = ((rowBytes as word) - (((wpl + 1) as word) * 2)) as uword
+            }
+        }
+        ; DIW coordinates have twice the horizontal resolution of DDF.
+        regs.ddfstrt = ((regs.ddfstrt as word) + ddf_offset) as uword
+        regs.ddfstop = ((regs.ddfstop as word) + ddf_offset) as uword
+        regs.bpl2mod = regs.bpl1mod
+
+        ; Display window. Units are lores pixels, so hires widths are halved.
+        ; VSTART is $2c plus vertical_offset; VSTOP wraps at 256, yielding
+        ; $f4 for a 200-line (NTSC) field and $2c for a 256-line (PAL) field.
+        uword lores_width = view_width as uword
+        if hires
+            lores_width = lores_width >> 1
+        word hstart = ($81 as word) + diw_offset
+        word hstop = hstart + (lores_width as word) - 256
+        uword vstart_field = (vstart as uword) & $ff
+        uword vstop = (vstop_unwrapped as uword) & $ff
+        regs.diwstrt = (vstart_field << 8) | ((hstart as uword) & $00ff)
+        regs.diwstop = (vstop << 8) | ((hstop as uword) & $00ff)
+
+        ; Bitplane control. BPU holds the depth; BPU3 (bit 4, AGA) extends
+        ; it past 6 planes. HIRES, EHB and HAM are bits 15, 7 and 11.
+        uword con0 = ((depth & 7) as uword) << 12
+        if hires
+            con0 |= $8000
+        if ehb
+            con0 |= $0080
+        if ham
+            con0 |= $0800
+        if depth == 8
+            con0 |= $0010
+        con0 |= $0200    ; color burst enable
+        regs.bplcon0 = con0
+        return regs
+    }
+
 
     pointer @shared cpuVBR     ; after calling grab_system: contains CPU VBR register
     bool @shared isPAL         ; after calling grab_system: is true when system is PAL, false if NTSC
@@ -175,7 +352,11 @@ IRQ7 = $7C
     private pointer @shared savedIRQ4          ; original IRQ4 vector
 
 
-    ; ========== AGA palette utilities ==========
+
+    ; ========== canonical palette helpers ($00RRGGBB) ==========
+    ; You only ever deal in 24-bit longs (8 bits per channel). Every loader
+    ; converts internally and picks the ECS or AGA path at runtime, so one
+    ; binary serves both chipsets. All paths are Kickstart 1.3 compatible.
 
     asmsub set_aga_color(ubyte color_index @D0, long rgb24 @D1) {
         ; Write a 24-bit RGB color ($00RRGGBB) to an AGA palette entry.
@@ -232,31 +413,74 @@ IRQ7 = $7C
         }}
     }
 
-    asmsub set_aga_color_nibbles(ubyte color_index @D0, uword rgb_high_nibbles @D1, uword rgb_low_nibbles @D2) {
-        ; Write preformatted AGA palette nibbles. Each value is $0RGB. Result will still be 24 bit RRGGBB AGA color.
-        ; Keep this routine 68000-compatible: the amiga500 target is assembled as
-        ; 68000 by default, even though AGA hardware is normally paired with a 68020.
+    sub set_ocs_color(ubyte index, long rgb24) {
+        ; Direct 12-bit COLORxx write from the top nibbles of a canonical
+        ; color. On OCS/ECS this is the full color; on AGA it sets the upper 12
+        ; bits and leaves the lower 8 untouched (the cheap 12-bit fast path).
+        ; Index above 31 is ignored.
+        if index > 31
+            return
+        pokew($dff180 + (index as uword)*2, pack12(rgb24))
+    }
+
+    sub load_colors(^^long rgb24, ubyte count) {
+        ; Bare-metal load of count canonical colors into COLOR00.. .
+        ; AGA: full 24-bit via set_aga_color. ECS: top nibbles packed into
+        ; COLORxx directly (count capped at 32, the ECS register file).
+        if count == 0
+            return
+        if detect_chipset()==CHIPSET::AGA {
+            for i in 0 to count-1
+                set_aga_color(i, rgb24[i])
+        } else {
+            ubyte n = count
+            if n > 32
+                n = 32
+            for i in 0 to n-1
+                set_ocs_color(i, rgb24[i])
+        }
+    }
+
+    sub set_color(ubyte index, long rgb24) {
+        ; Bare-metal write of one canonical color. Index above 31 is ignored
+        ; on ECS (only COLOR00-31 exist there).
+        if detect_chipset()==CHIPSET::AGA {
+            set_aga_color(index, rgb24)
+        } else {
+            set_ocs_color(index, rgb24)
+        }
+    }
+
+    sub cycle_forward(^^long rgb24, uword count) {
+        ; Rotate a canonical palette one step forward in place; re-load it
+        ; with load_colors() afterwards.
+        if count < 2
+            return
+        long last = rgb24[count-1]
+        for i in count-1 downto 1
+            rgb24[i] = rgb24[i-1]
+        rgb24[0] = last
+    }
+
+    asmsub pack12(long rgb24 @D0) -> uword @D0 {
+        ; Pack a canonical $00RRGGBB color into a 12-bit $0RGB word (top nibbles).
+        ; d0 = 00RRGGBB → d0.w = 0RGB. Plain 68000, no stack, d1 scratched.
+        ; (High word of d0 is garbage on exit, like sys.exec_version: uword
+        ; callers only read the low word.)
         %asm {{
-            move.l  d3,-(sp)
-            and.l   #$ff,d0
-            move.l  d0,d3
-            lsr.w   #5,d3
-            lsl.w   #8,d3
-            lsl.w   #5,d3
-
-            and.w   #$1f,d0
-            lsl.w   #1,d0
-            move.l  #$dff180,a0
-            adda.w   d0,a0
-
-            move.w  d3,custom.BPLCON3
-            move.w  d1,(a0)
-            ori.w   #$0200,d3
-            move.w  d3,custom.BPLCON3
-            move.w  d2,(a0)
-            andi.w  #$fdff,d3
-            move.w  d3,custom.BPLCON3
-            move.l  (sp)+,d3
+            andi.l  #$f0f0f0,d0     ; 00R0G0B0: keep top nibbles only
+            swap    d0              ; G0B000R0
+            move.w  d0,d1
+            lsl.w   #4,d1           ; 0R00: red placed
+            lsr.l   #8,d0           ; 00G0B000
+            swap    d0              ; B00000G0
+            or.w    d0,d1           ; 0RG0: green placed
+            swap    d0              ; 00G0B000
+            lsr.l   #8,d0           ; 0000G0B0
+            andi.w  #$00f0,d0       ; 00B0
+            lsr.w   #4,d0           ; 000B: blue placed
+            or.w    d0,d1           ; 0RGB
+            move.w  d1,d0
             rts
         }}
     }
@@ -279,7 +503,8 @@ IRQ7 = $7C
         }}
     }
 
-    ; Bit masks; combine these flags with |.
+    ; ======== joystick and mouse =======
+    ; Joystick bit masks; combine these flags with |.
     const ubyte JOY_UP = %00000001
     const ubyte JOY_DOWN = %00000010
     const ubyte JOY_LEFT = %00000100
@@ -439,19 +664,19 @@ IRQ7 = $7C
     sub left_button() -> bool {
         ; Returns true if the left mouse button (port 1) is pressed.
         ; Left button is CIA-A PRA bit 6, active low.
-        return (custom.CIAA_PRA & %01000000) == 0
+        return (CIAA_PRA & %01000000) == 0
     }
 
     sub right_button() -> bool {
         ; Returns true if the right mouse button (port 1) is pressed.
         ; Right button is POTGOR ($dff016) bit 10, active low.
-        return (custom.POTGOR & %0000010000000000) == 0
+        return (POTGOR & %0000010000000000) == 0
     }
 
     sub middle_button() -> bool {
         ; Returns true if the middle mouse button (port 1) is pressed.
         ; Middle button is POTGOR ($dff016) bit 8, active low.
-        return (custom.POTGOR & %0000000100000000) == 0
+        return (POTGOR & %0000000100000000) == 0
     }
 
 
@@ -1108,4 +1333,3 @@ IRQ7 = $7C
         }}
     }
 }
-

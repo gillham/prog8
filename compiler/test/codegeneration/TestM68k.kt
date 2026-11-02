@@ -453,8 +453,8 @@ main {
     test("status flag return is saved and register return read first on m68k") {
         // Regression test: a multi-assign returning both a status flag and a register value
         // used to let the flag extraction (which uses D0 as scratch for ROXL) clobber the
-        // register return. The register return is now read first, protected by a
-        // register-neutral PUSHST/POPST (the 68010+ 'move ccr,-(sp)' form).
+        // register return. The single flag is now extracted first, before anything can
+        // clobber the status bits, so no PUSHST/POPST is needed at all.
         val src = """
 main {
     inline asmsub f(ubyte arg @D0) -> bool @Pc, ubyte @D0 {
@@ -478,22 +478,17 @@ main {
         val start = asm.indexOf("; ---- Subroutine: p8b_main.p8s_start")
         val end = asm.indexOf("; ---- Subroutine:", start + 1).let { if (it < 0) asm.length else it }
         val lines = asm.substring(start, end).lines().map { it.trim() }
-        // register-neutral PUSHST/POPST form, no d0 round-trip
-        lines.count { it == "move  ccr,-(sp)" } shouldBe 1
-        lines.count { it == "move  (sp)+,ccr" } shouldBe 1
+        // no PUSHST/POPST needed anymore, no d0 round-trip
+        lines.count { it == "move  ccr,-(sp)" } shouldBe 0
+        lines.count { it == "move  (sp)+,ccr" } shouldBe 0
         lines.count { it == "move  ccr, d0" } shouldBe 0
         lines.count { it == "move.b  d0, -(sp)" } shouldBe 0
-        // the @D0 return is read (loadhr) before the flag extraction's scratch use (roxl)
+        // the flag extraction (roxl) now comes before the register return read (loadhr)
         val loadhrIdx = lines.indexOfFirst { it.startsWith("; loadhr.b") }
         val roxlIdx = lines.indexOfFirst { it.contains("roxl") }
         loadhrIdx shouldBeGreaterThan -1
         roxlIdx shouldBeGreaterThan -1
-        (loadhrIdx < roxlIdx) shouldBe true
-        // the loadhr sits inside the PUSHST/POPST sandwich
-        val pushIdx = lines.indexOfFirst { it == "move  ccr,-(sp)" }
-        val popIdx = lines.indexOfFirst { it == "move  (sp)+,ccr" }
-        (pushIdx < loadhrIdx) shouldBe true
-        (loadhrIdx < popIdx) shouldBe true
+        (roxlIdx < loadhrIdx) shouldBe true
     }
 
     test("struct type symbols are emitted in the header before program start") {
@@ -595,7 +590,7 @@ some_label:
 
 main {
     sub start() {
-        custom.grab_system()
+        custom.grab_system(true)
         custom.restore_system()
     }
 }
@@ -606,7 +601,7 @@ main {
         val grab = asm.substring(asm.indexOf("custom.grab_system:"), asm.indexOf("; End of subroutine: custom.grab_system"))
         grab.lines().map { it.substringBefore(';').trim() }.let { lines ->
             lines.count { it == "move.l  a5,-(sp)" } shouldBe 1
-            lines.count { it == ".skip:      move.l  (sp)+,a5" } shouldBe 1
+            lines.count { it.startsWith("move.l") && it.endsWith("(sp)+,a5") } shouldBe 1
         }
     }
 

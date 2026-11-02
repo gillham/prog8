@@ -2,7 +2,7 @@
 
 Bugs found while working on the `llvm` branch that are also on `master` and have nothing to do with the llvm targets
 or quad support. Each repro was checked on a compiler built from `master` at `8bcd17674`, the virtual and cx16 targets,
-and all of them still fail on `master` at `489e6b3a0`.
+and all of them still fail on `master` at `c530aaf32`.
 "Branch" says whether `llvm` already has a fix that could be sent upstream.
 
 Keeping the list: add new items at the end with the next number, and remove an item once its repro passes on `master`.
@@ -172,13 +172,6 @@ Keeping the list: add new items at the end with the next number, and remove an i
   variable index the result is right. `AssignmentGen.operatorShiftRightInplace` always uses `LSRM`/`LSRNM` for a
   constant index.
 - Branch: fixed, it uses `ASRM`/`ASRNM` for signed elements.
-
-**U27. Comparing a `str` with 0 using `!=` crashes the compiler**
-- Repro: `str name = "hello"` and `if name != 0 ...` stops with an internal error, "numeric literal type should be
-  numeric or bool: STR"; `name == 0` gives the expected error, "left and right operands aren't the same type".
-  `VariousCleanups` retypes the 0 to the type of the left operand, and only its `==` branch checks that this is a
-  numeric type.
-- Branch: fixed, the `!=` branch has the same check, so both give the type error.
 
 **U28. A struct pointer cast to `pointer` and passed to a parameter of another struct pointer type crashes the 6502 codegen**
 - Repro: `struct A { ubyte x }`, `struct B { uword y }`, `sub show(^^B b)`, `^^A a = 1000`, `show(a as pointer)` on c64 or

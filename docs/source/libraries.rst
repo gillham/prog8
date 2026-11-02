@@ -488,8 +488,13 @@ modules. Import them the same way as any other library::
     ``graphics``, ``intuition``, ``icon`` and ``utility`` for you, so their modules are
     ready to use without doing anything. (``exec`` needs no opening at all: ExecBase always
     lives at 4.w and is available as ``sys.SysBase``.) The remaining libraries below -
-    ``iffparse``, ``lowlevel``, ``arexx`` and ``asyncio`` - must be opened on demand by
-    calling their ``openlib()`` subroutine, and closed again with ``closelib()``.
+    ``iffparse``, ``lowlevel``, ``arexx``, ``asyncio``, ``asllib``, ``datatypes`` (amiga1200
+    only, kickstart 3.0+) and ``diskfont`` - must be opened on demand by calling their
+    ``openlib()`` subroutine, and closed again with ``closelib()``. You do not have to call
+    ``closelib()`` yourself: the startup code closes every library that was actually opened
+    (including the on-demand ones) automatically when the program exits. Calling ``closelib()``
+    manually is still fine and recommended when you are done with a library well before the
+    program ends, to free its resources early.
 
 ``exec`` (``exec.library``)
     Memory allocation, message ports, interrupts, device and resource management. Also the
@@ -532,6 +537,25 @@ modules. Import them the same way as any other library::
 ``asyncio`` (``asyncio.library``)
     Asynchronous file IO.
 
+``asllib`` (``asl.library``)
+    Standard requesters: file, font and screen-mode. Requires Kickstart 2.0 or newer.
+    See ``examples/amiga/aslfile.p8``.
+
+``diskfont`` (``diskfont.library``)
+    Loading and using fonts from disk. Opened on demand.
+
+``datatypes`` (``datatypes.library``, **amiga1200 only**, AmigaOS 3.1 / V40)
+    Essentials subset for loading and inspecting media (images, sounds, text) via DataType
+    objects: object lifecycle and attribute queries (``GetDTAttrsA``),
+    8SVX playback via ``DoDTMethodA`` / ``DTM_TRIGGER``, and picture rendering in
+    Intuition windows via ``AddDTObject``. It includes ``DataType`` / ``DataTypeHeader``
+    metadata and ``BitMapHeader``, the
+    ``GID_*`` / ``DTF_*`` classification constants, and ``DTA_*`` / ``PDTA_*`` /
+    ``SDTA_*`` / ``TDTA_*`` / ``ADTA_*`` tags.
+    On OS 3.1, sound metadata includes sample length, period, volume and cycles; exact sample
+    rate is not exposed by the V40 sound datatype.
+    See ``examples/amiga/datatype.p8``.
+
 **Devices and hardware**
 
 ``trackdisk`` (``trackdisk.device``)
@@ -554,9 +578,22 @@ modules. Import them the same way as any other library::
 
 ``custom``
     Direct access to the custom chipset, with no library involved. Contains
-    ``grab_system()``/``restore_system()`` to take over the whole system and interrupt
-    handlers for hardware banging programs (games, demos), ``waitvsync()``, AGA colour
-    register writes, and controller input routines. ``detect_chipset()`` returns
+    ``grab_system(replace_view)``/``restore_system()`` to take over the whole system and interrupt
+    handlers for hardware banging programs (games, demos); pass true to load
+    a blank NULL view first, false to leave the currently active View untouched
+    (display DMA stays on). ``compute_display()`` accepts a vertical offset
+    in scanlines (positive moves the display down) and computes shadow display
+    register values (``DisplayRegs``) for a bare-metal playfield without
+    Intuition or View/ViewPort setup. ``view_width``/``view_height`` are the
+    visible viewport; ``bitmap_width`` sets the backing bitplane row pitch.
+    The caller can allocate extra bitmap rows and update plane pointers for
+    vertical scrolling. The shared ``isPAL`` boolean (set by ``grab_system()``)
+    reports the machine's TV standard. ``waitvsync()``,
+    AGA colour register writes, and controller input routines. Canonical
+    ``$00RRGGBB`` palette helpers ``load_colors()``/``set_color()``/
+    ``cycle_forward()`` and ``pack12()`` load the bare-metal palette AGA-aware
+    (``graphics`` has the matching ``ViewPort`` loaders
+    ``load_palette()``/``set_palette_color()``). ``detect_chipset()`` returns
     ``custom.CHIPSET::OCS``, ``custom.CHIPSET::ECS`` or
     ``custom.CHIPSET::AGA`` using the Denise ID and VPOSR hardware registers.
     ``joystick_axes(port)`` returns signed x/y values in -1..1.
@@ -583,6 +620,31 @@ modules. Import them the same way as any other library::
 ``blitter``
     Blitter operations and the ``MINTERM`` logic modes.
 
+``playfield``
+    Bare-metal bitplane manager to pair with ``custom.compute_display()``:
+    ``create()`` accepts viewport and backing bitmap dimensions plus the same
+    vertical offset, allocates chip-RAM bitplanes, and computes the shadow
+    display registers. Larger bitmap dimensions provide scrolling room; callers
+    move plane pointers to select the viewport. ``clear()`` zeroes the planes,
+    ``show()`` installs plane addresses into ``BPLxPT``,
+    ``apply_registers()`` writes the rest of the shadow registers once per
+    setup, ``patch_copper()`` patches plane addresses into a copper list, and
+    ``set_scroll()`` sets fine horizontal scroll. Kickstart 1.3 compatible
+    (the ``AllocBitMap`` fast path is only
+    used on 3.0+). See ``examples/amiga/viewdemo.p8`` for
+    the equivalent manual setup.
+
+``copper``
+    Bare-metal copper list builder: emits raw copper words into a caller-owned
+    chip-RAM buffer, for use with or without the OS. ``move()`` returns the value
+    word's index so the main loop patches values in place instead of
+    rebuilding; ``wait()``/``skip()`` hide the instruction encoding,
+    ``attach_planes()`` emits ``BPLxPT`` slots for ``playfield.patch_copper()``,
+    ``rasterbar()`` builds a patchable per-scanline color skeleton, and
+    ``aga_move()``/``aga_set()`` encapsulate the four-MOVE 24-bit AGA color
+    sequence behind a single slot handle.
+    Emissions beyond capacity are dropped and counted in ``overflows``.
+
 ``sound``
     Direct Paula audio: hardware-banging 4-channel 8-bit PCM playback with no
     OS involved, to be used after ``custom.grab_system()``. Plays samples once,
@@ -592,6 +654,12 @@ modules. Import them the same way as any other library::
     channel falls silent. ``is_playing`` and ``stream_ready`` poll the audio
     interrupt request flag to notice the end, so no interrupt handler is
     installed.
+
+``ptplayer``
+    ProTracker module (MOD) player: load and play Amiga ProTracker modules via
+    the ptplayer playroutine. Install the player with ``ptplayer.install()``,
+    start playback with ``ptplayer.play()`` / ``ptplayer.stop()`` and query
+    status with the module's routines. See ``examples/amiga/modplay.p8``.
 
 ``easygfx``
     Friendly OS graphics wrapper in the style of the ``gfx_*`` pixel modules:
@@ -2261,11 +2329,12 @@ Read the :source:`textio source code <compiler/res/prog8lib/cx16/textio.p8>`
 to see what's in there. (Note: slight variations for different compiler targets)
 
 
-verafx  (cx16 only)
-^^^^^^^^^^^^^^^^^^^
+verafx
+^^^^^^
 .. index:: pair: Libraries; verafx
 
-Available for the Cx16 target. Routines that use the Vera FX logic to accelerate certain operations.
+Available for the CX16 target and for C64 programs using the VERA64 board.
+These routines use VERA FX to accelerate certain operations.
 
 ``available``
     Returns true if Vera FX is available, false if not (that would be an older Vera chip)
@@ -2283,8 +2352,16 @@ Available for the Cx16 target. Routines that use the Vera FX logic to accelerate
     Very quickly draw a line between two points using the Vera FX line draw helper.
     It only works in the 320x240 256 color (8 bpp) bitmap screen mode (the default cx16 screen mode 128,
     as used by the ``gfx_lores`` module, with the bitmap at vram address 0).
-    WARNING: it does NOT work in 4 bpp screen modes, because the helper has a hardware bug there.
+    The hardware helper supports 8 bpp and 4 bpp (using nibble increments), but
+    this Prog8 routine configures only 8 bpp. VERA firmware 48.0.1 has a line-helper
+    bug in 4 bpp mode. The hardware documentation does not specify a 1 bpp mode.
     No bounds checking or clipping is performed, all coordinates must lie within the screen (0..319, 0..239).
+
+``line_batch_begin``, ``line_batch_draw``, ``line_batch_end``
+    Draw several lines while configuring and resetting the FX line helper only once per batch.
+    Pair ``line_batch_begin`` with ``line_batch_end``. Do not use other VERA FX
+    operations, such as ``muls``, inside a batch.
+    ``line`` remains available as a single-line wrapper.
 
 ``muls``
     The VeraFX signed word 16*16 to 32 multiplier is accessible via the ``muls`` routine.
