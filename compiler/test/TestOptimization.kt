@@ -1642,4 +1642,37 @@ main {
             }
         }
     }
+
+    test("x*y + x keeps both evaluations of an x or y with side effects, and still merges plain variables") {
+        val src = """
+            main {
+                ubyte @shared counter
+                sub next() -> ubyte {
+                    counter++
+                    return counter
+                }
+                sub start() {
+                    ubyte @shared v = 3
+                    ubyte @shared a = next() * 10 + next()
+                    ubyte @shared b = next() + next() * 10
+                    ubyte @shared c = next() * 10 - next()
+                    ubyte @shared d = v * next() + v
+                    ubyte @shared e = v * 10 + v
+                }
+            }"""
+        val result = compileText(Cx16Target(), true, src, outputDir, writeAssembly = false)!!
+        val assignments = result.compilerAst.entrypoint.statements.filterIsInstance<Assignment>()
+        fun valueOf(name: String) = assignments.single { it.target.identifier?.nameInSource == listOf(name) }.value as BinaryExpression
+        fun calls(expr: Expression): Int = when(expr) {
+            is FunctionCallExpression -> 1
+            is BinaryExpression -> calls(expr.left) + calls(expr.right)
+            is TypecastExpression -> calls(expr.expression)
+            else -> 0
+        }
+        calls(valueOf("a")) shouldBe 2
+        calls(valueOf("b")) shouldBe 2
+        calls(valueOf("c")) shouldBe 2
+        valueOf("d").operator shouldBe "+"
+        valueOf("e").operator shouldBe "*"
+    }
 })

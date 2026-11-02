@@ -6295,5 +6295,34 @@ main {
         }
         txt.nl()
     }
-}""", "aa bb cc \n")
+}""", "aa bb cc \n"),
+
+    "x*y + x with a call as x" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    ubyte counter
+
+    sub next() -> ubyte {
+        counter++
+        return counter
+    }
+
+    sub start() {
+        ubyte r
+        counter = 0
+        r = next() * 10 + next()
+        txt.print_ub(r)
+        txt.spc()
+        counter = 0
+        r = next() + next() * 10
+        txt.print_ub(r)
+        txt.spc()
+        counter = 0
+        r = next() * 10 - next()
+        txt.print_ub(r)
+        txt.nl()
+    }
+}""", "12 21 8\n")
 )

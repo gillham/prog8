@@ -861,11 +861,13 @@ class ExpressionSimplifier(private val program: Program, private val errors: IEr
     }
 
     private fun determineY(x: Expression, subBinExpr: BinaryExpression): Expression? {
-        return when {
+        val y = when {
             subBinExpr.left isSameAs x -> subBinExpr.right
             subBinExpr.right isSameAs x -> subBinExpr.left
-            else -> null
+            else -> return null
         }
+        // the rewrite evaluates X once, and Y could change what X evaluates to
+        return if(x.hasSideEffects(options.compTarget) || y.hasSideEffects(options.compTarget)) null else y
     }
 
     private fun optimizeAdd(expr: BinaryExpression, leftVal: NumericLiteral?, rightVal: NumericLiteral?): Expression? {

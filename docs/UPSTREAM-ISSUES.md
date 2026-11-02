@@ -193,3 +193,54 @@ Keeping the list: add new items at the end with the next number, and remove an i
   increment before the second read; `fuseLoadExtend` had made that read a `LOADIZ`, which the pass skips.
 - Branch: fixed, the fusion is skipped when an instruction or a call between the load and the `incm` can access the
   pointer variable.
+
+**U31. `min` and `max` of two ubyte expressions on 6502 ignore one operand**
+- Repro: `ubyte a = 15`, `ubyte b = 55`, `ubyte r = min(1 + a, b - 2)` gives 53 instead of 16 on c64 and cx16, with and
+  without optimization (`master` bcc9ba5ee); virtual is right. `BuiltinFunctionsAsmGen.funcMin` pushes the second
+  operand, computes the first into A, and then `pla` overwrites it, so the value is compared with itself. `funcMax` has
+  the same fault and always gives the first operand.
+- Branch: fixed, both keep A in Y across the `pla`.
+
+**U32. `x*y + x` drops a call with side effects**
+- Repro: with `next()` returning 1, 2, 3...: `next()*10 + next()` gives 11 instead of 12 on every target; `-noopt` is
+  right (`master` bcc9ba5ee). `n() + n()*10` and `n()*10 - n()` go wrong the same way. The rewrites at the top of
+  `ExpressionSimplifier` don't check the common term for side effects. `diskio.status_code()` is affected: its
+  `(cbm.CHRIN()-'0')*10 + (cbm.CHRIN()-'0')` returns 66 for status 62.
+- Branch: fixed, `determineY` declines the rewrite when the common term or the other factor has side effects.
+
+**U33. Comparing a uword array element with a ubyte variable reads the next byte as the high byte on 6502**
+- Repro: `arr[s] == id` with `uword[4] arr` and a ubyte `id` generates `cmp p8v_id` and `cpy p8v_id+1`, also with
+  `-noopt` (`master` bcc9ba5ee); a match is only found when the byte after `id` is 0. `arr[s] == id as uword` works.
+- Branch: not fixed.
+
+**U34. Comparing two constant-index elements of a split word array doesn't assemble**
+- Repro: `uword[2] a = [5, 3]`, `if a[0] < a[1] ...` on c64: `not defined symbol 'p8v_a'` (`master` bcc9ba5ee). It fails
+  on cx16, c128 and pet32 too. The right operand is generated as `p8v_a+2`, as if the array weren't split.
+- Branch: not fixed.
+
+**U35. `sys.memcmp` doesn't assemble with basicsafe on c64**
+- Repro: `sys.memcmp(a, b, 4)` with `%zeropage basicsafe` on c64: `not a direct page address bits '$cfe0'`
+  (`master` bcc9ba5ee). It also fails to build on c128 and pet32. `shared_sys_functions.p8` uses `(cx16.r0),y`, but
+  the virtual registers are outside zero page there; `%zeropage kernalsafe` builds.
+- Branch: not fixed.
+
+**U36. `%option force_output` doesn't keep a const-only block in a module of its own**
+- Repro: a module holding only `settings { %option force_output  const ubyte LEVEL = 7  %asm {{ ... }} }`, used only
+  from the assembler of another module: `not defined symbol 'p8b_settings'` with optimization, on either side of the
+  import (`master` bcc9ba5ee); `-noopt` builds. Likely `UnusedCodeRemover.before(module)`, which removes an unused
+  module without checking its blocks for `force_output`.
+- Branch: not fixed.
+
+**U37. The VM reads a `uword` pointer variable as 4 bytes after `LOADP_INC`/`STOREP_INC` fusion**
+- Repro: `sub mb(uword src, uword dest, uword count)` with `@(dest) = @(src)`, `src++`, `dest++` in a loop prints
+  `1 2 3 4 5 6 7 8` instead of `2 3 4 5 6 6 7 8` on virtual; `-noopt` is right, and `pointer` parameters are right
+  (`master` bcc9ba5ee). `IRPeepholeOptimizer.fusePointerPostInc` also fuses a word-sized variable, and the VM's
+  `InsLOADP_INC` always reads the variable with `getSL`.
+- Branch: not fixed.
+
+**U38. `diskio.exists()` of a missing file can hang a true-drive 1541**
+- Repro: 50 calls of `diskio.exists("nofile")` on VICE x64sc with `-drive8type 1541 -drive8truedrive`: the program hit
+  the cycle limit in 3 of 4 runs on `master` bcc9ba5ee. Opening the file and reading the status from the command channel,
+  without `CHKIN` on the file's channel, finished in 4 of 4 runs. `f_open` does `CHKIN` on a channel the drive never
+  opened. Not checked on real hardware, and the root cause isn't proven.
+- Branch: not fixed.

@@ -2354,9 +2354,7 @@ import prog8.codegen.cpu6502.assignment.*
                         asmgen.assignExpressionToVariable(fcall.args[1], "P8ZP_SCRATCH_B1", fcall.type)     // right
                         asmgen.out("  lda  P8ZP_SCRATCH_B1\n  pha")
                         asmgen.assignExpressionToRegister(fcall.args[0], RegisterOrPair.A)          // left (may clobber B1)
-                        asmgen.out("  pla\n  sta  P8ZP_SCRATCH_B1")
-                        // now A holds left, need to compare again? Actually left already in A, right in B1 restored, so cmp is still valid
-                        // Re-do cmp after restore is not needed, the following cmp uses P8ZP_SCRATCH_B1 correctly
+                        asmgen.out("  tay\n  pla\n  sta  P8ZP_SCRATCH_B1\n  tya")
                     }
                     asmgen.out("  cmp  P8ZP_SCRATCH_B1")
                     asmgen.out("  bcc  +")
@@ -2481,7 +2479,7 @@ import prog8.codegen.cpu6502.assignment.*
                         asmgen.assignExpressionToVariable(fcall.args[0], "P8ZP_SCRATCH_B1", fcall.type)     // left
                         asmgen.out("  lda  P8ZP_SCRATCH_B1\n  pha")
                         asmgen.assignExpressionToRegister(fcall.args[1], RegisterOrPair.A)          // right (may clobber B1)
-                        asmgen.out("  pla\n  sta  P8ZP_SCRATCH_B1")
+                        asmgen.out("  tay\n  pla\n  sta  P8ZP_SCRATCH_B1\n  tya")
                     }
                     asmgen.out("  cmp  P8ZP_SCRATCH_B1")
                     asmgen.out("  bcs  +")

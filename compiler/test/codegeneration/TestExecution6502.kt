@@ -1164,4 +1164,57 @@ class TestExecution6502 : FunSpec({
             }
         }
     }
+
+    test("min and max of two expressions, in both operand orders") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                &ubyte minLeft = $02
+                &ubyte minRight = $03
+                &ubyte maxLeft = $04
+                &ubyte maxRight = $05
+                &byte signedMin = $06
+                &byte signedMax = $07
+                &uword wordMin = $08
+                &uword wordMax = $0a
+                sub start() {
+                    ubyte @shared a = 15
+                    ubyte @shared b = 55
+                    byte @shared sa = -15
+                    byte @shared sb = 55
+                    uword @shared ua = 1000
+                    uword @shared ub = 5000
+                    minLeft = min(1 + a, b - 2)
+                    minRight = min(b - 2, 1 + a)
+                    maxLeft = max(1 + a, b - 2)
+                    maxRight = max(b - 2, 1 + a)
+                    signedMin = min(1 + sa, sb - 2)
+                    signedMax = max(1 + sa, sb - 2)
+                    wordMin = min(1 + ua, ub - 2)
+                    wordMax = max(1 + ua, ub - 2)
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for(optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+                machine.assertMemory(0x02, 16)
+                machine.assertMemory(0x03, 16)
+                machine.assertMemory(0x04, 53)
+                machine.assertMemory(0x05, 53)
+                machine.assertMemory(0x06, (-14).toByte().toUByte().toInt())
+                machine.assertMemory(0x07, 53)
+                machine.assertMemory(0x08, 1001 and 255)
+                machine.assertMemory(0x09, 1001 shr 8)
+                machine.assertMemory(0x0a, 4998 and 255)
+                machine.assertMemory(0x0b, 4998 shr 8)
+            }
+        }
+    }
 })
