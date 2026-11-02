@@ -289,7 +289,7 @@ class AsmGen6502Internal (
         }
         if (e is PtArrayIndexer) {
             val idx = e.index.asConstInteger()
-            if (idx != null && e.variable != null) {
+            if (idx != null && e.variable != null && !e.splitWords) {
                 val actualSize = when {
                     e.type.isByte -> 1
                     e.type.isWord -> 2

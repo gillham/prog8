@@ -1264,4 +1264,49 @@ class TestExecution6502 : FunSpec({
             }
         }
     }
+
+    test("comparing two constant-index elements of a split word array") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                &ubyte lt = $02
+                &ubyte ge = $03
+                &ubyte le = $04
+                &ubyte gt = $05
+                &ubyte signedLt = $06
+                &ubyte signedGe = $07
+                &ubyte exprLt = $08
+                uword[3] a = [5, 300, 5]
+                word[2] sw = [-5, 300]
+                sub start() {
+                    lt = 0
+                    if a[0] < a[1]  lt = 1
+                    ge = 0
+                    if a[0] >= a[2]  ge = 1
+                    le = 0
+                    if a[0] <= a[2]  le = 1
+                    gt = 0
+                    if a[1] > a[0]  gt = 1
+                    signedLt = 0
+                    if sw[0] < sw[1]  signedLt = 1
+                    signedGe = 0
+                    if sw[1] >= sw[0]  signedGe = 1
+                    exprLt = if a[0] < a[1]  1 else 0
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for(optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+                for(address in 0x02..0x08)
+                    withClue("address $address") { machine.assertMemory(address, 1) }
+            }
+        }
+    }
 })

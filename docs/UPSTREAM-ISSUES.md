@@ -218,7 +218,9 @@ Keeping the list: add new items at the end with the next number, and remove an i
 **U34. Comparing two constant-index elements of a split word array doesn't assemble**
 - Repro: `uword[2] a = [5, 3]`, `if a[0] < a[1] ...` on c64: `not defined symbol 'p8v_a'` (`master` bcc9ba5ee). It fails
   on cx16, c128 and pet32 too. The right operand is generated as `p8v_a+2`, as if the array weren't split.
-- Branch: not fixed.
+  `AsmGen.tryGetStaticAddress` returned a single address for a constant-index element of a split array; it affects
+  `<`, `<=`, `>` and `>=` of both signed and unsigned arrays.
+- Branch: fixed.
 
 **U35. `sys.memcmp` doesn't assemble with basicsafe on c64**
 - Repro: `sys.memcmp(a, b, 4)` with `%zeropage basicsafe` on c64: `not a direct page address bits '$cfe0'`
