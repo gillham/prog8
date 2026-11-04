@@ -5,6 +5,7 @@ import prog8.code.core.CompilationOptions
 import prog8.code.core.IErrorReporter
 import prog8.code.core.OutputFiles
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmToolLocator
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.writeText
@@ -32,7 +33,8 @@ internal class AssemblyProgramLlvm(
             return true
         val target = options.compTarget as? LlvmTarget
         if (!LlvmToolchain.compileToExecutable(file, programFile, target?.profile,
-                extraCompileArgs = target?.extraCompileArgs.orEmpty(), extraLinkArgs = target?.extraLinkArgs.orEmpty(), linkLibraries = options.linkLibraries))
+                extraCompileArgs = target?.extraCompileArgs.orEmpty(), extraLinkArgs = target?.extraLinkArgs.orEmpty(), linkLibraries = options.linkLibraries,
+                clangOption = target?.clangOption))
             return false
         if (!options.quiet)
             println("Native executable written to '$programFile'")
@@ -40,7 +42,14 @@ internal class AssemblyProgramLlvm(
     }
 
     private fun validate(file: Path, options: CompilationOptions): Boolean {
-        val command = validation(file, (options.compTarget as? LlvmTarget)?.targetTriple)
+        val target = options.compTarget as? LlvmTarget
+        val namedClang = try {
+            target?.takeIf { it.clangOption != null || it.profile.clang != null }?.clang()
+        } catch (x: IllegalArgumentException) {
+            System.err.println("Can't check the LLVM IR in '$file': ${x.message}")
+            return false
+        }
+        val command = validation(file, target?.targetTriple, namedClang)
         if (command == null) {
             if (!options.quiet)
                 println("LLVM IR written to '$file', but not checked: neither llvm-as nor clang was found")
@@ -65,12 +74,16 @@ internal class AssemblyProgramLlvm(
 
     private fun outputFile(options: CompilationOptions): Path = OutputFiles.of(options, name).programFile
 
-    /** llvm-as only parses the IR; clang compiles it, for [triple] rather than for this host, which may not support that. */
-    private fun validation(file: Path, triple: String?): List<String>? {
-        LlvmToolchain.find("llvm-as")?.let { return listOf(it.toString(), "-disable-output", file.toString()) }
+    /**
+     * llvm-as only parses the IR; clang compiles it, for [triple] rather than for this host, which may not support that.
+     * A [namedClang] (-clang or the profile's) is checked with the llvm-as beside it, or else itself, as it may accept IR that another LLVM doesn't.
+     */
+    private fun validation(file: Path, triple: String?, namedClang: Path?): List<String>? {
+        val llvmAs = if (namedClang != null) LlvmToolLocator.besideClang("llvm-as", namedClang).takeIf { it?.parent == namedClang.parent } else LlvmToolchain.find("llvm-as")
+        llvmAs?.let { return listOf(it.toString(), "-disable-output", file.toString()) }
         val nullDevice = if (System.getProperty("os.name").orEmpty().startsWith("Windows")) "NUL" else "/dev/null"
         val targetArgs = triple?.let { listOf("--target=$it") }.orEmpty()
-        LlvmToolchain.find("clang")?.let { return listOf(it.toString()) + targetArgs + listOf("-Wno-override-module", "-x", "ir", "-c", "-o", nullDevice, file.toString()) }
+        (namedClang ?: LlvmToolchain.find("clang"))?.let { return listOf(it.toString()) + targetArgs + listOf("-Wno-override-module", "-x", "ir", "-c", "-o", nullDevice, file.toString()) }
         return null
     }
 }

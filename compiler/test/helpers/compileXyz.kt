@@ -57,6 +57,7 @@ internal fun compileFile(
         assemble = assemble,
         llvmTriple = (platform as? LlvmTarget)?.profile?.name,
         llvmCompileArgs = (platform as? LlvmTarget)?.extraCompileArgs.orEmpty(),
+        llvmClang = (platform as? LlvmTarget)?.clangOption,
         llvmLinkArgs = (platform as? LlvmTarget)?.extraLinkArgs.orEmpty(),
         irComments = irComments
     )

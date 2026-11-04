@@ -25,7 +25,7 @@ data class LlvmTripleProfile(
     val cLongSize: Int,
     private val clangArgsTemplate: List<String> = emptyList(),
     val outputExtension: String = "",
-    val runCommand: List<String>? = null,
+    private val runCommandTemplate: List<String>? = null,
     val strictIndirectSignatures: Boolean = false,
     val cMainSymbol: String = "main",
     private val linkCommandTemplate: List<String>? = null,
@@ -40,7 +40,16 @@ data class LlvmTripleProfile(
     /** The C routines that seek and tell the file position, whose offset has [fileOffsetSize] bytes, like _fseeki64 on Windows. */
     val fseekSymbol: String = "fseek",
     val ftellSymbol: String = "ftell",
-    val fileOffsetSize: Int = cLongSize
+    val fileOffsetSize: Int = cLongSize,
+    val cIntSize: Int = 4,
+    private val clangTemplate: String? = null,
+    /** The C functions of [C_FUNCTIONS] that the target's C library doesn't have. */
+    val libcLacks: Set<String> = emptySet(),
+    /** The memory-mapped I/O addresses; [ioAllAddresses] makes every constant address one. */
+    val ioRanges: List<UIntRange> = emptyList(),
+    val ioAllAddresses: Boolean = false,
+    /** False when the program can't be given command line arguments. */
+    val programArgs: Boolean = true
 ) {
     /** The pointer width in bits of the default address space, which LLVM takes as 64 when the data layout has no `p:` entry. */
     val pointerBits: Int = dataLayout.split('-').firstOrNull { it.startsWith("p:") }
@@ -60,6 +69,17 @@ data class LlvmTripleProfile(
     /** The command that links clang's object file `{object}` into the executable `{file}`, with environment variables expanded as in [clangArgs]. */
     val linkCommand: List<String>?
         get() = linkCommandTemplate?.let { template -> expandEnvironment(template) { System.getenv(it) } }
+
+    /** The command that runs the program, with environment variables expanded as in [clangArgs]. */
+    val runCommand: List<String>?
+        get() = runCommandTemplate?.let { template -> expandEnvironment(template) { System.getenv(it) } }
+
+    /** The clang this profile names, a name searched for or a path, with environment variables expanded as in [clangArgs]. */
+    val clang: String?
+        get() = clangTemplate?.let { expandEnvironment(listOf(it)) { variable -> System.getenv(variable) }.single() }
+
+    /** The clang that builds for this profile: [clangOption] (the -clang option), else [clang], else the default one; see [LlvmToolLocator.resolveClang]. */
+    fun resolveClang(clangOption: String?): Path? = LlvmToolLocator.resolveClang(clangOption, clang, name)
 
     /**
      * Writes the [startupSources] files that the link command builds along as `{startup}` next to [outputFile], and returns them.
@@ -91,7 +111,7 @@ data class LlvmTripleProfile(
             "the llvm triple profile '$name' has an invalid pointer entry in its data layout"
         }
         require(cLongSize == 4 || cLongSize == 8) { "the llvm triple profile '$name' has c_long_size $cLongSize, it must be 4 or 8" }
-        require(runCommand == null || runCommand.any { "{file}" in it }) { "the run_command of llvm triple profile '$name' must contain {file}" }
+        require(runCommandTemplate == null || runCommandTemplate.any { "{file}" in it }) { "the run_command of llvm triple profile '$name' must contain {file}" }
         require(linkCommandTemplate == null || (linkCommandTemplate.any { "{object}" in it } && linkCommandTemplate.any { "{file}" in it })) {
             "the link_command of llvm triple profile '$name' must contain {object} and {file}"
         }
@@ -110,13 +130,31 @@ data class LlvmTripleProfile(
         require(cMainSymbol.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "the c_main_symbol of llvm triple profile '$name' must be a C identifier" }
         require(direntNameOffset == null || direntNameOffset >= 0) { "the dirent_name_offset of llvm triple profile '$name' must not be negative" }
         require(fileOffsetSize == 4 || fileOffsetSize == 8) { "the llvm triple profile '$name' has file_offset_size $fileOffsetSize, it must be 4 or 8" }
+        require(cIntSize == 2 || cIntSize == 4) { "the llvm triple profile '$name' has c_int_size $cIntSize, it must be 2 or 4" }
+        require(clangTemplate == null || clangTemplate.isNotBlank()) { "the clang of llvm triple profile '$name' is empty" }
+        (libcLacks - C_FUNCTIONS).let { unknown ->
+            require(unknown.isEmpty()) { "the libc_lacks of llvm triple profile '$name' has names of C functions that Prog8 doesn't call: ${unknown.sorted().joinToString()}" }
+        }
+        require(ioRanges.none { it.isEmpty() }) { "the io_ranges of llvm triple profile '$name' has a range that ends before it starts" }
     }
 
     companion object {
         const val RESOURCE_DIR = "/prog8lib/llvm-triples"
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
             "link_command", "link_args", "run_timeout_seconds", "startup_source",
-            "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "file_offset_size")
+            "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "file_offset_size",
+            "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args")
+
+        /** The C library functions that the llvm code generator can call, which libc_lacks can name. */
+        val C_FUNCTIONS: Set<String> = buildSet {
+            addAll(listOf("fopen", "fclose", "fgetc", "fputc", "fread", "fwrite", "fseek", "ftell", "ferror", "feof", "fflush", "remove", "rename",
+                "getcwd", "mkdir", "chdir", "rmdir", "opendir", "readdir", "closedir", "strcmp", "strdup", "realloc", "free", "qsort",
+                "putchar", "getchar", "exit", "usleep", "strtod", "snprintf", "printf"))
+            for (math in listOf("sin", "cos", "tan", "atan", "atan2", "sqrt", "pow", "log", "log2", "fabs", "floor", "ceil", "roundeven")) {
+                add(math)
+                add(math + "f")
+            }
+        }
         private val environmentVariable = Regex($$"""\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?}""")
         private val tripleName = Regex("[A-Za-z0-9_][A-Za-z0-9_.-]*")
         private const val ARGS = "{args}"
@@ -146,43 +184,48 @@ data class LlvmTripleProfile(
         }
         private val clangAnswers = ConcurrentHashMap<List<String>, ClangTargetInfo>()
 
-        fun load(path: Path): LlvmTripleProfile = path.inputStream().use { parse(path.toString(), it, path.toAbsolutePath().parent) }
+        /** [clangOption] is the -clang option, which answers for a profile that leaves out what clang can supply. */
+        fun load(path: Path, clangOption: String? = null): LlvmTripleProfile =
+            path.inputStream().use { parse(path.toString(), it, path.toAbsolutePath().parent, clangOption) }
 
         /**
          * Finds [nameOrPath] as a file, then as `~/.prog8/llvm/<name>.properties`, then as a profile embedded in the compiler;
          * any other triple name gets the data layout and C long size that clang reports for it.
          */
-        fun resolve(nameOrPath: String): LlvmTripleProfile {
+        fun resolve(nameOrPath: String, clangOption: String? = null): LlvmTripleProfile {
             val file = ImportFileSystem.expandTilde(Path(nameOrPath))
             if(file.isRegularFile())
-                return load(file)
+                return load(file, clangOption)
             val userFile = ImportFileSystem.userHome.resolve(".prog8/llvm/$nameOrPath.properties")
             if(userFile.isRegularFile())
-                return userFile.inputStream().use { parse(nameOrPath, it, userFile.parent) }
+                return userFile.inputStream().use { parse(nameOrPath, it, userFile.parent, clangOption) }
             val resource = LlvmTripleProfile::class.java.getResourceAsStream("$RESOURCE_DIR/$nameOrPath.properties")
             if(resource != null)
-                return resource.use { parse(nameOrPath, it) }
+                return resource.use { parse(nameOrPath, it, clangOption = clangOption) }
             val notFound = "unknown llvm triple '$nameOrPath': no such file, no $userFile, and no embedded profile"
             if(!nameOrPath.matches(tripleName))
                 throw IllegalArgumentException(notFound)
             val info = try {
-                askClang(nameOrPath, emptyList())
+                askClang(nameOrPath, emptyList(), LlvmToolLocator.resolveClang(clangOption, null, null))
             } catch(x: IllegalArgumentException) {
                 throw IllegalArgumentException("$notFound; ${x.message}")
             }
-            return LlvmTripleProfile(nameOrPath, info.triple, info.dataLayout, info.cLongSize, listOf("--target=$nameOrPath"))
+            return LlvmTripleProfile(nameOrPath, info.triple, info.dataLayout, info.cLongSize, listOf("--target=$nameOrPath"), cIntSize = info.cIntSize)
         }
 
         /**
-         * The normalized triple, data layout and C long size that clang reports for [triple] with [clangArgs], which can change the ABI.
-         * Answers are kept for the life of the process. Throws an IllegalArgumentException when clang is missing or rejects them.
+         * The normalized triple, data layout and C long and int sizes that [clang], or else the default clang, reports for [triple]
+         * with [clangArgs], which can change the ABI. Answers are kept for the life of the process.
+         * Throws an IllegalArgumentException when clang is missing or rejects them.
          */
-        internal fun askClang(triple: String, clangArgs: List<String>): ClangTargetInfo =
-            clangAnswers[listOf(triple) + clangArgs] ?: queryClang(triple, clangArgs).also { clangAnswers[listOf(triple) + clangArgs] = it }
-
-        private fun queryClang(triple: String, clangArgs: List<String>): ClangTargetInfo {
-            val clang = LlvmToolLocator.clang()
+        internal fun askClang(triple: String, clangArgs: List<String>, clang: Path? = null): ClangTargetInfo {
+            val found = clang ?: LlvmToolLocator.clang()
                 ?: throw IllegalArgumentException("clang, which could supply it, was not found on the PATH or in ${LlvmToolLocator.homebrewLlvmBin}")
+            val key = listOf(found.toString(), triple) + clangArgs
+            return clangAnswers[key] ?: queryClang(found, triple, clangArgs).also { clangAnswers[key] = it }
+        }
+
+        private fun queryClang(clang: Path, triple: String, clangArgs: List<String>): ClangTargetInfo {
             val command = listOf(clang.toString(), "--target=$triple") + clangArgs + listOf("-S", "-emit-llvm", "-x", "c", "-", "-o", "-")
             val process = try {
                 ProcessBuilder(command).start()
@@ -192,7 +235,7 @@ data class LlvmTripleProfile(
             val errors = CompletableFuture.supplyAsync { process.errorStream.bufferedReader().use { it.readText() } }
             val output = CompletableFuture.supplyAsync { process.inputStream.bufferedReader().use { it.readText() } }
             try {
-                process.outputStream.bufferedWriter().use { it.write("long prog8_c_long_size = sizeof(long);\n") }
+                process.outputStream.bufferedWriter().use { it.write("long prog8_c_long_size = sizeof(long);\nint prog8_c_int_size = sizeof(int);\n") }
             } catch(_: IOException) {
                 // clang already exited, rejecting its arguments; its exit status below says why
             }
@@ -210,7 +253,8 @@ data class LlvmTripleProfile(
             return ClangTargetInfo(
                 find("""^target triple = "([^"]*)""""),
                 find("""^target datalayout = "([^"]*)""""),
-                find("""^@prog8_c_long_size = .*global i\d+ (\d+)""").toInt()
+                find("""^@prog8_c_long_size = .*global i\d+ (\d+)""").toInt(),
+                find("""^@prog8_c_int_size = .*global i\d+ (\d+)""").toInt()
             )
         }
 
@@ -222,7 +266,7 @@ data class LlvmTripleProfile(
         }
 
         /** [directory] holds the profile file, which a startup_source is relative to; null for an embedded profile. */
-        private fun parse(name: String, input: InputStream, directory: Path? = null): LlvmTripleProfile {
+        private fun parse(name: String, input: InputStream, directory: Path? = null, clangOption: String? = null): LlvmTripleProfile {
             val props = Properties()
             props.load(input)
             val unknown = props.stringPropertyNames() - knownKeys
@@ -233,9 +277,12 @@ data class LlvmTripleProfile(
             fun optional(key: String) = props.getProperty(key)?.trim()?.takeIf { it.isNotEmpty() }
             val triple = required("triple")
             val clangArgs = words("clang_args").orEmpty()
+            val clang = optional("clang")
+            val asksClang = optional("datalayout") == null || optional("c_long_size") == null
             val fromClang by lazy {
                 try {
-                    askClang(triple, expandEnvironment(clangArgs) { System.getenv(it) })
+                    val profileClang = clang?.let { expandEnvironment(listOf(it)) { variable -> System.getenv(variable) }.single() }
+                    askClang(triple, expandEnvironment(clangArgs) { System.getenv(it) }, LlvmToolLocator.resolveClang(clangOption, profileClang, name))
                 } catch(x: IllegalArgumentException) {
                     throw IllegalArgumentException("llvm triple profile '$name' leaves out its datalayout or c_long_size, but ${x.message}")
                 }
@@ -249,6 +296,15 @@ data class LlvmTripleProfile(
             val fileOffsetSize = optional("file_offset_size")?.let {
                 it.toIntOrNull() ?: throw IllegalArgumentException("llvm triple profile '$name' has a non-numeric file_offset_size")
             } ?: cLongSize
+            val cIntSize = optional("c_int_size")?.let {
+                it.toIntOrNull() ?: throw IllegalArgumentException("llvm triple profile '$name' has a non-numeric c_int_size")
+            } ?: if (asksClang) fromClang.cIntSize else 4
+            val ioRanges = optional("io_ranges")
+            val programArgs = when (val value = optional("program_args")) {
+                null, "true" -> true
+                "false" -> false
+                else -> throw IllegalArgumentException("llvm triple profile '$name' has program_args '$value', it must be true or false")
+            }
             val runTimeout = props.getProperty("run_timeout_seconds")?.trim()?.let {
                 it.toIntOrNull() ?: throw IllegalArgumentException("llvm triple profile '$name' has a non-numeric run_timeout_seconds")
             }
@@ -272,11 +328,34 @@ data class LlvmTripleProfile(
                 optional("readdir_symbol") ?: "readdir",
                 optional("fseek_symbol") ?: "fseek",
                 optional("ftell_symbol") ?: "ftell",
-                fileOffsetSize
+                fileOffsetSize,
+                cIntSize,
+                clang,
+                words("libc_lacks").orEmpty().toSet(),
+                if (ioRanges == null || ioRanges == "*") emptyList() else parseAddressRanges(name, ioRanges),
+                ioRanges == "*",
+                programArgs
             )
+        }
+
+        private fun parseAddressRanges(name: String, ranges: String): List<UIntRange> = ranges.split(',').map { range ->
+            fun address(text: String): UInt {
+                val trimmed = text.trim()
+                return when {
+                    trimmed.startsWith("$") -> trimmed.drop(1).toUIntOrNull(16)
+                    trimmed.startsWith("0x") -> trimmed.drop(2).toUIntOrNull(16)
+                    else -> trimmed.toUIntOrNull()
+                } ?: throw IllegalArgumentException("the io_ranges of llvm triple profile '$name' has an invalid address '$trimmed'")
+            }
+            val parts = range.split('-')
+            when (parts.size) {
+                1 -> address(parts[0]).let { it..it }
+                2 -> address(parts[0])..address(parts[1])
+                else -> throw IllegalArgumentException("the io_ranges of llvm triple profile '$name' has an invalid range '${range.trim()}'")
+            }
         }
     }
 }
 
 
-internal data class ClangTargetInfo(val triple: String, val dataLayout: String, val cLongSize: Int)
+internal data class ClangTargetInfo(val triple: String, val dataLayout: String, val cLongSize: Int, val cIntSize: Int)

@@ -300,6 +300,15 @@ These are the keys of a profile; an unknown key is an error:
     Without it, clang supplies it for ``triple`` and ``clang_args``, which then must not need an unset environment variable.
 ``c_long_size``
     The size in bytes of the C ``long`` type on that platform: 4 or 8. Without it, clang supplies it like ``datalayout``.
+``c_int_size``
+    The size in bytes of the C ``int`` type: 2 or 4. Without it, clang supplies it when it is asked for ``datalayout``
+    or ``c_long_size``, and otherwise it is 4.
+``clang``
+    The clang that builds for this profile: a name, looked up on the PATH like the other LLVM tools, or a path, such as
+    ``${LLVM_MOS}/bin/mos-sim-clang``. Environment variables work as in ``clang_args``. The ``-clang`` option
+    overrides it, and without either the compiler uses the clang it finds itself. llvm-as and llvm-ar are looked for
+    next to the clang that is used first. A backslash starts an escape in a profile file, so write a Windows path
+    with ``/`` or with doubled backslashes.
 ``clang_args``
     Extra arguments for clang when it builds the executable, separated by spaces, such as ``--target`` and ``--sysroot``.
     Environment variables can be used as ``${NAME}``, or as ``${NAME:-default}`` to use the default when the variable
@@ -326,6 +335,10 @@ These are the keys of a profile; an unknown key is an error:
     Without it, the executable is run directly. The program arguments given after ``--`` go at the end of the command,
     or in place of a word ``{args}``; ``{semihosting_args}`` inside a word becomes the ``,arg=`` entries of qemu's
     ``-semihosting-config`` for the executable and its arguments, as in ``enable=on,target=native{semihosting_args}``.
+    Environment variables work as in ``clang_args``.
+``program_args``
+    ``false`` for platforms whose programs can't get command line arguments: giving them after ``--`` is then an error.
+    The default is ``true``.
 ``run_timeout_seconds``
     The number of seconds after which ``-emu`` stops the run, for runners that can hang, such as an emulator after
     the program crashed. Without it, ``-emu`` waits until the program exits.
@@ -345,6 +358,12 @@ These are the keys of a profile; an unknown key is an error:
     The C library routines that the file routines seek and tell the position in a file with, and the size in bytes of
     their offset. The defaults are ``fseek()`` and ``ftell()``, whose offset is a C ``long``. The Windows profiles name
     ``_fseeki64`` and ``_ftelli64`` with 8 bytes, because a C ``long`` has only 32 bits there.
+``libc_lacks``
+    The C functions, separated by spaces, that the platform's C library doesn't have, such as ``opendir readdir closedir``.
+    Only the names of C functions that Prog8 programs can call are accepted.
+``io_ranges``
+    The memory-mapped I/O addresses, as comma-separated addresses and ranges in decimal or ``$`` hexadecimal,
+    such as ``0-1,$d000-$dfff``, or ``*`` for every constant address.
 
 The ``-Xcompile`` and ``-Xlink`` options add arguments to a single build without a profile of your own:
 ``-Xcompile`` arguments come after ``clang_args``, ``-Xlink`` arguments at the end of the ``link_command``, or at the

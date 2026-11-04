@@ -1,5 +1,6 @@
 package prog8.code.target
 
+import prog8.code.source.ImportFileSystem
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
@@ -30,6 +31,29 @@ object LlvmToolLocator {
         }
         return besideLlvmAs ?: find("clang")
     }
+
+    /** A bare tool [nameOrPath] is searched for as [find] does; a path, with a leading ~ expanded, is taken as it is. Null when there is no such executable. */
+    fun locate(nameOrPath: String): Path? {
+        if ('/' !in nameOrPath && File.separatorChar !in nameOrPath)
+            return find(nameOrPath)
+        return orNull { ImportFileSystem.expandTilde(Path.of(nameOrPath)).takeIf { Files.isRegularFile(it) && Files.isExecutable(it) } }
+    }
+
+    /**
+     * The clang to use: [option] (the -clang option), else [profileClang] (the clang of llvm triple profile [profileName]), else [clang].
+     * Null when none is named and none is found; throws an IllegalArgumentException when a named one isn't found.
+     */
+    fun resolveClang(option: String?, profileClang: String?, profileName: String?): Path? {
+        if (option != null)
+            return locate(option) ?: throw IllegalArgumentException("the clang '$option' given with -clang was not found")
+        if (profileClang != null)
+            return locate(profileClang) ?: throw IllegalArgumentException("the clang '$profileClang' of llvm triple profile '$profileName' was not found")
+        return clang()
+    }
+
+    /** The LLVM tool [tool] of the installation of [clang], else as [find] finds it. */
+    fun besideClang(tool: String, clang: Path?): Path? =
+        clang?.let { orNull { it.resolveSibling(executableName(tool)).takeIf { file -> Files.isRegularFile(file) && Files.isExecutable(file) } } } ?: find(tool)
 
     fun executableName(name: String): String =
         if (orNull { System.getProperty("os.name") }.orEmpty().startsWith("Windows")) "$name.exe" else name

@@ -43,6 +43,7 @@ class TestDaemonProtocol : FunSpec({
             llvmTriple = "riscv32-unknown-elf",
             llvmCompileArgs = listOf("-g", "-mcpu=cortex-a15"),
             llvmLinkArgs = listOf("-L/a b", "-lfoo", "x=\"y\""),
+            llvmClang = "/opt/llvm \"mos\"/bin/mos-clang",
             generateDocumentation = false,
             irComments = true
         )
@@ -82,6 +83,7 @@ class TestDaemonProtocol : FunSpec({
         decoded.llvmTriple shouldBe request.llvmTriple
         decoded.llvmCompileArgs shouldBe request.llvmCompileArgs
         decoded.llvmLinkArgs shouldBe request.llvmLinkArgs
+        decoded.llvmClang shouldBe request.llvmClang
         decoded.irComments shouldBe request.irComments
     }
 
@@ -126,6 +128,7 @@ class TestDaemonProtocol : FunSpec({
         decoded.breakpointCpuInstruction shouldBe null
         decoded.newCodegen shouldBe false
         decoded.outputFile shouldBe null
+        decoded.llvmClang shouldBe null
     }
 
     test("Decode fails gracefully with missing field") {

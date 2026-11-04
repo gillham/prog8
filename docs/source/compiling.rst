@@ -338,6 +338,12 @@ One or more .p8 module files
     knows, which clang then supplies the data layout for. The default for ``llvm64`` is the profile of the machine the compiler runs on, and ``wasm32-wasip1`` for ``llvm32``.
     It is an error with the other targets. See :ref:`llvm_triples` for the lookup order and the profile keys.
 
+``-clang <name|file>``
+    The clang that the ``llvm64`` and ``llvm32`` targets build the executable with, instead of the ``clang`` of the triple
+    profile or the clang found on the PATH; a name without a directory is looked up on the PATH. It also answers for a
+    profile that leaves out keys that clang supplies, and its llvm-as checks the ``.ll`` file.
+    It is kept in the ``.p8ir`` file, and is an error with the other targets.
+
 ``-Xcompile <argument>``, ``-Xlink <argument>``
     Pass one extra argument to the clang compile step, or to the link step, when the ``llvm64`` and ``llvm32`` targets
     build an executable. Repeat the option for more arguments; each value is passed as is, also when it starts with ``-``

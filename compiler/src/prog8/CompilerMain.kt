@@ -16,6 +16,7 @@ import prog8.code.source.ImportFileSystem.expandTilde
 import prog8.code.target.CompilationTargets
 import prog8.code.target.Cx16Target
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmToolLocator
 import prog8.code.target.VMTarget
 import prog8.code.target.getCompilationTargetByName
 import prog8.compiler.*
@@ -108,6 +109,7 @@ private class CompilerCli : CliktCommand(name = "prog8c") {
     val llvmTripleArg by option("-triple", "--triple", help = "triple profile of the ${LlvmTarget.NAME32}/${LlvmTarget.NAME64} targets: a name such as ${LlvmTarget.DEFAULT_TRIPLE_32}, or a profile properties file")
     val llvmCompileArgs by option("-Xcompile", "--Xcompile", help = "pass one extra argument to the clang compile step of the ${LlvmTarget.NAME32}/${LlvmTarget.NAME64} targets (can be repeated)").multiple()
     val llvmLinkArgs by option("-Xlink", "--Xlink", help = "pass one extra argument to the link step of the ${LlvmTarget.NAME32}/${LlvmTarget.NAME64} targets, such as -lfoo (can be repeated)").multiple()
+    val llvmClangArg by option("-clang", "--clang", help = "the clang that builds programs of the ${LlvmTarget.NAME32}/${LlvmTarget.NAME64} targets, instead of the one of the triple profile or the one found on the PATH")
     val showTimings by option("-timings", "--timings", help = "show internal compiler timings").flag()
     val varsGolden by option("-varsgolden", "--varsgolden", help = "put uninitialized variables and memory slabs in golden ram").flag()
     val varsHighBank by option("-varshigh", "--varshigh", help = "put uninitialized variables and memory slabs in high memory area").int()
@@ -220,9 +222,26 @@ private fun compileMain(args: Array<String>): Boolean {
         val file = expandTilde(Path(triple))
         if(file.isRegularFile()) file.toAbsolutePath().normalize().toString() else triple
     }
-    if(llvmTriple!=null || llvmCompileArgs.isNotEmpty() || llvmLinkArgs.isNotEmpty()) {
+    val llvmClang = llvmClangArg?.let { clang ->
+        if('/' in clang || File.separatorChar in clang) expandTilde(Path(clang)).toAbsolutePath().normalize().toString() else clang
+    }
+    if(llvmClang!=null) {
+        if(compilationTarget?.lowercase() !in setOf(LlvmTarget.NAME32, LlvmTarget.NAME64, LlvmTarget.ALIAS)) {
+            presenter.printErrorLine("-clang can only be given for the ${LlvmTarget.NAME32} and ${LlvmTarget.NAME64} targets.")
+            return false
+        }
+        if(LlvmToolLocator.locate(llvmClang)==null) {
+            presenter.printErrorLine("Invalid -clang: the clang '$llvmClangArg' was not found.")
+            return false
+        }
+    }
+    if(llvmTriple!=null || llvmCompileArgs.isNotEmpty() || llvmLinkArgs.isNotEmpty() || llvmClang!=null) {
         try {
-            getCompilationTargetByName(compilationTarget ?: "", llvmTriple, llvmCompileArgs, llvmLinkArgs)
+            val target = getCompilationTargetByName(compilationTarget ?: "", llvmTriple, llvmCompileArgs, llvmLinkArgs, llvmClang)
+            if(programArgs.isNotEmpty() && target is LlvmTarget && !target.profile.programArgs) {
+                presenter.printErrorLine("Program arguments after -- can't be given: ${target.programArgsRejected()}.")
+                return false
+            }
         } catch (x: IllegalArgumentException) {
             presenter.printErrorLine(if(llvmTriple!=null) "Invalid -triple: ${x.message}" else "${x.message}")
             return false
@@ -327,6 +346,7 @@ private fun compileMain(args: Array<String>): Boolean {
                     llvmTriple = llvmTriple,
                     llvmCompileArgs = llvmCompileArgs,
                     llvmLinkArgs = llvmLinkArgs,
+                    llvmClang = llvmClang,
                     irComments = irComments,
                 )
                 val compilationResult = compileProgram(compilerArgs)
@@ -421,6 +441,7 @@ private fun compileMain(args: Array<String>): Boolean {
                 llvmTriple = llvmTriple,
                 llvmCompileArgs = llvmCompileArgs,
                 llvmLinkArgs = llvmLinkArgs,
+                llvmClang = llvmClang,
                 irComments = irComments,
             )
             val response = compileViaDaemon(compilerArgs, plainText)
@@ -433,7 +454,7 @@ private fun compileMain(args: Array<String>): Boolean {
                 } else {
                     val programFile = Path.of(response.outputFiles.first())
 
-                    val target = getCompilationTargetByName(compilationTarget!!, llvmTriple, llvmCompileArgs, llvmLinkArgs)
+                    val target = getCompilationTargetByName(compilationTarget!!, llvmTriple, llvmCompileArgs, llvmLinkArgs, llvmClang)
                     if (startEmulator1) {
                         if (target is VMTarget) {
                             if(!launchVirtualMachine(target, programFile, quietAll, vmTrace, presenter))
@@ -495,6 +516,7 @@ private fun compileMain(args: Array<String>): Boolean {
                     llvmTriple = llvmTriple,
                     llvmCompileArgs = llvmCompileArgs,
                     llvmLinkArgs = llvmLinkArgs,
+                    llvmClang = llvmClang,
                     irComments = irComments,
                 )
                 val result = compileProgram(compilerArgs)
@@ -899,7 +921,7 @@ private fun printCompileStart(args: CompilerArguments) {
     val programPath = args.filepath.toAbsolutePath().normalize()
     val display = args.cwd.toAbsolutePath().relativize(programPath)
     println("Compiling program $display")
-    println("Compiler target: ${getCompilationTargetByName(args.compilationTarget, args.llvmTriple, args.llvmCompileArgs, args.llvmLinkArgs).name}")
+    println("Compiler target: ${getCompilationTargetByName(args.compilationTarget, args.llvmTriple, args.llvmCompileArgs, args.llvmLinkArgs, args.llvmClang).name}")
 }
 
 private fun startDaemonProcess(quiet: Boolean = false): Boolean {
@@ -996,7 +1018,8 @@ private fun communicateWithDaemon(channel: SocketChannel, compilerArgs: Compiler
             generateDocumentation = compilerArgs.generateDocumentation,
             llvmTriple = compilerArgs.llvmTriple,
             llvmCompileArgs = compilerArgs.llvmCompileArgs,
-            llvmLinkArgs = compilerArgs.llvmLinkArgs
+            llvmLinkArgs = compilerArgs.llvmLinkArgs,
+            llvmClang = compilerArgs.llvmClang
         )
 
         val requestJson = DaemonProtocol.encodeRequest(request)

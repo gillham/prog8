@@ -18,7 +18,8 @@ import prog8.intermediate.IRSymbolTable
 internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: Int = 8, cLongBytes: Int = 8, fileOffsetBytes: Int = cLongBytes, cIntBytes: Int = 4) {
 
     constructor(st: IRSymbolTable, target: ICompilationTarget) :
-        this(st, target.POINTER_MEM_SIZE.toInt(), (target as? LlvmTarget)?.profile?.cLongSize ?: 8, (target as? LlvmTarget)?.profile?.fileOffsetSize ?: 8)
+        this(st, target.POINTER_MEM_SIZE.toInt(), (target as? LlvmTarget)?.profile?.cLongSize ?: 8, (target as? LlvmTarget)?.profile?.fileOffsetSize ?: 8,
+            (target as? LlvmTarget)?.profile?.cIntSize ?: 4)
 
     init {
         require(pointerBytes == 2 || pointerBytes == 4 || pointerBytes == 8) { "unsupported pointer size: $pointerBytes" }

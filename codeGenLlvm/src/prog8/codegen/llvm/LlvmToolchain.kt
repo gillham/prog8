@@ -27,17 +27,12 @@ internal object LlvmToolchain {
      * link command in [profile], clang only compiles an object file that the command links, along with the profile's startup sources if it has any.
      * [extraCompileArgs] go last on the clang command, [extraLinkArgs] and then [linkLibraries] last on the command that links, so libraries
      * come after the object file, and the profile's link arguments after those; a link command can place the [linkLibraries] elsewhere with a `{libs}` word.
-     * Messages and any failure are reported on System.err.
+     * The clang is the one of [clangFor]. Messages and any failure are reported on System.err.
      */
     fun compileToExecutable(llFile: Path, outputFile: Path, profile: LlvmTripleProfile? = null, optLevel: String = "-O2",
                             extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList(),
-                            linkLibraries: List<String> = emptyList()): Boolean {
-        val clang = clang()
-        if (clang == null) {
-            System.err.println("Can't build '$outputFile': clang was not found on the PATH or in $homebrewLlvmBin. " +
-                "Install LLVM, for example with 'brew install llvm', or put clang on the PATH.")
-            return false
-        }
+                            linkLibraries: List<String> = emptyList(), clangOption: String? = null): Boolean {
+        val clang = clangFor(outputFile, profile, clangOption) ?: return false
         val (profileArgs, linkCommand, profileLinkArgs) = try {
             Triple(profile?.clangArgs.orEmpty(), profile?.linkCommand, profile?.linkArgs.orEmpty())
         } catch (x: IllegalArgumentException) {
@@ -64,6 +59,23 @@ internal object LlvmToolchain {
             Files.deleteIfExists(objectFile)
             startupFiles.forEach { Files.deleteIfExists(it) }
         }
+    }
+
+    /**
+     * The clang for [profile] and the -clang option [clangOption] (see [LlvmToolLocator.resolveClang]), or null when there is none;
+     * the reason is reported on System.err as why [outputFile] can't be built.
+     */
+    fun clangFor(outputFile: Path, profile: LlvmTripleProfile?, clangOption: String?): Path? {
+        val clang = try {
+            if (profile != null) profile.resolveClang(clangOption) else LlvmToolLocator.resolveClang(clangOption, null, null)
+        } catch (x: IllegalArgumentException) {
+            System.err.println("Can't build '$outputFile': ${x.message}")
+            return null
+        }
+        if (clang == null)
+            System.err.println("Can't build '$outputFile': clang was not found on the PATH or in $homebrewLlvmBin. " +
+                "Install LLVM, for example with 'brew install llvm', or put clang on the PATH.")
+        return clang
     }
 
     internal fun compileCommand(clang: String, profileArgs: List<String>, optLevel: String, extraCompileArgs: List<String>): List<String> =
@@ -165,11 +177,13 @@ internal object LlvmToolchain {
  */
 class LlvmProgramRunner : ILlvmProgramRunner {
     /** Builds [executable] from the LLVM IR in [llFile] as the compiler does, with the clang arguments, startup sources and link command of [profile]. */
-    fun build(llFile: Path, executable: Path, profile: LlvmTripleProfile?): Boolean = LlvmToolchain.compileToExecutable(llFile, executable, profile)
+    fun build(llFile: Path, executable: Path, profile: LlvmTripleProfile?, clangOption: String? = null): Boolean =
+        LlvmToolchain.compileToExecutable(llFile, executable, profile, clangOption = clangOption)
 
     override fun buildAndRun(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile?,
-                             extraCompileArgs: List<String>, extraLinkArgs: List<String>, programArgs: List<String>, linkLibraries: List<String>): Int? {
-        val executable = executableOf(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, linkLibraries) ?: return null
+                             extraCompileArgs: List<String>, extraLinkArgs: List<String>, programArgs: List<String>, linkLibraries: List<String>,
+                             clangOption: String?): Int? {
+        val executable = executableOf(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, linkLibraries, clangOption) ?: return null
         return try {
             LlvmToolchain.runExecutable(executable, quiet, profile?.runCommand, profile?.runTimeoutSeconds, programArgs)
         } catch (x: IOException) {
@@ -183,7 +197,7 @@ class LlvmProgramRunner : ILlvmProgramRunner {
 
     /** An executable named with -o runs as it is; a missing one, or the one of a .ll file, is built from the LLVM IR first. */
     private fun executableOf(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile?,
-                             extraCompileArgs: List<String>, extraLinkArgs: List<String>, linkLibraries: List<String>): Path? {
+                             extraCompileArgs: List<String>, extraLinkArgs: List<String>, linkLibraries: List<String>, clangOption: String?): Path? {
         val irFile = LlvmToolchain.irFileFor(programFile)
         if (programFile != irFile && programFile.exists())
             return programFile
@@ -192,8 +206,10 @@ class LlvmProgramRunner : ILlvmProgramRunner {
             return null
         }
         val executable = if (programFile == irFile) LlvmToolchain.executableFor(irFile, profile?.outputExtension.orEmpty()) else programFile
+        val clang = LlvmToolchain.clangFor(executable, profile, clangOption) ?: return null
         if (!quiet)
-            println("Building $executable from $irFile with clang...")
-        return if (LlvmToolchain.compileToExecutable(irFile, executable, profile, extraCompileArgs = extraCompileArgs, extraLinkArgs = extraLinkArgs, linkLibraries = linkLibraries)) executable else null
+            println("Building $executable from $irFile with $clang...")
+        return if (LlvmToolchain.compileToExecutable(irFile, executable, profile, extraCompileArgs = extraCompileArgs, extraLinkArgs = extraLinkArgs,
+                linkLibraries = linkLibraries, clangOption = clangOption)) executable else null
     }
 }

@@ -17,6 +17,7 @@ import java.nio.file.NoSuchFileException
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteExisting
 import kotlin.io.path.exists
+import kotlin.io.path.invariantSeparatorsPathString
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
@@ -227,6 +228,7 @@ class TestLlvmTripleProfile: FunSpec({
             withClue("$name: profile ${profile.dataLayout}, clang ${reported.dataLayout}") {
                 usedLayout(profile.dataLayout) shouldBe usedLayout(reported.dataLayout)
                 profile.cLongSize shouldBe reported.cLongSize
+                profile.cIntSize shouldBe reported.cIntSize
             }
         }
     }
@@ -256,11 +258,129 @@ class TestLlvmTripleProfile: FunSpec({
         profile.triple shouldBe "riscv32-unknown-elf"
         profile.dataLayout shouldBe "e-m:e-p:32:32-i64:64-n32-S128"
         profile.cLongSize shouldBe 4
+        profile.cIntSize shouldBe 4
         profile.runCommand shouldBe listOf("qemu", "{file}")
         LlvmTripleProfile.load(profileFile("partiallong", "triple = x86_64-pc-windows-msvc\ndatalayout = $wasmLayout")).let {
             it.dataLayout shouldBe wasmLayout
             it.cLongSize shouldBe 4
         }
+    }
+
+    test("the new keys have defaults that keep the behaviour of profiles without them") {
+        for (name in embedded.keys) {
+            val profile = LlvmTripleProfile.resolve(name)
+            withClue(name) {
+                profile.cIntSize shouldBe 4
+                profile.clang shouldBe null
+                profile.libcLacks shouldBe emptySet()
+                profile.ioRanges shouldBe emptyList()
+                profile.ioAllAddresses shouldBe false
+                profile.programArgs shouldBe true
+            }
+        }
+    }
+
+    test("c_int_size, libc_lacks, io_ranges and program_args are read from a profile file") {
+        val profile = LlvmTripleProfile.load(profileFile("newkeys", validProfile(
+            $$"c_int_size = 2\nlibc_lacks = opendir  readdir closedir\nio_ranges = $d000-$dfff, 0-1 ,53280, 0x10\nprogram_args = false")))
+        profile.cIntSize shouldBe 2
+        profile.libcLacks shouldBe setOf("opendir", "readdir", "closedir")
+        profile.ioRanges shouldBe listOf(0xd000u..0xdfffu, 0u..1u, 53280u..53280u, 16u..16u)
+        profile.ioAllAddresses shouldBe false
+        profile.programArgs shouldBe false
+        LlvmTripleProfile.load(profileFile("allio", validProfile("io_ranges = *\nc_int_size = 4\nprogram_args = true"))).let {
+            it.ioAllAddresses shouldBe true
+            it.ioRanges shouldBe emptyList()
+            it.cIntSize shouldBe 4
+            it.programArgs shouldBe true
+        }
+        LlvmTripleProfile.C_FUNCTIONS.containsAll(listOf("fopen", "putchar", "usleep", "printf", "tan", "atan2f")) shouldBe true
+    }
+
+    test("invalid values of the new keys are rejected") {
+        fun rejected(name: String, properties: String): String =
+            shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(profileFile(name, properties)) }.message!!
+        rejected("intsize", validProfile("c_int_size = 8")) shouldContain "c_int_size 8"
+        rejected("inttext", validProfile("c_int_size = two")) shouldContain "non-numeric c_int_size"
+        rejected("lacks", validProfile("libc_lacks = fopen no_such_function")) shouldContain "no_such_function"
+        rejected("iohex", validProfile($$"io_ranges = $zz")) shouldContain $$"invalid address '$zz'"
+        rejected("iothree", validProfile("io_ranges = 1-2-3")) shouldContain "invalid range '1-2-3'"
+        rejected("iobackwards", validProfile("io_ranges = 5-1")) shouldContain "ends before it starts"
+        rejected("ioallmixed", validProfile("io_ranges = *, 1")) shouldContain "invalid address '*'"
+        rejected("args", validProfile("program_args = yes")) shouldContain "program_args 'yes'"
+    }
+
+    test("run_command and clang expand environment variables on use, keeping the {file} and {args} placeholders") {
+        val profile = LlvmTripleProfile.load(profileFile("runenv", validProfile(
+            $$"run_command = ${PROG8_NO_SUCH_VARIABLE:-qemu} -kernel {file} {args}\nclang = ${PROG8_NO_SUCH_VARIABLE:-/opt/x}/bin/clang")))
+        profile.runCommand shouldBe listOf("qemu", "-kernel", "{file}", "{args}")
+        LlvmTripleProfile.runCommandFor(profile.runCommand, "/p/x", listOf("a")) shouldBe listOf("qemu", "-kernel", "/p/x", "a")
+        profile.clang shouldBe "/opt/x/bin/clang"
+        val unset = LlvmTripleProfile.load(profileFile("runenvunset", validProfile($$"run_command = ${PROG8_NO_SUCH_VARIABLE} {file}\nclang = ${PROG8_NO_SUCH_VARIABLE}")))
+        shouldThrow<IllegalArgumentException> { unset.runCommand }.message!! shouldContain "PROG8_NO_SUCH_VARIABLE"
+        shouldThrow<IllegalArgumentException> { unset.clang }.message!! shouldContain "PROG8_NO_SUCH_VARIABLE"
+    }
+
+    test("a profile with program_args = false rejects program arguments") {
+        val profile = LlvmTripleProfile.load(profileFile("noargs", "triple = t\ndatalayout = $wasmLayout\nc_long_size = 4\nprogram_args = false"))
+        val target = LlvmTarget(4, profile)
+        target.launchEmulator(1, directory.resolve("noargs.ll"), quiet = true, programArgs = listOf("a")) shouldBe null
+        target.programArgsRejected() shouldContain "program_args = false"
+    }
+
+    test("a profile with its datalayout and c_long_size doesn't ask its clang, one without them names the missing clang") {
+        val missing = directory.resolve("no such dir").resolve("clang").invariantSeparatorsPathString
+        LlvmTripleProfile.load(profileFile("noclangneeded", validProfile("clang = $missing"))).let {
+            it.cIntSize shouldBe 4
+            it.clang shouldBe missing
+            shouldThrow<IllegalArgumentException> { it.resolveClang(null) }.message!! shouldContain "the clang '$missing' of llvm triple profile"
+        }
+        shouldThrow<IllegalArgumentException> {
+            LlvmTripleProfile.load(profileFile("clangneeded", "triple = t\ndatalayout = $wasmLayout\nclang = $missing"))
+        }.message!! shouldContain "the clang '$missing' of llvm triple profile"
+    }
+
+    test("the clang is the -clang option, then the profile's clang, then the default one, and answers for the profile")
+        .config(enabled = !System.getProperty("os.name").startsWith("Windows")) {
+        val bin = directory.resolve("fakellvm").createDirectories()
+        fun fakeClang(name: String, intType: String, intSize: Int): Path = bin.resolve(name).also {
+            it.writeText(listOf("#!/bin/sh", "cat > /dev/null",
+                "echo 'target datalayout = \"e-m:e-p:16:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:8-Fi8-n8\"'",
+                "echo 'target triple = \"fake\"'",
+                "echo '@prog8_c_long_size = dso_local global i32 4, align 1'",
+                "echo '@prog8_c_int_size = dso_local global $intType $intSize, align 1'").joinToString("\n", postfix = "\n"))
+            it.toFile().setExecutable(true)
+        }
+        val profileClang = fakeClang("profile-clang", "i16", 2)
+        val optionClang = fakeClang("option-clang", "i32", 4)
+        val llvmAs = bin.resolve("llvm-as").also { it.writeText("#!/bin/sh\n"); it.toFile().setExecutable(true) }
+        LlvmToolLocator.resolveClang(optionClang.toString(), profileClang.toString(), "p") shouldBe optionClang
+        LlvmToolLocator.resolveClang(null, profileClang.toString(), "p") shouldBe profileClang
+        LlvmToolLocator.resolveClang(null, null, "p") shouldBe LlvmToolLocator.clang()
+        LlvmToolLocator.locate("prog8-no-such-clang") shouldBe null
+        LlvmToolLocator.besideClang("llvm-as", profileClang) shouldBe llvmAs
+        shouldThrow<IllegalArgumentException> { LlvmToolLocator.resolveClang("/prog8/no/such/clang", null, null) }.message!! shouldContain "-clang"
+        shouldThrow<IllegalArgumentException> { LlvmToolLocator.resolveClang(null, "/prog8/no/such/clang", "myprofile") }.message!! shouldContain
+            "the clang '/prog8/no/such/clang' of llvm triple profile 'myprofile' was not found"
+
+        val file = profileFile("fakeclang", "triple = fake\nclang = $profileClang")
+        val profile = LlvmTripleProfile.load(file)
+        profile.cIntSize shouldBe 2
+        profile.cLongSize shouldBe 4
+        profile.pointerBits shouldBe 16
+        profile.resolveClang(null) shouldBe profileClang
+        profile.resolveClang(optionClang.toString()) shouldBe optionClang
+        LlvmTripleProfile.load(file, optionClang.toString()).cIntSize shouldBe 4
+        (getCompilationTargetByName("llvm32", "wasm32-wasip1", clang = optionClang.toString()) as LlvmTarget).let {
+            it.clangOption shouldBe optionClang.toString()
+            it.clang() shouldBe optionClang
+        }
+    }
+
+    test("-clang is only accepted for the llvm targets") {
+        shouldThrow<IllegalArgumentException> { getCompilationTargetByName("cx16", clang = "clang") }.message!! shouldContain "-clang"
+        (getCompilationTargetByName("llvm", clang = "/x/clang") as LlvmTarget).clangOption shouldBe "/x/clang"
+        LlvmTarget(4).clangOption shouldBe null
     }
 
     test("the llvm32 target defaults to wasm32 with 4-byte pointers, the llvm64 target to arm64 macOS with 8-byte pointers") {

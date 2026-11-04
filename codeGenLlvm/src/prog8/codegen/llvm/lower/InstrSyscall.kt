@@ -646,10 +646,10 @@ private const val CURDIR_BUFFER_SIZE = 4096
 private const val SEEK_SET = 0L
 private const val SEEK_END = 2L
 
-private enum class CType { VOID, INT, PTR, SIZE_T, OFFSET }
+internal enum class CType { VOID, INT, PTR, SIZE_T, OFFSET }
 
 /** The C library routines of the file syscalls; the widths of size_t and of the file offset come from the target triple. */
-private enum class Libc(val returnType: CType, vararg parameters: CType) {
+internal enum class Libc(val returnType: CType, vararg parameters: CType) {
     FOPEN(CType.PTR, CType.PTR, CType.PTR),
     FCLOSE(CType.INT, CType.PTR),
     FGETC(CType.INT, CType.PTR),

@@ -143,6 +143,7 @@ class IRFileReader {
         var llvmTriple: String? = null
         val llvmCompileArgs = mutableListOf<String>()
         val llvmLinkArgs = mutableListOf<String>()
+        var llvmClang: String? = null
         val linkLibraries = mutableListOf<String>()
         var outputType = OutputType.PRG
         var launcher = CbmPrgLauncherType.NONE
@@ -165,6 +166,7 @@ class IRFileReader {
                     "llvmTriple" -> llvmTriple = value
                     "llvmCompileArg" -> llvmCompileArgs.add(unescapeOptionValue(value))
                     "llvmLinkArg" -> llvmLinkArgs.add(unescapeOptionValue(value))
+                    "llvmClang" -> llvmClang = unescapeOptionValue(value)
                     "linkLibrary" -> linkLibraries.add(unescapeOptionValue(value))
                     "output" -> outputType = OutputType.valueOf(value)
                     "launcher" -> launcher = CbmPrgLauncherType.valueOf(value)
@@ -190,7 +192,7 @@ class IRFileReader {
         }
         targetName?.let {
             target = try {
-                getCompilationTargetByName(it, llvmTriple, llvmCompileArgs, llvmLinkArgs)
+                getCompilationTargetByName(it, llvmTriple, llvmCompileArgs, llvmLinkArgs, llvmClang)
             } catch (x: IllegalArgumentException) {
                 throw IRParseException("invalid compilation target in OPTIONS: ${x.message}")
             }

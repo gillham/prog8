@@ -165,6 +165,16 @@ main {
         irTarget.profile.name shouldBe "riscv32-unknown-elf"
         irTarget.extraCompileArgs shouldBe compileArgs
         irTarget.extraLinkArgs shouldBe linkArgs
+        irTarget.clangOption shouldBe null
+    }
+
+    test("the -clang option is kept in the .p8ir file") {
+        val dir = outputDir.resolve("clang-option").createDirectories()
+        val clang = "/opt/some llvm/bin/clang=x"
+        val target = getCompilationTargetByName("llvm32", "riscv32-unknown-elf", clang = clang)
+        val result = compileText(target, false, programs.getValue("arithmetic expressions"), dir, assemble = false).shouldNotBeNull()
+        val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        (IRFileReader().read(irFile).options.compTarget as LlvmTarget).clangOption shouldBe clang
     }
 
     test("-Xcompile and -Xlink arguments are only accepted for the llvm targets") {
@@ -174,17 +184,17 @@ main {
     }
 
     test("-Xlink links an extra static library into a native executable").config(enabledOrReasonIf = requiresNativeLlvmAndAr) {
-        val ar = checkNotNull(llvmBin).resolve(LlvmToolLocator.executableName("llvm-ar"))
+        val ar = checkNotNull(llvmAr)
         linksExtraLibrary(outputDir, hostLlvmTarget, "native-library", ar) { source, objectFile ->
-            listOf(checkNotNull(llvmBin).resolve("clang").toString(), "-c", source.toString(), "-o", objectFile.toString())
+            listOf(clangOf(hostLlvmProfile), "-c", source.toString(), "-o", objectFile.toString())
         }
     }
 
     test("-Xlink links an extra static library into an llvm32 wasm32 program").config(enabledOrReasonIf = requiresWasmAndAr) {
-        val ar = checkNotNull(llvmBin).resolve(LlvmToolLocator.executableName("llvm-ar"))
+        val ar = checkNotNull(llvmAr)
         val sysroot = System.getenv("WASI_SYSROOT") ?: "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot"
         linksExtraLibrary(outputDir, LlvmTarget(4), "wasm-library", ar) { source, objectFile ->
-            listOf(checkNotNull(llvmBin).resolve("clang").toString(), "--target=wasm32-wasip1", "--sysroot=$sysroot", "-c", source.toString(), "-o", objectFile.toString())
+            listOf(clangOf(LlvmTarget(4).profile), "--target=wasm32-wasip1", "--sysroot=$sysroot", "-c", source.toString(), "-o", objectFile.toString())
         }
     }
 
@@ -266,7 +276,7 @@ main {
         val wasm = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + ".wasm")
         withClue("a compile without -o only writes the LLVM IR") { wasm.exists() shouldBe false }
         val printed = printedOnStdout { LlvmTarget(4).launchEmulator(1, llFile, quiet = false) }
-        printed shouldContain "Building $wasm from $llFile with clang..."
+        printed shouldContain "Building $wasm from $llFile with ${clangOf(LlvmTarget(4).profile)}..."
         printed shouldContain "Running $wasm..."
         printed shouldContain "Program exited with status 42"
         wasm.exists() shouldBe true
@@ -399,7 +409,7 @@ main {
         val llFile = compiledLlFile(compileText(armTarget(), false, nativeHello.source, dir))
         val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + ".elf")
         val printed = printedOnStdout { armTarget().launchEmulator(1, llFile, quiet = false) }
-        printed shouldContain "Building $elf from $llFile with clang..."
+        printed shouldContain "Building $elf from $llFile with ${clangOf(armTarget().profile)}..."
         printed shouldContain "Running $elf..."
         printed shouldContain "Program exited with status 42"
         elf.exists() shouldBe true
@@ -455,7 +465,7 @@ main {
         val executable = hostExecutable(llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll")))
         withClue("a compile without -o only writes the LLVM IR") { executable.exists() shouldBe false }
         val printed = printedOnStdout { hostLlvmTarget.launchEmulator(1, llFile, quiet = false) }
-        printed shouldContain "Building $executable from $llFile with clang..."
+        printed shouldContain "Building $executable from $llFile with ${clangOf(hostLlvmTarget.profile)}..."
         printed shouldContain "Running $executable..."
         printed shouldContain "Program exited with status 42"
         withClue("$executable should be executable") { Files.isExecutable(executable) shouldBe true }
@@ -495,7 +505,7 @@ main {
         val source = libraryDir.resolve("tripler.c").also { it.writeText("int p8test_triple(int x) { return x * 3; }\n") }
         val objectFile = libraryDir.resolve("tripler.o")
         withClue("compiling the library") {
-            execute(checkNotNull(llvmBin).resolve("clang").toString(), "-c", source.toString(), "-o", objectFile.toString()).first shouldBe 0
+            execute(clangOf(hostLlvmProfile), "-c", source.toString(), "-o", objectFile.toString()).first shouldBe 0
         }
         dir.resolve("tripler.p8").writeText("""
             %link "lib dir/tripler.o", "$system"
@@ -1196,7 +1206,7 @@ other {
         }
         val profile = checkNotNull(hostLlvmProfile)
         val cProgram = hostExecutable(dir.resolve("sizeof_file"))
-        execute(checkNotNull(llvmBin).resolve("clang").toString(), *profile.clangArgs.toTypedArray(), sizeofFile.toString(), "-o", cProgram.toString()).first shouldBe 0
+        execute(clangOf(profile), *profile.clangArgs.toTypedArray(), sizeofFile.toString(), "-o", cProgram.toString()).first shouldBe 0
         // this C program writes its stdout in text mode, which ends a line with \r\n on Windows
         val cSize = execute(cProgram.toString()).second.replace("\r\n", "\n")
         val program = stdioBindingsProgram("^^c_stdio.FILE", "txt.print_uw(sizeof(c_stdio.FILE))\ntxt.nl()")
@@ -1278,7 +1288,7 @@ other {
 private fun generateBindings(dir: Path, fileName: String, triple: String, vararg args: String): Path {
     val output = dir.resolve(fileName)
     val (exitCode, messages) = execute(checkNotNull(python3), Path("..", "scripts", "c-header-to-prog8.py").toAbsolutePath().normalize().toString(),
-        *args, "--triple", triple, "--clang", checkNotNull(llvmBin).resolve("clang").toString(), "-o", output.toString())
+        *args, "--triple", triple, "--clang", clangOf(null), "-o", output.toString())
     withClue(messages) { exitCode shouldBe 0 }
     return output
 }
@@ -1356,19 +1366,23 @@ private fun compiledLlFile(result: CompilationResult?): Path {
 }
 
 // llvm-as and clang of one LLVM installation; Homebrew installs LLVM keg-only, outside the PATH
-// the directory of the clang that prog8c uses, which is the one next to llvm-as if there is one
-private val llvmBin: Path? = LlvmToolLocator.clang()?.parent
+// the clang that prog8c uses by default, which is the one next to llvm-as if there is one
+private val defaultClang: Path? = LlvmToolLocator.clang()
+private val llvmAr: Path? = LlvmToolLocator.besideClang("llvm-ar", defaultClang)
+
+/** The clang that prog8c builds the programs of [profile] with, or the default one when there is no profile. */
+private fun clangOf(profile: LlvmTripleProfile?): String = checkNotNull(profile?.resolveClang(null) ?: defaultClang).toString()
 
 private val requiresNativeLlvm: (TestCase) -> Enabled = {
     when {
         noHostLlvmProfileReason != null -> Enabled.disabled(noHostLlvmProfileReason!!)
-        llvmBin == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        defaultClang == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         else -> Enabled.enabled
     }
 }
 
 private val requiresNativeLlvmAndAr: (TestCase) -> Enabled = {
-    if (llvmBin?.resolve(LlvmToolLocator.executableName("llvm-ar"))?.let { Files.isExecutable(it) } != true) Enabled.disabled("llvm-ar not found next to clang") else requiresNativeLlvm(it)
+    if (llvmAr == null) Enabled.disabled("llvm-ar not found next to clang or on the PATH") else requiresNativeLlvm(it)
 }
 
 /**
@@ -1407,7 +1421,7 @@ private val requiresWasm: (TestCase) -> Enabled = {
     val sysroot = System.getenv("WASI_SYSROOT") ?: "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot"
     fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
-        llvmBin == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        defaultClang == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         !Files.isDirectory(Path(sysroot)) -> Enabled.disabled("no WASI sysroot in WASI_SYSROOT or $sysroot")
         !onPath("wasm-ld") -> Enabled.disabled("wasm-ld (from lld) not found on the PATH")
         !onPath("wasmtime") -> Enabled.disabled("wasmtime not found on the PATH")
@@ -1423,7 +1437,7 @@ private val requiresWasm: (TestCase) -> Enabled = {
 private fun buildAndRunWasm(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val profile = LlvmTarget(4).profile
     val wasm = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + profile.outputExtension)
-    val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *profile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module",
+    val compiled = execute(clangOf(profile), *profile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module",
         llFile.toString(), "-o", wasm.toString())
     if (compiled.first != 0)
         return compiled
@@ -1433,7 +1447,7 @@ private fun buildAndRunWasm(llFile: Path, input: String = "", args: List<String>
 }
 
 private val requiresWasmAndAr: (TestCase) -> Enabled = {
-    if (llvmBin?.resolve(LlvmToolLocator.executableName("llvm-ar"))?.let { Files.isExecutable(it) } != true) Enabled.disabled("llvm-ar not found next to clang") else requiresWasm(it)
+    if (llvmAr == null) Enabled.disabled("llvm-ar not found next to clang or on the PATH") else requiresWasm(it)
 }
 
 private val armProfile = LlvmTripleProfile.resolve("armv7a-none-eabihf")
@@ -1444,7 +1458,7 @@ private val requiresArm: (TestCase) -> Enabled = {
     val linker = try { armProfile.linkCommand?.first()?.let { Path(LlvmToolLocator.executableName(it)) } } catch (_: IllegalArgumentException) { null } catch (_: InvalidPathException) { null }
     fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
-        llvmBin == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        defaultClang == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         linker == null || !Files.isExecutable(linker) -> Enabled.disabled("arm-none-eabi-gcc of the Arm GNU Toolchain not found in ARM_GNU_TOOLCHAIN or its default location")
         !onPath("qemu-system-arm") -> Enabled.disabled("qemu-system-arm not found on the PATH")
         else -> Enabled.enabled
@@ -1458,7 +1472,7 @@ private val requiresArm: (TestCase) -> Enabled = {
 private fun buildAndRunArm(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + armProfile.outputExtension)
     val objectFile = elf.resolveSibling("${elf.fileName}.o")
-    val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *armProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
+    val compiled = execute(clangOf(armProfile), *armProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
         llFile.toString(), "-o", objectFile.toString())
     if (compiled.first != 0)
         return compiled
@@ -1478,7 +1492,7 @@ private val riscvGcc: Path? = System.getenv("RISCV_NONE_ELF_GCC")?.let { try { P
 private val requiresRiscv: (TestCase) -> Enabled = {
     fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
-        llvmBin == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        defaultClang == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         riscvGcc == null -> Enabled.disabled("riscv-none-elf-gcc not found in RISCV_NONE_ELF_GCC, on the PATH or in ~/Library/xPacks")
         !onPath("qemu-system-riscv32") -> Enabled.disabled("qemu-system-riscv32 not found on the PATH")
         else -> Enabled.enabled
@@ -1496,7 +1510,7 @@ private val requiresRiscvOnThePath: (TestCase) -> Enabled = {
 private fun buildAndRunRiscv(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + riscvProfile.outputExtension)
     val objectFile = elf.resolveSibling("${elf.fileName}.o")
-    val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *riscvProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
+    val compiled = execute(clangOf(riscvProfile), *riscvProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
         llFile.toString(), "-o", objectFile.toString())
     if (compiled.first != 0)
         return compiled
@@ -1533,7 +1547,7 @@ private val emcc: Path? = System.getenv("EMCC")?.let { try { Path(it) } catch (_
 private val requiresEmscripten: (TestCase) -> Enabled = {
     fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
-        llvmBin == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
+        defaultClang == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
         emcc == null -> Enabled.disabled("emcc not found in EMCC or on the PATH")
         !onPath("node") -> Enabled.disabled("node not found on the PATH")
         else -> Enabled.enabled
@@ -1554,7 +1568,7 @@ private val requiresEmscriptenOnThePath: (TestCase) -> Enabled = {
 private fun buildAndRunEmscripten(llFile: Path, input: String = "", args: List<String> = emptyList(), directory: Path? = null): Pair<Int, String> {
     val js = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + emscriptenProfile.outputExtension)
     val objectFile = js.resolveSibling("${js.fileName}.o")
-    val compiled = execute(checkNotNull(llvmBin).resolve("clang").toString(), *emscriptenProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
+    val compiled = execute(clangOf(emscriptenProfile), *emscriptenProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
         llFile.toString(), "-o", objectFile.toString())
     if (compiled.first != 0)
         return compiled

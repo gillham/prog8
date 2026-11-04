@@ -7,13 +7,14 @@ import java.nio.file.Path
 /**
  * Hosted 32 or 64-bit target that emits LLVM IR. The [profile] of the chosen triple supplies the triple and data layout
  * of the module header, and its pointer width must match [pointerSize]. [extraCompileArgs] and [extraLinkArgs] come from
- * -Xcompile and -Xlink, and go after the profile's own arguments of those build steps.
+ * -Xcompile and -Xlink, and go after the profile's own arguments of those build steps. [clangOption] is the -clang option.
  */
 class LlvmTarget(
     val pointerSize: Int = 8,
     val profile: LlvmTripleProfile = LlvmTripleProfile.resolve(defaultTriple(pointerSize)),
     val extraCompileArgs: List<String> = emptyList(),
-    val extraLinkArgs: List<String> = emptyList()
+    val extraLinkArgs: List<String> = emptyList(),
+    val clangOption: String? = null
 ): ICompilationTarget,
     IStringEncoding by Encoder(false),
     IMemSizer by NormalMemSizer(8u, pointerSize.toUInt()) {
@@ -31,6 +32,9 @@ class LlvmTarget(
 
     val targetTriple: String get() = profile.triple
     val dataLayout: String get() = profile.dataLayout
+
+    /** The clang that builds the program, see [LlvmTripleProfile.resolveClang]. */
+    fun clang(): Path? = profile.resolveClang(clangOption)
 
     init {
         require(pointerSize == 4 || pointerSize == 8) { "the llvm targets have 4 or 8 byte pointers, not $pointerSize" }
@@ -112,13 +116,20 @@ class LlvmTarget(
             System.err.println("The $name target has no alternative emulator; -emu builds the program into an executable for this host and runs it.")
             return null
         }
+        if (programArgs.isNotEmpty() && !profile.programArgs) {
+            System.err.println(programArgsRejected())
+            return null
+        }
         // the LLVM code generator module depends on this one, so its runner can only be loaded via reflection
         val runner = Class.forName("prog8.codegen.llvm.LlvmProgramRunner").getDeclaredConstructor().newInstance() as ILlvmProgramRunner
-        val status = runner.buildAndRun(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, programArgs, linkLibraries) ?: return null
+        val status = runner.buildAndRun(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, programArgs, linkLibraries, clangOption) ?: return null
         if (!quiet)
             println("\nProgram exited with status $status")
         return status
     }
+
+    /** The error message for program arguments given to a program of a profile with `program_args = false`. */
+    fun programArgsRejected(): String = "the programs of llvm triple profile '${profile.name}' can't be given arguments (it has program_args = false)"
 
     override fun isIOAddress(address: UInt): Boolean = false
 
@@ -131,11 +142,12 @@ class LlvmTarget(
 /**
  * Builds the executable of an llvm program file when needed, and runs it with the command line arguments [programArgs],
  * with the run command of [profile] when it has one. Returns its exit status, or null when it didn't run; the reason has been printed then.
+ * [clangOption] is the -clang option.
  */
 interface ILlvmProgramRunner {
     fun buildAndRun(programFile: Path, quiet: Boolean, profile: LlvmTripleProfile? = null,
                     extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList(), programArgs: List<String> = emptyList(),
-                    linkLibraries: List<String> = emptyList()): Int?
+                    linkLibraries: List<String> = emptyList(), clangOption: String? = null): Int?
 }
 
 private class LlvmZeropage(options: CompilationOptions): Zeropage(options) {
