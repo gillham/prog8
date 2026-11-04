@@ -34,6 +34,7 @@ internal fun needsIndirectEntry(sub: IRSubroutine) = sub.parameters.isEmpty() &&
 internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmDataSymbols) {
     val mapper = LlvmTypeMapper(program.st, program.options.compTarget)
     val profile = (program.options.compTarget as? LlvmTarget)?.profile
+    val realAddresses: Boolean = (program.options.compTarget as? LlvmTarget)?.realAddresses == true
     /** Whether an indirect call must use the callee's exact signature, as WebAssembly's call_indirect traps on any other. */
     val strictIndirectSignatures: Boolean = profile?.strictIndirectSignatures == true
     /** Whether the program calls math.mul16_last_upper, so that word multiplications keep the upper 16 bits of their product for it, as in the VM. */

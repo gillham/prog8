@@ -410,6 +410,13 @@ in a window. Floats are not supported yet on ``llvm16``: a float variable, value
 The C library of llvm-mos lacks some routines (the profiles' ``libc_lacks``); a program that needs one of them
 doesn't link yet. ``sys.target`` is 252.
 
+On ``llvm16`` constant addresses such as ``@($d020)`` and ``@(0)``, and memory-mapped variables such as
+``&ubyte border = $d020``, access the machine's real memory (the cx16 virtual registers ``cx16.r0`` to ``cx16.r15``
+at ``$ff0000`` remain ordinary variables). An access at a constant address, or at a memory-mapped variable plus a
+constant offset or an index, is volatile when it touches an address in the profile's ``io_ranges``, and so is any
+access at address 0; accesses through pointers that are computed at runtime are never volatile, so read and write
+I/O registers through constant addresses or memory-mapped variables.
+
 
 Memory Model
 ============

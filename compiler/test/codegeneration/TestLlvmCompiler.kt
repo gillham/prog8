@@ -605,6 +605,73 @@ main {
         compileText(LlvmTarget(4), false, sources[1], outputDir, assemble = false) shouldNotBe null
     }
 
+    test("llvm16 accesses constant addresses and memory-mapped variables at their real address, volatile inside the io_ranges") {
+        val source = $$"""
+%zeropage basicsafe
+main {
+    &ubyte border = $d020
+    &ubyte[1000] screen = $0400
+    &uword zpword = $fb
+    struct Node {
+        ubyte value
+        ^^Node next
+    }
+    sub start() {
+        ubyte @shared i = 5
+        border = 1
+        border = 2
+        screen[i] = 42
+        screen[10] = 43
+        zpword = 1234
+        @(0) = 47
+        @(1) = 55
+        @(1) = 56
+        @($c000) = 9
+        ^^Node @shared head = 0
+        if head != 0
+            i++
+        cx16.r0 = 99
+        sys.exit(i + lsb(cx16.r0) + @(1))
+    }
+}"""
+        fun llLines(target: LlvmTarget, optimize: Boolean, dirName: String) =
+            compiledLlFile(compileText(target, optimize, source, outputDir.resolve(dirName).createDirectories(), assemble = false)).readLines().map { it.trim() }
+        val nullAccess = Regex("""^(%\S+ = load|store) .*, ptr null\b.*""")
+
+        for (optimize in listOf(false, true)) {
+            withClue("mos-c64 optimize=$optimize") {
+                val lines = llLines(LlvmTarget(2, LlvmTripleProfile.resolve("mos-c64")), optimize, "llvm16-c64-$optimize")
+                lines.count { it == "store volatile i8 1, ptr inttoptr (i16 -12256 to ptr)" } shouldBe 1
+                lines.count { it == "store volatile i8 2, ptr inttoptr (i16 -12256 to ptr)" } shouldBe 1
+                lines.count { it == "store volatile i8 47, ptr inttoptr (i16 0 to ptr)" } shouldBe 1
+                lines.count { it == "store volatile i8 55, ptr inttoptr (i16 1 to ptr)" } shouldBe 1
+                lines.count { it == "store volatile i8 56, ptr inttoptr (i16 1 to ptr)" } shouldBe 1
+                lines.any { it.matches(Regex("""%\S+ = load volatile i8, ptr inttoptr \(i16 1 to ptr\)""")) } shouldBe true
+                lines.count { it == "store i8 9, ptr inttoptr (i16 -16384 to ptr)" } shouldBe 1
+                lines.count { it.startsWith("store i16 1234, ptr inttoptr (i16 251 to ptr)") } shouldBe 1
+                lines.count { it.matches(nullAccess) } shouldBe 0
+                lines.count { it.startsWith("@.memmapped.") && !it.startsWith("@.memmapped.ff0000 ") } shouldBe 0
+                lines.any { it.startsWith("store i16 99, ptr @.memmapped.ff0000") } shouldBe true
+            }
+        }
+        val c64 = llLines(LlvmTarget(2, LlvmTripleProfile.resolve("mos-c64")), false, "llvm16-c64-screen")
+        c64.any { it.matches(Regex("""store i8 %\S+, ptr inttoptr \(i16 1034 to ptr\)""")) } shouldBe true
+        c64.any { it.matches(Regex("""%\S+ = getelementptr i8, ptr inttoptr \(i16 1024 to ptr\), i16 %\S+""")) } shouldBe true
+        c64 shouldContain "@main.start.head = global ptr null"
+        c64.any { it.matches(Regex("""%\S+ = icmp (eq|ne) i16 %\S+, 0""")) } shouldBe true
+
+        val sim = llLines(LlvmTarget(2, LlvmTripleProfile.resolve("mos-sim")), false, "llvm16-sim")
+        sim shouldContain "store i8 1, ptr inttoptr (i16 -12256 to ptr)"
+        sim shouldContain "store i8 55, ptr inttoptr (i16 1 to ptr)"
+        sim shouldContain "store volatile i8 47, ptr inttoptr (i16 0 to ptr)"
+
+        val emulated = llLines(LlvmTarget(4), false, "llvm32-memmapped")
+        listOf(".memmapped.d020", ".memmapped.400", ".memmapped.fb", ".memmapped.ff0000").forEach { name -> emulated.any { it.startsWith("@$name = ") } shouldBe true }
+        emulated shouldContain "store i8 1, ptr @.memmapped.d020"
+        emulated shouldContain "store i8 47, ptr null"
+        emulated.count { it.contains("volatile") } shouldBe 0
+    }
+
     test("llvm16 builds and runs a program in mos-sim").config(enabledOrReasonIf = {
         if (System.getenv("LLVM_MOS") == null) Enabled.disabled("LLVM_MOS, the llvm-mos SDK directory, is not set") else Enabled.enabled
     }) {

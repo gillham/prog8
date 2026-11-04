@@ -50,9 +50,19 @@ internal class LlvmGlobalEmitter(private val program: IRProgram, private val sta
             .mapIndexed { index, variable -> variable.name to ".str.$index" }.toMap()
     }
 
+    private val realAddresses = (target as? LlvmTarget)?.realAddresses == true
+
+    /** The memory-mapped variables at their real address: on a target with [LlvmTarget.realAddresses], those inside its address space. */
+    private val realAddressed: Map<String, Long> by lazy {
+        if (!realAddresses) emptyMap()
+        else st.allMemMappedVariables()
+            .filter { it.address.toLong() + target.memorySize(it.dt, it.length?.toInt()) <= 1L shl (8 * mapper.pointerBytes) }
+            .associate { it.name to it.address.toLong() }
+    }
+
     private val memoryMappedClusters: List<MemoryMappedCluster> by lazy {
         val clusters = mutableListOf<MemoryMappedCluster>()
-        for (memvar in st.allMemMappedVariables().sortedBy { it.address }) {
+        for (memvar in st.allMemMappedVariables().filter { it.name !in realAddressed }.sortedBy { it.address }) {
             val start = memvar.address.toLong()
             val cluster = clusters.lastOrNull()?.takeIf { start <= it.end } ?: MemoryMappedCluster(start, mapper.intPtr).also { clusters += it }
             cluster.members += memvar
@@ -68,6 +78,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram, private val sta
             st.allStructInstances().forEach { put(it.name, LlvmValue.Global(it.name)) }
             st.allMemorySlabs().forEach { put(it.name, LlvmValue.Global(it.name)) }
             memoryMappedClusters.forEach { cluster -> cluster.members.forEach { put(it.name, cluster.addressAt(it.address.toLong())) } }
+            realAddressed.forEach { (name, address) -> put(name, realAddress(address, mapper.intPtr)) }
             st.allConstants().forEach { put(it.name, LlvmValue.Global(it.name)) }
         }
     }
@@ -105,7 +116,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram, private val sta
             val type = mapper.storageType(variable.dt, variable.length)
             StackLocal(variable.name, stackLocals.getValue(variable.name), type, initializer(variable, type))
         }
-        return LlvmDataSymbols(addresses, memoryMappedClusters, pointerArrays, indirectEntries, locals.groupBy { it.subroutine })
+        return LlvmDataSymbols(addresses, memoryMappedClusters, pointerArrays, indirectEntries, locals.groupBy { it.subroutine }, realAddressed)
     }
 
     /**
@@ -349,11 +360,17 @@ internal class LlvmDataSymbols(
     val pointerArrays: Map<String, PointerArray>,
     val indirectEntries: Set<String> = emptySet(),
     /** The variables that live in a stack slot of their subroutine, by subroutine label. */
-    val stackLocals: Map<String, List<StackLocal>> = emptyMap()
+    val stackLocals: Map<String, List<StackLocal>> = emptyMap(),
+    /** The addresses of the memory-mapped variables that use their real address instead of backing storage. */
+    val realAddressed: Map<String, Long> = emptyMap()
 ) {
     /** The backing storage of absolute [address] when a memory-mapped variable covers it (the IR accesses those by address), else null. */
     fun memoryMappedAddress(address: Long): LlvmValue? = memoryMapped.addressOf(address)
 }
+
+/** The machine address [address] itself as a constant ptr; [intPtr] is the pointer-sized integer type. */
+internal fun realAddress(address: Long, intPtr: LlvmType): LlvmValue =
+    LlvmValue.ConstantCast(CastOperator.INTTOPTR, LlvmValue.IntConstant(address, intPtr), LlvmType.Ptr)
 
 /** A variable of [subroutine] that lives in a stack slot of type [type], which gets [initialValue] on every entry. */
 internal data class StackLocal(val name: String, val subroutine: String, val type: LlvmType, val initialValue: LlvmValue)

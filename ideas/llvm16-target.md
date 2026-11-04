@@ -98,6 +98,9 @@ Each step keeps llvm32 and llvm64 unchanged. Check that with llvm-opt-check (0 d
 ### Step 5: libc_lacks lowering
 - Syscalls that need a listed function lower to their failure result, as LIST_DIRECTORY does without `dirent_name_offset` (InstrSyscall.kt:456).
 - `usleep`: a busy loop or nothing on mos-sim.
+- `sys.argc()`/`sys.argv()` with `program_args = false`: argc is 0 and argv empty. The llvm-mos startup calls `main` without arguments, so mos-sim gives garbage (255).
+- Integer `sqrt` on llvm16: a pure integer routine. Today it goes through a double `llvm.sqrt.f64` and `fptosi.sat`, which llvm-mos can't lower (textelite).
+- RAM: a smaller `.stack` on llvm16 (InstrMemory.kt:27), and no 4096-byte curdir buffer when `getcwd` is in `libc_lacks` (InstrSyscall.kt:630).
 
 ### Step 6: tests and docs
 - TestLlvmCompiler:

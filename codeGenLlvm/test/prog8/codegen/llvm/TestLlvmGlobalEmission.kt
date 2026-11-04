@@ -267,6 +267,21 @@ class TestLlvmGlobalEmission: FunSpec({
         symbols.memoryMappedAddress(0xd020) shouldBe null
     }
 
+    test("on llvm16, memory-mapped variables inside the 16-bit address space use their real address, the others keep backing storage") {
+        val target16 = LlvmTarget(2)
+        val st = memoryMappedSymbols(target16).apply { add(IRStMemVar("main.screen", DataType.arrayFor(BaseDataType.UBYTE, target16), 0x0400u, 1000u)) }
+        val (module, symbols) = emit(st, target16)
+        module.globals.map { it.name } shouldBe listOf(".memmapped.ff0000", ".memmapped.ff0100")
+        fun address(name: String) = LlvmPrinter.format(symbols.addresses.getValue(name))
+        address("main.oddreg") shouldBe "inttoptr (i16 -12255 to ptr)"
+        address("main.screen") shouldBe "inttoptr (i16 1024 to ptr)"
+        address("cx16.r0H") shouldBe "getelementptr inbounds (i8, ptr @.memmapped.ff0000, i16 1)"
+        symbols.realAddressed shouldBe mapOf("main.oddreg" to 0xd021L, "main.screen" to 0x0400L)
+        symbols.memoryMappedAddress(0xd021) shouldBe null
+        symbols.memoryMappedAddress(0xff0003)?.let { LlvmPrinter.format(it) } shouldBe "getelementptr inbounds (i8, ptr @.memmapped.ff0000, i16 3)"
+        emit(st, LlvmTarget(4)).second.realAddressed shouldBe emptyMap()
+    }
+
     test("constants become internal constant globals, memory slab constants are ptr constants holding the slab address") {
         val st = IRSymbolTable()
         st.add(IRStConstant("main.LIMIT", DataType.UBYTE, 42.0))

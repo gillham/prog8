@@ -93,7 +93,7 @@ internal fun FunctionLowering.loadMemory(ins: IRInstruction, base: String): Llvm
         return element
     }
     val address = memoryAddress(memory)
-    return derive(base, typeOf(type)) { LlvmInstruction.Load(it, address, align = alignment(typeOf(type))) }
+    return derive(base, typeOf(type)) { LlvmInstruction.Load(it, address, align = alignment(typeOf(type)), volatile = isVolatile(memory, typeOf(type))) }
 }
 
 internal fun FunctionLowering.storeMemory(ins: IRInstruction, value: LlvmValue) {
@@ -103,7 +103,28 @@ internal fun FunctionLowering.storeMemory(ins: IRInstruction, value: LlvmValue) 
         PointerArrayAccess.store(array, type, memory, indexValue(memory), value, freshName("store")).forEach { emit(it) }
         return
     }
-    emit(LlvmInstruction.Store(convert(value, typeOf(type)), memoryAddress(memory), align = alignment(typeOf(type))))
+    emit(LlvmInstruction.Store(convert(value, typeOf(type)), memoryAddress(memory), align = alignment(typeOf(type)), volatile = isVolatile(memory, typeOf(type))))
+}
+
+/**
+ * With real addresses, an access at a constant address, or at a constant base address plus an index, is volatile when it touches
+ * an I/O address of the target. So is one at address 0, as LLVM deletes non-volatile accesses through null.
+ */
+private fun FunctionLowering.isVolatile(memory: MemoryReference, type: LlvmType): Boolean {
+    if (!builder.realAddresses)
+        return false
+    val (base, displacement) = when (memory) {
+        is MemoryReference.Direct -> memory.base to memory.displacement
+        is MemoryReference.Indexed -> memory.base to memory.displacement
+        is MemoryReference.Indirect -> return false
+    }
+    val address = when (base) {
+        is AddressBase.Absolute -> base.address.value.toLong()
+        is AddressBase.Symbol -> builder.symbols.realAddressed[base.name] ?: return false
+        is AddressBase.FrameSlot -> return false
+    } + displacement
+    val target = builder.program.options.compTarget
+    return address == 0L || (address until address + builder.mapper.byteSize(type)).any { target.isIOAddress(it.toUInt()) }
 }
 
 // IR memory addresses aren't necessarily aligned, think of packed structs and memory-mapped variables
@@ -123,7 +144,9 @@ private fun FunctionLowering.memoryAddress(memory: MemoryReference): LlvmValue =
 private fun FunctionLowering.baseAddress(base: AddressBase, displacement: Int): LlvmValue = when (base) {
     is AddressBase.Symbol -> symbolAddress(base.name, displacement)
     is AddressBase.Absolute -> {
-        integerConstant(base.address.value.toLong() + displacement, LlvmType.Ptr)
+        val address = base.address.value.toLong() + displacement
+        // address 0 is the null pointer only as a value; as a real address it is memory, such as the 6510's port
+        if (builder.realAddresses && address == 0L) realAddress(0, builder.mapper.intPtr) else integerConstant(address, LlvmType.Ptr)
     }
     is AddressBase.FrameSlot -> throw IllegalArgumentException("${sub.label} uses a stack frame slot, which the llvm targets don't have")
 }
@@ -147,12 +170,13 @@ private fun FunctionLowering.postIncrement(ins: IRInstruction, access: (pointer:
     require(pointerArray(memory) == null) { "${ins.opcode} in ${sub.label} advances an element of pointer array ${memory.symbolName}, which isn't supported" }
     val variable = memoryAddress(memory)
     val storage = pointerVariableType(memory)
-    val pointer = convert(derive("ptr", storage) { LlvmInstruction.Load(it, variable, align = alignment(storage)) }, LlvmType.Ptr, "ptr")
+    val volatile = isVolatile(memory, storage)
+    val pointer = convert(derive("ptr", storage) { LlvmInstruction.Load(it, variable, align = alignment(storage), volatile = volatile) }, LlvmType.Ptr, "ptr")
     val type = typeOf(checkNotNull(ins.type))
     access(pointer, type)
     val size = LlvmValue.IntConstant(builder.mapper.byteSize(type).toLong(), builder.mapper.intPtr)
     val next = derive("ptr", LlvmType.Ptr) { LlvmInstruction.GetElementPtr(it, LlvmType.I8, pointer, listOf(size), inBounds = false) }
-    emit(LlvmInstruction.Store(convert(next, storage, "ptr"), variable, align = alignment(storage)))
+    emit(LlvmInstruction.Store(convert(next, storage, "ptr"), variable, align = alignment(storage), volatile = volatile))
 }
 
 /** Normally a pointer variable, but IR code can also keep an address in a word or long variable. */
