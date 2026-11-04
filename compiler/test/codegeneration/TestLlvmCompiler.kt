@@ -579,13 +579,34 @@ main {
                 val lines = compiledLlFile(compileText(LlvmTarget(2), optimize, source, dir, assemble = false)).readLines()
                 lines shouldContain "target triple = \"mos\""
                 lines shouldContain "target datalayout = \"e-m:e-p:16:8-p1:8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:8-Fi8-n8\""
-                lines shouldContain "define i16 @main(i16 %argc, ptr %argv) {"
+                lines shouldContain "define i16 @main() {"
                 lines.any { it.startsWith("@main.start.p = ") && it.contains(" i16 ") } shouldBe true
                 lines.count { it.contains(" i64") && !it.startsWith("@sys.") } shouldBe 0
             }
         }
         val pointerSum = compiledLlFile(compileText(LlvmTarget(2), false, source, outputDir.resolve("llvm16-add").createDirectories(), assemble = false)).readLines()
         pointerSum.any { it.trim().matches(Regex("""%\S+ = add i16 %\S+, %\S+""")) } shouldBe true
+    }
+
+    test("llvm16 indexes arrays of more than 256 bytes with the whole word index") {
+        val source = """
+%zeropage basicsafe
+main {
+    bool[512] composite
+    sub start() {
+        uword @shared i = 300
+        composite[i] = true
+        sys.exit(composite[i] as ubyte)
+    }
+}"""
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val dir = outputDir.resolve("llvm16-bigindex-$optimize").createDirectories()
+                val lines = compiledLlFile(compileText(LlvmTarget(2), optimize, source, dir, assemble = false)).readLines().map { it.trim() }
+                lines.count { it.contains("getelementptr i8, ptr @main.composite, i16 %") } shouldBe 2
+                lines.count { it.matches(Regex("""%\S+ = trunc i16 %\S+ to i8""")) } shouldBe 0
+            }
+        }
     }
 
     test("floats are a clear error on llvm16: a float variable, a float value, %import floats and %option enable_floats") {
@@ -694,6 +715,54 @@ main {
         val (exitCode, output) = execute(*LlvmTripleProfile.runCommandFor(target.profile.runCommand, executable.toString(), emptyList()).toTypedArray())
         output shouldBe "hello 12345\n"
         exitCode shouldBe 3
+    }
+
+    test("llvm16 on mos-sim declares no C function that its C library lacks, has a 256-byte value stack and no curdir buffer; llvm32 keeps them") {
+        val dir = outputDir.resolve("llvm16-lacks").createDirectories()
+        val sim = compiledLlFile(compileText(LlvmTarget(2), false, lacksSource, dir, assemble = false)).readLines()
+        for (name in LlvmTripleProfile.resolve("mos-sim").libcLacks)
+            withClue(name) { sim.none { it.startsWith("declare ") && "@$name(" in it } shouldBe true }
+        sim.any { it == "define i16 @main() {" } shouldBe true
+        sim.any { it == "@.stack.data = internal global [256 x i8] zeroinitializer" } shouldBe true
+        sim.none { ".sys.curdir.buf" in it || "@.sys.argc" in it } shouldBe true
+        sim.none { "@llvm.sqrt" in it || "fptosi" in it } shouldBe true
+        sim.any { it.startsWith("define internal i16 @.math.isqrt.i16(") } shouldBe true
+
+        val llvm32 = compiledLlFile(compileText(LlvmTarget(4), false, lacksSource, outputDir.resolve("llvm32-lacks").createDirectories(), assemble = false)).readLines()
+        llvm32.any { it == "define i32 @__main_argc_argv(i32 %argc, ptr %argv) {" } shouldBe true
+        llvm32.any { it == "@.stack.data = internal global [1024 x i8] zeroinitializer" } shouldBe true
+        llvm32.any { it == "@.sys.curdir.buf = internal global [4096 x i8] zeroinitializer" } shouldBe true
+        llvm32.any { it.startsWith("declare ") && "@fopen(" in it } shouldBe true
+        llvm32.any { "@llvm.sqrt.f64" in it } shouldBe true
+        llvm32.none { ".math.isqrt" in it } shouldBe true
+    }
+
+    test("on mos-sim, math.atan2 needs atan2f and floorf, which is an error only when the program can reach it") {
+        val unused = "%import math\n%zeropage basicsafe\nmain {\n sub start() {\n  ubyte @shared b = 3\n  sys.exit(b)\n }\n}"
+        compileText(LlvmTarget(2), false, unused, outputDir.resolve("llvm16-atan-unused").createDirectories(), assemble = false) shouldNotBe null
+        val used = "%import math\n%zeropage basicsafe\nmain {\n sub start() {\n  ubyte @shared b = 3\n  sys.exit(math.atan2(0, 0, b, b))\n }\n}"
+        val errors = ErrorReporterForTests()
+        compileText(LlvmTarget(2), false, used, outputDir.resolve("llvm16-atan-used").createDirectories(), errors = errors, assemble = false) shouldBe null
+        errors.errors.single() shouldContain "math.atan2 needs C functions atan2f and floorf, which the C library of llvm triple profile 'mos-sim' lacks"
+    }
+
+    test("llvm16 in mos-sim: integer square roots, no command line arguments, and the failure results of the syscalls whose C functions are lacking").config(enabledOrReasonIf = {
+        if (System.getenv("LLVM_MOS") == null) Enabled.disabled("LLVM_MOS, the llvm-mos SDK directory, is not set") else Enabled.enabled
+    }) {
+        val target = LlvmTarget(2)
+        val llFile = compiledLlFile(compileText(target, false, lacksSource, outputDir.resolve("mos-sim-lacks").createDirectories()))
+        val executable = llFile.resolveSibling("lacks16.sim")
+        LlvmProgramRunner().build(llFile, executable, target.profile) shouldBe true
+        val (exitCode, output) = execute(*LlvmTripleProfile.runCommandFor(target.profile.runCommand, executable.toString(), emptyList()).toTypedArray())
+        fun root(value: Long) = if (value < 0) 0L else kotlin.math.sqrt(value.toDouble()).toLong()
+        val expected = buildString {
+            append((0L..255L).joinToString(" ", postfix = "\n") { root(it).toString() })
+            append(((0L..65535L step 257) + lacksWords).joinToString(" ", postfix = "\n") { root(it).toString() })
+            append(lacksLongs.joinToString(" ", postfix = "\n") { root(it).toString() })
+            append("0\n|\n|\nfalse true false false true false false\n7\n")
+        }
+        output shouldBe expected
+        exitCode shouldBe 0
     }
 
     test("-o without .ll builds a native executable with the LLVM IR next to it").config(enabledOrReasonIf = requiresNativeLlvm) {
@@ -1421,6 +1490,78 @@ other {
 
 
 /** Runs scripts/c-header-to-prog8.py for the [triple] profile, with the clang of the tests, writing the module [fileName] in [dir]. */
+private val lacksWords = listOf(0L, 1L, 255L, 256L, 65024L, 65025L, 65534L, 65535L)
+private val lacksLongs = listOf(0L, 1L, 2L, 3L, 4L, 999999L, 1000000L, 65536L, 2147395599L, 2147395600L, 2147483647L, -1L, -2147483648L)
+
+/** Integer square roots, the command line arguments, the file and directory syscalls, a wait and the value stack. */
+private val lacksSource = """
+%import textio
+%import diskio
+%import fileio
+%zeropage basicsafe
+main {
+    sub start() {
+        uword[] words = [${lacksWords.joinToString()}]
+        long[] longs = [${lacksLongs.joinToString()}]
+        ubyte @shared b
+        uword @shared w
+        ubyte @shared i
+        ubyte[4] buffer
+        b = 0
+        repeat 256 {
+            txt.print_ub(sqrt(b))
+            if b != 255
+                txt.spc()
+            b++
+        }
+        txt.nl()
+        w = 0
+        repeat 256 {
+            txt.print_ub(sqrt(w))
+            txt.spc()
+            w += 257
+        }
+        for i in 0 to len(words)-1 {
+            txt.print_ub(sqrt(words[i]))
+            if i != len(words)-1
+                txt.spc()
+        }
+        txt.nl()
+        for i in 0 to len(longs)-1 {
+            txt.print_l(sqrt(longs[i]))
+            if i != len(longs)-1
+                txt.spc()
+        }
+        txt.nl()
+        txt.print_uw(sys.argc())
+        txt.nl()
+        txt.print(sys.argv(0))
+        txt.print("|\n")
+        txt.print(diskio.curdir())
+        txt.print("|\n")
+        diskio.mkdir("d")
+        diskio.delete("x")
+        txt.print_bool(diskio.f_open("x"))
+        txt.spc()
+        txt.print_bool(diskio.load("x", &buffer) == 0)
+        txt.spc()
+        txt.print_bool(diskio.save("x", &buffer, 4))
+        txt.spc()
+        txt.print_bool(diskio.exists("x"))
+        txt.spc()
+        txt.print_bool(fileio.open("x", "rb") == 0)
+        txt.spc()
+        txt.print_bool(fileio.flush(0))
+        txt.spc()
+        txt.print_bool(diskio.directory())
+        txt.nl()
+        sys.wait(1)
+        push(7)
+        txt.print_ub(pop())
+        txt.nl()
+    }
+}"""
+
 private fun generateBindings(dir: Path, fileName: String, triple: String, vararg args: String): Path {
     val output = dir.resolve(fileName)
     val (exitCode, messages) = execute(checkNotNull(python3), Path("..", "scripts", "c-header-to-prog8.py").toAbsolutePath().normalize().toString(),

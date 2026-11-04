@@ -73,6 +73,15 @@ private const val VM_LIST_DIRECTORY = 212
 internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
     val site = ins.requireCallSite()
     val number = requireNotNull(site.target as? CallTarget.SystemCall) { "SYSCALL in ${sub.label} needs a syscall number" }.number
+    builder.loweringSyscall = "syscall $number in ${sub.label}"
+    try {
+        lowerSyscall(site, number)
+    } finally {
+        builder.loweringSyscall = null
+    }
+}
+
+private fun FunctionLowering.lowerSyscall(site: CallSite, number: Int) {
     when (number) {
         VM_EXIT -> exit(site, number)
         VM_PRINT_C -> printChar(site, number)
@@ -80,7 +89,8 @@ internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
         VM_WAIT -> waitJiffies(site, number)
         VM_WAITVSYNC -> {
             arguments(site, number, 0)
-            emit(LlvmInstruction.Call(null, builder.helperFunction(".sys.wait") { builder.waitHelper() }, listOf(LlvmValue.IntConstant(1, LlvmType.I16)), LlvmType.Void))
+            if (!builder.lacks("usleep"))
+                emit(LlvmInstruction.Call(null, builder.helperFunction(".sys.wait") { builder.waitHelper() }, listOf(LlvmValue.IntConstant(1, LlvmType.I16)), LlvmType.Void))
         }
         VM_ATAN -> angle(site, number)
         VM_MUL16_LAST_UPPER -> mul16LastUpper(site, number)
@@ -149,6 +159,12 @@ private fun FunctionLowering.result(site: CallSite, value: LlvmValue) {
     site.results.singleOrNull()?.destination?.let { write(it, value) }
 }
 
+/** Whether the C library lacks one of the [routines]; a syscall that needs one gives its result for a failure instead. */
+private fun FunctionLowering.lacks(vararg routines: Libc): Boolean = builder.lacks(*routines.map { it.name.lowercase() }.toTypedArray())
+
+/** The stream syscalls need fopen() as well, as without it there is never an open file. */
+private fun FunctionLowering.lacksFile(vararg routines: Libc): Boolean = lacks(Libc.FOPEN, *routines)
+
 private fun FunctionLowering.callHelper(helper: LlvmValue.Global, args: List<LlvmValue>, base: String): LlvmValue =
     derive(base, LlvmType.I8) { LlvmInstruction.Call(it, helper, args, LlvmType.I8) }
 
@@ -182,8 +198,18 @@ private fun FunctionLowering.clamp(site: CallSite, number: Int, type: LlvmType, 
     result(site, intrinsic(if (signed) "llvm.smin.$suffix" else "llvm.umin.$suffix", type, atLeastMinimum, maximum))
 }
 
-/** ATAN(x1, y1, x2, y2): the angle from the first point to the second, in 256 steps for a full circle, as in the VM. */
+/**
+ * ATAN(x1, y1, x2, y2): the angle from the first point to the second, in 256 steps for a full circle, as in the VM.
+ * Without atan2() and floor() in the C library it is an error, when the program can reach it.
+ */
 private fun FunctionLowering.angle(site: CallSite, number: Int) {
+    val needed = arrayOf(libmName("atan2", floatType), libmName("floor", floatType))
+    if (builder.lacks(*needed)) {
+        arguments(site, number, 4)
+        builder.errorIfReachable("${sub.label} needs C functions ${needed.joinToString(" and ")}, which the C library of llvm triple profile '${builder.profile?.name}' lacks", sub.position)
+        result(site, LlvmValue.IntConstant(0, LlvmType.I8))
+        return
+    }
     val (x1, y1, x2, y2) = arguments(site, number, 4).map { derive("coord", floatType) { value -> LlvmInstruction.Cast(CastOperator.UITOFP, value, convert(read(it), LlvmType.I8), floatType) } }
     val dy = derive("dy", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FSUB, it, y2, y1) }
     val dx = derive("dx", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FSUB, it, x2, x1) }
@@ -205,9 +231,14 @@ private fun FunctionLowering.mul16LastUpper(site: CallSite, number: Int) {
     result(site, derive("upper", LlvmType.I16) { LlvmInstruction.Load(it, builder.mul16Upper()) })
 }
 
-/** WAIT(jiffies word) sleeps for that many 1/60 seconds; WAITVSYNC() sleeps for one, as there is no vertical blank to wait for. */
+/**
+ * WAIT(jiffies word) sleeps for that many 1/60 seconds; WAITVSYNC() sleeps for one, as there is no vertical blank to wait for.
+ * Without usleep() in the C library, both return at once.
+ */
 private fun FunctionLowering.waitJiffies(site: CallSite, number: Int) {
     val (jiffies) = arguments(site, number, 1)
+    if (builder.lacks("usleep"))
+        return
     emit(LlvmInstruction.Call(null, builder.helperFunction(".sys.wait") { builder.waitHelper() }, listOf(convert(read(jiffies), LlvmType.I16)), LlvmType.Void))
 }
 
@@ -244,9 +275,13 @@ private fun FunctionLowering.getChar(site: CallSite, number: Int) {
     result(site, convert(intrinsic("llvm.smax.${LlvmPrinter.format(cInt)}", cInt, code, LlvmValue.IntConstant(0, cInt)), LlvmType.I8, "ch"))
 }
 
-/** GET_ARGC(): the number of command line arguments as a word, including the program name; it can't count past 65535. */
+/** GET_ARGC(): the number of command line arguments as a word, including the program name; it can't count past 65535, and is 0 without [LlvmFunctionBuilder.programArgs]. */
 private fun FunctionLowering.argumentCount(site: CallSite, number: Int) {
     arguments(site, number, 0)
+    if (!builder.programArgs) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I16))
+        return
+    }
     val cInt = builder.mapper.cInt
     val count = derive("argc", cInt) { LlvmInstruction.Load(it, builder.argumentCount()) }
     // saturated rather than truncated, so that every index below the count still gives an argument
@@ -256,11 +291,17 @@ private fun FunctionLowering.argumentCount(site: CallSite, number: Int) {
 /** GET_ARGV(index word): the command line argument at the index, 0 being the program name, or an empty string when there is none. */
 private fun FunctionLowering.argument(site: CallSite, number: Int) {
     val (index) = arguments(site, number, 1)
+    if (!builder.programArgs) {
+        result(site, builder.noArgument())
+        return
+    }
     val helper = builder.helperFunction(".sys.argv.at") {
-        argumentHelper(builder.argumentCount(), builder.argumentArray(), builder.runtimeGlobal(".sys.argv.none", LlvmType.Array(1, LlvmType.I8), constant = true), builder.mapper.intPtr, builder.mapper.cInt)
+        argumentHelper(builder.argumentCount(), builder.argumentArray(), builder.noArgument(), builder.mapper.intPtr, builder.mapper.cInt)
     }
     result(site, derive("argv", LlvmType.Ptr) { LlvmInstruction.Call(it, helper, listOf(convert(read(index), LlvmType.I16)), LlvmType.Ptr) })
 }
+
+private fun LlvmFunctionBuilder.noArgument(): LlvmValue.Global = runtimeGlobal(".sys.argv.none", LlvmType.Array(1, LlvmType.I8), constant = true)
 
 /** MEMCOPY(source, target, number of bytes) becomes memmove, so that overlapping areas don't give undefined behavior. */
 private fun FunctionLowering.memoryCopy(site: CallSite, number: Int) {
@@ -288,6 +329,10 @@ private fun FunctionLowering.memorySetWords(site: CallSite, number: Int) {
 /** LOAD(name, address) and LOAD_RAW(name, address): the end address of the file's data at the address, or null for an error. */
 private fun FunctionLowering.load(site: CallSite, number: Int, raw: Boolean) {
     val (name, address) = arguments(site, number, 2)
+    if (lacksFile(Libc.FGETC, Libc.FTELL, Libc.FSEEK, Libc.FREAD, Libc.FERROR, Libc.FCLOSE)) {
+        result(site, LlvmValue.NullPtr())
+        return
+    }
     val helper = builder.helperFunction(".file.load") { builder.loadHelper() }
     val args = listOf(pointerValue(name), pointerValue(address), LlvmValue.IntConstant(if (raw) 1L else 0L, LlvmType.I1))
     result(site, derive("end", LlvmType.Ptr) { LlvmInstruction.Call(it, helper, args, LlvmType.Ptr) })
@@ -296,6 +341,10 @@ private fun FunctionLowering.load(site: CallSite, number: Int, raw: Boolean) {
 /** SAVE(raw byte, name, start, size): 1 when the file is written, which gets a 2-byte header first unless raw, else 0. */
 private fun FunctionLowering.save(site: CallSite, number: Int) {
     val (raw, name, start, size) = arguments(site, number, 4)
+    if (lacksFile(Libc.FPUTC, Libc.FWRITE, Libc.FCLOSE)) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I8))
+        return
+    }
     val helper = builder.helperFunction(".file.save") { builder.saveHelper() }
     val headerless = derive("raw", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.NE, it, convert(read(raw), LlvmType.I8), LlvmValue.IntConstant(0, LlvmType.I8)) }
     val args = listOf(headerless, pointerValue(name), pointerValue(start), convert(readWide(size), builder.mapper.sizeT))
@@ -304,10 +353,15 @@ private fun FunctionLowering.save(site: CallSite, number: Int) {
 
 /**
  * DELETE(name), RENAME(name, new name), MKDIR(path), CHDIR(path) and RMDIR(path). The VM's give no result,
- * but here a call site that asks for one gets 1 when the C routine succeeded, else 0.
+ * but here a call site that asks for one gets 1 when the C routine succeeded, else 0, which it is when the C library lacks the routine.
  */
 private fun FunctionLowering.fileSystem(site: CallSite, number: Int, routine: Libc) {
-    val paths = arguments(site, number, if (routine == Libc.RENAME) 2 else 1).map { pointerValue(it) }
+    val names = arguments(site, number, if (routine == Libc.RENAME) 2 else 1)
+    if (lacks(routine)) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I8))
+        return
+    }
+    val paths = names.map { pointerValue(it) }
     // rwxr-xr-x, before the umask
     val cInt = builder.mapper.cInt
     val args = if (routine == Libc.MKDIR) paths + LlvmValue.IntConstant(0b111_101_101, cInt) else paths
@@ -322,9 +376,16 @@ private fun FunctionLowering.succeeded(status: LlvmValue): LlvmValue {
     return derive("ok", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, ok, LlvmType.I8) }
 }
 
-/** CURDIR(): the current directory in a static buffer, or null when it doesn't fit or getcwd() fails otherwise. */
+/**
+ * CURDIR(): the current directory in a static buffer, or null when it doesn't fit or getcwd() fails otherwise.
+ * Without getcwd() in the C library it is an empty string, and there is no buffer.
+ */
 private fun FunctionLowering.currentDirectory(site: CallSite, number: Int) {
     arguments(site, number, 0)
+    if (lacks(Libc.GETCWD)) {
+        result(site, builder.runtimeString(".sys.curdir.none", ""))
+        return
+    }
     val buffer = builder.runtimeGlobal(".sys.curdir.buf", LlvmType.Array(CURDIR_BUFFER_SIZE, LlvmType.I8))
     val args = listOf(buffer, LlvmValue.IntConstant(CURDIR_BUFFER_SIZE.toLong(), builder.mapper.sizeT))
     result(site, derive("cwd", LlvmType.Ptr) { LlvmInstruction.Call(it, builder.libc(Libc.GETCWD), args, LlvmType.Ptr) })
@@ -333,6 +394,10 @@ private fun FunctionLowering.currentDirectory(site: CallSite, number: Int) {
 /** OPEN_FILE(name) and OPEN_FILE_WRITE(name): 1 when the file becomes the read or write stream, else 0, keeping the stream there was. */
 private fun FunctionLowering.openFile(site: CallSite, number: Int, write: Boolean) {
     val (name) = arguments(site, number, 1)
+    if (lacksFile(Libc.FCLOSE)) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I8))
+        return
+    }
     val helper = builder.helperFunction(".file.open") { builder.openHelper() }
     val mode = if (write) builder.runtimeString(".file.mode.wb", "wb") else builder.runtimeString(".file.mode.rb", "rb")
     val args = listOf(pointerValue(name), mode, if (write) builder.writeStream() else builder.readStream())
@@ -342,6 +407,8 @@ private fun FunctionLowering.openFile(site: CallSite, number: Int, write: Boolea
 /** CLOSE_FILE() and CLOSE_FILE_WRITE() close the read or write stream, if there is one. */
 private fun FunctionLowering.closeFile(site: CallSite, number: Int, write: Boolean) {
     arguments(site, number, 0)
+    if (lacksFile(Libc.FCLOSE))
+        return
     val helper = builder.helperFunction(".file.close") { builder.closeHelper() }
     emit(LlvmInstruction.Call(null, helper, listOf(if (write) builder.writeStream() else builder.readStream()), LlvmType.Void))
 }
@@ -349,6 +416,10 @@ private fun FunctionLowering.closeFile(site: CallSite, number: Int, write: Boole
 /** READ_FILE_BYTE(): $0100 plus the next byte of the read stream, as in the VM, or 0 at its end, for an error or without a stream. */
 private fun FunctionLowering.readFileByte(site: CallSite, number: Int) {
     arguments(site, number, 0)
+    if (lacksFile(Libc.FGETC)) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I16))
+        return
+    }
     val helper = builder.helperFunction(".file.read.byte") { builder.readByteHelper() }
     result(site, derive("byte", LlvmType.I16) { LlvmInstruction.Call(it, helper, emptyList(), LlvmType.I16) })
 }
@@ -356,6 +427,10 @@ private fun FunctionLowering.readFileByte(site: CallSite, number: Int) {
 /** WRITE_FILE_BYTE(byte): 1 when the byte is written to the write stream, else 0. */
 private fun FunctionLowering.writeFileByte(site: CallSite, number: Int) {
     val (byte) = arguments(site, number, 1)
+    if (lacksFile(Libc.FPUTC)) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I8))
+        return
+    }
     val helper = builder.helperFunction(".file.write.byte") { builder.writeByteHelper() }
     val args = listOf(convert(read(byte), LlvmType.I8))
     result(site, derive("written", LlvmType.I8) { LlvmInstruction.Call(it, helper, args, LlvmType.I8) })
@@ -364,6 +439,10 @@ private fun FunctionLowering.writeFileByte(site: CallSite, number: Int) {
 /** SEEK_FILE(position long): 1 when the read stream moved to the position, else 0. */
 private fun FunctionLowering.seekFile(site: CallSite, number: Int) {
     val (position) = arguments(site, number, 1)
+    if (lacksFile(Libc.FTELL, Libc.FSEEK)) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I8))
+        return
+    }
     val helper = builder.helperFunction(".file.seek") { builder.seekHelper() }
     val args = listOf(convert(read(position), LlvmType.I32))
     result(site, derive("sought", LlvmType.I8) { LlvmInstruction.Call(it, helper, args, LlvmType.I8) })
@@ -372,16 +451,25 @@ private fun FunctionLowering.seekFile(site: CallSite, number: Int) {
 /** TELL_FILE_POS() and TELL_FILE_SIZE(): the position in the read stream, or the size of its file, as a long; 0 without a stream. */
 private fun FunctionLowering.tellFile(site: CallSite, number: Int, size: Boolean) {
     arguments(site, number, 0)
+    if (lacksFile(Libc.FTELL, Libc.FSEEK)) {
+        result(site, i32(0))
+        return
+    }
     val helper = if (size) builder.helperFunction(".file.size") { builder.sizeHelper() } else builder.helperFunction(".file.tell") { builder.tellHelper() }
     result(site, derive(if (size) "size" else "position", LlvmType.I32) { LlvmInstruction.Call(it, helper, emptyList(), LlvmType.I32) })
 }
 
 // The file handle syscalls of the llvm fileio module, whose handle is the FILE pointer from FOPEN. As in C, only FFLUSH
 // accepts a null one, which flushes every output stream; fileio checks the handle for the others.
+// When the C library lacks a routine, its syscall gives the result for a failure; without fopen() FEOF gives 1, as for a null handle.
 
 /** FOPEN(name, mode): the FILE pointer of the file that fopen() opens with the C mode string, or null when it can't. */
 private fun FunctionLowering.openHandle(site: CallSite, number: Int) {
     val (name, mode) = arguments(site, number, 2)
+    if (lacks(Libc.FOPEN)) {
+        result(site, LlvmValue.NullPtr())
+        return
+    }
     val args = listOf(pointerValue(name), pointerValue(mode))
     result(site, derive("file", LlvmType.Ptr) { LlvmInstruction.Call(it, builder.libc(Libc.FOPEN), args, LlvmType.Ptr) })
 }
@@ -389,6 +477,10 @@ private fun FunctionLowering.openHandle(site: CallSite, number: Int) {
 /** FCLOSE(file) and FFLUSH(file): 1 when fclose() or fflush() succeeds, else 0. */
 private fun FunctionLowering.handleStatus(site: CallSite, number: Int, routine: Libc) {
     val (file) = arguments(site, number, 1)
+    if (lacks(routine) || (routine == Libc.FCLOSE && lacks(Libc.FOPEN))) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I8))
+        return
+    }
     val status = derive("status", builder.mapper.cInt) { LlvmInstruction.Call(it, builder.libc(routine), listOf(pointerValue(file)), builder.mapper.cInt) }
     result(site, succeeded(status))
 }
@@ -396,6 +488,10 @@ private fun FunctionLowering.handleStatus(site: CallSite, number: Int, routine: 
 /** FREAD(file, buffer, count word) and FWRITE(file, buffer, count word): the number of bytes that fread() or fwrite() transfers. */
 private fun FunctionLowering.transfer(site: CallSite, number: Int, routine: Libc) {
     val (file, buffer, count) = arguments(site, number, 3)
+    if (lacksFile(routine)) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I16))
+        return
+    }
     val sizeT = builder.mapper.sizeT
     val args = listOf(pointerValue(buffer), LlvmValue.IntConstant(1, sizeT), convert(read(count), sizeT, "count"), pointerValue(file))
     val transferred = derive("transferred", sizeT) { LlvmInstruction.Call(it, builder.libc(routine), args, sizeT) }
@@ -406,6 +502,10 @@ private fun FunctionLowering.transfer(site: CallSite, number: Int, routine: Libc
 /** FSEEK(file, offset quad, origin byte): 1 when fseek() moves to the offset from the origin, SEEK_SET 0, SEEK_CUR 1 or SEEK_END 2, else 0. */
 private fun FunctionLowering.seekHandle(site: CallSite, number: Int) {
     val (file, offset, origin) = arguments(site, number, 3)
+    if (lacksFile(Libc.FTELL, Libc.FSEEK)) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I8))
+        return
+    }
     val fileOffset = builder.mapper.fileOffset
     val quadOffset = read(offset)
     val narrowed = checkNotNull(quadOffset.type.bitWidth) > checkNotNull(fileOffset.bitWidth)
@@ -427,6 +527,10 @@ private fun FunctionLowering.seekHandle(site: CallSite, number: Int) {
 /** FTELL(file): the position in the file as a quad, which is -1 for an error. */
 private fun FunctionLowering.tellHandle(site: CallSite, number: Int) {
     val (file) = arguments(site, number, 1)
+    if (lacksFile(Libc.FTELL)) {
+        result(site, LlvmValue.IntConstant(-1, LlvmType.I64))
+        return
+    }
     val fileOffset = builder.mapper.fileOffset
     val position = derive("position", fileOffset) { LlvmInstruction.Call(it, builder.libc(Libc.FTELL), listOf(pointerValue(file)), fileOffset) }
     result(site, widen(position, LlvmType.I64, signed = true, "position"))
@@ -435,22 +539,37 @@ private fun FunctionLowering.tellHandle(site: CallSite, number: Int) {
 /** FEOF(file): 1 when a read went past the end of the file, else 0. */
 private fun FunctionLowering.endOfFile(site: CallSite, number: Int) {
     val (file) = arguments(site, number, 1)
+    if (lacksFile(Libc.FEOF)) {
+        result(site, LlvmValue.IntConstant(1, LlvmType.I8))
+        return
+    }
     val cInt = builder.mapper.cInt
     val flag = derive("eof", cInt) { LlvmInstruction.Call(it, builder.libc(Libc.FEOF), listOf(pointerValue(file)), cInt) }
     val set = derive("eof", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.NE, it, flag, LlvmValue.IntConstant(0, cInt)) }
     result(site, derive("eof", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, set, LlvmType.I8) })
 }
 
-/** FLOAT_DIGITS(buffer of 32 bytes, float): the shortest "%.*e" text of the float, of at least two digits, that reads back as the same float. */
+/**
+ * FLOAT_DIGITS(buffer of 32 bytes, float): the shortest "%.*e" text of the float, of at least two digits, that reads back as the same float.
+ * Without snprintf() or strtod() in the C library, the text is empty.
+ */
 private fun FunctionLowering.floatDigits(site: CallSite, number: Int) {
     val (buffer, value) = arguments(site, number, 2)
+    if (builder.lacks("snprintf", "strtod")) {
+        emit(LlvmInstruction.Store(LlvmValue.IntConstant(0, LlvmType.I8), pointerValue(buffer)))
+        return
+    }
     val helper = builder.helperFunction(".float.digits") { builder.floatDigitsHelper() }
     emit(LlvmInstruction.Call(null, helper, listOf(pointerValue(buffer), toCDouble(read(value))), LlvmType.Void))
 }
 
-/** PARSE_FLOAT(string): the float that strtod() reads from the whole string, or 0.0 when the string isn't one number. */
+/** PARSE_FLOAT(string): the float that strtod() reads from the whole string, or 0.0 when the string isn't one number or there is no strtod(). */
 private fun FunctionLowering.parseFloat(site: CallSite, number: Int) {
     val (string) = arguments(site, number, 1)
+    if (builder.lacks("strtod")) {
+        result(site, floatConstant(0.0))
+        return
+    }
     val helper = builder.helperFunction(".float.parse") { builder.parseFloatHelper() }
     result(site, fromCDouble(derive("float", LlvmType.Double) { LlvmInstruction.Call(it, helper, listOf(pointerValue(string)), LlvmType.Double) }))
 }
@@ -464,12 +583,14 @@ private fun FunctionLowering.fromCDouble(value: LlvmValue): LlvmValue =
 
 /**
  * LIST_DIRECTORY(kind byte): prints the entries of the current directory sorted by name, all of them for kind 0, the subdirectories
- * for 1 and the files for 2. 1 when the directory could be read, else 0, which it always is without the triple's dirent layout.
+ * for 1 and the files for 2. 1 when the directory could be read, else 0, which it always is without the triple's dirent layout
+ * or the C library's directory routines.
  */
 private fun FunctionLowering.listDirectory(site: CallSite, number: Int) {
     val (kind) = arguments(site, number, 1)
     val nameOffset = builder.profile?.direntNameOffset
-    if (nameOffset == null) {
+    val needed = arrayOf(Libc.CLOSEDIR, Libc.STRCMP, Libc.STRDUP, Libc.REALLOC, Libc.FREE, Libc.QSORT, Libc.FOPEN, Libc.FSEEK, Libc.FTELL, Libc.FCLOSE)
+    if (nameOffset == null || lacks(*needed) || builder.lacks("opendir", "readdir", "printf")) {
         result(site, LlvmValue.IntConstant(0, LlvmType.I8))
         return
     }

@@ -106,6 +106,7 @@ class LlvmTarget(
     override val FLOAT_MAX_NEGATIVE = -FLOAT_MAX_POSITIVE
     override val POINTER_MEM_SIZE = pointerSize.toUInt()
     override val splitPointerArrays = false
+    override val wordArrayIndexes = true
     override val ARRAY_SIZE_LIMIT = 65535u
 
     override val PROGRAM_LOAD_ADDRESS = 0u

@@ -234,6 +234,60 @@ class TestLlvmInstructionLowering: FunSpec({
         val (exitCode, output) = compileWasmObject(LlvmPrinter.print(TestProgram(LlvmTarget(4)).apply { checkProgram() }.module().withMainCalling("main.check")))
         withClue(output) { exitCode shouldBe 0 }
     }
+
+    test("on llvm16, the square root of an integer uses an integer helper per width without float operations; llvm64 keeps its double sqrt") {
+        val code = """
+            _main.roots:
+            load.b r1.b,#200.b
+            sqrt.b r2.b,r1.b
+            load.w r3.w,#65535.w
+            sqrt.w r4.b,r3.w
+            load.l r5.l,#-5.l
+            sqrt.l r6.w,r5.l
+            return
+            """
+        val module = TestProgram(LlvmTarget(2)).apply { sub("main.roots", code = code) }.module()
+        val lines = module.function("main.roots").lines()
+        lines shouldHave "  %root.1 = call i8 @.math.isqrt.i8(i8 %r1.1)"
+        lines shouldHave "  %root.2 = call i16 @.math.isqrt.i16(i16 %r3.1)"
+        lines shouldHave "  %root.3 = call i32 @.math.isqrt.i32(i32 %r5.1)"
+        lines shouldHave "  %negative.1 = icmp slt i32 %r5.1, 0"
+        lines shouldHave "  %root.4 = select i1 %negative.1, i32 0, i32 %root.3"
+        val text = LlvmPrinter.print(module)
+        for (float in listOf("sqrt.f", "fptosi", "itofp", "double", "float"))
+            withClue(float) { (float in text) shouldBe false }
+        module.function(".math.isqrt.i16").text() shouldBe """
+            define internal i16 @.math.isqrt.i16(i16 %value) {
+            entry:
+              br label %loop
+
+            loop:
+              %rest = phi i16 [ %value, %entry ], [ %next.rest, %step ]
+              %root = phi i16 [ 0, %entry ], [ %next.root, %step ]
+              %bit = phi i16 [ 16384, %entry ], [ %next.bit, %step ]
+              %done = icmp eq i16 %bit, 0
+              br i1 %done, label %finished, label %step
+
+            step:
+              %trial = add i16 %root, %bit
+              %fits = icmp uge i16 %rest, %trial
+              %reduced = sub i16 %rest, %trial
+              %next.rest = select i1 %fits, i16 %reduced, i16 %rest
+              %half = lshr i16 %root, 1
+              %raised = add i16 %half, %bit
+              %next.root = select i1 %fits, i16 %raised, i16 %half
+              %next.bit = lshr i16 %bit, 2
+              br label %loop
+
+            finished:
+              ret i16 %root
+            }
+            """.trimIndent() + "\n"
+
+        val text64 = LlvmPrinter.print(TestProgram().apply { sub("main.roots", code = code) }.module())
+        (".math.isqrt" in text64) shouldBe false
+        ("@llvm.sqrt.f64" in text64) shouldBe true
+    }
 })
 
 

@@ -1,10 +1,14 @@
 package prog8.codegen.llvm.lower
 
+import prog8.codegen.llvm.LlvmPrinter
 import prog8.codegen.llvm.model.BinaryOperator
 import prog8.codegen.llvm.model.CastOperator
 import prog8.codegen.llvm.model.FcmpCondition
 import prog8.codegen.llvm.model.IcmpCondition
+import prog8.codegen.llvm.model.LlvmBlock
+import prog8.codegen.llvm.model.LlvmFunction
 import prog8.codegen.llvm.model.LlvmInstruction
+import prog8.codegen.llvm.model.LlvmLinkage
 import prog8.codegen.llvm.model.LlvmType
 import prog8.codegen.llvm.model.LlvmValue
 import prog8.codegen.llvm.types.floatIntrinsic
@@ -251,12 +255,66 @@ private fun FunctionLowering.squareRoot(ins: IRInstruction) {
     val value = read(ins.requireSrcA())
     if (value.type.isFloatingPoint)
         write(dest, intrinsic(floatIntrinsic("sqrt", value.type), value.type, value))
+    else if (floatType != LlvmType.Double || builder.lacks("sqrt"))
+        write(dest, convert(integerSquareRoot(asInteger(value), signed = ins.type == IRDataType.LONG), typeOf(dest.type)))
     else {
         val operator = if (ins.type == IRDataType.LONG) CastOperator.SITOFP else CastOperator.UITOFP
         val number = asInteger(value)
         val float = derive("float", LlvmType.Double) { LlvmInstruction.Cast(operator, it, number, LlvmType.Double) }
         write(dest, floatToInteger(intrinsic(floatIntrinsic("sqrt", LlvmType.Double), LlvmType.Double, float), typeOf(dest.type)))
     }
+}
+
+/** The square root of [value] without floats, for targets without a double sqrt; like the double one, a negative signed value gives 0. */
+private fun FunctionLowering.integerSquareRoot(value: LlvmValue, signed: Boolean): LlvmValue {
+    val type = value.type
+    val name = ".math.isqrt.${LlvmPrinter.format(type)}"
+    val helper = builder.helperFunction(name) { integerSquareRootHelper(name, type) }
+    val root = derive("root", type) { LlvmInstruction.Call(it, helper, listOf(value), type) }
+    if (!signed)
+        return root
+    val negative = derive("negative", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.SLT, it, value, LlvmValue.IntConstant(0, type)) }
+    return derive("root", type) { LlvmInstruction.Select(it, negative, LlvmValue.IntConstant(0, type), root) }
+}
+
+/** `iN (iN value)`: the floor of the square root of the unsigned value, found bit by bit with shifts and subtractions only. */
+private fun integerSquareRootHelper(name: String, type: LlvmType): LlvmFunction {
+    val bits = checkNotNull(type.bitWidth)
+    fun constant(value: Long) = LlvmValue.IntConstant(value, type)
+    fun local(name: String) = LlvmValue.Local(name, type)
+    val value = local("value")
+    val rest = local("rest")
+    val root = local("root")
+    val bit = local("bit")
+    val done = LlvmValue.Local("done", LlvmType.I1)
+    val trial = local("trial")
+    val fits = LlvmValue.Local("fits", LlvmType.I1)
+    val reduced = local("reduced")
+    val nextRest = local("next.rest")
+    val half = local("half")
+    val raised = local("raised")
+    val nextRoot = local("next.root")
+    val nextBit = local("next.bit")
+    val blocks = listOf(
+        LlvmBlock("entry", mutableListOf(LlvmInstruction.Br("loop"))),
+        LlvmBlock("loop", mutableListOf(
+            LlvmInstruction.Phi(rest, listOf(value to "entry", nextRest to "step")),
+            LlvmInstruction.Phi(root, listOf(constant(0) to "entry", nextRoot to "step")),
+            LlvmInstruction.Phi(bit, listOf(constant(1L shl (bits - 2)) to "entry", nextBit to "step")),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, done, bit, constant(0)),
+            LlvmInstruction.CondBr(done, "finished", "step"))),
+        LlvmBlock("step", mutableListOf(
+            LlvmInstruction.BinaryOp(BinaryOperator.ADD, trial, root, bit),
+            LlvmInstruction.Icmp(IcmpCondition.UGE, fits, rest, trial),
+            LlvmInstruction.BinaryOp(BinaryOperator.SUB, reduced, rest, trial),
+            LlvmInstruction.Select(nextRest, fits, reduced, rest),
+            LlvmInstruction.BinaryOp(BinaryOperator.LSHR, half, root, constant(1)),
+            LlvmInstruction.BinaryOp(BinaryOperator.ADD, raised, half, bit),
+            LlvmInstruction.Select(nextRoot, fits, raised, half),
+            LlvmInstruction.BinaryOp(BinaryOperator.LSHR, nextBit, bit, constant(2)),
+            LlvmInstruction.Br("loop"))),
+        LlvmBlock("finished", mutableListOf(LlvmInstruction.Ret(root))))
+    return LlvmFunction(name, type, listOf(value), blocks.toMutableList(), linkage = LlvmLinkage.INTERNAL)
 }
 
 /** Like the VM's Kotlin toInt() (toLong() for a quad), which saturates and turns NaN into 0, followed by truncation to [type]. */

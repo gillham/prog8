@@ -1,8 +1,10 @@
 package prog8.codegen.llvm
 
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
 import prog8.code.target.LlvmTarget
@@ -539,6 +541,72 @@ class TestLlvmSyscallLowering: FunSpec({
         for (ir in llvm32Syscalls())
             compileWasmObject(ir).let { (exitCode, output) -> withClue(output) { exitCode shouldBe 0 } }
     }
+
+    test("on mos-sim, the syscalls that need a C function the C library lacks give their failure results, and declare none of those functions") {
+        val mosSim = LlvmTarget(2, LlvmTripleProfile.resolve("mos-sim"))
+        val module = TestProgram(mosSim).apply { allFileSyscallsSub(); allHandleSyscallsSub(); waitSub(); listSub() }.module()
+        val text = LlvmPrinter.print(module).lines()
+        for (name in mosSim.profile.libcLacks)
+            withClue(name) { text.none { it.startsWith("declare ") && "@$name(" in it } shouldBe true }
+        for (name in listOf(".file.", ".sys.curdir.buf", ".sys.wait", ".diskio.list"))
+            withClue(name) { text.none { name in it } shouldBe true }
+        text shouldHave """@.sys.curdir.none = private unnamed_addr constant [1 x i8] c"\00""""
+        val files = module.function("main.files").lines()
+        files shouldHave "  store ptr null, ptr %r3.slot"
+        files shouldHave "  store ptr null, ptr %r4.slot"
+        for (register in listOf(7, 9, 10, 12, 14))
+            files shouldHave "  store i8 0, ptr %r$register.slot"
+        files shouldHave "  store ptr @.sys.curdir.none, ptr %r8.slot"
+        files shouldHave "  store i16 0, ptr %r11.slot"
+        files shouldHave "  store i32 0, ptr %r15.slot"
+        files shouldHave "  store i32 0, ptr %r16.slot"
+        val handles = module.function("main.handles").lines()
+        handles shouldHave "  store ptr null, ptr %r3.slot"
+        handles shouldHave "  store i16 0, ptr %r5.slot"
+        handles shouldHave "  store i16 0, ptr %r6.slot"
+        handles shouldHave "  store i8 0, ptr %r9.slot"
+        handles shouldHave "  store i64 -1, ptr %r10.slot"
+        handles shouldHave "  store i8 0, ptr %r11.slot"
+        handles shouldHave "  store i8 1, ptr %r12.slot"
+        handles shouldHave "  store i8 0, ptr %r13.slot"
+        module.function("main.list").lines() shouldHave "  store i8 0, ptr %r2.slot"
+        module.function("main.wait").lines().none { "call" in it } shouldBe true
+    }
+
+    test("on mos-c64, whose C library has the file routines, only the directory, curdir and wait syscalls give their failure results") {
+        val text = LlvmPrinter.print(TestProgram(LlvmTarget(2, LlvmTripleProfile.resolve("mos-c64"))).apply { allFileSyscallsSub(); allHandleSyscallsSub(); waitSub() }.module()).lines()
+        for (name in listOf("fopen", "fclose", "fflush", "remove", "rename"))
+            withClue(name) { text.any { it.startsWith("declare ") && "@$name(" in it } shouldBe true }
+        for (name in listOf("getcwd", "mkdir", "chdir", "rmdir", "usleep"))
+            withClue(name) { text.none { "@$name(" in it } shouldBe true }
+        text.none { ".sys.curdir.buf" in it } shouldBe true
+    }
+
+    test("a C function that the C library lacks and that a syscall still calls is an internal error that names the syscall") {
+        val mosSim = LlvmTripleProfile.resolve("mos-sim")
+        val profile = LlvmTripleProfile("noputchar", mosSim.triple, mosSim.dataLayout, 4, cIntSize = 2, libcLacks = setOf("putchar"))
+        val error = shouldThrow<IllegalStateException> { TestProgram(LlvmTarget(2, profile)).apply { printCharSub() }.module() }
+        error.message shouldContain "syscall 2 in main.printchar"
+        error.message shouldContain "'putchar'"
+        error.message shouldContain "'noputchar'"
+    }
+
+    test("with program_args = false, the C main takes no arguments, argc is 0 and every argument the empty string") {
+        val module = TestProgram(LlvmTarget(2, LlvmTripleProfile.resolve("mos-sim"))).apply { argumentLookupSub() }.programModule()
+        module.function("main").text() shouldBe """
+            define i16 @main() {
+            entry:
+              call void @main.start()
+              ret i16 0
+            }
+            """.trimIndent() + "\n"
+        val lines = module.function("main.start").lines()
+        lines shouldHave "  store i16 0, ptr %r1.slot"
+        lines shouldHave "  store ptr @.sys.argv.none, ptr %r2.slot"
+        val text = LlvmPrinter.print(module).lines()
+        text.none { "@.sys.argc" in it || "@.sys.argv " in it || ".sys.argv.at" in it } shouldBe true
+        text shouldHave "@.sys.argv.none = internal constant [1 x i8] zeroinitializer"
+    }
 })
 
 
@@ -703,6 +771,21 @@ private fun TestProgram.allHandleSyscallsSub() {
         return
         """)
 }
+
+private fun TestProgram.waitSub() = sub("main.wait", code = """
+    _main.wait:
+    load.w r1.w,#10.w
+    syscall 13 (r1.w)
+    syscall 14 ()
+    return
+    """)
+
+private fun TestProgram.listSub() = sub("main.list", code = """
+    _main.list:
+    load.b r1.b,#0.b
+    syscall 212 (r1.b): r2.b
+    return
+    """)
 
 private fun TestProgram.longSeekSub() = sub("main.seek", code = """
     _main.seek:

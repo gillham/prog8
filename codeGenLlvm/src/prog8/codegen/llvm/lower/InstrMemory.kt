@@ -25,6 +25,8 @@ import prog8.intermediate.symbolName
 
 // the value stack of PUSH and POP, where a LONG takes the size of its register slot because it may hold an address
 private const val VALUE_STACK_SIZE = 1024
+// with 16-bit pointers: the 6502 hardware stack that push and pop use on the 6502 targets, as RAM is scarce there
+private const val SMALL_VALUE_STACK_SIZE = 256
 
 /**
  * Lowers register loads, memory access through a symbol, a fixed address, an index register or a pointer register,
@@ -217,7 +219,8 @@ private fun FunctionLowering.pop(type: LlvmType, base: String): LlvmValue {
 }
 
 private fun FunctionLowering.valueStackEntry(offset: LlvmValue): LlvmValue {
-    val data = builder.runtimeGlobal(".stack.data", LlvmType.Array(VALUE_STACK_SIZE, LlvmType.I8))
+    val size = if (builder.mapper.intPtr == LlvmType.I16) SMALL_VALUE_STACK_SIZE else VALUE_STACK_SIZE
+    val data = builder.runtimeGlobal(".stack.data", LlvmType.Array(size, LlvmType.I8))
     return derive("sp", LlvmType.Ptr) { LlvmInstruction.GetElementPtr(it, LlvmType.I8, data, listOf(offset), inBounds = false) }
 }
 

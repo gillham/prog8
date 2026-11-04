@@ -23,6 +23,10 @@ interface IMemSizer {
     val splitPointerArrays: Boolean
         get() = POINTER_MEM_SIZE <= 2u
 
+    /** Whether array indexes in the IR are words, as they are with pointers wider than 2 bytes and on the llvm targets, whose arrays can exceed 256 bytes. */
+    val wordArrayIndexes: Boolean
+        get() = POINTER_MEM_SIZE > 2u
+
     fun memorySize(dt: DataType, numElements: Int?): Int
 
     fun memorySize(dt: BaseDataType): Int {

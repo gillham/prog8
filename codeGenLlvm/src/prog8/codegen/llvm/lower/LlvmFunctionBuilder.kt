@@ -101,14 +101,30 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
         require(start.parameters.isEmpty()) { "$PROGRAM_START can't have parameters" }
         val argc = LlvmValue.Local("argc", mapper.cInt)
         val argv = LlvmValue.Local("argv", LlvmType.Ptr)
-        val code = mutableListOf<LlvmInstruction>(LlvmInstruction.Store(argc, argumentCount()), LlvmInstruction.Store(argv, argumentArray()))
+        val code = mutableListOf<LlvmInstruction>()
+        if (programArgs)
+            code += listOf(LlvmInstruction.Store(argc, argumentCount()), LlvmInstruction.Store(argv, argumentArray()))
         if (program.globalInits.isNotEmpty())
             code += LlvmInstruction.Call(null, GLOBAL_INITS, emptyList(), LlvmType.Void)
         val startType = returnType(start)
         val ignoredResult = if (startType == LlvmType.Void) null else LlvmValue.Local("ignored", startType)
         code += LlvmInstruction.Call(ignoredResult, PROGRAM_START, emptyList(), startType)
         code += LlvmInstruction.Ret(LlvmValue.IntConstant(0, mapper.cInt))
-        return LlvmFunction(profile?.cMainSymbol ?: "main", mapper.cInt, listOf(argc, argv), mutableListOf(LlvmBlock("entry", code)))
+        return LlvmFunction(profile?.cMainSymbol ?: "main", mapper.cInt, if (programArgs) listOf(argc, argv) else emptyList(), mutableListOf(LlvmBlock("entry", code)))
+    }
+
+    /** False when the C runtime calls main without command line arguments, so that argc and argv would be garbage. */
+    val programArgs: Boolean get() = profile?.programArgs != false
+
+    /** Whether the target's C library lacks one of the C functions [names], so that the code must not call it. */
+    fun lacks(vararg names: String): Boolean = profile?.libcLacks?.let { lacking -> names.any { it in lacking } } == true
+
+    /** The syscall being lowered, which a call of a lacking C function names in its internal error. */
+    var loweringSyscall: String? = null
+
+    /** Reports [message] as an error at the end of [build], but only when the subroutine being lowered can be reached. */
+    fun errorIfReachable(message: String, position: Position) {
+        runtimeConflicts += loweringSub to LlvmLoweringException(message, position, IllegalArgumentException(message))
     }
 
     /**
@@ -236,6 +252,9 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
                 definingHelper?.let { helperConflicts.getOrPut(it) { mutableListOf() } += error }
             }
             return declared
+        }
+        check(!lacks(name)) {
+            "internal error: ${loweringSyscall ?: loweringSub} calls C function '$name', which the C library of llvm triple profile '${profile?.name}' lacks"
         }
         val function = externalFunctions.getOrPut(name) {
             LlvmFunction(name, returnType, paramTypes.mapIndexed { index, type -> LlvmValue.Local("p$index", type) }, isExternal = true, isVarArg = isVarArg)

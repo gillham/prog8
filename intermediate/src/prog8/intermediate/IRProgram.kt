@@ -7,7 +7,7 @@ val IMemSizer.pointerIRType: IRDataType
     get() = if(POINTER_MEM_SIZE > 2u) IRDataType.LONG else IRDataType.WORD
 
 val IMemSizer.indexRegType: IRDataType
-    get() = if(POINTER_MEM_SIZE > 2u) IRDataType.WORD else IRDataType.BYTE
+    get() = if(wordArrayIndexes) IRDataType.WORD else IRDataType.BYTE
 
 /**
  * Slot geometry of the M68K incoming-argument area, shared by the IR frame layout pass
