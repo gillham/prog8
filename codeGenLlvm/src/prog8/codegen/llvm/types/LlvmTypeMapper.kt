@@ -12,20 +12,29 @@ import prog8.intermediate.IRSymbolTable
 
 /**
  * Maps Prog8 IR and Prog8 data types onto LLVM types for the llvm targets ([pointerBytes]-byte pointers, doubles, packed Prog8 struct layout).
- * [cLongBytes] is the size of the C `long` of the target triple, and [fileOffsetBytes] that of the file offset of its fseek and ftell routines.
+ * [cLongBytes] is the size of the C `long` of the target triple, [fileOffsetBytes] that of the file offset of its fseek and ftell routines,
+ * and [cIntBytes] that of its C `int`.
  */
-internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: Int = 8, cLongBytes: Int = 8, fileOffsetBytes: Int = cLongBytes) {
+internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: Int = 8, cLongBytes: Int = 8, fileOffsetBytes: Int = cLongBytes, cIntBytes: Int = 4) {
 
     constructor(st: IRSymbolTable, target: ICompilationTarget) :
         this(st, target.POINTER_MEM_SIZE.toInt(), (target as? LlvmTarget)?.profile?.cLongSize ?: 8, (target as? LlvmTarget)?.profile?.fileOffsetSize ?: 8)
 
     init {
-        require(pointerBytes == 4 || pointerBytes == 8) { "unsupported pointer size: $pointerBytes" }
+        require(pointerBytes == 2 || pointerBytes == 4 || pointerBytes == 8) { "unsupported pointer size: $pointerBytes" }
         require(cLongBytes == 4 || cLongBytes == 8) { "unsupported C long size: $cLongBytes" }
+        require(cIntBytes == 2 || cIntBytes == 4) { "unsupported C int size: $cIntBytes" }
     }
 
     /** The integer type of the size of a pointer, for address arithmetic and offsets. */
-    val intPtr: LlvmType = if (pointerBytes == 8) LlvmType.I64 else LlvmType.I32
+    val intPtr: LlvmType = when (pointerBytes) {
+        8 -> LlvmType.I64
+        4 -> LlvmType.I32
+        else -> LlvmType.I16
+    }
+
+    /** The integer type of an IR LONG register, which can hold an address as well as a 32-bit long. */
+    val wideInt: LlvmType = if (pointerBytes == 8) LlvmType.I64 else LlvmType.I32
 
     /** C's `size_t`. */
     val sizeT: LlvmType get() = intPtr
@@ -36,11 +45,17 @@ internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: I
     /** The file offset of the target's fseek and ftell routines, which is C's `long` unless the triple profile names others. */
     val fileOffset: LlvmType = if (fileOffsetBytes == 8) LlvmType.I64 else LlvmType.I32
 
+    /** C's `int`, which is 16 bits on some small targets. */
+    val cInt: LlvmType = if (cIntBytes == 2) LlvmType.I16 else LlvmType.I32
+
+    /** The type of Prog8 floats. */
+    val floatType: LlvmType = LlvmType.Double
+
     fun map(type: IRDataType): LlvmType = when (type) {
         IRDataType.BYTE -> LlvmType.I8
         IRDataType.WORD -> LlvmType.I16
         IRDataType.LONG -> LlvmType.I32
-        IRDataType.FLOAT -> LlvmType.Double
+        IRDataType.FLOAT -> floatType
         IRDataType.POINTER -> LlvmType.Ptr
         IRDataType.QUAD -> LlvmType.I64
     }
@@ -50,7 +65,7 @@ internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: I
         BaseDataType.UWORD, BaseDataType.WORD -> LlvmType.I16
         BaseDataType.LONG -> LlvmType.I32
         BaseDataType.QUAD, BaseDataType.UQUAD -> LlvmType.I64
-        BaseDataType.FLOAT -> LlvmType.Double
+        BaseDataType.FLOAT -> floatType
         BaseDataType.POINTER -> LlvmType.Ptr
         BaseDataType.STR, BaseDataType.ARRAY, BaseDataType.ARRAY_SPLITW, BaseDataType.STRUCT_INSTANCE, BaseDataType.UNDEFINED ->
             throw IllegalArgumentException("$type is not a scalar type")
@@ -79,7 +94,7 @@ internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: I
     fun byteSize(type: LlvmType): Int = when (type) {
         LlvmType.I1, LlvmType.I8 -> 1
         LlvmType.I16 -> 2
-        LlvmType.I32 -> 4
+        LlvmType.I32, LlvmType.Float -> 4
         LlvmType.I64, LlvmType.Double -> 8
         LlvmType.Ptr -> pointerBytes
         is LlvmType.Array -> type.size * byteSize(type.elementType)
@@ -104,3 +119,16 @@ internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: I
 
     private fun requireLength(dt: DataType, length: UInt?): Int = requireNotNull(length) { "storage of type $dt needs a length" }.toInt()
 }
+
+/** The suffix of LLVM's overloaded float intrinsics for [type], such as the `f64` of `llvm.sin.f64`. */
+internal fun floatSuffix(type: LlvmType): String = when (type) {
+    LlvmType.Float -> "f32"
+    LlvmType.Double -> "f64"
+    else -> throw IllegalArgumentException("$type is no floating point type")
+}
+
+/** The LLVM intrinsic [name] for [type], such as `llvm.sin.f32` for `sin`. */
+internal fun floatIntrinsic(name: String, type: LlvmType): String = "llvm.$name.${floatSuffix(type)}"
+
+/** The C math library routine [name] for [type], such as `sinf` for `sin` on floats. */
+internal fun libmName(name: String, type: LlvmType): String = if (floatSuffix(type) == "f32") "${name}f" else name

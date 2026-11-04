@@ -59,23 +59,23 @@ internal fun FunctionLowering.lowerMemory(ins: IRInstruction) {
         Opcode.LOADHR -> {
             val destination = ins.requireDest()
             val slot = builder.hardwareSlot(ins.requireHardwareSlot().slot, destination.isFloat)
-            write(destination, derive(destination.register.toString(), if (destination.isFloat) LlvmType.Double else LlvmType.I64) { LlvmInstruction.Load(it, slot) })
+            write(destination, derive(destination.register.toString(), if (destination.isFloat) floatType else LlvmType.I64) { LlvmInstruction.Load(it, slot) })
         }
         Opcode.STOREHR -> {
             val source = ins.requireSrcA()
             val slot = builder.hardwareSlot(ins.requireHardwareSlot().slot, source.isFloat)
-            emit(LlvmInstruction.Store(convert(readWide(source), if (source.isFloat) LlvmType.Double else LlvmType.I64), slot))
+            emit(LlvmInstruction.Store(convert(readWide(source), if (source.isFloat) floatType else LlvmType.I64), slot))
         }
         Opcode.LOADHFACZERO, Opcode.LOADHFACONE -> {
             val dest = ins.requireDest()
             val fac = facSlot(one = ins.opcode == Opcode.LOADHFACONE)
-            write(dest, derive(dest.register.toString(), LlvmType.Double) { LlvmInstruction.Load(it, fac) })
+            write(dest, derive(dest.register.toString(), floatType) { LlvmInstruction.Load(it, fac) })
         }
         Opcode.STOREHFACZERO, Opcode.STOREHFACONE -> emit(LlvmInstruction.Store(read(ins.requireSrcA()), facSlot(one = ins.opcode == Opcode.STOREHFACONE)))
         Opcode.PUSH -> push(readWide(ins.requireSrcA()))
         Opcode.POP -> {
             val dest = ins.requireDest()
-            write(dest, pop(if (dest.type == IRDataType.LONG) builder.mapper.intPtr else typeOf(dest.type), dest.register.toString()))
+            write(dest, pop(if (dest.type == IRDataType.LONG) builder.mapper.wideInt else typeOf(dest.type), dest.register.toString()))
         }
         Opcode.PUSHST -> pushStatus()
         Opcode.POPST -> popStatus()

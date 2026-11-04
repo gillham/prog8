@@ -10,6 +10,9 @@ import prog8.code.core.CpuType
 import prog8.code.target.LlvmTarget
 import prog8.code.target.LlvmTripleProfile
 import prog8.codegen.llvm.model.*
+import prog8.codegen.llvm.types.floatIntrinsic
+import prog8.codegen.llvm.types.floatSuffix
+import prog8.codegen.llvm.types.libmName
 import java.nio.file.Path
 
 
@@ -64,6 +67,31 @@ class TestLlvmAstEmission: FunSpec({
         float(Double.POSITIVE_INFINITY) shouldBe "0x7FF0000000000000"
         float(Double.NEGATIVE_INFINITY) shouldBe "0xFFF0000000000000"
         LlvmPrinter.typed(LlvmValue.FloatConstant(2.25)) shouldBe "double 2.25"
+    }
+
+    test("float constants of type float are decimals only when exact as a float, else the hex of that float as a double") {
+        fun float(value: Double) = LlvmPrinter.typed(LlvmValue.FloatConstant(value, LlvmType.Float))
+        float(1.5) shouldBe "float 1.5"
+        float(0.1) shouldBe "float 0x3FB99999A0000000"
+        float(Double.NaN) shouldBe "float 0x7FF8000000000000"
+        LlvmPrinter.format(LlvmValue.ZeroInitializer(LlvmType.Float)) shouldBe "0.0"
+        shouldThrow<IllegalArgumentException> { LlvmValue.FloatConstant(1.0, LlvmType.I32) }
+    }
+
+    test("llvm-as accepts float constants that have no exact decimal form as a float").config(enabledOrReasonIf = requiresLlvmAs) {
+        val module = LlvmModule("floats")
+        module.globals += listOf(0.1, 1.5, Double.NaN, 1e30).mapIndexed { index, value ->
+            LlvmGlobal("f$index", LlvmType.Float, LlvmValue.FloatConstant(value, LlvmType.Float), isConstant = true)
+        }
+        assertAcceptedByLlvmAs(module)
+    }
+
+    test("float intrinsics and C math routines are named for the float type") {
+        floatIntrinsic("sin", LlvmType.Double) shouldBe "llvm.sin.f64"
+        floatIntrinsic("sin", LlvmType.Float) shouldBe "llvm.sin.f32"
+        libmName("atan2", LlvmType.Double) shouldBe "atan2"
+        libmName("atan2", LlvmType.Float) shouldBe "atan2f"
+        shouldThrow<IllegalArgumentException> { floatSuffix(LlvmType.I32) }
     }
 
     test("string constants are [N x i8] arrays with escaped bytes") {

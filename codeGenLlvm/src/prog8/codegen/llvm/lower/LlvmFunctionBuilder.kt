@@ -98,7 +98,7 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     private fun entryPoint(): LlvmFunction {
         val start = requireNotNull(subroutine(PROGRAM_START)) { "the program has no $PROGRAM_START subroutine to begin with" }
         require(start.parameters.isEmpty()) { "$PROGRAM_START can't have parameters" }
-        val argc = LlvmValue.Local("argc", LlvmType.I32)
+        val argc = LlvmValue.Local("argc", mapper.cInt)
         val argv = LlvmValue.Local("argv", LlvmType.Ptr)
         val code = mutableListOf<LlvmInstruction>(LlvmInstruction.Store(argc, argumentCount()), LlvmInstruction.Store(argv, argumentArray()))
         if (program.globalInits.isNotEmpty())
@@ -106,8 +106,8 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
         val startType = returnType(start)
         val ignoredResult = if (startType == LlvmType.Void) null else LlvmValue.Local("ignored", startType)
         code += LlvmInstruction.Call(ignoredResult, PROGRAM_START, emptyList(), startType)
-        code += LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I32))
-        return LlvmFunction(profile?.cMainSymbol ?: "main", LlvmType.I32, listOf(argc, argv), mutableListOf(LlvmBlock("entry", code)))
+        code += LlvmInstruction.Ret(LlvmValue.IntConstant(0, mapper.cInt))
+        return LlvmFunction(profile?.cMainSymbol ?: "main", mapper.cInt, listOf(argc, argv), mutableListOf(LlvmBlock("entry", code)))
     }
 
     /**
@@ -135,7 +135,7 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     }
 
     /** The argc of the C main, which stays 0 in a module without that entry point. */
-    fun argumentCount(): LlvmValue.Global = runtimeGlobal(".sys.argc", LlvmType.I32)
+    fun argumentCount(): LlvmValue.Global = runtimeGlobal(".sys.argc", mapper.cInt)
 
     /** The argv of the C main: the addresses of the command line argument strings. */
     fun argumentArray(): LlvmValue.Global = runtimeGlobal(".sys.argv", LlvmType.Ptr)
@@ -247,7 +247,7 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     fun hardwareSlot(slot: CallingConventionSlot, float: Boolean): LlvmValue.Global {
         val name = if (float) ".slot.f${slot.value}" else ".slot.s${slot.value}"
         hardwareSlots.getOrPut(name) {
-            val type = if (float) LlvmType.Double else LlvmType.I64
+            val type = if (float) mapper.floatType else LlvmType.I64
             LlvmGlobal(name, type, LlvmValue.ZeroInitializer(type), isConstant = false, linkage = LlvmLinkage.INTERNAL)
         }
         return LlvmValue.Global(name)
@@ -351,6 +351,10 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
 
     fun typeOf(type: IRDataType): LlvmType = builder.mapper.map(type)
 
+    val floatType: LlvmType get() = builder.mapper.floatType
+
+    fun floatConstant(value: Double): LlvmValue.FloatConstant = LlvmValue.FloatConstant(value, floatType)
+
     fun read(operand: RegisterOperand): LlvmValue {
         val (slot, slotType) = registerSlot(operand.register)
         val base = operand.register.toString()
@@ -428,7 +432,7 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     fun immediate(ins: IRInstruction, type: LlvmType): LlvmValue = when (val immediate = ins.requireImmediate()) {
         is ImmediateOperand.Integer -> integerConstant(immediate.value.toLong(), type)
         is ImmediateOperand.QuadValue -> integerConstant(immediate.value, type)
-        is ImmediateOperand.FloatValue -> LlvmValue.FloatConstant(immediate.value)
+        is ImmediateOperand.FloatValue -> floatConstant(immediate.value)
         is ImmediateOperand.SymbolAddress -> convert(symbolAddress(immediate.symbol, immediate.offset), type)
     }
 
@@ -641,14 +645,14 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
 
     /**
      * A register used with a single IR type other than LONG gets a slot of that type. LONG registers, which can hold addresses,
-     * and registers used with several types get a pointer-sized slot that holds any integer or pointer, or an i64 one for quads.
+     * and registers used with several types get a slot of at least pointer size that holds any integer or pointer, or an i64 one for quads.
      */
     private fun registerSlot(register: VirtualRegister): Pair<LlvmValue.Local, LlvmType> {
         val types = registerTypes[register]
         val type = when {
-            register is VirtualRegister.FloatReg -> LlvmType.Double
+            register is VirtualRegister.FloatReg -> floatType
             types == null || IRDataType.QUAD in types -> LlvmType.I64
-            else -> types.singleOrNull()?.takeIf { it != IRDataType.LONG }?.let { typeOf(it) } ?: builder.mapper.intPtr
+            else -> types.singleOrNull()?.takeIf { it != IRDataType.LONG }?.let { typeOf(it) } ?: builder.mapper.wideInt
         }
         return registerSlots.getOrPut(register) { stackSlot("$register.slot", type) } to type
     }

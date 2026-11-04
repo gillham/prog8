@@ -8,6 +8,7 @@ internal sealed interface LlvmType {
     data object I16 : LlvmType
     data object I32 : LlvmType
     data object I64 : LlvmType
+    data object Float : LlvmType
     data object Double : LlvmType
     data object Ptr : LlvmType
     data object Void : LlvmType
@@ -40,10 +41,12 @@ internal sealed interface LlvmType {
             I16 -> 16
             I32 -> 32
             I64 -> 64
-            Double, Ptr, Void, is Array, is Function, is Struct -> null
+            Float, Double, Ptr, Void, is Array, is Function, is Struct -> null
         }
 
     val isInteger: Boolean get() = bitWidth != null
+
+    val isFloatingPoint: Boolean get() = this == Float || this == Double
 
     val isFirstClass: Boolean get() = this != Void && this !is Function
 }
@@ -76,7 +79,7 @@ internal sealed interface LlvmValue {
 
     data class FloatConstant(val value: kotlin.Double, override val type: LlvmType = LlvmType.Double) : LlvmValue {
         init {
-            require(type == LlvmType.Double) { "float constant must have type double, not $type" }
+            require(type.isFloatingPoint) { "float constant must have a floating point type, not $type" }
         }
     }
 
@@ -164,13 +167,13 @@ internal sealed interface LlvmInstruction {
     data class BinaryOp(val op: BinaryOperator, val result: Local, val lhs: LlvmValue, val rhs: LlvmValue) : LlvmInstruction {
         init {
             require(lhs.type == rhs.type && result.type == lhs.type) { "${op.keyword} operand and result types differ: ${lhs.type}, ${rhs.type}, ${result.type}" }
-            require(if (op.isFloat) lhs.type == LlvmType.Double else lhs.type.isInteger) { "${op.keyword} does not accept type ${lhs.type}" }
+            require(if (op.isFloat) lhs.type.isFloatingPoint else lhs.type.isInteger) { "${op.keyword} does not accept type ${lhs.type}" }
         }
     }
 
     data class FNeg(val result: Local, val value: LlvmValue) : LlvmInstruction {
         init {
-            require(value.type == LlvmType.Double && result.type == LlvmType.Double) { "fneg needs type double, not ${value.type} -> ${result.type}" }
+            require(value.type.isFloatingPoint && result.type == value.type) { "fneg needs a floating point type, not ${value.type} -> ${result.type}" }
         }
     }
 
@@ -184,7 +187,7 @@ internal sealed interface LlvmInstruction {
 
     data class Fcmp(val cond: FcmpCondition, val result: Local, val lhs: LlvmValue, val rhs: LlvmValue) : LlvmInstruction {
         init {
-            require(lhs.type == LlvmType.Double && rhs.type == LlvmType.Double) { "fcmp operands must have type double: ${lhs.type}, ${rhs.type}" }
+            require(lhs.type.isFloatingPoint && rhs.type == lhs.type) { "fcmp operands must have the same floating point type: ${lhs.type}, ${rhs.type}" }
             require(result.type == LlvmType.I1) { "fcmp result must have type i1, not ${result.type}" }
         }
     }
@@ -352,8 +355,8 @@ private fun isValidCast(op: CastOperator, from: LlvmType, to: LlvmType): Boolean
     return when (op) {
         CastOperator.TRUNC -> fromBits != null && toBits != null && toBits < fromBits
         CastOperator.ZEXT, CastOperator.SEXT -> fromBits != null && toBits != null && toBits > fromBits
-        CastOperator.UITOFP, CastOperator.SITOFP -> fromBits != null && to == LlvmType.Double
-        CastOperator.FPTOUI, CastOperator.FPTOSI -> from == LlvmType.Double && toBits != null
+        CastOperator.UITOFP, CastOperator.SITOFP -> fromBits != null && to.isFloatingPoint
+        CastOperator.FPTOUI, CastOperator.FPTOSI -> from.isFloatingPoint && toBits != null
         CastOperator.PTRTOINT -> from == LlvmType.Ptr && toBits != null
         CastOperator.INTTOPTR -> fromBits != null && to == LlvmType.Ptr
         CastOperator.FPTRUNC, CastOperator.FPEXT, CastOperator.BITCAST -> true

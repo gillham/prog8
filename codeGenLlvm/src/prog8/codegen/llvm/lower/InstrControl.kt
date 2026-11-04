@@ -80,11 +80,11 @@ private fun FunctionLowering.jumpIndirect(ins: IRInstruction) {
         emit(LlvmInstruction.Call(null, address, emptyList(), LlvmType.Void))
         emit(LlvmInstruction.Ret(null))
     } else if (builder.strictIndirectSignatures) {
-        val float = returnType == LlvmType.Double
+        val float = returnType == floatType
         val slot = builder.hardwareSlot(CallingConventionSlot(10), float)
-        emit(LlvmInstruction.Store(LlvmValue.ZeroInitializer(if (float) LlvmType.Double else LlvmType.I64), slot))
+        emit(LlvmInstruction.Store(LlvmValue.ZeroInitializer(if (float) floatType else LlvmType.I64), slot))
         emit(LlvmInstruction.Call(null, address, emptyList(), LlvmType.Void))
-        val result = derive("jumpi", if (float) LlvmType.Double else LlvmType.I64) { LlvmInstruction.Load(it, slot) }
+        val result = derive("jumpi", if (float) floatType else LlvmType.I64) { LlvmInstruction.Load(it, slot) }
         emit(LlvmInstruction.Ret(convert(result, returnType)))
     } else
         emit(LlvmInstruction.Ret(derive("jumpi", returnType) { LlvmInstruction.Call(it, address, emptyList(), returnType) }))
@@ -93,8 +93,8 @@ private fun FunctionLowering.jumpIndirect(ins: IRInstruction) {
 /** SGN: the byte -1, 0 or 1 for the sign of the (signed) operand, and the flags of comparing that with 0. */
 private fun FunctionLowering.sign(ins: IRInstruction) {
     val value = read(ins.requireSrcA())
-    val sign = if (value.type == LlvmType.Double) {
-        val zero = LlvmValue.FloatConstant(0.0)
+    val sign = if (value.type.isFloatingPoint) {
+        val zero = LlvmValue.FloatConstant(0.0, value.type)
         minusZeroPlus(derive("neg", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OLT, it, value, zero) },
             derive("pos", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OGT, it, value, zero) })
     } else {

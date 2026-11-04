@@ -302,9 +302,9 @@ class TestLlvmGlobalEmission: FunSpec({
             listOf("main.counter", "prog8_struct_instances.node", "prog8_slabs.memory_buf", ".memmapped.d020", "main.LIMIT")
     }
 
-    test("the emitter only accepts targets with 4- or 8-byte pointers") {
+    test("the emitter rejects a target whose floats it has no type for") {
         val st = IRSymbolTable().apply { add(variable("main.counter", DataType.UWORD)) }
-        shouldThrow<IllegalArgumentException> { emit(st, C64Target()) }.message shouldContain "unsupported pointer size: 2"
+        shouldThrow<IllegalArgumentException> { emit(st, C64Target()) }.message shouldContain "the LLVM backend needs 8-byte floats"
         emit(st, VMTarget()).first.globals.map { it.name } shouldBe listOf("main.counter")
     }
 
@@ -328,7 +328,17 @@ class TestLlvmGlobalEmission: FunSpec({
         types(target32) shouldBe listOf(LlvmType.I32, LlvmType.I32, LlvmType.I32, 4)
         types(LlvmTarget(4, LlvmTripleProfile.resolve("armv7-unknown-linux-gnueabihf"))) shouldBe listOf(LlvmType.I32, LlvmType.I32, LlvmType.I32, 4)
         types(LlvmTarget(8, LlvmTripleProfile.resolve("x86_64-unknown-linux-gnu"))) shouldBe listOf(LlvmType.I64, LlvmType.I64, LlvmType.I64, 8)
-        shouldThrow<IllegalArgumentException> { LlvmTypeMapper(IRSymbolTable(), 2) }
+        shouldThrow<IllegalArgumentException> { LlvmTypeMapper(IRSymbolTable(), 3) }
+    }
+
+    test("with 2-byte pointers the address types have 16 bits, while LONG register slots keep 32") {
+        val mapper = LlvmTypeMapper(IRSymbolTable(), pointerBytes = 2, cLongBytes = 4)
+        listOf(mapper.intPtr, mapper.sizeT, mapper.wideInt, mapper.cInt, mapper.byteSize(LlvmType.Ptr)) shouldBe listOf(LlvmType.I16, LlvmType.I16, LlvmType.I32, LlvmType.I32, 2)
+        LlvmTypeMapper(IRSymbolTable()).wideInt shouldBe LlvmType.I64
+        LlvmTypeMapper(IRSymbolTable(), pointerBytes = 2, cLongBytes = 4, cIntBytes = 2).cInt shouldBe LlvmType.I16
+        LlvmTypeMapper(IRSymbolTable()).floatType shouldBe LlvmType.Double
+        mapper.byteSize(LlvmType.Float) shouldBe 4
+        shouldThrow<IllegalArgumentException> { LlvmTypeMapper(IRSymbolTable(), cIntBytes = 8) }
     }
 
     test("on llvm32, a pointer field takes 4 bytes in a packed struct, and the addresses in it are stored at i32 offsets") {

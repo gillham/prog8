@@ -7,6 +7,9 @@ import prog8.codegen.llvm.model.IcmpCondition
 import prog8.codegen.llvm.model.LlvmInstruction
 import prog8.codegen.llvm.model.LlvmType
 import prog8.codegen.llvm.model.LlvmValue
+import prog8.codegen.llvm.types.floatIntrinsic
+import prog8.codegen.llvm.types.floatSuffix
+import prog8.codegen.llvm.types.libmName
 import prog8.intermediate.IRDataType
 import prog8.intermediate.IRInstruction
 import prog8.intermediate.Opcode
@@ -41,19 +44,19 @@ internal fun FunctionLowering.lowerArithmetic(ins: IRInstruction) {
         Opcode.FTOUB, Opcode.FTOSB, Opcode.FTOUW, Opcode.FTOSW, Opcode.FTOSL, Opcode.FTOSQ ->
             ins.requireDest().let { write(it, floatToInteger(read(ins.requireSrcA()), typeOf(it.type))) }
         Opcode.FTOUQ -> ins.requireDest().let { write(it, floatToUnsignedQuad(read(ins.requireSrcA()), it.register.toString())) }
-        Opcode.FPOW -> ins.requireDest().let { write(it, intrinsic("llvm.pow.f64", LlvmType.Double, read(it), read(ins.requireSrcA()))) }
-        Opcode.FABS -> floatFunction(ins, "llvm.fabs.f64")
-        Opcode.FSIN -> floatFunction(ins, "llvm.sin.f64")
-        Opcode.FCOS -> floatFunction(ins, "llvm.cos.f64")
+        Opcode.FPOW -> ins.requireDest().let { write(it, intrinsic(floatIntrinsic("pow", floatType), floatType, read(it), read(ins.requireSrcA()))) }
+        Opcode.FABS -> floatFunction(ins, floatIntrinsic("fabs", floatType))
+        Opcode.FSIN -> floatFunction(ins, floatIntrinsic("sin", floatType))
+        Opcode.FCOS -> floatFunction(ins, floatIntrinsic("cos", floatType))
         // the C library's, as LLVM only has the llvm.tan and llvm.atan intrinsics from version 19 on
-        Opcode.FTAN -> floatFunction(ins, "tan")
-        Opcode.FATAN -> floatFunction(ins, "atan")
-        Opcode.FLN -> floatFunction(ins, "llvm.log.f64")
-        Opcode.FLOG -> floatFunction(ins, "llvm.log2.f64")
+        Opcode.FTAN -> floatFunction(ins, libmName("tan", floatType))
+        Opcode.FATAN -> floatFunction(ins, libmName("atan", floatType))
+        Opcode.FLN -> floatFunction(ins, floatIntrinsic("log", floatType))
+        Opcode.FLOG -> floatFunction(ins, floatIntrinsic("log2", floatType))
         // the VM rounds with Kotlin's round(), which rounds half to even
-        Opcode.FROUND -> floatFunction(ins, "llvm.roundeven.f64")
-        Opcode.FFLOOR -> floatFunction(ins, "llvm.floor.f64")
-        Opcode.FCEIL -> floatFunction(ins, "llvm.ceil.f64")
+        Opcode.FROUND -> floatFunction(ins, floatIntrinsic("roundeven", floatType))
+        Opcode.FFLOOR -> floatFunction(ins, floatIntrinsic("floor", floatType))
+        Opcode.FCEIL -> floatFunction(ins, floatIntrinsic("ceil", floatType))
         else -> throw IllegalArgumentException("${ins.opcode} is no arithmetic instruction")
     }
 }
@@ -93,14 +96,14 @@ private fun FunctionLowering.multiply(ins: IRInstruction, signed: Boolean) {
 
 /** [left] [operator] [right] on integers or floats; a pointer gets an integer added or subtracted as a byte offset. */
 internal fun FunctionLowering.operation(operator: BinaryOperator, left: LlvmValue, right: LlvmValue, base: String): LlvmValue {
-    if (left.type == LlvmType.Double) {
+    if (left.type.isFloatingPoint) {
         val floatOperator = when (operator) {
             BinaryOperator.ADD -> BinaryOperator.FADD
             BinaryOperator.SUB -> BinaryOperator.FSUB
             BinaryOperator.MUL -> BinaryOperator.FMUL
             else -> throw IllegalArgumentException("${sub.label}: ${operator.keyword} doesn't work on floats")
         }
-        return derive(base, LlvmType.Double) { LlvmInstruction.BinaryOp(floatOperator, it, left, right) }
+        return derive(base, left.type) { LlvmInstruction.BinaryOp(floatOperator, it, left, right) }
     }
     if (left.type == LlvmType.Ptr && right.type != LlvmType.Ptr && (operator == BinaryOperator.ADD || operator == BinaryOperator.SUB)) {
         val intPtr = builder.mapper.intPtr
@@ -116,8 +119,8 @@ internal fun FunctionLowering.operation(operator: BinaryOperator, left: LlvmValu
 }
 
 private fun FunctionLowering.step(value: LlvmValue, up: Boolean, base: String): LlvmValue = when (value.type) {
-    LlvmType.Double -> derive(base, LlvmType.Double) {
-        LlvmInstruction.BinaryOp(if (up) BinaryOperator.FADD else BinaryOperator.FSUB, it, value, LlvmValue.FloatConstant(1.0))
+    LlvmType.Float, LlvmType.Double -> derive(base, value.type) {
+        LlvmInstruction.BinaryOp(if (up) BinaryOperator.FADD else BinaryOperator.FSUB, it, value, LlvmValue.FloatConstant(1.0, value.type))
     }
     LlvmType.Ptr -> derive(base, LlvmType.Ptr) {
         LlvmInstruction.GetElementPtr(it, LlvmType.I8, value, listOf(LlvmValue.IntConstant(if (up) 1 else -1, builder.mapper.intPtr)), inBounds = false)
@@ -128,8 +131,8 @@ private fun FunctionLowering.step(value: LlvmValue, up: Boolean, base: String): 
 }
 
 private fun FunctionLowering.negate(value: LlvmValue, base: String): LlvmValue {
-    if (value.type == LlvmType.Double)
-        return derive(base, LlvmType.Double) { LlvmInstruction.FNeg(it, value) }
+    if (value.type.isFloatingPoint)
+        return derive(base, value.type) { LlvmInstruction.FNeg(it, value) }
     val number = asInteger(value)
     if (number is LlvmValue.IntConstant)
         return integerConstant(-number.value, number.type)
@@ -139,8 +142,8 @@ private fun FunctionLowering.negate(value: LlvmValue, base: String): LlvmValue {
 /** DIV, DIVS, MOD and MODS of a register or memory, by a register or an immediate. */
 private fun FunctionLowering.divide(ins: IRInstruction, signed: Boolean, remainder: Boolean) =
     modify(ins) { left, base ->
-        if (left.type == LlvmType.Double)
-            floatQuotient(left, ins.srcA?.let { read(it) } ?: immediate(ins, LlvmType.Double), base)
+        if (left.type.isFloatingPoint)
+            floatQuotient(left, ins.srcA?.let { read(it) } ?: immediate(ins, left.type), base)
         else {
             val dividend = divisible(left)
             val divisor = ins.srcA?.let { divisible(read(it)) } ?: immediate(ins, dividend.type)
@@ -231,46 +234,48 @@ private fun widerThan(type: LlvmType): LlvmType = when (type) {
 
 /** The VM gives the largest float for a division by zero. */
 private fun FunctionLowering.floatQuotient(dividend: LlvmValue, divisor: LlvmValue, base: String): LlvmValue {
+    val type = dividend.type
+    val largest = LlvmValue.FloatConstant(if (type == LlvmType.Float) Float.MAX_VALUE.toDouble() else Double.MAX_VALUE, type)
     if (divisor is LlvmValue.FloatConstant && divisor.value == 0.0)
-        return LlvmValue.FloatConstant(Double.MAX_VALUE)
-    val quotient = derive(base, LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FDIV, it, dividend, divisor) }
+        return largest
+    val quotient = derive(base, type) { LlvmInstruction.BinaryOp(BinaryOperator.FDIV, it, dividend, divisor) }
     if (divisor is LlvmValue.FloatConstant)
         return quotient
-    val isZero = derive("zero", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OEQ, it, divisor, LlvmValue.FloatConstant(0.0)) }
-    return derive(base, LlvmType.Double) { LlvmInstruction.Select(it, isZero, LlvmValue.FloatConstant(Double.MAX_VALUE), quotient) }
+    val isZero = derive("zero", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OEQ, it, divisor, LlvmValue.FloatConstant(0.0, type)) }
+    return derive(base, type) { LlvmInstruction.Select(it, isZero, largest, quotient) }
 }
 
 /** The square root of an integer is an integer, truncated like the VM does; the VM takes a long as signed. */
 private fun FunctionLowering.squareRoot(ins: IRInstruction) {
     val dest = ins.requireDest()
     val value = read(ins.requireSrcA())
-    if (value.type == LlvmType.Double)
-        write(dest, intrinsic("llvm.sqrt.f64", LlvmType.Double, value))
+    if (value.type.isFloatingPoint)
+        write(dest, intrinsic(floatIntrinsic("sqrt", value.type), value.type, value))
     else {
         val operator = if (ins.type == IRDataType.LONG) CastOperator.SITOFP else CastOperator.UITOFP
         val number = asInteger(value)
         val float = derive("float", LlvmType.Double) { LlvmInstruction.Cast(operator, it, number, LlvmType.Double) }
-        write(dest, floatToInteger(intrinsic("llvm.sqrt.f64", LlvmType.Double, float), typeOf(dest.type)))
+        write(dest, floatToInteger(intrinsic(floatIntrinsic("sqrt", LlvmType.Double), LlvmType.Double, float), typeOf(dest.type)))
     }
 }
 
 /** Like the VM's Kotlin toInt() (toLong() for a quad), which saturates and turns NaN into 0, followed by truncation to [type]. */
 private fun FunctionLowering.floatToInteger(value: LlvmValue, type: LlvmType): LlvmValue =
-    if (type == LlvmType.I64) intrinsic("llvm.fptosi.sat.i64.f64", LlvmType.I64, value)
-    else convert(intrinsic("llvm.fptosi.sat.i32.f64", LlvmType.I32, value), type)
+    if (type == LlvmType.I64) intrinsic("llvm.fptosi.sat.i64.${floatSuffix(value.type)}", LlvmType.I64, value)
+    else convert(intrinsic("llvm.fptosi.sat.i32.${floatSuffix(value.type)}", LlvmType.I32, value), type)
 
 /** Like the VM, a negative float wraps around as with a signed conversion, others saturate to the uquad range; NaN gives 0. */
 private fun FunctionLowering.floatToUnsignedQuad(value: LlvmValue, base: String): LlvmValue {
-    val negative = derive("negative", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OLT, it, value, LlvmValue.FloatConstant(0.0)) }
-    val signed = intrinsic("llvm.fptosi.sat.i64.f64", LlvmType.I64, value)
-    val unsigned = intrinsic("llvm.fptoui.sat.i64.f64", LlvmType.I64, value)
+    val negative = derive("negative", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OLT, it, value, LlvmValue.FloatConstant(0.0, value.type)) }
+    val signed = intrinsic("llvm.fptosi.sat.i64.${floatSuffix(value.type)}", LlvmType.I64, value)
+    val unsigned = intrinsic("llvm.fptoui.sat.i64.${floatSuffix(value.type)}", LlvmType.I64, value)
     return derive(base, LlvmType.I64) { LlvmInstruction.Select(it, negative, signed, unsigned) }
 }
 
 private fun FunctionLowering.toFloat(ins: IRInstruction, operator: CastOperator) {
     val value = read(ins.requireSrcA())
-    write(ins.requireDest(), derive("float", LlvmType.Double) { LlvmInstruction.Cast(operator, it, value, LlvmType.Double) })
+    write(ins.requireDest(), derive("float", floatType) { LlvmInstruction.Cast(operator, it, value, floatType) })
 }
 
 private fun FunctionLowering.floatFunction(ins: IRInstruction, name: String) =
-    write(ins.requireDest(), intrinsic(name, LlvmType.Double, read(ins.requireSrcA())))
+    write(ins.requireDest(), intrinsic(name, floatType, read(ins.requireSrcA())))

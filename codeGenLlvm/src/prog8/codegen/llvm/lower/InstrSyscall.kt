@@ -11,6 +11,8 @@ import prog8.codegen.llvm.model.LlvmInstruction
 import prog8.codegen.llvm.model.LlvmLinkage
 import prog8.codegen.llvm.model.LlvmType
 import prog8.codegen.llvm.model.LlvmValue
+import prog8.codegen.llvm.types.floatIntrinsic
+import prog8.codegen.llvm.types.libmName
 import prog8.intermediate.CallSite
 import prog8.intermediate.CallTarget
 import prog8.intermediate.IMSyscall
@@ -124,7 +126,7 @@ internal fun FunctionLowering.lowerSyscall(ins: IRInstruction) {
             IMSyscall.WORDARRAY_CONTAINS -> arrayContains(site, number, LlvmType.I16)
             IMSyscall.LONGARRAY_CONTAINS -> arrayContains(site, number, LlvmType.I32)
             IMSyscall.QUADARRAY_CONTAINS -> arrayContains(site, number, LlvmType.I64)
-            IMSyscall.FLOATARRAY_CONTAINS -> arrayContains(site, number, LlvmType.Double)
+            IMSyscall.FLOATARRAY_CONTAINS -> arrayContains(site, number, builder.mapper.floatType)
             IMSyscall.CLAMP_UBYTE -> clamp(site, number, LlvmType.I8, signed = false)
             IMSyscall.CLAMP_BYTE -> clamp(site, number, LlvmType.I8, signed = true)
             IMSyscall.CLAMP_UWORD -> clamp(site, number, LlvmType.I16, signed = false)
@@ -182,18 +184,18 @@ private fun FunctionLowering.clamp(site: CallSite, number: Int, type: LlvmType, 
 
 /** ATAN(x1, y1, x2, y2): the angle from the first point to the second, in 256 steps for a full circle, as in the VM. */
 private fun FunctionLowering.angle(site: CallSite, number: Int) {
-    val (x1, y1, x2, y2) = arguments(site, number, 4).map { derive("coord", LlvmType.Double) { value -> LlvmInstruction.Cast(CastOperator.UITOFP, value, convert(read(it), LlvmType.I8), LlvmType.Double) } }
-    val dy = derive("dy", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FSUB, it, y2, y1) }
-    val dx = derive("dx", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FSUB, it, x2, x1) }
-    val radians = derive("radians", LlvmType.Double) { LlvmInstruction.Call(it, external("atan2", LlvmType.Double, listOf(LlvmType.Double, LlvmType.Double)), listOf(dy, dx), LlvmType.Double) }
-    val negative = derive("negative", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OLT, it, radians, LlvmValue.FloatConstant(0.0)) }
-    val turned = derive("radians", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FADD, it, radians, LlvmValue.FloatConstant(2 * Math.PI)) }
-    val full = derive("radians", LlvmType.Double) { LlvmInstruction.Select(it, negative, turned, radians) }
+    val (x1, y1, x2, y2) = arguments(site, number, 4).map { derive("coord", floatType) { value -> LlvmInstruction.Cast(CastOperator.UITOFP, value, convert(read(it), LlvmType.I8), floatType) } }
+    val dy = derive("dy", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FSUB, it, y2, y1) }
+    val dx = derive("dx", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FSUB, it, x2, x1) }
+    val radians = derive("radians", floatType) { LlvmInstruction.Call(it, external(libmName("atan2", floatType), floatType, listOf(floatType, floatType)), listOf(dy, dx), floatType) }
+    val negative = derive("negative", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OLT, it, radians, floatConstant(0.0)) }
+    val turned = derive("radians", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FADD, it, radians, floatConstant(2 * Math.PI)) }
+    val full = derive("radians", floatType) { LlvmInstruction.Select(it, negative, turned, radians) }
     // the VM's radians/2.0/PI*256.0, in that order, so that values on a step boundary round the same
-    val halved = derive("steps", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FDIV, it, full, LlvmValue.FloatConstant(2.0)) }
-    val turns = derive("steps", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FDIV, it, halved, LlvmValue.FloatConstant(Math.PI)) }
-    val scaled = derive("steps", LlvmType.Double) { LlvmInstruction.BinaryOp(BinaryOperator.FMUL, it, turns, LlvmValue.FloatConstant(256.0)) }
-    val steps = derive("steps", LlvmType.I32) { LlvmInstruction.Cast(CastOperator.FPTOSI, it, intrinsic("llvm.floor.f64", LlvmType.Double, scaled), LlvmType.I32) }
+    val halved = derive("steps", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FDIV, it, full, floatConstant(2.0)) }
+    val turns = derive("steps", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FDIV, it, halved, floatConstant(Math.PI)) }
+    val scaled = derive("steps", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FMUL, it, turns, floatConstant(256.0)) }
+    val steps = derive("steps", LlvmType.I32) { LlvmInstruction.Cast(CastOperator.FPTOSI, it, intrinsic(floatIntrinsic("floor", floatType), floatType, scaled), LlvmType.I32) }
     result(site, convert(steps, LlvmType.I8, "angle"))
 }
 
@@ -212,47 +214,50 @@ private fun FunctionLowering.waitJiffies(site: CallSite, number: Int) {
 /** EXIT(status byte) ends the program with C's exit(), which the hosted llvm targets can rely on. */
 private fun FunctionLowering.exit(site: CallSite, number: Int) {
     val (status) = arguments(site, number, 1)
-    val code = convert(read(status), LlvmType.I32)
-    emit(LlvmInstruction.Call(null, external("exit", LlvmType.Void, listOf(LlvmType.I32)), listOf(code), LlvmType.Void))
+    val cInt = builder.mapper.cInt
+    val code = convert(read(status), cInt)
+    emit(LlvmInstruction.Call(null, external("exit", LlvmType.Void, listOf(cInt)), listOf(code), LlvmType.Void))
 }
 
 /** PRINT_C(character) writes the byte to stdout. */
 private fun FunctionLowering.printChar(site: CallSite, number: Int) {
     val (character) = arguments(site, number, 1)
-    val code = convert(read(character), LlvmType.I32, "ch")
-    emit(LlvmInstruction.Call(null, putchar(), listOf(code), LlvmType.I32))
+    val code = convert(read(character), builder.mapper.cInt, "ch")
+    emit(LlvmInstruction.Call(null, putchar(), listOf(code), builder.mapper.cInt))
 }
 
 /** PRINT_S(string) writes the zero-terminated string to stdout, without its terminating 0. */
 private fun FunctionLowering.printString(site: CallSite, number: Int) {
     val (string) = arguments(site, number, 1)
-    val helper = builder.helperFunction(".print.string") { printStringHelper(putchar(), builder.mapper.intPtr) }
+    val helper = builder.helperFunction(".print.string") { printStringHelper(putchar(), builder.mapper.intPtr, builder.mapper.cInt) }
     emit(LlvmInstruction.Call(null, helper, listOf(pointerValue(string)), LlvmType.Void))
 }
 
 // putchar() and not printf() or fputs(): those need a format string, or the platform-specific stdout symbol
-private fun FunctionLowering.putchar(): LlvmValue.Global = external("putchar", LlvmType.I32, listOf(LlvmType.I32))
+private fun FunctionLowering.putchar(): LlvmValue.Global = external("putchar", builder.mapper.cInt, listOf(builder.mapper.cInt))
 
 /** GET_C(): the next byte from stdin, read with C's getchar(); its negative EOF becomes 0, as in the VM. */
 private fun FunctionLowering.getChar(site: CallSite, number: Int) {
     arguments(site, number, 0)
-    val code = derive("ch", LlvmType.I32) { LlvmInstruction.Call(it, external("getchar", LlvmType.I32, emptyList()), emptyList(), LlvmType.I32) }
-    result(site, convert(intrinsic("llvm.smax.i32", LlvmType.I32, code, LlvmValue.IntConstant(0, LlvmType.I32)), LlvmType.I8, "ch"))
+    val cInt = builder.mapper.cInt
+    val code = derive("ch", cInt) { LlvmInstruction.Call(it, external("getchar", cInt, emptyList()), emptyList(), cInt) }
+    result(site, convert(intrinsic("llvm.smax.${LlvmPrinter.format(cInt)}", cInt, code, LlvmValue.IntConstant(0, cInt)), LlvmType.I8, "ch"))
 }
 
 /** GET_ARGC(): the number of command line arguments as a word, including the program name; it can't count past 65535. */
 private fun FunctionLowering.argumentCount(site: CallSite, number: Int) {
     arguments(site, number, 0)
-    val count = derive("argc", LlvmType.I32) { LlvmInstruction.Load(it, builder.argumentCount()) }
+    val cInt = builder.mapper.cInt
+    val count = derive("argc", cInt) { LlvmInstruction.Load(it, builder.argumentCount()) }
     // saturated rather than truncated, so that every index below the count still gives an argument
-    result(site, convert(intrinsic("llvm.umin.i32", LlvmType.I32, count, LlvmValue.IntConstant(0xffff, LlvmType.I32)), LlvmType.I16, "argc"))
+    result(site, convert(intrinsic("llvm.umin.${LlvmPrinter.format(cInt)}", cInt, count, LlvmValue.IntConstant(0xffff, cInt)), LlvmType.I16, "argc"))
 }
 
 /** GET_ARGV(index word): the command line argument at the index, 0 being the program name, or an empty string when there is none. */
 private fun FunctionLowering.argument(site: CallSite, number: Int) {
     val (index) = arguments(site, number, 1)
     val helper = builder.helperFunction(".sys.argv.at") {
-        argumentHelper(builder.argumentCount(), builder.argumentArray(), builder.runtimeGlobal(".sys.argv.none", LlvmType.Array(1, LlvmType.I8), constant = true), builder.mapper.intPtr)
+        argumentHelper(builder.argumentCount(), builder.argumentArray(), builder.runtimeGlobal(".sys.argv.none", LlvmType.Array(1, LlvmType.I8), constant = true), builder.mapper.intPtr, builder.mapper.cInt)
     }
     result(site, derive("argv", LlvmType.Ptr) { LlvmInstruction.Call(it, helper, listOf(convert(read(index), LlvmType.I16)), LlvmType.Ptr) })
 }
@@ -304,15 +309,16 @@ private fun FunctionLowering.save(site: CallSite, number: Int) {
 private fun FunctionLowering.fileSystem(site: CallSite, number: Int, routine: Libc) {
     val paths = arguments(site, number, if (routine == Libc.RENAME) 2 else 1).map { pointerValue(it) }
     // rwxr-xr-x, before the umask
-    val args = if (routine == Libc.MKDIR) paths + LlvmValue.IntConstant(0b111_101_101, LlvmType.I32) else paths
-    val status = derive("status", LlvmType.I32) { LlvmInstruction.Call(it, builder.libc(routine), args, LlvmType.I32) }
+    val cInt = builder.mapper.cInt
+    val args = if (routine == Libc.MKDIR) paths + LlvmValue.IntConstant(0b111_101_101, cInt) else paths
+    val status = derive("status", cInt) { LlvmInstruction.Call(it, builder.libc(routine), args, cInt) }
     if (site.results.isNotEmpty())
         result(site, succeeded(status))
 }
 
 /** The byte 1 when the int [status] of a C routine is 0, its value for success, else 0. */
 private fun FunctionLowering.succeeded(status: LlvmValue): LlvmValue {
-    val ok = derive("ok", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, status, i32(0)) }
+    val ok = derive("ok", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, status, LlvmValue.IntConstant(0, status.type)) }
     return derive("ok", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, ok, LlvmType.I8) }
 }
 
@@ -383,7 +389,7 @@ private fun FunctionLowering.openHandle(site: CallSite, number: Int) {
 /** FCLOSE(file) and FFLUSH(file): 1 when fclose() or fflush() succeeds, else 0. */
 private fun FunctionLowering.handleStatus(site: CallSite, number: Int, routine: Libc) {
     val (file) = arguments(site, number, 1)
-    val status = derive("status", LlvmType.I32) { LlvmInstruction.Call(it, builder.libc(routine), listOf(pointerValue(file)), LlvmType.I32) }
+    val status = derive("status", builder.mapper.cInt) { LlvmInstruction.Call(it, builder.libc(routine), listOf(pointerValue(file)), builder.mapper.cInt) }
     result(site, succeeded(status))
 }
 
@@ -404,16 +410,17 @@ private fun FunctionLowering.seekHandle(site: CallSite, number: Int) {
     val quadOffset = read(offset)
     val narrowed = checkNotNull(quadOffset.type.bitWidth) > checkNotNull(fileOffset.bitWidth)
     val longOffset = if (narrowed) convert(quadOffset, fileOffset, "offset") else widen(quadOffset, fileOffset, signed = true, "offset")
-    var whence = convert(read(origin), LlvmType.I32, "origin")
+    val cInt = builder.mapper.cInt
+    var whence = convert(read(origin), cInt, "origin")
     if (narrowed) {
         // an offset that doesn't fit in the file offset fails the seek, with an origin that fseek rejects, instead of going to its low bits
         val restored = widen(longOffset, quadOffset.type, signed = true, "offset")
         val fits = derive("fits", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.EQ, it, restored, quadOffset) }
         val checked = whence
-        whence = derive("origin", LlvmType.I32) { LlvmInstruction.Select(it, fits, checked, i32(-1)) }
+        whence = derive("origin", cInt) { LlvmInstruction.Select(it, fits, checked, LlvmValue.IntConstant(-1, cInt)) }
     }
     val args = listOf(pointerValue(file), longOffset, whence)
-    val status = derive("status", LlvmType.I32) { LlvmInstruction.Call(it, builder.restoringSeek(), args, LlvmType.I32) }
+    val status = derive("status", cInt) { LlvmInstruction.Call(it, builder.restoringSeek(), args, cInt) }
     result(site, succeeded(status))
 }
 
@@ -428,8 +435,9 @@ private fun FunctionLowering.tellHandle(site: CallSite, number: Int) {
 /** FEOF(file): 1 when a read went past the end of the file, else 0. */
 private fun FunctionLowering.endOfFile(site: CallSite, number: Int) {
     val (file) = arguments(site, number, 1)
-    val flag = derive("eof", LlvmType.I32) { LlvmInstruction.Call(it, builder.libc(Libc.FEOF), listOf(pointerValue(file)), LlvmType.I32) }
-    val set = derive("eof", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.NE, it, flag, i32(0)) }
+    val cInt = builder.mapper.cInt
+    val flag = derive("eof", cInt) { LlvmInstruction.Call(it, builder.libc(Libc.FEOF), listOf(pointerValue(file)), cInt) }
+    val set = derive("eof", LlvmType.I1) { LlvmInstruction.Icmp(IcmpCondition.NE, it, flag, LlvmValue.IntConstant(0, cInt)) }
     result(site, derive("eof", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, set, LlvmType.I8) })
 }
 
@@ -437,15 +445,22 @@ private fun FunctionLowering.endOfFile(site: CallSite, number: Int) {
 private fun FunctionLowering.floatDigits(site: CallSite, number: Int) {
     val (buffer, value) = arguments(site, number, 2)
     val helper = builder.helperFunction(".float.digits") { builder.floatDigitsHelper() }
-    emit(LlvmInstruction.Call(null, helper, listOf(pointerValue(buffer), read(value)), LlvmType.Void))
+    emit(LlvmInstruction.Call(null, helper, listOf(pointerValue(buffer), toCDouble(read(value))), LlvmType.Void))
 }
 
 /** PARSE_FLOAT(string): the float that strtod() reads from the whole string, or 0.0 when the string isn't one number. */
 private fun FunctionLowering.parseFloat(site: CallSite, number: Int) {
     val (string) = arguments(site, number, 1)
     val helper = builder.helperFunction(".float.parse") { builder.parseFloatHelper() }
-    result(site, derive("float", LlvmType.Double) { LlvmInstruction.Call(it, helper, listOf(pointerValue(string)), LlvmType.Double) })
+    result(site, fromCDouble(derive("float", LlvmType.Double) { LlvmInstruction.Call(it, helper, listOf(pointerValue(string)), LlvmType.Double) }))
 }
+
+// the C library's float text conversions work on doubles
+private fun FunctionLowering.toCDouble(value: LlvmValue): LlvmValue =
+    if (value.type == LlvmType.Double) value else derive("double", LlvmType.Double) { LlvmInstruction.Cast(CastOperator.FPEXT, it, value, LlvmType.Double) }
+
+private fun FunctionLowering.fromCDouble(value: LlvmValue): LlvmValue =
+    if (floatType == LlvmType.Double) value else derive("float", floatType) { LlvmInstruction.Cast(CastOperator.FPTRUNC, it, value, floatType) }
 
 /**
  * LIST_DIRECTORY(kind byte): prints the entries of the current directory sorted by name, all of them for kind 0, the subdirectories
@@ -475,7 +490,7 @@ private fun containsHelper(name: String, elementType: LlvmType, intPtr: LlvmType
     val element = LlvmValue.Local("element", elementType)
     val found = LlvmValue.Local("found", LlvmType.I1)
     val next = LlvmValue.Local("next", intPtr)
-    val equal = if (elementType == LlvmType.Double) LlvmInstruction.Fcmp(FcmpCondition.OEQ, found, element, needle)
+    val equal = if (elementType.isFloatingPoint) LlvmInstruction.Fcmp(FcmpCondition.OEQ, found, element, needle)
         else LlvmInstruction.Icmp(IcmpCondition.EQ, found, element, needle)
     return helper(name, LlvmType.I8, listOf(needle, array, count),
         "entry" to listOf(LlvmInstruction.Cast(CastOperator.ZEXT, n, count, intPtr), LlvmInstruction.Br("loop")),
@@ -555,12 +570,12 @@ private fun compareStringsHelper(intPtr: LlvmType): LlvmFunction {
 }
 
 /** `void (ptr str)`: writes the bytes of the zero-terminated string with [putchar], up to its terminating 0. */
-private fun printStringHelper(putchar: LlvmValue.Global, intPtr: LlvmType): LlvmFunction {
+private fun printStringHelper(putchar: LlvmValue.Global, intPtr: LlvmType, cInt: LlvmType): LlvmFunction {
     val str = LlvmValue.Local("str", LlvmType.Ptr)
     val currentPointer = LlvmValue.Local("curr_ptr", LlvmType.Ptr)
     val ch = LlvmValue.Local("ch", LlvmType.I8)
     val end = LlvmValue.Local("end", LlvmType.I1)
-    val code = LlvmValue.Local("ch_ext", LlvmType.I32)
+    val code = LlvmValue.Local("ch_ext", cInt)
     val next = LlvmValue.Local("next", LlvmType.Ptr)
     return helper(".print.string", LlvmType.Void, listOf(str),
         "entry" to listOf(LlvmInstruction.Br("loop")),
@@ -570,8 +585,8 @@ private fun printStringHelper(putchar: LlvmValue.Global, intPtr: LlvmType): Llvm
             LlvmInstruction.Icmp(IcmpCondition.EQ, end, ch, LlvmValue.IntConstant(0, LlvmType.I8)),
             LlvmInstruction.CondBr(end, "done", "print")),
         "print" to listOf(
-            LlvmInstruction.Cast(CastOperator.ZEXT, code, ch, LlvmType.I32),
-            LlvmInstruction.Call(null, putchar, listOf(code), LlvmType.I32),
+            LlvmInstruction.Cast(CastOperator.ZEXT, code, ch, cInt),
+            LlvmInstruction.Call(null, putchar, listOf(code), cInt),
             LlvmInstruction.GetElementPtr(next, LlvmType.I8, currentPointer, listOf(LlvmValue.IntConstant(1, intPtr)), inBounds = false),
             LlvmInstruction.Br("loop")),
         "done" to listOf(LlvmInstruction.Ret(null)))
@@ -602,11 +617,11 @@ private fun setWordsHelper(intPtr: LlvmType): LlvmFunction {
 }
 
 /** `ptr (i16 index)`: the [arguments] entry at the index when that is below the [count], else the [empty] string. */
-private fun argumentHelper(count: LlvmValue.Global, arguments: LlvmValue.Global, empty: LlvmValue.Global, intPtr: LlvmType): LlvmFunction {
+private fun argumentHelper(count: LlvmValue.Global, arguments: LlvmValue.Global, empty: LlvmValue.Global, intPtr: LlvmType, cInt: LlvmType): LlvmFunction {
     val index = LlvmValue.Local("index", LlvmType.I16)
     val i = LlvmValue.Local("i", intPtr)
-    val argc = LlvmValue.Local("argc", LlvmType.I32)
-    val n = if (intPtr == LlvmType.I32) argc else LlvmValue.Local("n", intPtr)
+    val argc = LlvmValue.Local("argc", cInt)
+    val n = if (intPtr == cInt) argc else LlvmValue.Local("n", intPtr)
     val inRange = LlvmValue.Local("inrange", LlvmType.I1)
     val argv = LlvmValue.Local("argv", LlvmType.Ptr)
     val slot = LlvmValue.Local("slot", LlvmType.Ptr)
@@ -615,7 +630,7 @@ private fun argumentHelper(count: LlvmValue.Global, arguments: LlvmValue.Global,
         "entry" to listOfNotNull(
             LlvmInstruction.Cast(CastOperator.ZEXT, i, index, intPtr),
             LlvmInstruction.Load(argc, count),
-            if (n === argc) null else LlvmInstruction.Cast(CastOperator.ZEXT, n, argc, intPtr),
+            if (n === argc) null else LlvmInstruction.Cast(resize(cInt, intPtr), n, argc, intPtr),
             LlvmInstruction.Icmp(IcmpCondition.ULT, inRange, i, n),
             LlvmInstruction.CondBr(inRange, "present", "absent")),
         "present" to listOf(
@@ -665,7 +680,7 @@ private enum class Libc(val returnType: CType, vararg parameters: CType) {
 
 private fun LlvmFunctionBuilder.cType(type: CType): LlvmType = when (type) {
     CType.VOID -> LlvmType.Void
-    CType.INT -> LlvmType.I32
+    CType.INT -> mapper.cInt
     CType.PTR -> LlvmType.Ptr
     CType.SIZE_T -> mapper.sizeT
     CType.OFFSET -> mapper.fileOffset
@@ -688,6 +703,12 @@ private fun LlvmFunctionBuilder.writeStream(): LlvmValue.Global = runtimeGlobal(
 
 private fun i32(value: Long) = LlvmValue.IntConstant(value, LlvmType.I32)
 
+private fun LlvmFunctionBuilder.cIntConstant(value: Long) = LlvmValue.IntConstant(value, mapper.cInt)
+
+/** The cast that zero extends or truncates an integer of type [from] to [to]. */
+private fun resize(from: LlvmType, to: LlvmType): CastOperator =
+    if (checkNotNull(to.bitWidth) < checkNotNull(from.bitWidth)) CastOperator.TRUNC else CastOperator.ZEXT
+
 /**
  * `void (i16 jiffies)`: usleep() for that many 1/60 seconds, in parts of at most half a second, because POSIX lets usleep() fail
  * from a million microseconds on. Fewer calls also add up less of the time that each one oversleeps.
@@ -700,7 +721,7 @@ private fun LlvmFunctionBuilder.waitHelper(): LlvmFunction {
     val over = LlvmValue.Local("over", LlvmType.I1)
     val part = LlvmValue.Local("part", LlvmType.I32)
     val next = LlvmValue.Local("next", LlvmType.I32)
-    val usleep = LlvmValue.Global(externalFunction("usleep", LlvmType.I32, listOf(LlvmType.I32)).name)
+    val usleep = LlvmValue.Global(externalFunction("usleep", mapper.cInt, listOf(LlvmType.I32)).name)
     val umin = LlvmValue.Global(externalFunction("llvm.umin.i32", LlvmType.I32, listOf(LlvmType.I32, LlvmType.I32)).name)
     return helper(".sys.wait", LlvmType.Void, listOf(jiffies),
         "entry" to listOf(
@@ -714,7 +735,7 @@ private fun LlvmFunctionBuilder.waitHelper(): LlvmFunction {
             LlvmInstruction.CondBr(over, "finished", "sleep")),
         "sleep" to listOf(
             LlvmInstruction.Call(part, umin, listOf(left, i32(500000)), LlvmType.I32),
-            LlvmInstruction.Call(null, usleep, listOf(part), LlvmType.I32),
+            LlvmInstruction.Call(null, usleep, listOf(part), mapper.cInt),
             LlvmInstruction.BinaryOp(BinaryOperator.SUB, next, left, part),
             LlvmInstruction.Br("loop")),
         "finished" to listOf(LlvmInstruction.Ret(null)))
@@ -730,23 +751,23 @@ private fun LlvmFunctionBuilder.strtod(): LlvmValue.Global =
 private fun LlvmFunctionBuilder.floatDigitsHelper(): LlvmFunction {
     val buffer = LlvmValue.Local("buffer", LlvmType.Ptr)
     val value = LlvmValue.Local("value", LlvmType.Double)
-    val precision = LlvmValue.Local("precision", LlvmType.I32)
-    val next = LlvmValue.Local("next", LlvmType.I32)
+    val precision = LlvmValue.Local("precision", mapper.cInt)
+    val next = LlvmValue.Local("next", mapper.cInt)
     val parsed = LlvmValue.Local("parsed", LlvmType.Double)
     val same = LlvmValue.Local("same", LlvmType.I1)
     val last = LlvmValue.Local("last", LlvmType.I1)
     val found = LlvmValue.Local("found", LlvmType.I1)
-    val snprintf = externalFunction("snprintf", LlvmType.I32, listOf(LlvmType.Ptr, mapper.sizeT, LlvmType.Ptr), isVarArg = true)
+    val snprintf = externalFunction("snprintf", mapper.cInt, listOf(LlvmType.Ptr, mapper.sizeT, LlvmType.Ptr), isVarArg = true)
     val args = listOf(buffer, LlvmValue.IntConstant(32, mapper.sizeT), runtimeString(".float.digits.format", "%.*e"), precision, value)
     return helper(".float.digits", LlvmType.Void, listOf(buffer, value),
         "entry" to listOf(LlvmInstruction.Br("loop")),
         "loop" to listOf(
-            LlvmInstruction.Phi(precision, listOf(i32(1) to "entry", next to "loop")),
-            LlvmInstruction.Call(null, LlvmValue.Global(snprintf.name), args, LlvmType.I32, snprintf.type),
+            LlvmInstruction.Phi(precision, listOf(cIntConstant(1) to "entry", next to "loop")),
+            LlvmInstruction.Call(null, LlvmValue.Global(snprintf.name), args, mapper.cInt, snprintf.type),
             LlvmInstruction.Call(parsed, strtod(), listOf(buffer, LlvmValue.NullPtr()), LlvmType.Double),
             LlvmInstruction.Fcmp(FcmpCondition.OEQ, same, parsed, value),
-            LlvmInstruction.BinaryOp(BinaryOperator.ADD, next, precision, i32(1)),
-            LlvmInstruction.Icmp(IcmpCondition.SGE, last, next, i32(17)),
+            LlvmInstruction.BinaryOp(BinaryOperator.ADD, next, precision, cIntConstant(1)),
+            LlvmInstruction.Icmp(IcmpCondition.SGE, last, next, cIntConstant(17)),
             LlvmInstruction.BinaryOp(BinaryOperator.OR, found, same, last),
             LlvmInstruction.CondBr(found, "done", "loop")),
         "done" to listOf(LlvmInstruction.Ret(null)))
@@ -791,7 +812,7 @@ private fun LlvmFunctionBuilder.openHelper(): LlvmFunction {
             LlvmInstruction.Icmp(IcmpCondition.NE, open, previous, LlvmValue.NullPtr()),
             LlvmInstruction.CondBr(open, "close", "keep")),
         "close" to listOf(
-            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(previous), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(previous), mapper.cInt),
             LlvmInstruction.Br("keep")),
         "keep" to listOf(
             LlvmInstruction.Store(file, stream),
@@ -810,7 +831,7 @@ private fun LlvmFunctionBuilder.closeHelper(): LlvmFunction {
             LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
             LlvmInstruction.CondBr(open, "close", "done")),
         "close" to listOf(
-            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(file), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(file), mapper.cInt),
             LlvmInstruction.Store(LlvmValue.NullPtr(), stream),
             LlvmInstruction.Br("done")),
         "done" to listOf(LlvmInstruction.Ret(null)))
@@ -820,7 +841,7 @@ private fun LlvmFunctionBuilder.closeHelper(): LlvmFunction {
 private fun LlvmFunctionBuilder.readByteHelper(): LlvmFunction {
     val file = LlvmValue.Local("file", LlvmType.Ptr)
     val open = LlvmValue.Local("open", LlvmType.I1)
-    val char = LlvmValue.Local("char", LlvmType.I32)
+    val char = LlvmValue.Local("char", mapper.cInt)
     val end = LlvmValue.Local("end", LlvmType.I1)
     val byte = LlvmValue.Local("byte", LlvmType.I16)
     val value = LlvmValue.Local("value", LlvmType.I16)
@@ -830,8 +851,8 @@ private fun LlvmFunctionBuilder.readByteHelper(): LlvmFunction {
             LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
             LlvmInstruction.CondBr(open, "read", "none")),
         "read" to listOf(
-            LlvmInstruction.Call(char, libc(Libc.FGETC), listOf(file), LlvmType.I32),
-            LlvmInstruction.Icmp(IcmpCondition.SLT, end, char, i32(0)),
+            LlvmInstruction.Call(char, libc(Libc.FGETC), listOf(file), mapper.cInt),
+            LlvmInstruction.Icmp(IcmpCondition.SLT, end, char, cIntConstant(0)),
             LlvmInstruction.CondBr(end, "none", "got")),
         "got" to listOf(
             LlvmInstruction.Cast(CastOperator.TRUNC, byte, char, LlvmType.I16),
@@ -845,8 +866,8 @@ private fun LlvmFunctionBuilder.writeByteHelper(): LlvmFunction {
     val byte = LlvmValue.Local("byte", LlvmType.I8)
     val file = LlvmValue.Local("file", LlvmType.Ptr)
     val open = LlvmValue.Local("open", LlvmType.I1)
-    val char = LlvmValue.Local("char", LlvmType.I32)
-    val written = LlvmValue.Local("written", LlvmType.I32)
+    val char = LlvmValue.Local("char", mapper.cInt)
+    val written = LlvmValue.Local("written", mapper.cInt)
     val ok = LlvmValue.Local("ok", LlvmType.I1)
     val result = LlvmValue.Local("result", LlvmType.I8)
     return helper(".file.write.byte", LlvmType.I8, listOf(byte),
@@ -855,9 +876,9 @@ private fun LlvmFunctionBuilder.writeByteHelper(): LlvmFunction {
             LlvmInstruction.Icmp(IcmpCondition.NE, open, file, LlvmValue.NullPtr()),
             LlvmInstruction.CondBr(open, "write", "fail")),
         "write" to listOf(
-            LlvmInstruction.Cast(CastOperator.ZEXT, char, byte, LlvmType.I32),
-            LlvmInstruction.Call(written, libc(Libc.FPUTC), listOf(char, file), LlvmType.I32),
-            LlvmInstruction.Icmp(IcmpCondition.SGE, ok, written, i32(0)),
+            LlvmInstruction.Cast(CastOperator.ZEXT, char, byte, mapper.cInt),
+            LlvmInstruction.Call(written, libc(Libc.FPUTC), listOf(char, file), mapper.cInt),
+            LlvmInstruction.Icmp(IcmpCondition.SGE, ok, written, cIntConstant(0)),
             LlvmInstruction.Cast(CastOperator.ZEXT, result, ok, LlvmType.I8),
             LlvmInstruction.Ret(result)),
         "fail" to listOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I8))))
@@ -873,18 +894,18 @@ private fun LlvmFunctionBuilder.restoringSeekHelper(): LlvmFunction {
     val fileOffset = mapper.fileOffset
     val file = LlvmValue.Local("file", LlvmType.Ptr)
     val offset = LlvmValue.Local("offset", fileOffset)
-    val origin = LlvmValue.Local("origin", LlvmType.I32)
+    val origin = LlvmValue.Local("origin", mapper.cInt)
     val before = LlvmValue.Local("before", fileOffset)
-    val status = LlvmValue.Local("status", LlvmType.I32)
+    val status = LlvmValue.Local("status", mapper.cInt)
     val failed = LlvmValue.Local("failed", LlvmType.I1)
-    return helper(".file.fseek", LlvmType.I32, listOf(file, offset, origin),
+    return helper(".file.fseek", mapper.cInt, listOf(file, offset, origin),
         "entry" to listOf(
             LlvmInstruction.Call(before, libc(Libc.FTELL), listOf(file), fileOffset),
-            LlvmInstruction.Call(status, libc(Libc.FSEEK), listOf(file, offset, origin), LlvmType.I32),
-            LlvmInstruction.Icmp(IcmpCondition.NE, failed, status, i32(0)),
+            LlvmInstruction.Call(status, libc(Libc.FSEEK), listOf(file, offset, origin), mapper.cInt),
+            LlvmInstruction.Icmp(IcmpCondition.NE, failed, status, cIntConstant(0)),
             LlvmInstruction.CondBr(failed, "restore", "done")),
         "restore" to listOf(
-            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, before, i32(SEEK_SET)), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, before, cIntConstant(SEEK_SET)), mapper.cInt),
             LlvmInstruction.Ret(status)),
         "done" to listOf(LlvmInstruction.Ret(status)))
 }
@@ -896,7 +917,7 @@ private fun LlvmFunctionBuilder.seekHelper(): LlvmFunction {
     val open = LlvmValue.Local("open", LlvmType.I1)
     val fileOffset = mapper.fileOffset
     val offset = if (fileOffset == LlvmType.I32) position else LlvmValue.Local("offset", fileOffset)
-    val status = LlvmValue.Local("status", LlvmType.I32)
+    val status = LlvmValue.Local("status", mapper.cInt)
     val ok = LlvmValue.Local("ok", LlvmType.I1)
     val result = LlvmValue.Local("result", LlvmType.I8)
     return helper(".file.seek", LlvmType.I8, listOf(position),
@@ -906,8 +927,8 @@ private fun LlvmFunctionBuilder.seekHelper(): LlvmFunction {
             LlvmInstruction.CondBr(open, "seek", "fail")),
         "seek" to listOfNotNull(
             if (offset === position) null else LlvmInstruction.Cast(CastOperator.SEXT, offset, position, fileOffset),
-            LlvmInstruction.Call(status, restoringSeek(), listOf(file, offset, i32(SEEK_SET)), LlvmType.I32),
-            LlvmInstruction.Icmp(IcmpCondition.EQ, ok, status, i32(0)),
+            LlvmInstruction.Call(status, restoringSeek(), listOf(file, offset, cIntConstant(SEEK_SET)), mapper.cInt),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, ok, status, cIntConstant(0)),
             LlvmInstruction.Cast(CastOperator.ZEXT, result, ok, LlvmType.I8),
             LlvmInstruction.Ret(result)),
         "fail" to listOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I8))))
@@ -957,9 +978,9 @@ private fun LlvmFunctionBuilder.sizeHelper(): LlvmFunction {
             LlvmInstruction.Icmp(IcmpCondition.SGE, seekable, position, LlvmValue.IntConstant(0, fileOffset)),
             LlvmInstruction.CondBr(seekable, "end", "none")),
         "end" to listOfNotNull(
-            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, LlvmValue.IntConstant(0, fileOffset), i32(SEEK_END)), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, LlvmValue.IntConstant(0, fileOffset), cIntConstant(SEEK_END)), mapper.cInt),
             LlvmInstruction.Call(size, libc(Libc.FTELL), listOf(file), fileOffset),
-            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, position, i32(SEEK_SET)), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, position, cIntConstant(SEEK_SET)), mapper.cInt),
             LlvmInstruction.Icmp(IcmpCondition.SGE, valid, size, LlvmValue.IntConstant(0, fileOffset)),
             LlvmInstruction.Select(known, valid, size, LlvmValue.IntConstant(0, fileOffset)),
             if (result === known) null else LlvmInstruction.Cast(CastOperator.TRUNC, result, known, LlvmType.I32),
@@ -978,7 +999,7 @@ private fun LlvmFunctionBuilder.loadHelper(): LlvmFunction {
     val nowhere = LlvmValue.Local("nowhere", LlvmType.I1)
     val file = LlvmValue.Local("file", LlvmType.Ptr)
     val failed = LlvmValue.Local("failed", LlvmType.I1)
-    val second = LlvmValue.Local("second", LlvmType.I32)
+    val second = LlvmValue.Local("second", mapper.cInt)
     val truncated = LlvmValue.Local("truncated", LlvmType.I1)
     val sizeT = mapper.sizeT
     val fileOffset = mapper.fileOffset
@@ -989,7 +1010,7 @@ private fun LlvmFunctionBuilder.loadHelper(): LlvmFunction {
     val count = LlvmValue.Local("count", sizeT)
     val next = LlvmValue.Local("next", LlvmType.Ptr)
     val unknown = LlvmValue.Local("unknown", LlvmType.I1)
-    val error = LlvmValue.Local("error", LlvmType.I32)
+    val error = LlvmValue.Local("error", mapper.cInt)
     val broken = LlvmValue.Local("broken", LlvmType.I1)
     return helper(".file.load", LlvmType.Ptr, listOf(name, address, raw),
         "entry" to listOf(
@@ -1002,34 +1023,34 @@ private fun LlvmFunctionBuilder.loadHelper(): LlvmFunction {
         "header" to listOf(LlvmInstruction.CondBr(raw, "read", "skip")),
         // the end of the file stays the end, so the second byte tells whether there were two
         "skip" to listOf(
-            LlvmInstruction.Call(null, libc(Libc.FGETC), listOf(file), LlvmType.I32),
-            LlvmInstruction.Call(second, libc(Libc.FGETC), listOf(file), LlvmType.I32),
-            LlvmInstruction.Icmp(IcmpCondition.SLT, truncated, second, i32(0)),
+            LlvmInstruction.Call(null, libc(Libc.FGETC), listOf(file), mapper.cInt),
+            LlvmInstruction.Call(second, libc(Libc.FGETC), listOf(file), mapper.cInt),
+            LlvmInstruction.Icmp(IcmpCondition.SLT, truncated, second, cIntConstant(0)),
             LlvmInstruction.CondBr(truncated, "unloaded", "read")),
         // exactly the rest of the file: Windows' fread fails when its count goes past writable memory, even when the file is shorter
         "read" to listOfNotNull(
             LlvmInstruction.Call(start, libc(Libc.FTELL), listOf(file), fileOffset),
-            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, LlvmValue.IntConstant(0, fileOffset), i32(SEEK_END)), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, LlvmValue.IntConstant(0, fileOffset), cIntConstant(SEEK_END)), mapper.cInt),
             LlvmInstruction.Call(end, libc(Libc.FTELL), listOf(file), fileOffset),
             LlvmInstruction.Icmp(IcmpCondition.SLT, unknown, end, start),
             LlvmInstruction.CondBr(unknown, "unloaded", "measured")),
         "measured" to listOfNotNull(
-            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, start, i32(SEEK_SET)), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, start, cIntConstant(SEEK_SET)), mapper.cInt),
             LlvmInstruction.BinaryOp(BinaryOperator.SUB, rest, end, start),
             if (fileOffset == sizeT) null else LlvmInstruction.Cast(CastOperator.SEXT, size as LlvmValue.Local, rest, sizeT),
             LlvmInstruction.Call(count, libc(Libc.FREAD), listOf(address, LlvmValue.IntConstant(1, sizeT), size, file), sizeT),
             LlvmInstruction.GetElementPtr(next, LlvmType.I8, address, listOf(count), inBounds = false),
             // reading on at the end sets the error flag for a directory, as reading it did before
-            LlvmInstruction.Call(null, libc(Libc.FGETC), listOf(file), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FGETC), listOf(file), mapper.cInt),
             LlvmInstruction.Br("done")),
         "done" to listOf(
-            LlvmInstruction.Call(error, libc(Libc.FERROR), listOf(file), LlvmType.I32),
-            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(file), LlvmType.I32),
-            LlvmInstruction.Icmp(IcmpCondition.NE, broken, error, i32(0)),
+            LlvmInstruction.Call(error, libc(Libc.FERROR), listOf(file), mapper.cInt),
+            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(file), mapper.cInt),
+            LlvmInstruction.Icmp(IcmpCondition.NE, broken, error, cIntConstant(0)),
             LlvmInstruction.CondBr(broken, "fail", "loaded")),
         "loaded" to listOf(LlvmInstruction.Ret(next)),
         "unloaded" to listOf(
-            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(file), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(file), mapper.cInt),
             LlvmInstruction.Br("fail")),
         "fail" to listOf(LlvmInstruction.Ret(LlvmValue.NullPtr())))
 }
@@ -1047,13 +1068,14 @@ private fun LlvmFunctionBuilder.saveHelper(): LlvmFunction {
     val file = LlvmValue.Local("file", LlvmType.Ptr)
     val failed = LlvmValue.Local("failed", LlvmType.I1)
     val address = LlvmValue.Local("address", mapper.intPtr)
-    val low = if (mapper.intPtr == LlvmType.I32) address else LlvmValue.Local("low", LlvmType.I32)
-    val lsb = LlvmValue.Local("lsb", LlvmType.I32)
-    val shifted = LlvmValue.Local("shifted", LlvmType.I32)
-    val msb = LlvmValue.Local("msb", LlvmType.I32)
+    val cInt = mapper.cInt
+    val low = if (mapper.intPtr == cInt) address else LlvmValue.Local("low", cInt)
+    val lsb = LlvmValue.Local("lsb", cInt)
+    val shifted = LlvmValue.Local("shifted", cInt)
+    val msb = LlvmValue.Local("msb", cInt)
     val written = LlvmValue.Local("written", sizeT)
     val complete = LlvmValue.Local("complete", LlvmType.I1)
-    val closed = LlvmValue.Local("closed", LlvmType.I32)
+    val closed = LlvmValue.Local("closed", cInt)
     val flushed = LlvmValue.Local("flushed", LlvmType.I1)
     val ok = LlvmValue.Local("ok", LlvmType.I1)
     val result = LlvmValue.Local("result", LlvmType.I8)
@@ -1065,19 +1087,19 @@ private fun LlvmFunctionBuilder.saveHelper(): LlvmFunction {
         "opened" to listOf(LlvmInstruction.CondBr(raw, "write", "header")),
         "header" to listOfNotNull(
             LlvmInstruction.Cast(CastOperator.PTRTOINT, address, start, mapper.intPtr),
-            if (low === address) null else LlvmInstruction.Cast(CastOperator.TRUNC, low, address, LlvmType.I32),
-            LlvmInstruction.BinaryOp(BinaryOperator.AND, lsb, low, i32(0xff)),
-            LlvmInstruction.Call(null, libc(Libc.FPUTC), listOf(lsb, file), LlvmType.I32),
-            LlvmInstruction.BinaryOp(BinaryOperator.LSHR, shifted, low, i32(8)),
-            LlvmInstruction.BinaryOp(BinaryOperator.AND, msb, shifted, i32(0xff)),
-            LlvmInstruction.Call(null, libc(Libc.FPUTC), listOf(msb, file), LlvmType.I32),
+            if (low === address) null else LlvmInstruction.Cast(resize(mapper.intPtr, cInt), low, address, cInt),
+            LlvmInstruction.BinaryOp(BinaryOperator.AND, lsb, low, cIntConstant(0xff)),
+            LlvmInstruction.Call(null, libc(Libc.FPUTC), listOf(lsb, file), mapper.cInt),
+            LlvmInstruction.BinaryOp(BinaryOperator.LSHR, shifted, low, cIntConstant(8)),
+            LlvmInstruction.BinaryOp(BinaryOperator.AND, msb, shifted, cIntConstant(0xff)),
+            LlvmInstruction.Call(null, libc(Libc.FPUTC), listOf(msb, file), mapper.cInt),
             LlvmInstruction.Br("write")),
         // fclose() reports the errors of writing what was still buffered
         "write" to listOf(
             LlvmInstruction.Call(written, libc(Libc.FWRITE), listOf(start, LlvmValue.IntConstant(1, sizeT), size, file), sizeT),
             LlvmInstruction.Icmp(IcmpCondition.EQ, complete, written, size),
-            LlvmInstruction.Call(closed, libc(Libc.FCLOSE), listOf(file), LlvmType.I32),
-            LlvmInstruction.Icmp(IcmpCondition.EQ, flushed, closed, i32(0)),
+            LlvmInstruction.Call(closed, libc(Libc.FCLOSE), listOf(file), mapper.cInt),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, flushed, closed, cIntConstant(0)),
             LlvmInstruction.BinaryOp(BinaryOperator.AND, ok, complete, flushed),
             LlvmInstruction.Cast(CastOperator.ZEXT, result, ok, LlvmType.I8),
             LlvmInstruction.Ret(result)),
@@ -1095,7 +1117,7 @@ private fun LlvmFunctionBuilder.listDirectoryHelper(nameOffset: Int): LlvmFuncti
     val pointerSize = LlvmValue.IntConstant((profile.pointerBits / 8).toLong(), sizeT)
     val opendir = LlvmValue.Global(externalFunction(profile.opendirSymbol, LlvmType.Ptr, listOf(LlvmType.Ptr)).name)
     val readdir = LlvmValue.Global(externalFunction(profile.readdirSymbol, LlvmType.Ptr, listOf(LlvmType.Ptr)).name)
-    val printf = externalFunction("printf", LlvmType.I32, listOf(LlvmType.Ptr), isVarArg = true)
+    val printf = externalFunction("printf", mapper.cInt, listOf(LlvmType.Ptr), isVarArg = true)
     val compare = helperFunction(".diskio.compare") { compareNamesHelper() }
     fun local(name: String, type: LlvmType) = LlvmValue.Local(name, type)
     val kind = local("kind", LlvmType.I8)
@@ -1106,9 +1128,9 @@ private fun LlvmFunctionBuilder.listDirectoryHelper(nameOffset: Int): LlvmFuncti
     val entry = local("dirent", LlvmType.Ptr)
     val end = local("end", LlvmType.I1)
     val name = local("entry_name", LlvmType.Ptr)
-    val dot = local("dot", LlvmType.I32)
+    val dot = local("dot", mapper.cInt)
     val isDot = local("is_dot", LlvmType.I1)
-    val dotDot = local("dotdot", LlvmType.I32)
+    val dotDot = local("dotdot", mapper.cInt)
     val isDotDot = local("is_dotdot", LlvmType.I1)
     val skip = local("skip", LlvmType.I1)
     val count = local("count", sizeT)
@@ -1137,7 +1159,7 @@ private fun LlvmFunctionBuilder.listDirectoryHelper(nameOffset: Int): LlvmFuncti
     val next = local("next_index", sizeT)
     val zero = LlvmValue.IntConstant(0, sizeT)
     fun print(format: String, text: String, vararg values: LlvmValue) =
-        LlvmInstruction.Call(null, LlvmValue.Global(printf.name), listOf(runtimeString(format, text)) + values, LlvmType.I32, printf.type)
+        LlvmInstruction.Call(null, LlvmValue.Global(printf.name), listOf(runtimeString(format, text)) + values, mapper.cInt, printf.type)
     return helper(".diskio.list", LlvmType.I8, listOf(kind),
         "entry" to listOf(
             LlvmInstruction.Alloca(namesSlot, LlvmType.Ptr),
@@ -1153,10 +1175,10 @@ private fun LlvmFunctionBuilder.listDirectoryHelper(nameOffset: Int): LlvmFuncti
             LlvmInstruction.CondBr(end, "sort", "name")),
         "name" to listOf(
             LlvmInstruction.GetElementPtr(name, LlvmType.I8, entry, listOf(i32(nameOffset.toLong())), inBounds = true),
-            LlvmInstruction.Call(dot, libc(Libc.STRCMP), listOf(name, runtimeString(".diskio.dot", ".")), LlvmType.I32),
-            LlvmInstruction.Icmp(IcmpCondition.EQ, isDot, dot, i32(0)),
-            LlvmInstruction.Call(dotDot, libc(Libc.STRCMP), listOf(name, runtimeString(".diskio.dotdot", "..")), LlvmType.I32),
-            LlvmInstruction.Icmp(IcmpCondition.EQ, isDotDot, dotDot, i32(0)),
+            LlvmInstruction.Call(dot, libc(Libc.STRCMP), listOf(name, runtimeString(".diskio.dot", ".")), mapper.cInt),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, isDot, dot, cIntConstant(0)),
+            LlvmInstruction.Call(dotDot, libc(Libc.STRCMP), listOf(name, runtimeString(".diskio.dotdot", "..")), mapper.cInt),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, isDotDot, dotDot, cIntConstant(0)),
             LlvmInstruction.BinaryOp(BinaryOperator.OR, skip, isDot, isDotDot),
             LlvmInstruction.CondBr(skip, "read", "keep")),
         // without the memory for another name, the listing has the names so far
@@ -1179,7 +1201,7 @@ private fun LlvmFunctionBuilder.listDirectoryHelper(nameOffset: Int): LlvmFuncti
             LlvmInstruction.Store(grownCount, countSlot),
             LlvmInstruction.Br("read")),
         "sort" to listOf(
-            LlvmInstruction.Call(null, libc(Libc.CLOSEDIR), listOf(dir), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.CLOSEDIR), listOf(dir), mapper.cInt),
             LlvmInstruction.Load(total, countSlot),
             LlvmInstruction.Load(list, namesSlot),
             LlvmInstruction.Call(null, libc(Libc.QSORT), listOf(list, total, pointerSize, compare), LlvmType.Void),
@@ -1195,7 +1217,7 @@ private fun LlvmFunctionBuilder.listDirectoryHelper(nameOffset: Int): LlvmFuncti
             LlvmInstruction.Icmp(IcmpCondition.NE, isDir, sub, LlvmValue.NullPtr()),
             LlvmInstruction.CondBr(isDir, "directory", "other")),
         "directory" to listOf(
-            LlvmInstruction.Call(null, libc(Libc.CLOSEDIR), listOf(sub), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.CLOSEDIR), listOf(sub), mapper.cInt),
             LlvmInstruction.Icmp(IcmpCondition.NE, wantDirs, kind, LlvmValue.IntConstant(2, LlvmType.I8)),
             LlvmInstruction.CondBr(wantDirs, "print_dir", "next")),
         "print_dir" to listOf(
@@ -1209,9 +1231,9 @@ private fun LlvmFunctionBuilder.listDirectoryHelper(nameOffset: Int): LlvmFuncti
             LlvmInstruction.Icmp(IcmpCondition.NE, opened, stream, LlvmValue.NullPtr()),
             LlvmInstruction.CondBr(opened, "size", "print_file")),
         "size" to listOf(
-            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(stream, LlvmValue.IntConstant(0, fileOffset), i32(SEEK_END)), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(stream, LlvmValue.IntConstant(0, fileOffset), cIntConstant(SEEK_END)), mapper.cInt),
             LlvmInstruction.Call(length, libc(Libc.FTELL), listOf(stream), fileOffset),
-            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(stream), LlvmType.I32),
+            LlvmInstruction.Call(null, libc(Libc.FCLOSE), listOf(stream), mapper.cInt),
             LlvmInstruction.Br("print_file")),
         // an unreadable file shows size 0
         "print_file" to listOf(
@@ -1234,12 +1256,12 @@ private fun LlvmFunctionBuilder.compareNamesHelper(): LlvmFunction {
     val second = LlvmValue.Local("second", LlvmType.Ptr)
     val a = LlvmValue.Local("a", LlvmType.Ptr)
     val b = LlvmValue.Local("b", LlvmType.Ptr)
-    val order = LlvmValue.Local("order", LlvmType.I32)
-    return helper(".diskio.compare", LlvmType.I32, listOf(first, second),
+    val order = LlvmValue.Local("order", mapper.cInt)
+    return helper(".diskio.compare", mapper.cInt, listOf(first, second),
         "entry" to listOf(
             LlvmInstruction.Load(a, first),
             LlvmInstruction.Load(b, second),
-            LlvmInstruction.Call(order, libc(Libc.STRCMP), listOf(a, b), LlvmType.I32),
+            LlvmInstruction.Call(order, libc(Libc.STRCMP), listOf(a, b), mapper.cInt),
             LlvmInstruction.Ret(order)))
 }
 

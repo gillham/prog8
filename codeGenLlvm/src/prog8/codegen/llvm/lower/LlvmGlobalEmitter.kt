@@ -321,7 +321,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram, private val sta
 
     /** The Double [value] of a quad is only approximate, so its exact [quadBits] are used when it has those. */
     private fun scalarConstant(base: BaseDataType, value: Double, quadBits: Long?): LlvmValue = when (base) {
-        BaseDataType.FLOAT -> LlvmValue.FloatConstant(value)
+        BaseDataType.FLOAT -> LlvmValue.FloatConstant(value, mapper.floatType)
         BaseDataType.POINTER ->
             if (value == 0.0) LlvmValue.NullPtr()
             else memoryMappedClusters.addressOf(value.toLong())

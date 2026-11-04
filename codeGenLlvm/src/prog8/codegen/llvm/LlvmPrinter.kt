@@ -40,6 +40,7 @@ internal object LlvmPrinter {
         LlvmType.I16 -> "i16"
         LlvmType.I32 -> "i32"
         LlvmType.I64 -> "i64"
+        LlvmType.Float -> "float"
         LlvmType.Double -> "double"
         LlvmType.Ptr -> "ptr"
         LlvmType.Void -> "void"
@@ -52,13 +53,13 @@ internal object LlvmPrinter {
         is LlvmValue.Local -> localName(value.name)
         is LlvmValue.Global -> globalName(value.name)
         is LlvmValue.IntConstant -> formatInteger(value)
-        is LlvmValue.FloatConstant -> formatDouble(value.value)
+        is LlvmValue.FloatConstant -> if (value.type == LlvmType.Float) formatFloat(value.value) else formatDouble(value.value)
         is LlvmValue.StringConstant -> "c" + quote(value.bytes)
         is LlvmValue.NullPtr -> "null"
         is LlvmValue.ZeroInitializer -> when (val type = value.type) {
             LlvmType.I1 -> "false"
             LlvmType.I8, LlvmType.I16, LlvmType.I32, LlvmType.I64 -> "0"
-            LlvmType.Double -> "0.0"
+            LlvmType.Float, LlvmType.Double -> "0.0"
             LlvmType.Ptr -> "null"
             is LlvmType.Array, is LlvmType.Struct -> "zeroinitializer"
             LlvmType.Void, is LlvmType.Function -> error("$type has no zero value")
@@ -153,7 +154,7 @@ internal object LlvmPrinter {
         LlvmType.I16 -> constant.value.toShort().toString()
         LlvmType.I32 -> constant.value.toInt().toString()
         LlvmType.I64 -> constant.value.toString()
-        LlvmType.Double, LlvmType.Ptr, LlvmType.Void, is LlvmType.Array, is LlvmType.Function, is LlvmType.Struct ->
+        LlvmType.Float, LlvmType.Double, LlvmType.Ptr, LlvmType.Void, is LlvmType.Array, is LlvmType.Function, is LlvmType.Struct ->
             error("integer constant with non-integer type ${constant.type}")
     }
 
@@ -162,6 +163,14 @@ internal object LlvmPrinter {
         val decimal = value.toString()
         return if (value.isFinite() && decimal.toDouble().toRawBits() == rawBits) decimal
         else "0x" + rawBits.toULong().toString(16).uppercase().padStart(16, '0')
+    }
+
+    /** LLVM reads a `float` constant as a double that must be exactly representable as a float, so inexact decimals become hex. */
+    private fun formatFloat(value: Double): String {
+        val rounded = value.toFloat()
+        val decimal = rounded.toString()
+        return if (rounded.isFinite() && decimal.toDouble() == rounded.toDouble()) decimal
+        else "0x" + rounded.toDouble().toRawBits().toULong().toString(16).uppercase().padStart(16, '0')
     }
 
     private fun localName(name: String): String = "%" + identifier(name)
