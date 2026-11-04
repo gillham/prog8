@@ -23,6 +23,7 @@ Currently these machines can be selected as a compilation target (via the ``-tar
 - 'virtual': a builtin virtual machine (32-bit pointers, 16 MB memory)
 - 'llvm64' (or 'llvm'): a hosted 64-bit program, compiled to LLVM IR (see :ref:`llvm_triples`)
 - 'llvm32': a hosted 32-bit program, compiled to LLVM IR, such as WebAssembly with WASI
+- 'llvm16': a 16-bit program, compiled to LLVM IR and built with `llvm-mos <https://llvm-mos.org/>`_ (experimental, see :ref:`llvm16`)
 - custom targets via a separate configuration file (see :ref:`customizable_target`)
 
 This chapter explains some relevant system details of the c64 and cx16 machines.
@@ -263,8 +264,8 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
 2. ``~/.prog8/llvm/<name>.properties``
 3. a profile built into the compiler: ``wasm32-wasip1``, ``wasm32-unknown-emscripten``, ``armv7a-none-eabihf``, ``riscv32-unknown-elf``,
    ``arm64-apple-macosx``, ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``,
-   ``riscv64-unknown-linux-gnu``, ``riscv32-unknown-linux-gnu``, ``armv7-unknown-linux-gnueabihf``, ``x86_64-pc-windows-msvc``
-   and ``x86_64-w64-windows-gnu``
+   ``riscv64-unknown-linux-gnu``, ``riscv32-unknown-linux-gnu``, ``armv7-unknown-linux-gnueabihf``, ``x86_64-pc-windows-msvc``,
+   ``x86_64-w64-windows-gnu``, and for ``llvm16`` ``mos-sim`` and ``mos-c64``
 4. any other triple that clang knows, such as ``aarch64-linux-musl`` or ``i686-unknown-linux-gnu``: the compiler asks
    clang for its normalized name, data layout and C ``long`` size, and builds with ``--target=<name>``.
    Run, link and startup settings need a profile file.
@@ -296,7 +297,7 @@ These are the keys of a profile; an unknown key is an error:
 ``datalayout``
     The LLVM data layout string of that triple, as printed by ``clang --target=<triple> -S -emit-llvm -x c /dev/null -o -``.
     It must be little-endian (start with ``e``), and its pointer width (the ``p:`` entry, 64 bits when there is none)
-    must match the target: 32 bits for ``llvm32``, 64 bits for ``llvm64``.
+    must match the target: 16 bits for ``llvm16``, 32 bits for ``llvm32``, 64 bits for ``llvm64``.
     Without it, clang supplies it for ``triple`` and ``clang_args``, which then must not need an unset environment variable.
 ``c_long_size``
     The size in bytes of the C ``long`` type on that platform: 4 or 8. Without it, clang supplies it like ``datalayout``.
@@ -395,6 +396,21 @@ On wasm32 the C ``int``, ``long`` and ``size_t`` types are all ``long`` in Prog8
 C ``long`` can't hold fails.
 
 
+.. _llvm16:
+
+The llvm16 target
+-----------------
+
+The ``llvm16`` target (experimental) compiles for 16-bit platforms with the `llvm-mos <https://llvm-mos.org/>`_ SDK:
+pointers have 2 bytes, as on the 6502 targets, and a C ``int`` has 2 bytes. The ``LLVM_MOS`` environment variable
+names the directory of the llvm-mos SDK; building fails without it, but writing the ``.ll`` file works. The default
+profile ``mos-sim`` builds for the SDK's 6502 simulator, which ``-emu`` runs with ``mos-sim``; it takes no program
+arguments. ``-triple mos-c64`` builds a Commodore 64 ``.prg`` file, which ``-emu`` starts in the VICE emulator ``x64sc``,
+in a window. Floats are not supported yet on ``llvm16``: a float variable, value or ``%import floats`` is an error.
+The C library of llvm-mos lacks some routines (the profiles' ``libc_lacks``); a program that needs one of them
+doesn't link yet. ``sys.target`` is 252.
+
+
 Memory Model
 ============
 .. index:: single: Targets; Memory model
@@ -410,11 +426,12 @@ The size of a pointer (memory address) depends on the target's CPU architecture:
 - **virtual target**: **4 bytes** (32-bit address space, 16 MB)
 - **llvm64 target**: **8 bytes** (the 64-bit address space of the host)
 - **llvm32 target**: **4 bytes** (32-bit platforms such as wasm32)
+- **llvm16 target**: **2 bytes** (16-bit platforms such as the 6502 with llvm-mos)
 
 The ``pointer`` type keyword automatically takes the correct size for the target,
 making it the natural choice for variables that hold a memory address in portable code.
 On 6502 targets it is equivalent to ``uword``; on m68k and virtual targets it is equivalent to ``long``;
-on the llvm64 target it is equivalent to ``uquad``, and on the llvm32 target to ``long``.
+on the llvm64 target it is equivalent to ``uquad``, on the llvm32 target to ``long``, and on the llvm16 target to ``uword``.
 Alternatively, you can use ``uword``, ``long`` or ``uquad`` directly if you know the target in advance.
 
 On llvm64 a *constant* address is limited to 32 bits for now: a memory-mapped variable, ``@(...)`` and ``goto`` at a fixed

@@ -483,7 +483,7 @@ private fun containsHelper(name: String, elementType: LlvmType, intPtr: LlvmType
     val needle = LlvmValue.Local("needle", elementType)
     val array = LlvmValue.Local("array", LlvmType.Ptr)
     val count = LlvmValue.Local("count", LlvmType.I16)
-    val n = LlvmValue.Local("n", intPtr)
+    val n = if (intPtr == LlvmType.I16) count else LlvmValue.Local("n", intPtr)
     val i = LlvmValue.Local("i", intPtr)
     val more = LlvmValue.Local("more", LlvmType.I1)
     val slot = LlvmValue.Local("slot", LlvmType.Ptr)
@@ -493,7 +493,7 @@ private fun containsHelper(name: String, elementType: LlvmType, intPtr: LlvmType
     val equal = if (elementType.isFloatingPoint) LlvmInstruction.Fcmp(FcmpCondition.OEQ, found, element, needle)
         else LlvmInstruction.Icmp(IcmpCondition.EQ, found, element, needle)
     return helper(name, LlvmType.I8, listOf(needle, array, count),
-        "entry" to listOf(LlvmInstruction.Cast(CastOperator.ZEXT, n, count, intPtr), LlvmInstruction.Br("loop")),
+        "entry" to listOfNotNull(if (n === count) null else LlvmInstruction.Cast(CastOperator.ZEXT, n, count, intPtr), LlvmInstruction.Br("loop")),
         "loop" to listOf(
             LlvmInstruction.Phi(i, listOf(LlvmValue.IntConstant(0, intPtr) to "entry", next to "body")),
             LlvmInstruction.Icmp(IcmpCondition.ULT, more, i, n),
@@ -597,13 +597,13 @@ private fun setWordsHelper(intPtr: LlvmType): LlvmFunction {
     val address = LlvmValue.Local("address", LlvmType.Ptr)
     val count = LlvmValue.Local("count", LlvmType.I16)
     val value = LlvmValue.Local("value", LlvmType.I16)
-    val n = LlvmValue.Local("n", intPtr)
+    val n = if (intPtr == LlvmType.I16) count else LlvmValue.Local("n", intPtr)
     val i = LlvmValue.Local("i", intPtr)
     val more = LlvmValue.Local("more", LlvmType.I1)
     val slot = LlvmValue.Local("slot", LlvmType.Ptr)
     val next = LlvmValue.Local("next", intPtr)
     return helper(".memsetw", LlvmType.Void, listOf(address, count, value),
-        "entry" to listOf(LlvmInstruction.Cast(CastOperator.ZEXT, n, count, intPtr), LlvmInstruction.Br("loop")),
+        "entry" to listOfNotNull(if (n === count) null else LlvmInstruction.Cast(CastOperator.ZEXT, n, count, intPtr), LlvmInstruction.Br("loop")),
         "loop" to listOf(
             LlvmInstruction.Phi(i, listOf(LlvmValue.IntConstant(0, intPtr) to "entry", next to "body")),
             LlvmInstruction.Icmp(IcmpCondition.ULT, more, i, n),
@@ -619,7 +619,7 @@ private fun setWordsHelper(intPtr: LlvmType): LlvmFunction {
 /** `ptr (i16 index)`: the [arguments] entry at the index when that is below the [count], else the [empty] string. */
 private fun argumentHelper(count: LlvmValue.Global, arguments: LlvmValue.Global, empty: LlvmValue.Global, intPtr: LlvmType, cInt: LlvmType): LlvmFunction {
     val index = LlvmValue.Local("index", LlvmType.I16)
-    val i = LlvmValue.Local("i", intPtr)
+    val i = if (intPtr == LlvmType.I16) index else LlvmValue.Local("i", intPtr)
     val argc = LlvmValue.Local("argc", cInt)
     val n = if (intPtr == cInt) argc else LlvmValue.Local("n", intPtr)
     val inRange = LlvmValue.Local("inrange", LlvmType.I1)
@@ -628,7 +628,7 @@ private fun argumentHelper(count: LlvmValue.Global, arguments: LlvmValue.Global,
     val argument = LlvmValue.Local("argument", LlvmType.Ptr)
     return helper(".sys.argv.at", LlvmType.Ptr, listOf(index),
         "entry" to listOfNotNull(
-            LlvmInstruction.Cast(CastOperator.ZEXT, i, index, intPtr),
+            if (i === index) null else LlvmInstruction.Cast(CastOperator.ZEXT, i, index, intPtr),
             LlvmInstruction.Load(argc, count),
             if (n === argc) null else LlvmInstruction.Cast(resize(cInt, intPtr), n, argc, intPtr),
             LlvmInstruction.Icmp(IcmpCondition.ULT, inRange, i, n),
@@ -843,7 +843,7 @@ private fun LlvmFunctionBuilder.readByteHelper(): LlvmFunction {
     val open = LlvmValue.Local("open", LlvmType.I1)
     val char = LlvmValue.Local("char", mapper.cInt)
     val end = LlvmValue.Local("end", LlvmType.I1)
-    val byte = LlvmValue.Local("byte", LlvmType.I16)
+    val byte = if (mapper.cInt == LlvmType.I16) char else LlvmValue.Local("byte", LlvmType.I16)
     val value = LlvmValue.Local("value", LlvmType.I16)
     return helper(".file.read.byte", LlvmType.I16, emptyList(),
         "entry" to listOf(
@@ -854,8 +854,8 @@ private fun LlvmFunctionBuilder.readByteHelper(): LlvmFunction {
             LlvmInstruction.Call(char, libc(Libc.FGETC), listOf(file), mapper.cInt),
             LlvmInstruction.Icmp(IcmpCondition.SLT, end, char, cIntConstant(0)),
             LlvmInstruction.CondBr(end, "none", "got")),
-        "got" to listOf(
-            LlvmInstruction.Cast(CastOperator.TRUNC, byte, char, LlvmType.I16),
+        "got" to listOfNotNull(
+            if (byte === char) null else LlvmInstruction.Cast(CastOperator.TRUNC, byte, char, LlvmType.I16),
             LlvmInstruction.BinaryOp(BinaryOperator.OR, value, byte, LlvmValue.IntConstant(0x100, LlvmType.I16)),
             LlvmInstruction.Ret(value)),
         "none" to listOf(LlvmInstruction.Ret(LlvmValue.IntConstant(0, LlvmType.I16))))
@@ -1037,7 +1037,8 @@ private fun LlvmFunctionBuilder.loadHelper(): LlvmFunction {
         "measured" to listOfNotNull(
             LlvmInstruction.Call(null, libc(Libc.FSEEK), listOf(file, start, cIntConstant(SEEK_SET)), mapper.cInt),
             LlvmInstruction.BinaryOp(BinaryOperator.SUB, rest, end, start),
-            if (fileOffset == sizeT) null else LlvmInstruction.Cast(CastOperator.SEXT, size as LlvmValue.Local, rest, sizeT),
+            if (fileOffset == sizeT) null else LlvmInstruction.Cast(if (fileOffset.bitWidth!! > sizeT.bitWidth!!) CastOperator.TRUNC else CastOperator.SEXT,
+                size as LlvmValue.Local, rest, sizeT),
             LlvmInstruction.Call(count, libc(Libc.FREAD), listOf(address, LlvmValue.IntConstant(1, sizeT), size, file), sizeT),
             LlvmInstruction.GetElementPtr(next, LlvmType.I8, address, listOf(count), inBounds = false),
             // reading on at the end sets the error flag for a directory, as reading it did before

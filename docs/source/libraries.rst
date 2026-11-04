@@ -2251,6 +2251,7 @@ miscellaneous
     - 68 = qemu68k
     - 120 = Amiga 1200
     - 128 = Commodore 128
+    - 252 = llvm16
     - 253 = llvm32
     - 254 = llvm64
     - 255 = Virtual machine

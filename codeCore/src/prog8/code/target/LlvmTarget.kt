@@ -5,7 +5,7 @@ import prog8.code.target.encodings.Encoder
 import java.nio.file.Path
 
 /**
- * Hosted 32 or 64-bit target that emits LLVM IR. The [profile] of the chosen triple supplies the triple and data layout
+ * 16, 32 or 64-bit target that emits LLVM IR. The [profile] of the chosen triple supplies the triple and data layout
  * of the module header, and its pointer width must match [pointerSize]. [extraCompileArgs] and [extraLinkArgs] come from
  * -Xcompile and -Xlink, and go after the profile's own arguments of those build steps. [clangOption] is the -clang option.
  */
@@ -17,9 +17,13 @@ class LlvmTarget(
     val clangOption: String? = null
 ): ICompilationTarget,
     IStringEncoding by Encoder(false),
-    IMemSizer by NormalMemSizer(8u, pointerSize.toUInt()) {
+    IMemSizer by NormalMemSizer(floatSize(pointerSize), pointerSize.toUInt()) {
 
-    override val name = if(pointerSize == 4) NAME32 else NAME64
+    override val name = when(pointerSize) {
+        2 -> NAME16
+        4 -> NAME32
+        else -> NAME64
+    }
     override val supportsBankedCalls = false
     override val supportsStackFrames = false
     override val hasFixedMemoryAddresses = false
@@ -36,8 +40,14 @@ class LlvmTarget(
     /** The clang that builds the program, see [LlvmTripleProfile.resolveClang]. */
     fun clang(): Path? = profile.resolveClang(clangOption)
 
+    /** True when constant addresses are the machine's own memory, which only the llvm backend reads. */
+    val realAddresses: Boolean = pointerSize == 2
+
+    /** False on llvm16, whose f32 floats lack the formatting, parsing and math routines yet. */
+    val supportsFloats: Boolean = pointerSize != 2
+
     init {
-        require(pointerSize == 4 || pointerSize == 8) { "the llvm targets have 4 or 8 byte pointers, not $pointerSize" }
+        require(pointerSize == 2 || pointerSize == 4 || pointerSize == 8) { "the llvm targets have 2, 4 or 8 byte pointers, not $pointerSize" }
         require(profile.pointerBits == pointerSize * 8) {
             "llvm triple '${profile.triple}' has ${profile.pointerBits}-bit pointers, but the $name target needs ${pointerSize * 8}-bit pointers"
         }
@@ -46,9 +56,15 @@ class LlvmTarget(
     companion object {
         const val NAME64 = "llvm64"
         const val NAME32 = "llvm32"
+        const val NAME16 = "llvm16"
         const val ALIAS = "llvm"
         const val FALLBACK_TRIPLE_64 = "arm64-apple-macosx"
         const val DEFAULT_TRIPLE_32 = "wasm32-wasip1"
+        const val DEFAULT_TRIPLE_16 = "mos-sim"
+        const val FLOATS_UNSUPPORTED = "floats are not supported yet on the $NAME16 target"
+
+        /** The target names, and [ALIAS], that select an llvm target. */
+        val NAMES = setOf(NAME16, NAME32, NAME64, ALIAS)
 
         /** The built-in llvm64 profile of the host the compiler runs on, or [FALLBACK_TRIPLE_64] where there is none. */
         val DEFAULT_TRIPLE_64: String = hostTriple64(System.getProperty("os.name"), System.getProperty("os.arch")) ?: FALLBACK_TRIPLE_64
@@ -69,15 +85,27 @@ class LlvmTarget(
             }
         }
 
-        fun defaultTriple(pointerSize: Int): String = if(pointerSize == 4) DEFAULT_TRIPLE_32 else DEFAULT_TRIPLE_64
+        fun defaultTriple(pointerSize: Int): String = when(pointerSize) {
+            2 -> DEFAULT_TRIPLE_16
+            4 -> DEFAULT_TRIPLE_32
+            else -> DEFAULT_TRIPLE_64
+        }
+
+        /** llvm16 has 4-byte floats (f32), the others 8-byte doubles. */
+        fun floatSize(pointerSize: Int): UInt = if(pointerSize == 2) 4u else 8u
     }
 
-    override val cpu = if(pointerSize == 4) CpuType.LLVM32 else CpuType.LLVM64
+    override val cpu = when(pointerSize) {
+        2 -> CpuType.LLVM16
+        4 -> CpuType.LLVM32
+        else -> CpuType.LLVM64
+    }
 
-    override val FLOAT_MAX_POSITIVE = Double.MAX_VALUE
-    override val FLOAT_MAX_NEGATIVE = -Double.MAX_VALUE
-    override val FLOAT_MEM_SIZE = 8u
+    override val FLOAT_MEM_SIZE = floatSize(pointerSize)
+    override val FLOAT_MAX_POSITIVE = if(FLOAT_MEM_SIZE == 4u) Float.MAX_VALUE.toDouble() else Double.MAX_VALUE
+    override val FLOAT_MAX_NEGATIVE = -FLOAT_MAX_POSITIVE
     override val POINTER_MEM_SIZE = pointerSize.toUInt()
+    override val splitPointerArrays = false
     override val ARRAY_SIZE_LIMIT = 65535u
 
     override val PROGRAM_LOAD_ADDRESS = 0u
@@ -92,15 +120,18 @@ class LlvmTarget(
     override fun getFloatAsmBytes(num: Number): String =
         convertFloatToBytes(num.toDouble()).joinToString(", ") { "$%02x".format(it.toInt()) }
 
-    // little-endian IEEE-754 double; the triple profile guarantees a little-endian data layout
+    // little-endian IEEE-754 single or double; the triple profile guarantees a little-endian data layout
     override fun convertFloatToBytes(num: Double): List<UByte> {
-        val bits = num.toRawBits()
-        return List(8) { (bits ushr (8 * it)).toUByte() }
+        val size = FLOAT_MEM_SIZE.toInt()
+        val bits = if(size == 4) num.toFloat().toRawBits().toLong() else num.toRawBits()
+        return List(size) { (bits ushr (8 * it)).toUByte() }
     }
 
     override fun convertBytesToFloat(bytes: List<UByte>): Double {
-        require(bytes.size==8) { "need 8 bytes" }
-        return Double.fromBits(bytes.foldIndexed(0L) { index, bits, byte -> bits or (byte.toLong() shl (8 * index)) })
+        val size = FLOAT_MEM_SIZE.toInt()
+        require(bytes.size==size) { "need $size bytes" }
+        val bits = bytes.foldIndexed(0L) { index, bits, byte -> bits or (byte.toLong() shl (8 * index)) }
+        return if(size == 4) Float.fromBits(bits.toInt()).toDouble() else Double.fromBits(bits)
     }
 
     override fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean) {
@@ -131,7 +162,7 @@ class LlvmTarget(
     /** The error message for program arguments given to a program of a profile with `program_args = false`. */
     fun programArgsRejected(): String = "the programs of llvm triple profile '${profile.name}' can't be given arguments (it has program_args = false)"
 
-    override fun isIOAddress(address: UInt): Boolean = false
+    override fun isIOAddress(address: UInt): Boolean = profile.ioAllAddresses || profile.ioRanges.any { address in it }
 
     override fun initializeMemoryAreas(compilerOptions: CompilationOptions) {
         zeropage = LlvmZeropage(compilerOptions)

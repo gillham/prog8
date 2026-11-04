@@ -557,7 +557,76 @@ main {
 
         val vmErrors = ErrorReporterForTests(keepMessagesAfterReporting = true)
         compileText(VMTarget(), false, "%link \"m\"\nmain {\n sub start() {\n }\n}", dir, errors = vmErrors, writeAssembly = false) shouldBe null
-        vmErrors.errors.single() shouldContain "%link is only available on the llvm32 and llvm64 targets"
+        vmErrors.errors.single() shouldContain "%link is only available on the llvm targets"
+    }
+
+    test("llvm16 compiles to a .ll file for the mos triple, with 16-bit addresses and C int, without LLVM_MOS or llvm-mos") {
+        val source = """
+%zeropage basicsafe
+main {
+    sub start() {
+        ubyte[10] @shared buffer
+        uword @shared index = 3
+        pointer @shared p = &buffer
+        p += index
+        @(p) = 42
+        sys.exit(buffer[3])
+    }
+}"""
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val dir = outputDir.resolve("llvm16-$optimize").createDirectories()
+                val lines = compiledLlFile(compileText(LlvmTarget(2), optimize, source, dir, assemble = false)).readLines()
+                lines shouldContain "target triple = \"mos\""
+                lines shouldContain "target datalayout = \"e-m:e-p:16:8-p1:8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:8-Fi8-n8\""
+                lines shouldContain "define i16 @main(i16 %argc, ptr %argv) {"
+                lines.any { it.startsWith("@main.start.p = ") && it.contains(" i16 ") } shouldBe true
+                lines.count { it.contains(" i64") && !it.startsWith("@sys.") } shouldBe 0
+            }
+        }
+        val pointerSum = compiledLlFile(compileText(LlvmTarget(2), false, source, outputDir.resolve("llvm16-add").createDirectories(), assemble = false)).readLines()
+        pointerSum.any { it.trim().matches(Regex("""%\S+ = add i16 %\S+, %\S+""")) } shouldBe true
+    }
+
+    test("floats are a clear error on llvm16: a float variable, a float value, %import floats and %option enable_floats") {
+        val sources = listOf(
+            "main {\n sub start() {\n float @shared f = 1.5\n }\n}",
+            "main {\n sub start() {\n ubyte @shared b = 3\n uword @shared w = (b as float * 1.5) as uword\n }\n}",
+            "%import floats\nmain {\n sub start() {\n }\n}",
+            "%option enable_floats\nmain {\n sub start() {\n }\n}")
+        for (source in sources) {
+            withClue(source) {
+                val errors = ErrorReporterForTests()
+                compileText(LlvmTarget(2), false, source, outputDir, errors = errors, assemble = false) shouldBe null
+                errors.errors.shouldNotBeEmpty()
+                errors.errors.forEach { it shouldContain "floats are not supported yet on the llvm16 target" }
+            }
+        }
+        compileText(LlvmTarget(4), false, sources[1], outputDir, assemble = false) shouldNotBe null
+    }
+
+    test("llvm16 builds and runs a program in mos-sim").config(enabledOrReasonIf = {
+        if (System.getenv("LLVM_MOS") == null) Enabled.disabled("LLVM_MOS, the llvm-mos SDK directory, is not set") else Enabled.enabled
+    }) {
+        val source = """
+%import textio
+%zeropage basicsafe
+main {
+    sub start() {
+        uword @shared n = 12345
+        txt.print("hello ")
+        txt.print_uw(n)
+        txt.nl()
+        sys.exit(3)
+    }
+}"""
+        val target = LlvmTarget(2)
+        val llFile = compiledLlFile(compileText(target, false, source, outputDir.resolve("mos-sim").createDirectories()))
+        val executable = llFile.resolveSibling("hello16.sim")
+        LlvmProgramRunner().build(llFile, executable, target.profile) shouldBe true
+        val (exitCode, output) = execute(*LlvmTripleProfile.runCommandFor(target.profile.runCommand, executable.toString(), emptyList()).toTypedArray())
+        output shouldBe "hello 12345\n"
+        exitCode shouldBe 3
     }
 
     test("-o without .ll builds a native executable with the LLVM IR next to it").config(enabledOrReasonIf = requiresNativeLlvm) {
@@ -801,7 +870,7 @@ main {
     }
 
     test("an unknown target name is rejected") {
-        shouldThrow<IllegalArgumentException> { getCompilationTargetByName("llvm16") }
+        shouldThrow<IllegalArgumentException> { getCompilationTargetByName("llvm8") }
     }
 
     test("a byte pointer or str parameter needs a cast to become another typed pointer, and call() an untyped address, on llvm64 as on the virtual machine") {

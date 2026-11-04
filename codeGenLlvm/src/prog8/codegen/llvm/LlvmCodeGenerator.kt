@@ -3,7 +3,12 @@ package prog8.codegen.llvm
 import prog8.code.ICodeGeneratorBackend
 import prog8.code.SymbolTable
 import prog8.code.assembly.IAssemblyProgram
+import prog8.code.ast.IPtVariable
+import prog8.code.ast.PtExpression
 import prog8.code.ast.PtProgram
+import prog8.code.ast.PtSubSignature
+import prog8.code.ast.PtSubroutineParameter
+import prog8.code.ast.walkAst
 import prog8.code.core.CompilationOptions
 import prog8.code.core.IErrorReporter
 import prog8.code.core.Position
@@ -26,7 +31,9 @@ import prog8.intermediate.dumpVariables
 class LlvmCodeGenerator(private val retainSSA: Boolean) : ICodeGeneratorBackend {
 
     override fun generate(program: PtProgram, symbolTable: SymbolTable, options: CompilationOptions, errors: IErrorReporter): IAssemblyProgram? {
-        val target = requireNotNull(options.compTarget as? LlvmTarget) { "the LLVM code generator needs the ${LlvmTarget.NAME32} or ${LlvmTarget.NAME64} target" }
+        val target = requireNotNull(options.compTarget as? LlvmTarget) { "the LLVM code generator needs an llvm target" }
+        if (!target.supportsFloats && reportFloats(program, errors))
+            return null
         val irCodeGen = IRCodeGen(program, symbolTable, options, errors, retainSSA)
         val irProgram = irCodeGen.generate()
         irProgram.verifyRegisterTypes(irCodeGen.registerTypes().entries.associate { (number, type) -> Calls.registerFor(number.value, type) to type })
@@ -43,6 +50,27 @@ class LlvmCodeGenerator(private val retainSSA: Boolean) : ICodeGeneratorBackend 
         val (instructions, chunks) = irProgram.countCodeElements()
         return AssemblyProgramLlvm(irProgram.name, LlvmPrinter.print(module), instructions, chunks, irProgram.countUsedRegisters())
             .also { it.save(options) }
+    }
+
+    /** Reports the nodes that use floats, which the AstChecker can't all see, such as a float cast; true when there are any. */
+    private fun reportFloats(program: PtProgram, errors: IErrorReporter): Boolean {
+        var found = false
+        walkAst(program) { node, _ ->
+            val type = when (node) {
+                is PtExpression -> node.type
+                is IPtVariable -> node.type
+                is PtSubroutineParameter -> node.type
+                is PtSubSignature -> node.returns.firstOrNull { it.isFloat }
+                else -> null
+            }
+            val float = type != null && (type.isFloat || type.isFloatArray)
+            if (float) {
+                errors.err(LlvmTarget.FLOATS_UNSUPPORTED, node.position)
+                found = true
+            }
+            !float
+        }
+        return found
     }
 
     private fun module(irProgram: IRProgram, target: LlvmTarget, options: CompilationOptions, errors: IErrorReporter): LlvmModule {

@@ -11,15 +11,16 @@ import prog8.intermediate.IRStStructField
 import prog8.intermediate.IRSymbolTable
 
 /**
- * Maps Prog8 IR and Prog8 data types onto LLVM types for the llvm targets ([pointerBytes]-byte pointers, doubles, packed Prog8 struct layout).
+ * Maps Prog8 IR and Prog8 data types onto LLVM types for the llvm targets ([pointerBytes]-byte pointers, [floatBytes]-byte floats, packed Prog8 struct layout).
  * [cLongBytes] is the size of the C `long` of the target triple, [fileOffsetBytes] that of the file offset of its fseek and ftell routines,
  * and [cIntBytes] that of its C `int`.
  */
-internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: Int = 8, cLongBytes: Int = 8, fileOffsetBytes: Int = cLongBytes, cIntBytes: Int = 4) {
+internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: Int = 8, cLongBytes: Int = 8, fileOffsetBytes: Int = cLongBytes, cIntBytes: Int = 4,
+                               floatBytes: Int = 8) {
 
     constructor(st: IRSymbolTable, target: ICompilationTarget) :
         this(st, target.POINTER_MEM_SIZE.toInt(), (target as? LlvmTarget)?.profile?.cLongSize ?: 8, (target as? LlvmTarget)?.profile?.fileOffsetSize ?: 8,
-            (target as? LlvmTarget)?.profile?.cIntSize ?: 4)
+            (target as? LlvmTarget)?.profile?.cIntSize ?: 4, target.FLOAT_MEM_SIZE.toInt())
 
     init {
         require(pointerBytes == 2 || pointerBytes == 4 || pointerBytes == 8) { "unsupported pointer size: $pointerBytes" }
@@ -50,7 +51,7 @@ internal class LlvmTypeMapper(private val st: IRSymbolTable, val pointerBytes: I
     val cInt: LlvmType = if (cIntBytes == 2) LlvmType.I16 else LlvmType.I32
 
     /** The type of Prog8 floats. */
-    val floatType: LlvmType = LlvmType.Double
+    val floatType: LlvmType = if (floatBytes == 4) LlvmType.Float else LlvmType.Double
 
     fun map(type: IRDataType): LlvmType = when (type) {
         IRDataType.BYTE -> LlvmType.I8

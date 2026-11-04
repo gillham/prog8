@@ -107,8 +107,10 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
             var changeDataType: DataType?
             when(decl.splitwordarray) {
                 SplitWish.DONTCARE -> {
+                    // the llvm backend has no split word arrays
+                    val noSplit = options.compTarget.POINTER_MEM_SIZE > 2u || options.compTarget.cpu.isLlvm
                     changeDataType = if(decl.datatype.isSplitWordArray(options.compTarget)) {
-                        if(options.compTarget.POINTER_MEM_SIZE > 2u)
+                        if(noSplit)
                             DataType.arrayFor(decl.datatype.elementType().base, options.compTarget)
                         else
                             null
@@ -116,7 +118,7 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
                         val eltDt = decl.datatype.elementType()
                         if(eltDt.isPointer)
                             TODO("convert array of pointers to split words array type  ${decl.position}")
-                        else if((eltDt.isWord || eltDt.isUnsignedWord) && options.compTarget.POINTER_MEM_SIZE == 2u)
+                        else if((eltDt.isWord || eltDt.isUnsignedWord) && !noSplit)
                             DataType.splitWordArrayFor(eltDt.base)
                         else
                             null

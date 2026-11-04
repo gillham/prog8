@@ -407,7 +407,7 @@ rm path/to/File.kt
 ## TODO Items
 The file `docs/source/todo.rst` contains a comprehensive list of things that still have to be fixed, implemented, or optimized. **Use this to understand what features are NOT yet available** in the compiler or Prog8 language: if a user asks for something that's on the TODO list, you'll know it's not implemented yet and can explain the limitation.
 
-## LLVM targets (llvm32 / llvm64)
+## LLVM targets (llvm16 / llvm32 / llvm64)
 
 The `llvm32` and `llvm64` targets compile to LLVM IR and build native or wasm/bare-metal programs with clang. The backend is `codeGenLlvm` (see `docs/CODEBASE-KNOWLEDGE-GRAPH.md`, section 4.10b), the per-triple settings are the `.properties` files in `codeCore/res/prog8lib/llvm-triples`, and the target docs are in `docs/source/targetsystem.rst`.
 

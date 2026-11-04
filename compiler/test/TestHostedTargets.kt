@@ -15,7 +15,7 @@ import prog8tests.helpers.compileText
 class TestHostedTargets: FunSpec({
 
     val outputDir = tempdir().toPath()
-    val hostedTargets = listOf(LlvmTarget(8), LlvmTarget(4))
+    val hostedTargets = listOf(LlvmTarget(8), LlvmTarget(4), LlvmTarget(2))
 
     fun program(header: String, blockAddress: String = "") = """
 $header

@@ -102,6 +102,7 @@ val CompilationTargets = listOf(
     Amiga500Target.NAME,
     Amiga1200Target.NAME,
     VMTarget.NAME,
+    LlvmTarget.NAME16,
     LlvmTarget.NAME32,
     LlvmTarget.NAME64
 )
@@ -113,13 +114,13 @@ val CompilationTargets = listOf(
 fun getCompilationTargetByName(name: String, triple: String? = null,
                                extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList(), clang: String? = null): ICompilationTarget {
     val lowercaseName = name.lowercase()
-    val isLlvm = lowercaseName in setOf(LlvmTarget.NAME32, LlvmTarget.NAME64, LlvmTarget.ALIAS)
+    val isLlvm = lowercaseName in LlvmTarget.NAMES
     if(triple != null && !isLlvm)
-        throw IllegalArgumentException("a triple can only be given for the ${LlvmTarget.NAME32} and ${LlvmTarget.NAME64} targets")
+        throw IllegalArgumentException("a triple can only be given for the llvm targets")
     if((extraCompileArgs.isNotEmpty() || extraLinkArgs.isNotEmpty()) && !isLlvm)
-        throw IllegalArgumentException("-Xcompile and -Xlink can only be given for the ${LlvmTarget.NAME32} and ${LlvmTarget.NAME64} targets")
+        throw IllegalArgumentException("-Xcompile and -Xlink can only be given for the llvm targets")
     if(clang != null && !isLlvm)
-        throw IllegalArgumentException("-clang can only be given for the ${LlvmTarget.NAME32} and ${LlvmTarget.NAME64} targets")
+        throw IllegalArgumentException("-clang can only be given for the llvm targets")
     return when(lowercaseName) {
         C64Target.NAME -> C64Target()
         C128Target.NAME -> C128Target()
@@ -131,6 +132,7 @@ fun getCompilationTargetByName(name: String, triple: String? = null,
         VMTarget.NAME -> VMTarget()
         LlvmTarget.NAME64, LlvmTarget.ALIAS -> llvmTarget(8, triple, extraCompileArgs, extraLinkArgs, clang)
         LlvmTarget.NAME32 -> llvmTarget(4, triple, extraCompileArgs, extraLinkArgs, clang)
+        LlvmTarget.NAME16 -> llvmTarget(2, triple, extraCompileArgs, extraLinkArgs, clang)
         else -> throw IllegalArgumentException("invalid compilation target")
     }
 }

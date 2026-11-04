@@ -1228,7 +1228,7 @@ internal class AstChecker(private val program: Program,
 
         // FLOATS enabled?
         if(!options.floats && decl.type != VarDeclType.CONST && decl.type != VarDeclType.MEMORY && (decl.datatype.isFloat || decl.datatype.isFloatArray)) {
-            err("floating point used, but that is not enabled via options")
+            err(floatsNotEnabled)
         }
         else if(options.compTarget.name == C128Target.NAME && decl.type != VarDeclType.CONST && (decl.datatype.isFloat || decl.datatype.isFloatArray)) {
             err("c128 target does not support floating point numbers yet")
@@ -1339,7 +1339,8 @@ internal class AstChecker(private val program: Program,
                 }
                 val numvalue = decl.value?.constValue(program)
                 if(numvalue!=null) {
-                    val maxAddr = if(options.compTarget.POINTER_MEM_SIZE > 2u) 0xFFFFFFFFu else 0xFFFFu
+                    // the llvm backend gives memory-mapped variables beyond the pointer range storage, such as the cx16 registers at $ff0000
+                    val maxAddr = if(options.compTarget.POINTER_MEM_SIZE > 2u || options.compTarget.cpu.isLlvm) 0xFFFFFFFFu else 0xFFFFu
                     if (!numvalue.type.isInteger || numvalue.number.toLong() < 0L || numvalue.number.toLong() > maxAddr.toLong()) {
                         valueerr($$"memory address must be valid integer 0..$$${maxAddr.toString(16)}")
                     }
@@ -1529,6 +1530,12 @@ internal class AstChecker(private val program: Program,
         super.visit(decl)
     }
 
+    private val floatsSupported: Boolean
+        get() = (options.compTarget as? LlvmTarget)?.supportsFloats ?: true
+
+    private val floatsNotEnabled: String
+        get() = if(floatsSupported) "floating point used, but that is not enabled via options" else LlvmTarget.FLOATS_UNSUPPORTED
+
     override fun visit(directive: Directive) {
         fun err(msg: String) {
             errors.err(msg, directive.position)
@@ -1616,6 +1623,8 @@ internal class AstChecker(private val program: Program,
                     err("invalid import directive, expected module name argument")
                 if(directive.args[0].string == (directive.parent as? Module)?.name)
                     err("invalid import directive, cannot import itself")
+                if(directive.args.firstOrNull()?.string == "floats" && !floatsSupported)
+                    err(LlvmTarget.FLOATS_UNSUPPORTED)
             }
             "%assert" -> {
                 if(directive.args.isEmpty() || directive.args.size>2)
@@ -1694,6 +1703,8 @@ internal class AstChecker(private val program: Program,
                     if(directive.args.any {it.string !in setOf("enable_floats", "no_sysinit", "no_symbol_prefixing", "ignore_unused", "romable", "private_symbols")})
                         err("using an option that is not valid for modules")
                 }
+                if(directive.args.any { it.string=="enable_floats" } && !floatsSupported)
+                    err(LlvmTarget.FLOATS_UNSUPPORTED)
                 if(directive.args.any { it.string=="verafxmuls" } && options.compTarget.name != Cx16Target.NAME)
                     err("verafx option is only valid on cx16 target")
                 if(directive.args.any { it.string=="amiga_chipram" } && options.compTarget.name != Amiga500Target.NAME && options.compTarget.name != Amiga1200Target.NAME)
@@ -1703,7 +1714,7 @@ internal class AstChecker(private val program: Program,
                 if(directive.parent !is Module)
                     err("this directive may only occur at module level")
                 if(!options.compTarget.cpu.isLlvm)
-                    err("%link is only available on the llvm32 and llvm64 targets")
+                    err("%link is only available on the llvm targets")
                 if(directive.args.isEmpty())
                     err("invalid link directive, expected one or more library names or files: \"name\" [, \"name\"...]")
                 for(arg in directive.args) {
@@ -1775,7 +1786,7 @@ internal class AstChecker(private val program: Program,
     override fun visit(array: ArrayLiteral) {
         if(array.type.isKnown) {
             if (!options.floats && (array.type issimpletype BaseDataType.FLOAT || array.type.isFloatArray)) {
-                errors.err("floating point used, but that is not enabled via options", array.position)
+                errors.err(floatsNotEnabled, array.position)
             }
             val arrayspec = ArrayIndex.forArray(array)
             checkValueTypeAndRangeArray(array.type.getOrUndef(), arrayspec, array)
@@ -2482,7 +2493,7 @@ internal class AstChecker(private val program: Program,
             }
             if(!options.floats) {
                 if (target.name == "peekf" || target.name == "pokef")
-                    errors.err("floating point used, but that is not enabled via options", position)
+                    errors.err(floatsNotEnabled, position)
             }
             if(target.name.startsWith("peek") || target.name.startsWith("poke"))
                 args.firstOrNull()?.let { checkConstantMemoryAddress(it) }

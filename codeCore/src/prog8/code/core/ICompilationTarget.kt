@@ -58,7 +58,10 @@ enum class CpuType(val statusBitsOnMultiByteOps: Boolean) {
     LLVM64(false),
 
     /** Hosted 32-bit target that emits LLVM IR, such as wasm32. No status flags, like [LLVM64]. */
-    LLVM32(false)
+    LLVM32(false),
+
+    /** 16-bit target that emits LLVM IR, such as llvm-mos. No status flags, like [LLVM64]. */
+    LLVM16(false)
     ;
 
     /** True for the 6502-family targets (plain 6502 and 65C02). */
@@ -67,7 +70,7 @@ enum class CpuType(val statusBitsOnMultiByteOps: Boolean) {
     val is68k: Boolean
         get() = this == M68000 || this == M68020
     val isLlvm: Boolean
-        get() = this == LLVM32 || this == LLVM64
+        get() = this == LLVM16 || this == LLVM32 || this == LLVM64
     val isVirtual: Boolean
         get() = this == VIRTUAL
     /** True for targets that use the m68k-style hardware-register calling convention (D0-D7, A0-A6, FP0-FP7). */

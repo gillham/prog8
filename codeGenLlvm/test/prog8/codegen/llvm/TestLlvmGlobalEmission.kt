@@ -304,7 +304,7 @@ class TestLlvmGlobalEmission: FunSpec({
 
     test("the emitter rejects a target whose floats it has no type for") {
         val st = IRSymbolTable().apply { add(variable("main.counter", DataType.UWORD)) }
-        shouldThrow<IllegalArgumentException> { emit(st, C64Target()) }.message shouldContain "the LLVM backend needs 8-byte floats"
+        shouldThrow<IllegalArgumentException> { emit(st, C64Target()) }.message shouldContain "the LLVM backend needs 4 or 8-byte floats"
         emit(st, VMTarget()).first.globals.map { it.name } shouldBe listOf("main.counter")
     }
 
@@ -329,6 +329,17 @@ class TestLlvmGlobalEmission: FunSpec({
         types(LlvmTarget(4, LlvmTripleProfile.resolve("armv7-unknown-linux-gnueabihf"))) shouldBe listOf(LlvmType.I32, LlvmType.I32, LlvmType.I32, 4)
         types(LlvmTarget(8, LlvmTripleProfile.resolve("x86_64-unknown-linux-gnu"))) shouldBe listOf(LlvmType.I64, LlvmType.I64, LlvmType.I64, 8)
         shouldThrow<IllegalArgumentException> { LlvmTypeMapper(IRSymbolTable(), 3) }
+        types(LlvmTarget(2)) shouldBe listOf(LlvmType.I16, LlvmType.I16, LlvmType.I32, 2)
+    }
+
+    test("the llvm16 target maps floats to f32 and C int to i16, the other llvm targets floats to f64") {
+        LlvmTypeMapper(IRSymbolTable(), LlvmTarget(2)).let {
+            it.floatType shouldBe LlvmType.Float
+            it.cInt shouldBe LlvmType.I16
+            it.wideInt shouldBe LlvmType.I32
+        }
+        LlvmTypeMapper(IRSymbolTable(), target32).floatType shouldBe LlvmType.Double
+        LlvmTypeMapper(IRSymbolTable(), floatBytes = 4).floatType shouldBe LlvmType.Float
     }
 
     test("with 2-byte pointers the address types have 16 bits, while LONG register slots keep 32") {

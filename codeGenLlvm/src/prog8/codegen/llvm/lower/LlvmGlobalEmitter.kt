@@ -89,7 +89,7 @@ internal class LlvmGlobalEmitter(private val program: IRProgram, private val sta
     }
 
     fun emit(module: LlvmModule): LlvmDataSymbols {
-        require(target.FLOAT_MEM_SIZE == 8u) { "the LLVM backend needs 8-byte floats" }
+        require(target.FLOAT_MEM_SIZE == 4u || target.FLOAT_MEM_SIZE == 8u) { "the LLVM backend needs 4 or 8-byte floats" }
         val globals = buildList {
             st.allVariables().filter { it.name !in stackLocals }.mapTo(this) { variableGlobal(it) }
             st.allStructInstances().mapTo(this) { structInstanceGlobal(it) }

@@ -19,6 +19,10 @@ interface IMemSizer {
     fun longConvertsToAddress(from: DataType, to: DataType): Boolean =
         POINTER_MEM_SIZE > 4u && from.isLong && to == pointerType
 
+    /** Whether pointer arrays are split word arrays, as they are with 2-byte pointers except on the llvm targets. */
+    val splitPointerArrays: Boolean
+        get() = POINTER_MEM_SIZE <= 2u
+
     fun memorySize(dt: DataType, numElements: Int?): Int
 
     fun memorySize(dt: BaseDataType): Int {

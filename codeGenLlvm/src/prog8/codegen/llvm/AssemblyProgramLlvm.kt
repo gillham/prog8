@@ -43,16 +43,23 @@ internal class AssemblyProgramLlvm(
 
     private fun validate(file: Path, options: CompilationOptions): Boolean {
         val target = options.compTarget as? LlvmTarget
+        var profileClangMissing = false
         val namedClang = try {
             target?.takeIf { it.clangOption != null || it.profile.clang != null }?.clang()
         } catch (x: IllegalArgumentException) {
-            System.err.println("Can't check the LLVM IR in '$file': ${x.message}")
-            return false
+            if (target?.clangOption != null) {
+                System.err.println("Can't check the LLVM IR in '$file': ${x.message}")
+                return false
+            }
+            // only a build needs the profile's clang; the default clang may not know the triple, but llvm-as can still check it
+            profileClangMissing = true
+            null
         }
-        val command = validation(file, target?.targetTriple, namedClang)
+        val command = validation(file, target?.targetTriple, namedClang, !profileClangMissing)
         if (command == null) {
             if (!options.quiet)
-                println("LLVM IR written to '$file', but not checked: neither llvm-as nor clang was found")
+                println("LLVM IR written to '$file', but not checked: " +
+                    if (profileClangMissing) "the clang of the triple profile and llvm-as were not found" else "neither llvm-as nor clang was found")
             return true
         }
         val process = ProcessBuilder(command).redirectErrorStream(true).start()
@@ -77,13 +84,14 @@ internal class AssemblyProgramLlvm(
     /**
      * llvm-as only parses the IR; clang compiles it, for [triple] rather than for this host, which may not support that.
      * A [namedClang] (-clang or the profile's) is checked with the llvm-as beside it, or else itself, as it may accept IR that another LLVM doesn't.
+     * Without [defaultClang], only llvm-as checks it.
      */
-    private fun validation(file: Path, triple: String?, namedClang: Path?): List<String>? {
+    private fun validation(file: Path, triple: String?, namedClang: Path?, defaultClang: Boolean): List<String>? {
         val llvmAs = if (namedClang != null) LlvmToolLocator.besideClang("llvm-as", namedClang).takeIf { it?.parent == namedClang.parent } else LlvmToolchain.find("llvm-as")
         llvmAs?.let { return listOf(it.toString(), "-disable-output", file.toString()) }
         val nullDevice = if (System.getProperty("os.name").orEmpty().startsWith("Windows")) "NUL" else "/dev/null"
         val targetArgs = triple?.let { listOf("--target=$it") }.orEmpty()
-        (namedClang ?: LlvmToolchain.find("clang"))?.let { return listOf(it.toString()) + targetArgs + listOf("-Wno-override-module", "-x", "ir", "-c", "-o", nullDevice, file.toString()) }
+        (namedClang ?: LlvmToolchain.find("clang")?.takeIf { defaultClang })?.let { return listOf(it.toString()) + targetArgs + listOf("-Wno-override-module", "-x", "ir", "-c", "-o", nullDevice, file.toString()) }
         return null
     }
 }

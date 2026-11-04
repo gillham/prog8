@@ -76,7 +76,13 @@ data class LlvmTripleProfile(
 
     /** The clang this profile names, a name searched for or a path, with environment variables expanded as in [clangArgs]. */
     val clang: String?
-        get() = clangTemplate?.let { expandEnvironment(listOf(it)) { variable -> System.getenv(variable) }.single() }
+        get() = clangTemplate?.let {
+            try {
+                expandEnvironment(listOf(it)) { variable -> System.getenv(variable) }.single()
+            } catch (x: IllegalArgumentException) {
+                throw IllegalArgumentException("can't find the clang of llvm triple profile '$name': ${x.message}")
+            }
+        }
 
     /** The clang that builds for this profile: [clangOption] (the -clang option), else [clang], else the default one; see [LlvmToolLocator.resolveClang]. */
     fun resolveClang(clangOption: String?): Path? = LlvmToolLocator.resolveClang(clangOption, clang, name)

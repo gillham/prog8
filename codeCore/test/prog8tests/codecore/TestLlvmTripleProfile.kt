@@ -5,12 +5,15 @@ import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
+import prog8.code.core.BaseDataType
 import prog8.code.core.CpuType
 import prog8.code.target.LlvmTarget
 import prog8.code.target.LlvmToolLocator
 import prog8.code.target.LlvmTripleProfile
+import prog8.code.target.CompilationTargets
 import prog8.code.target.getCompilationTargetByName
 import java.nio.file.Path
 import java.nio.file.NoSuchFileException
@@ -399,13 +402,104 @@ class TestLlvmTripleProfile: FunSpec({
         LlvmTarget(8, LlvmTripleProfile.resolve("arm64-apple-macosx")).dataLayout shouldBe "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
     }
 
+    val mosLayout = "e-m:e-p:16:8-p1:8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:8-Fi8-n8"
+    val mosProfiles = mapOf("mos-sim" to "mos-sim-clang", "mos-c64" to "mos-c64-clang")
+
+    test("the llvm-mos profiles load without running clang, with 16-bit pointers and C int, and name the clang of LLVM_MOS") {
+        for ((name, clang) in mosProfiles) {
+            val profile = LlvmTripleProfile.resolve(name)
+            withClue(name) {
+                profile.triple shouldBe "mos"
+                profile.dataLayout shouldBe mosLayout
+                profile.pointerBits shouldBe 16
+                profile.cIntSize shouldBe 2
+                profile.cLongSize shouldBe 4
+                profile.programArgs shouldBe false
+                if (System.getenv("LLVM_MOS") == null)
+                    shouldThrow<IllegalArgumentException> { profile.clang }.message!! shouldContain "LLVM_MOS"
+                else
+                    profile.clang shouldBe System.getenv("LLVM_MOS") + "/bin/" + clang
+                profile.libcLacks.containsAll(listOf("opendir", "readdir", "usleep", "strtod", "sinf", "sqrt")) shouldBe true
+                ("putchar" in profile.libcLacks) shouldBe false
+            }
+        }
+        LlvmTripleProfile.resolve("mos-sim").let {
+            it.outputExtension shouldBe ".sim"
+            it.ioRanges shouldBe listOf(0xfff0u..0xffffu)
+            it.libcLacks.containsAll(listOf("fopen", "fclose", "remove")) shouldBe true
+        }
+        LlvmTripleProfile.resolve("mos-c64").let {
+            it.outputExtension shouldBe ".prg"
+            it.ioRanges shouldBe listOf(0u..1u, 0xd000u..0xdfffu)
+            ("fopen" in it.libcLacks) shouldBe false
+        }
+    }
+
+    test("the data layout and C int and long sizes of the llvm-mos profiles are what their clang reports").config(enabled = System.getenv("LLVM_MOS") != null) {
+        for (name in mosProfiles.keys) {
+            val profile = LlvmTripleProfile.resolve(name)
+            val clang = profile.resolveClang(null).shouldNotBeNull()
+            val reported = LlvmTripleProfile.askClang(profile.triple, profile.clangArgs, clang)
+            withClue(name) {
+                usedLayout(profile.dataLayout) shouldBe usedLayout(reported.dataLayout)
+                profile.cLongSize shouldBe reported.cLongSize
+                profile.cIntSize shouldBe reported.cIntSize
+            }
+        }
+    }
+
+    test("the llvm16 target has 2-byte pointers, 4-byte floats and real addresses, and defaults to the mos-sim profile") {
+        val llvm16 = LlvmTarget(2)
+        llvm16.name shouldBe LlvmTarget.NAME16
+        llvm16.cpu shouldBe CpuType.LLVM16
+        llvm16.cpu.isLlvm shouldBe true
+        llvm16.POINTER_MEM_SIZE shouldBe 2u
+        llvm16.FLOAT_MEM_SIZE shouldBe 4u
+        llvm16.memorySize(BaseDataType.FLOAT) shouldBe 4
+        llvm16.FLOAT_MAX_POSITIVE shouldBe Float.MAX_VALUE.toDouble()
+        llvm16.FLOAT_MAX_NEGATIVE shouldBe -Float.MAX_VALUE.toDouble()
+        llvm16.convertFloatToBytes(1.5) shouldBe listOf<UByte>(0u, 0u, 0xc0u, 0x3fu)
+        llvm16.convertBytesToFloat(listOf(0u, 0u, 0xc0u, 0x3fu)) shouldBe 1.5
+        llvm16.realAddresses shouldBe true
+        llvm16.supportsFloats shouldBe false
+        llvm16.hasFixedMemoryAddresses shouldBe false
+        llvm16.splitPointerArrays shouldBe false
+        llvm16.profile.name shouldBe "mos-sim"
+        llvm16.targetTriple shouldBe "mos"
+        llvm16.isIOAddress(0xfff0u) shouldBe true
+        llvm16.isIOAddress(0xffffu) shouldBe true
+        llvm16.isIOAddress(0xd020u) shouldBe false
+        val c64 = getCompilationTargetByName("llvm16", "mos-c64") as LlvmTarget
+        c64.isIOAddress(1u) shouldBe true
+        c64.isIOAddress(0xd020u) shouldBe true
+        c64.isIOAddress(2u) shouldBe false
+        c64.isIOAddress(0xe000u) shouldBe false
+        for (target in listOf(LlvmTarget(4), LlvmTarget(8))) {
+            withClue(target.name) {
+                target.FLOAT_MEM_SIZE shouldBe 8u
+                target.FLOAT_MAX_POSITIVE shouldBe Double.MAX_VALUE
+                target.convertFloatToBytes(1.5).size shouldBe 8
+                target.realAddresses shouldBe false
+                target.supportsFloats shouldBe true
+                target.isIOAddress(0xd020u) shouldBe false
+            }
+        }
+        val allIO = LlvmTripleProfile.load(profileFile("allio16", "triple = mos\ndatalayout = $mosLayout\nc_long_size = 4\nio_ranges = *"))
+        LlvmTarget(2, allIO).isIOAddress(0x1234u) shouldBe true
+    }
+
     test("a triple whose pointer width doesn't match the target is rejected") {
         shouldThrow<IllegalArgumentException> { LlvmTarget(4, LlvmTripleProfile.resolve("x86_64-unknown-linux-gnu")) }.message!! shouldContain "64-bit pointers"
         shouldThrow<IllegalArgumentException> { LlvmTarget(8, LlvmTripleProfile.resolve("wasm32-wasip1")) }.message!! shouldContain "32-bit pointers"
+        shouldThrow<IllegalArgumentException> { LlvmTarget(2, LlvmTripleProfile.resolve("wasm32-wasip1")) }.message!! shouldContain "16-bit pointers"
+        shouldThrow<IllegalArgumentException> { LlvmTarget(4, LlvmTripleProfile.resolve("mos-sim")) }.message!! shouldContain "16-bit pointers"
     }
 
     test("targets by name: llvm32, llvm64 and llvm take a triple, the other targets don't") {
         getCompilationTargetByName("llvm32").name shouldBe LlvmTarget.NAME32
+        getCompilationTargetByName("llvm16").name shouldBe LlvmTarget.NAME16
+        (LlvmTarget.NAME16 in CompilationTargets) shouldBe true
+        (getCompilationTargetByName("LLVM16", "mos-c64") as LlvmTarget).profile.name shouldBe "mos-c64"
         (getCompilationTargetByName("llvm32", "armv7-unknown-linux-gnueabihf") as LlvmTarget).targetTriple shouldBe "armv7-unknown-linux-gnueabihf"
         (getCompilationTargetByName("llvm", "x86_64-unknown-linux-gnu") as LlvmTarget).targetTriple shouldBe "x86_64-unknown-linux-gnu"
         shouldThrow<IllegalArgumentException> { getCompilationTargetByName("cx16", "wasm32-wasip1") }

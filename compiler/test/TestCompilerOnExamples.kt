@@ -401,7 +401,7 @@ class TestCompilerOnExamplesLlvm: FunSpec({
 
     // the LLVM IR has no fixed size to check; clib declares C's size_t as an uquad, so it is for llvm64 only
     val portable = listOf("wordcount", "find", "hexdump", "hanoi", "fnv64", "ls", "textelite")
-    val programs = cartesianProduct(portable.map { it to LlvmTarget(4) } + (portable + "clib").map { it to LlvmTarget(8) }, listOf(false, true))
+    val programs = cartesianProduct(portable.map { it to LlvmTarget(4) } + (portable + "clib").map { it to LlvmTarget(8) } + portable.map { it to LlvmTarget(2) }, listOf(false, true))
 
     programs.forEach { (program, optimize) ->
         val (name, target) = program

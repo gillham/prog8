@@ -552,7 +552,7 @@ class DataType private constructor(
     fun isSplitWordArray(memsizer: IMemSizer): Boolean  {
         return when (base) {
             BaseDataType.ARRAY_SPLITW -> true
-            BaseDataType.ARRAY if sub == BaseDataType.POINTER -> memsizer.POINTER_MEM_SIZE <= 2u
+            BaseDataType.ARRAY if sub == BaseDataType.POINTER -> memsizer.splitPointerArrays
             else -> false
         }
     }

@@ -106,10 +106,10 @@ private class CompilerCli : CliktCommand(name = "prog8c") {
     val dontIncludeSourcelines by option("-nosourcelines", "--nosourcelines", help = "do not include original Prog8 source lines in generated asm code").flag()
     val sourceDirs by option("-srcdirs", "--srcdirs", help = "extra paths to search for imported modules").multiple()
     val compilationTarget by option("-target", "--target", help = "target output of the compiler (one of ${CompilationTargets.joinToString(",")} or a custom target properties file)")
-    val llvmTripleArg by option("-triple", "--triple", help = "triple profile of the ${LlvmTarget.NAME32}/${LlvmTarget.NAME64} targets: a name such as ${LlvmTarget.DEFAULT_TRIPLE_32}, or a profile properties file")
-    val llvmCompileArgs by option("-Xcompile", "--Xcompile", help = "pass one extra argument to the clang compile step of the ${LlvmTarget.NAME32}/${LlvmTarget.NAME64} targets (can be repeated)").multiple()
-    val llvmLinkArgs by option("-Xlink", "--Xlink", help = "pass one extra argument to the link step of the ${LlvmTarget.NAME32}/${LlvmTarget.NAME64} targets, such as -lfoo (can be repeated)").multiple()
-    val llvmClangArg by option("-clang", "--clang", help = "the clang that builds programs of the ${LlvmTarget.NAME32}/${LlvmTarget.NAME64} targets, instead of the one of the triple profile or the one found on the PATH")
+    val llvmTripleArg by option("-triple", "--triple", help = "triple profile of the llvm targets: a name such as ${LlvmTarget.DEFAULT_TRIPLE_32}, or a profile properties file")
+    val llvmCompileArgs by option("-Xcompile", "--Xcompile", help = "pass one extra argument to the clang compile step of the llvm targets (can be repeated)").multiple()
+    val llvmLinkArgs by option("-Xlink", "--Xlink", help = "pass one extra argument to the link step of the llvm targets, such as -lfoo (can be repeated)").multiple()
+    val llvmClangArg by option("-clang", "--clang", help = "the clang that builds programs of the llvm targets, instead of the one of the triple profile or the one found on the PATH")
     val showTimings by option("-timings", "--timings", help = "show internal compiler timings").flag()
     val varsGolden by option("-varsgolden", "--varsgolden", help = "put uninitialized variables and memory slabs in golden ram").flag()
     val varsHighBank by option("-varshigh", "--varshigh", help = "put uninitialized variables and memory slabs in high memory area").int()
@@ -194,8 +194,8 @@ private fun compileMain(args: Array<String>): Boolean {
             presenter.printErrorLine("Program arguments after -- are only passed on to the program that -emu runs.")
             return false
         }
-        if(compilationTarget?.lowercase() !in setOf(LlvmTarget.NAME32, LlvmTarget.NAME64, LlvmTarget.ALIAS)) {
-            presenter.printErrorLine("Program arguments after -- can only be given for the ${LlvmTarget.NAME32} and ${LlvmTarget.NAME64} targets.")
+        if(compilationTarget?.lowercase() !in LlvmTarget.NAMES) {
+            presenter.printErrorLine("Program arguments after -- can only be given for the llvm targets.")
             return false
         }
     }
@@ -226,8 +226,8 @@ private fun compileMain(args: Array<String>): Boolean {
         if('/' in clang || File.separatorChar in clang) expandTilde(Path(clang)).toAbsolutePath().normalize().toString() else clang
     }
     if(llvmClang!=null) {
-        if(compilationTarget?.lowercase() !in setOf(LlvmTarget.NAME32, LlvmTarget.NAME64, LlvmTarget.ALIAS)) {
-            presenter.printErrorLine("-clang can only be given for the ${LlvmTarget.NAME32} and ${LlvmTarget.NAME64} targets.")
+        if(compilationTarget?.lowercase() !in LlvmTarget.NAMES) {
+            presenter.printErrorLine("-clang can only be given for the llvm targets.")
             return false
         }
         if(LlvmToolLocator.locate(llvmClang)==null) {
