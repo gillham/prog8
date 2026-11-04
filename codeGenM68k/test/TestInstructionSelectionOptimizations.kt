@@ -19,7 +19,7 @@ class TestInstructionSelectionOptimizations : FunSpec({
 
     val tempRoot = tempdir().toPath()
 
-    fun generateAsmChunks(outputDir: Path, chunks: List<IRCodeChunkBase>, target: ICompilationTarget = Qemu68kTarget()): List<String> {
+    fun generateAsmChunks(outputDir: Path, chunks: List<IRCodeChunkBase>, target: ICompilationTarget = Qemu68kTarget(), irComments: Boolean = false): List<String> {
         val options = CompilationOptions.builder(target)
             .output(OutputType.RAW)
             .zeropage(ZeropageType.FLOATSAFE)
@@ -27,6 +27,7 @@ class TestInstructionSelectionOptimizations : FunSpec({
             .compilerVersion("test")
             .memtopAddress(0xffffu)
             .optimize(true)
+            .irComments(irComments)
             .build()
         val program = IRProgram("test", IRSymbolTable(), options, DummyStringEncoder)
         program.options.outputDir = outputDir
@@ -45,10 +46,10 @@ class TestInstructionSelectionOptimizations : FunSpec({
         return asmFile.readText().lines().map { it.trim() }
     }
 
-    fun generateAsm(outputDir: Path, instructions: List<IRInstruction>, target: ICompilationTarget = Qemu68kTarget()): List<String> {
+    fun generateAsm(outputDir: Path, instructions: List<IRInstruction>, target: ICompilationTarget = Qemu68kTarget(), irComments: Boolean = false): List<String> {
         val chunk = IRCodeChunk(null, null)
         chunk.instructions.addAll(instructions)
-        return generateAsmChunks(outputDir, listOf(chunk), target)
+        return generateAsmChunks(outputDir, listOf(chunk), target, irComments)
     }
 
     fun hwArg(register: Int, type: IRDataType, slot: Int): CallArgument =
@@ -88,8 +89,12 @@ class TestInstructionSelectionOptimizations : FunSpec({
             )
         )
 
-        lines.count { it == "addq.l  #1,a0" } shouldBe 1
-        lines.count { it == "adda.l  #65535,a0" } shouldBe 1
+
+        // the pointer value comes from memory: small offsets use addq, large ones
+        // adda, and neither may be folded into a lea of the regfile address
+        lines.any { it == "addq.l  #1,a0" } shouldBe true
+        lines.any { it == "adda.l  #65535,a0" } shouldBe true
+        lines.none { it.startsWith("lea  p8_regfile") } shouldBe true
     }
 
     test("uses moveq for zero extension and only representable immediate returns") {
@@ -874,6 +879,175 @@ class TestInstructionSelectionOptimizations : FunSpec({
         lines.any { it.contains("tst.w") } shouldBe true
     }
 
+    test("removes redundant tst after move to a data register") {
+        val lines = mutableListOf(
+            "    move.b  d0,d3",
+            "    tst.b   d3",
+            "    beq     somewhere"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.contains("tst.b") } shouldBe false
+        lines.any { it.contains("move.b") } shouldBe true
+    }
+
+    test("removes redundant tst after swap, clr and ext") {
+        val lines = mutableListOf(
+            "    swap    d0",
+            "    tst.l   d0",
+            "    clr.l   d1",
+            "    tst.l   d1",
+            "    ext.w   d2",
+            "    tst.w   d2",
+            "    beq     somewhere"
+        )
+        optimizeAssembly(lines)
+        lines.none { it.contains("tst.") } shouldBe true
+    }
+
+    test("does not remove tst after add, sub or cmp") {
+        // add/sub/cmp set V/C/X from the computation while tst clears them:
+        // only a liveness proof could show no V/C/X reader follows, which this
+        // pass does not attempt.
+        val lines = mutableListOf(
+            "    add.b   d0,d1",
+            "    tst.b   d1",
+            "    sub.w   d2,d3",
+            "    tst.w   d3",
+            "    cmp.l   d4,d5",
+            "    tst.l   d5",
+            "    beq     somewhere"
+        )
+        optimizeAssembly(lines)
+        lines.count { it.contains("tst.") } shouldBe 3
+    }
+
+    test("does not remove tst after movea which sets no flags") {
+        val lines = mutableListOf(
+            "    movea.l  d0,a0",
+            "    tst.l   d0",
+            "    beq     somewhere"
+        )
+        optimizeAssembly(lines)
+        // the tst here tests d0 (movea wrote a0 and set no flags): keep it.
+        // (tst on an address register would be invalid input and is never produced.)
+        lines.any { it.contains("tst.l") } shouldBe true
+    }
+
+    // === lsl #1 and redundant extension peepholes ===
+
+    test("rewrites lsl #1 on data registers to add dN,dN") {
+        val lines = mutableListOf(
+            "    lsl.b  #1,d0",
+            "    lsl.w  #1,d1",
+            "    lsl.l  #1,d2",
+            "    lsl.l  #2,d3",
+            "    lsl.l  d1,d3",
+            "    lsl.w  (a0)",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it == "    add.b  d0,d0" } shouldBe true
+        lines.any { it == "    add.w  d1,d1" } shouldBe true
+        lines.any { it == "    add.l  d2,d2" } shouldBe true
+        lines.count { it.trimStart().startsWith("lsl.") } shouldBe 3
+    }
+
+    test("rewrites labelled lsl #1 and keeps the label") {
+        val lines = mutableListOf(
+            "mylabel:",
+            "    lsl.w  #1,d3",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it == "mylabel:" } shouldBe true
+        lines.any { it == "    add.w  d3,d3" } shouldBe true
+        lines.none { it.trimStart().startsWith("lsl.") } shouldBe true
+    }
+
+    test("removes duplicate consecutive ext into the same data register") {
+        val lines = mutableListOf(
+            "    ext.w  d2",
+            "    ext.w  d2",
+            "    ext.l  d3",
+            "    ext.l  d3",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.count { it == "    ext.w  d2" } shouldBe 1
+        lines.count { it == "    ext.l  d3" } shouldBe 1
+    }
+
+    test("rewrites cmpi #0 on data registers to tst") {
+        val lines = mutableListOf(
+            "    cmpi.b  #0,d0",
+            "    cmpi.w  #0,d1",
+            "    cmpi.l  #0,d2",
+            "    beq     somewhere"
+        )
+        optimizeAssembly(lines)
+        lines.any { it == "    tst.b  d0" } shouldBe true
+        lines.any { it == "    tst.w  d1" } shouldBe true
+        lines.any { it == "    tst.l  d2" } shouldBe true
+        lines.none { it.trimStart().startsWith("cmpi.") } shouldBe true
+    }
+
+    test("rewrites cmp #0 alias on data registers to tst") {
+        val lines = mutableListOf(
+            "    cmp.b  #0,d3",
+            "    bne     somewhere"
+        )
+        optimizeAssembly(lines)
+        lines.any { it == "    tst.b  d3" } shouldBe true
+        lines.none { it.trimStart().startsWith("cmp.") } shouldBe true
+    }
+
+    test("keeps label when rewriting cmpi #0") {
+        val lines = mutableListOf(
+            "mylabel:",
+            "    cmpi.w  #0,d4",
+            "    beq     somewhere"
+        )
+        optimizeAssembly(lines)
+        lines.any { it == "mylabel:" } shouldBe true
+        lines.any { it == "    tst.w  d4" } shouldBe true
+        lines.none { it.trimStart().startsWith("cmpi.") } shouldBe true
+    }
+
+    test("does not rewrite cmp with non-zero immediate") {
+        val lines = mutableListOf(
+            "    cmpi.b  #1,d0",
+            "    cmp.w  #42,d1",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.count { it.trimStart().startsWith("cmpi.") } shouldBe 1
+        lines.count { it.trimStart().startsWith("cmp.") } shouldBe 1
+    }
+
+    test("does not rewrite cmp register-register") {
+        val lines = mutableListOf(
+            "    cmp.b  d0,d1",
+            "    cmpi.w  #0,d2",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it == "    cmp.b  d0,d1" } shouldBe true
+        lines.any { it == "    tst.w  d2" } shouldBe true
+    }
+
+    test("does not collapse ext.w plus ext.l or move.w plus ext.l") {
+        val lines = mutableListOf(
+            "    ext.w  d0",
+            "    ext.l  d0",
+            "    move.w  d1,d0",
+            "    ext.l  d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.count { it == "    ext.w  d0" } shouldBe 1
+        lines.count { it == "    ext.l  d0" } shouldBe 2
+    }
+
     // === Tests for status flag return handling fixes (commit 1286b6cc8 follow-up) ===
 
     test("single-return expression call with @A0 (slot 18) emits store instruction") {
@@ -1218,8 +1392,10 @@ class TestInstructionSelectionOptimizations : FunSpec({
         sub.any { it.startsWith("movea.l  ") && it.endsWith(",a0") } shouldBe true
         sub.any { it.startsWith("move.w  (a0),p8_regfile+") } shouldBe true
         sub.any { it.endsWith(",(6,a0)") } shouldBe true
-        // displacements beyond the signed 16-bit range need an explicit adda
+        // the pointer is loaded from memory, so a large displacement needs an
+        // explicit adda; folding it into a lea would address the regfile itself
         sub.any { it == "adda.l  #40000,a0" } shouldBe true
+        sub.none { it.startsWith("lea  p8_regfile") } shouldBe true
     }
 
     test("float indexed memory lowering uses full width d0.l indexing") {
@@ -1229,6 +1405,23 @@ class TestInstructionSelectionOptimizations : FunSpec({
                 IRInstructions.loadMemory(Opcode.LOADX, IRDataType.FLOAT, 1, IRMemory.indexed("arr", 2, IRDataType.WORD, 4)),
                 IRInstructions.storeMemory(Opcode.STOREX, IRDataType.FLOAT, 1, IRMemory.indexed("arr", 2, IRDataType.WORD, 8))
             )
+        )
+
+        // 68020 folds the scale into the full-extension form, no manual scaling.
+        lines.any { it == "fmove.s  (0,a0,d0.l*4),fp0" } shouldBe true
+        lines.any { it == "fmove.s  fp0,(0,a0,d0.l*8)" } shouldBe true
+        lines.none { it.startsWith("lsl.l") } shouldBe true
+        lines.none { it.startsWith("add.l  d0,d0") } shouldBe true
+    }
+
+    test("float indexed memory lowering scales manually on 68000") {
+        val lines = generateAsm(
+            tempRoot.resolve("test-m68k-indexed-float-000"),
+            listOf(
+                IRInstructions.loadMemory(Opcode.LOADX, IRDataType.FLOAT, 1, IRMemory.indexed("arr", 2, IRDataType.WORD, 4)),
+                IRInstructions.storeMemory(Opcode.STOREX, IRDataType.FLOAT, 1, IRMemory.indexed("arr", 2, IRDataType.WORD, 8))
+            ),
+            Amiga500Target()
         )
 
         lines.any { it == "lsl.l  #2,d0" } shouldBe true
@@ -1279,6 +1472,40 @@ class TestInstructionSelectionOptimizations : FunSpec({
         lines.count { it == "ext.l  d0" } shouldBe 1
     }
 
+    test("LOADMSL sign-extends byte to long with extb.l on M68020") {
+        val lines = generateAsm(
+            tempRoot.resolve("test-m68k-loadmsl-68020"),
+            listOf(IRInstructions.loadMemory(Opcode.LOADMSL, IRDataType.BYTE, 1, IRMemory.direct("p8b_test.p8v_value")))
+        )
+
+        lines.count { it == "extb.l  d0" } shouldBe 1
+        lines.count { it == "ext.w  d0" } shouldBe 0
+        lines.count { it == "ext.l  d0" } shouldBe 0
+    }
+
+    test("LOADMSL sign-extends byte to long with ext.w plus ext.l on M68000") {
+        val lines = generateAsm(
+            tempRoot.resolve("test-m68k-loadmsl-68000"),
+            listOf(IRInstructions.loadMemory(Opcode.LOADMSL, IRDataType.BYTE, 1, IRMemory.direct("p8b_test.p8v_value"))),
+            target = Amiga500Target()
+        )
+
+        lines.count { it == "extb.l  d0" } shouldBe 0
+        lines.count { it == "ext.w  d0" } shouldBe 1
+        lines.count { it == "ext.l  d0" } shouldBe 1
+    }
+
+    test("LOADISL sign-extends byte to long with extb.l on M68020") {
+        val lines = generateAsm(
+            tempRoot.resolve("test-m68k-loadisl-68020"),
+            listOf(IRInstructions.loadMemory(Opcode.LOADISL, IRDataType.BYTE, 1, IRMemory.indirect(2)))
+        )
+
+        lines.count { it == "extb.l  d0" } shouldBe 1
+        lines.count { it == "ext.w  d0" } shouldBe 0
+        lines.count { it == "ext.l  d0" } shouldBe 0
+    }
+
     test("M5 drops a lea when a0 already holds the same base") {
         val lines = mutableListOf(
             "    lea  arr,a0",
@@ -1325,6 +1552,117 @@ class TestInstructionSelectionOptimizations : FunSpec({
         optimizeAssembly(lines)
         lines.count { it.trimStart().startsWith("lea  arr,a0") } shouldBe 2
         lines.any { it.trimStart().startsWith("bsr") } shouldBe true
+    }
+
+    test("lea removal inside the loop enables conditional-over-jump") {
+        // the redundant lea blocks the bne/bra/JOIN window; only a refiring
+        // loop can remove the lea first and invert the branch afterwards.
+        val lines = mutableListOf(
+            "    lea  arr,a0",
+            "    move.w  d1,(a0,d0.w)",
+            "    bne  THEN",
+            "    lea  arr,a0",
+            "    bra  JOIN",
+            "THEN:",
+            "    move.w  d2,d3",
+            "JOIN:",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "beq  JOIN" } shouldBe true
+        lines.none { it.trim() == "bra  JOIN" } shouldBe true
+        lines.count { it.trimStart().startsWith("lea  arr,a0") } shouldBe 1
+    }
+
+    test("folds movea plus address arithmetic into lea") {
+        val lines = mutableListOf(
+            "    movea.l  a0,a2",
+            "    addq.l  #1,a2",
+            "    move.w  (a2),d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "lea  (1,a0),a2" } shouldBe true
+        lines.none { it.trimStart().startsWith("movea") } shouldBe true
+        lines.none { it.trimStart().startsWith("addq") } shouldBe true
+    }
+
+    test("does not fold a symbol memory load plus arithmetic into lea") {
+        // `move.l arr,a2` loads the value of arr, `lea arr+2,a2` would take its address.
+        val lines = mutableListOf(
+            "    move.l  arr,a2",
+            "    addq.l  #2,a2",
+            "    move.w  (a2),d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "move.l  arr,a2" } shouldBe true
+        lines.any { it.trim() == "addq.l  #2,a2" } shouldBe true
+        lines.none { it.trimStart().startsWith("lea") } shouldBe true
+    }
+
+    test("folds an immediate symbol base plus arithmetic into lea with offset") {
+        val lines = mutableListOf(
+            "    movea.l  #arr,a2",
+            "    addq.l  #2,a2",
+            "    move.w  (a2),d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "lea  arr+2,a2" } shouldBe true
+    }
+
+    test("does not fold move plus arithmetic over a flag consumer") {
+        val lines = mutableListOf(
+            "    move.l  #arr,a2",
+            "    addq.l  #2,a2",
+            "    beq  somewhere",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "move.l  #arr,a2" } shouldBe true
+        lines.any { it.trim() == "addq.l  #2,a2" } shouldBe true
+    }
+
+    test("does not fold absolute address sources that may be hardware") {
+        val lines = mutableListOf(
+            "    movea.l  \$00dff096,a2",
+            "    addq.l  #2,a2",
+            "    move.w  (a2),d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trimStart().startsWith("movea") } shouldBe true
+        lines.any { it.trimStart().startsWith("addq") } shouldBe true
+    }
+
+    test("does not fold a frame slot load plus arithmetic into lea") {
+        // `movea.l (-8,a5),a2` loads a pointer from the slot; `lea (-6,a5),a2`
+        // would instead point into the stack frame. This broke circles.p8.
+        val lines = mutableListOf(
+            "    movea.l  (-8,a5),a2",
+            "    addq.l  #2,a2",
+            "    move.w  (a2),d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "movea.l  (-8,a5),a2" } shouldBe true
+        lines.any { it.trim() == "addq.l  #2,a2" } shouldBe true
+        lines.none { it.trimStart().startsWith("lea") } shouldBe true
+    }
+
+    test("does not fold an unsigned frame slot load plus arithmetic into lea") {
+        // real codegen emits `8(a5)`, not `(8,a5)`, for positive offsets.
+        val lines = mutableListOf(
+            "    movea.l  8(a5),a2",
+            "    addq.l  #2,a2",
+            "    move.w  (a2),d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "movea.l  8(a5),a2" } shouldBe true
+        lines.any { it.trim() == "addq.l  #2,a2" } shouldBe true
+        lines.none { it.trimStart().startsWith("lea") } shouldBe true
     }
 
     test("M5 forgets a0 across a label") {
@@ -1438,14 +1776,94 @@ class TestInstructionSelectionOptimizations : FunSpec({
         lines.count { it.startsWith("    move.w") } shouldBe 2
     }
 
-    test("A3 does not treat symbols starting with d as data registers") {
+    test("A3 drops a mirrored move pair through a symbol") {
+        // `dmask` merely starts with d: not a register, but the mirror itself
+        // is still redundant (second writes back what the first just stored).
         val lines = mutableListOf(
             "    move.w  d0,dmask",
             "    move.w  dmask,d0",
             "    rts"
         )
         optimizeAssembly(lines)
-        lines.count { it.startsWith("    move.w") } shouldBe 2
+        lines.count { it.startsWith("    move.w") } shouldBe 1
+        lines.count { it.startsWith("    move.w  d0,dmask") } shouldBe 1
+    }
+
+    test("drops a mirrored move pair across address registers") {
+        // real bootinfo_ptr shape: a2 is unused between the two moves.
+        val lines = mutableListOf(
+            "    move.l  d0,a2",
+            "    move.l  a2,d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.count { it.startsWith("    move.l") } shouldBe 1
+        lines.count { it.startsWith("    move.l  d0,a2") } shouldBe 1
+    }
+
+    test("drops a duplicated consecutive move") {
+        val lines = mutableListOf(
+            "    move.l  p8b_test.p8v_x,d0",
+            "    move.l  p8b_test.p8v_x,d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.count { it.startsWith("    move.l") } shouldBe 1
+    }
+
+    test("drops movea and exg self-moves") {
+        val lines = mutableListOf(
+            "    movea.l  a0,a0",
+            "    exg     d2,d2",
+            "    move.l  d0,d1",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.contains("movea.l  a0,a0") } shouldBe false
+        lines.any { it.contains("exg") } shouldBe false
+        lines.count { it.startsWith("    move.l  d0,d1") } shouldBe 1
+    }
+
+    test("keeps a flag-setting self-move") {
+        // `move.l d0,d0` sets flags like `tst.l d0`: removing it needs a
+        // liveness proof this pass does not attempt.
+        val lines = mutableListOf(
+            "    move.l  d0,d0",
+            "    beq     somewhere"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.contains("move.l  d0,d0") } shouldBe true
+    }
+
+    test("keeps mirrors with pointer-advancing operands") {
+        val lines = mutableListOf(
+            "    move.l  (a0)+,d0",
+            "    move.l  d0,(a0)+",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.count { it.startsWith("    move.l") } shouldBe 2
+    }
+
+    test("keeps mixed move and movea mirrors") {
+        // movea sets no flags while move does: flag states would differ.
+        val lines = mutableListOf(
+            "    movea.l  a0,a1",
+            "    move.l  a1,d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.count { it.trimStart().startsWith("move") } shouldBe 2
+    }
+
+    test("does not merge moves through case-differing symbols") {
+        val lines = mutableListOf(
+            "    move.l  Foo,d0",
+            "    move.l  foo,d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.count { it.startsWith("    move.l") } shouldBe 2
     }
 
     // === A2 store-reload peephole ===
@@ -1462,24 +1880,63 @@ class TestInstructionSelectionOptimizations : FunSpec({
         lines.count { it.contains("p8b_test.p8v_x,d1") } shouldBe 0
     }
 
-    test("A2 keeps frame-slot reloads untouched") {
+    test("A2 replaces a frame-slot store-reload with a register copy") {
         val lines = mutableListOf(
             "    move.l  d0,8(a5)",
             "    move.l  8(a5),d1",
             "    rts"
         )
         optimizeAssembly(lines)
-        lines.count { it == "    move.l  8(a5),d1" } shouldBe 1
+        lines.count { it == "    move.l  d0,8(a5)" } shouldBe 1
+        lines.count { it == "    move.l  d0,d1" } shouldBe 1
+        lines.count { it == "    move.l  8(a5),d1" } shouldBe 0
     }
 
-    test("A2 leaves a store-reload-into-source pair alone") {
+    test("A2 replaces a negative-offset frame-slot store-reload") {
+        val lines = mutableListOf(
+            "    move.b  d2,(-5,a5)",
+            "    move.b  (-5,a5),d3",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.count { it == "    move.b  d2,(-5,a5)" } shouldBe 1
+        lines.count { it == "    move.b  d2,d3" } shouldBe 1
+    }
+
+    test("A2 keeps mismatched frame-slot offsets untouched") {
+        val lines = mutableListOf(
+            "    move.l  d0,8(a5)",
+            "    move.l  4(a5),d1",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.count { it == "    move.l  8(a5),d0" } shouldBe 0
+        lines.count { it == "    move.l  4(a5),d1" } shouldBe 1
+    }
+
+    test("A2 keeps post-increment store-reloads untouched") {
+        val lines = mutableListOf(
+            "    move.l  d0,(a0)+",
+            "    move.l  (a0)+,d1",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.count { it == "    move.l  d0,(a0)+" } shouldBe 1
+        lines.count { it == "    move.l  (a0)+,d1" } shouldBe 1
+        lines.count { it == "    move.l  d0,d1" } shouldBe 0
+    }
+
+    test("A2 drops a store-reload-into-source pair as a mirror") {
+        // The old store-reload pass deliberately skipped these; the mirror
+        // pass now removes the reload (it writes back what was just stored).
         val lines = mutableListOf(
             "    move.l  d0,p8b_test.p8v_x",
             "    move.l  p8b_test.p8v_x,d0",
             "    rts"
         )
         optimizeAssembly(lines)
-        lines.count { it == "    move.l  p8b_test.p8v_x,d0" } shouldBe 1
+        lines.count { it == "    move.l  d0,p8b_test.p8v_x" } shouldBe 1
+        lines.count { it == "    move.l  p8b_test.p8v_x,d0" } shouldBe 0
     }
 
     test("A2 does not treat symbols starting with d as data registers") {
@@ -1503,6 +1960,82 @@ class TestInstructionSelectionOptimizations : FunSpec({
         lines.count { it == "    move.w  d0,\$dff180" } shouldBe 1
         lines.count { it == "    move.w  \$dff180,d1" } shouldBe 1
         lines.count { it == "    move.w  d0,d1" } shouldBe 0
+    }
+
+    // === const-operate folding peephole ===
+
+    test("folds move-const plus or into immediate form") {
+        val lines = mutableListOf(
+            "    move.b  #8,d5",
+            "    or.b  d5,d4",
+            "    move.l  d0,d5",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "ori.b  #8,d4" } shouldBe true
+        lines.none { it.contains("move.b  #8,d5") } shouldBe true
+    }
+
+    test("folds move-const plus push into immediate push") {
+        val lines = mutableListOf(
+            "    move.l  #sym,d2",
+            "    move.l  d2,-(sp)",
+            "    move.l  d7,d2",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "move.l  #sym,-(sp)" } shouldBe true
+        lines.none { it.contains("move.l  #sym,d2") } shouldBe true
+    }
+
+    test("folds moveq plus narrow op") {
+        val lines = mutableListOf(
+            "    moveq  #-1,d2",
+            "    move.w  d2,d1",
+            "    moveq  #0,d2",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.none { it.trim() == "moveq  #-1,d2" } shouldBe true
+        lines.any { it.contains("d1") && it.contains("#-1") } shouldBe true
+    }
+
+    test("keeps the pair when the temp is read afterwards") {
+        val lines = mutableListOf(
+            "    move.l  #sym,d2",
+            "    move.l  d2,-(sp)",
+            "    move.l  d2,d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "move.l  #sym,d2" } shouldBe true
+        lines.any { it.trim() == "move.l  d2,-(sp)" } shouldBe true
+    }
+
+    test("keeps addi-form targets that cannot address An") {
+        // `add.l d0,a2` is legal but `addi.l #4,a2` is not: keep the pair
+        // (the `move.l #4` itself may still become `moveq` via 2.3).
+        val lines = mutableListOf(
+            "    move.l  #4,d0",
+            "    add.l  d0,a2",
+            "    move.l  d7,d0",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.none { it.trimStart().startsWith("addi.") } shouldBe true
+        lines.any { it.trim() == "add.l  d0,a2" } shouldBe true
+    }
+
+    test("keeps the pair across a label") {
+        val lines = mutableListOf(
+            "    move.b  #8,d5",
+            "    or.b  d5,d4",
+            "somelabel:",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "move.b  #8,d5" } shouldBe true
+        lines.any { it.trim() == "or.b  d5,d4" } shouldBe true
     }
 
     // === A6 zero-extend peephole ===
@@ -1655,5 +2188,159 @@ class TestInstructionSelectionOptimizations : FunSpec({
         optimizeAssembly(lines)
         lines.count { it.contains("label:") } shouldBe 1
         lines.any { it.contains("moveq  #42,d0") } shouldBe true
+    }
+
+    // === zero stores avoid clr on I/O addresses (68000 dummy-read hazard) ===
+
+    test("zero store to Amiga custom-chip address uses move instead of clr") {
+        val lines = generateAsm(
+            tempRoot.resolve("test-m68k-zero-io-amiga"),
+            listOf(
+                IRInstructions.storeImmediate(IRDataType.WORD, 0, IRMemory.direct(0xdff096u)),
+                IRInstructions.storeZero(Opcode.STOREZM, IRDataType.WORD, IRMemory.direct(0xdff180u))
+            ),
+            Amiga500Target()
+        )
+
+        lines.any { it == "move.w  #0,$00dff096" } shouldBe true
+        lines.any { it == "move.w  #0,$00dff180" } shouldBe true
+        lines.none { it.startsWith("clr") } shouldBe true
+    }
+
+    test("zero store to the same addresses keeps clr on qemu68k (not I/O there)") {
+        val lines = generateAsm(
+            tempRoot.resolve("test-m68k-zero-io-qemu68k"),
+            listOf(
+                IRInstructions.storeImmediate(IRDataType.WORD, 0, IRMemory.direct(0xdff096u)),
+                IRInstructions.storeZero(Opcode.STOREZM, IRDataType.WORD, IRMemory.direct(0xdff180u))
+            )
+        )
+
+        lines.any { it == "clr.w  $00dff096" } shouldBe true
+        lines.any { it == "clr.w  $00dff180" } shouldBe true
+    }
+
+    test("zero store to plain RAM keeps clr even on Amiga") {
+        val lines = generateAsm(
+            tempRoot.resolve("test-m68k-zero-ram-amiga"),
+            listOf(
+                IRInstructions.storeImmediate(IRDataType.WORD, 0, IRMemory.direct(0x1000u)),
+                IRInstructions.storeZero(Opcode.STOREZM, IRDataType.WORD, IRMemory.direct(0x2000u))
+            ),
+            Amiga500Target()
+        )
+
+        lines.any { it == "clr.w  $1000" } shouldBe true
+        lines.any { it == "clr.w  $2000" } shouldBe true
+    }
+
+    test("zero store to a memvar symbol on an I/O address uses move instead of clr") {
+        val target = Amiga500Target()
+        val options = CompilationOptions.builder(target)
+            .output(OutputType.RAW)
+            .zeropage(ZeropageType.FLOATSAFE)
+            .floats(false)
+            .compilerVersion("test")
+            .memtopAddress(0xffffu)
+            .optimize(true)
+            .build()
+        val program = IRProgram("test", IRSymbolTable(), options, DummyStringEncoder)
+        program.options.outputDir = tempRoot.resolve("test-m68k-zero-io-memvar")
+        program.st.add(IRStMemVar("custom.DMACON", DataType.UWORD, 0xdff096u, null))
+        val sub = IRSubroutine("test.start", emptyList(), emptyList(), Position.DUMMY)
+        val chunk = IRCodeChunk(null, null)
+        chunk.instructions.add(IRInstructions.storeImmediate(IRDataType.WORD, 0, IRMemory.direct("custom.DMACON")))
+        sub.chunks.add(chunk)
+        val block = IRBlock("test", false, IRBlock.Options(), Position.DUMMY)
+        block.children.add(sub)
+        program.blocks.add(block)
+
+        val output = program.options.outputDir.toFile()
+        output.deleteRecursively()
+        output.mkdirs()
+        AsmGen(program, target).generate()
+        val asmFile = program.options.outputDir.resolve("test.asm")
+        check(asmFile.exists()) { "Assembly file not written: $asmFile" }
+        val lines = asmFile.readText().lines().map { it.trim() }
+
+        lines.any { it == "move.w  #0,$00dff096" } shouldBe true
+        lines.none { it.startsWith("clr") } shouldBe true
+    }
+
+    // === data-register zeroing uses moveq instead of clr ===
+
+    test("forwarded zero call argument uses moveq instead of clr") {
+        val site = callSite("copper.wait", arguments = listOf(hwArg(1, IRDataType.WORD, 10)))
+        val lines = generateAsm(
+            tempRoot.resolve("test-m68k-call-forward-zero-moveq"),
+            listOf(
+                IRInstructions.load(IRDataType.WORD, 1, 0),
+                IRInstructions.call(site)
+            )
+        )
+
+        lines.any { it == "moveq  #0,d0" } shouldBe true
+        lines.none { it.startsWith("clr") } shouldBe true
+    }
+
+    // === immediate form selection (2.3): moveq for longs, addq/subq for small immediates ===
+
+    test("rewrites move.l with a small immediate to moveq") {
+        val lines = mutableListOf(
+            "    move.l  #100,d3",
+            "    move.l  #\$ffffff9c,d4",
+            "    move.l  #1000,d5",
+            "    move.l  #somelabel,d6",
+            "    rts"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "moveq  #100,d3" } shouldBe true
+        lines.any { it.trim() == "moveq  #-100,d4" } shouldBe true
+        lines.any { it.trim() == "move.l  #1000,d5" } shouldBe true
+        lines.any { it.trim() == "move.l  #somelabel,d6" } shouldBe true
+    }
+
+    test("rewrites small add/sub immediates to addq/subq with sign flip") {
+        val lines = mutableListOf(
+            "    add.b  #5,d0",
+            "    sub.w  #8,d1",
+            "    add.l  #-3,d2",
+            "    sub.l  #-8,d3",
+            "    add.w  #300,d4",
+            "    add.b  #0,d5",
+            "    add.b  #1,ccr"
+        )
+        optimizeAssembly(lines)
+        lines.any { it.trim() == "addq.b  #5,d0" } shouldBe true
+        lines.any { it.trim() == "subq.w  #8,d1" } shouldBe true
+        lines.any { it.trim() == "subq.l  #3,d2" } shouldBe true
+        lines.any { it.trim() == "addq.l  #8,d3" } shouldBe true
+        lines.any { it.trim() == "add.w  #300,d4" } shouldBe true
+        lines.any { it.trim() == "add.b  #0,d5" } shouldBe true
+        lines.any { it.trim() == "add.b  #1,ccr" } shouldBe true
+    }
+
+    // === IR echo comments are opt-in via irComments (off by default) ===
+    test("IR echo comments are omitted by default and kept with irComments") {
+        val instructions = listOf(IRInstructions.load(IRDataType.WORD, 1, 42))
+        val quiet = generateAsm(tempRoot.resolve("test-m68k-no-ircomments"), instructions)
+        quiet.none { it.trimStart().startsWith("; load") } shouldBe true
+        val verbose = generateAsm(tempRoot.resolve("test-m68k-ircomments"), instructions, irComments = true)
+        verbose.any { it.trimStart().startsWith("; load.w") } shouldBe true
+    }
+
+    // === instruction lines use lowercase mnemonics with two-space gaps ===
+    test("emitted instructions are normalized to lowercase with two-space gaps") {
+        val lines = generateAsm(
+            tempRoot.resolve("test-m68k-normalize"),
+            listOf(
+                IRInstructions.loadMemory(Opcode.LOADMZ, IRDataType.BYTE, 1, IRMemory.direct("p8b_test.p8v_value"))
+            )
+        )
+
+        // the zero-extending and.w was emitted with three spaces before normalization
+        lines.any { it == "and.w  #\$ff,d0" } shouldBe true
+        // every indented line the codegen emits starts with a lowercase mnemonic
+        lines.filter { it.startsWith("    ") }.none { it[4].isUpperCase() } shouldBe true
     }
 })

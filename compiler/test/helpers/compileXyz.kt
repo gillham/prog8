@@ -22,7 +22,8 @@ internal fun compileFile(
     varshigh: Int? = null,
     varsAddress: UInt? = null,
     newCodegen: Boolean = false,
-    outputFile: Path? = null
+    outputFile: Path? = null,
+    irComments: Boolean = false
 ) : CompilationResult? {
     val filepath = fileDir.resolve(fileName)
     assumeReadableFile(filepath)
@@ -56,7 +57,8 @@ internal fun compileFile(
         assemble = assemble,
         llvmTriple = (platform as? LlvmTarget)?.profile?.name,
         llvmCompileArgs = (platform as? LlvmTarget)?.extraCompileArgs.orEmpty(),
-        llvmLinkArgs = (platform as? LlvmTarget)?.extraLinkArgs.orEmpty()
+        llvmLinkArgs = (platform as? LlvmTarget)?.extraLinkArgs.orEmpty(),
+        irComments = irComments
     )
     return compileProgram(args)
 }
@@ -77,11 +79,12 @@ internal fun compileText(
     varshigh: Int? = null,
     varsAddress: UInt? = null,
     newCodegen: Boolean = false,
-    outputFile: Path? = null
+    outputFile: Path? = null,
+    irComments: Boolean = false
 ) : CompilationResult? {
     val filePath = outputDir.resolve("on_the_fly_test_${sourceText.hashCode().toUInt().toString(16)}.p8")
     // we don't assumeNotExists(filePath) - should be ok to just overwrite it
     filePath.toFile().writeText(sourceText)
     return compileFile(platform, optimize, filePath.parent, filePath.name, outputDir,
-        errors=errors, writeAssembly=writeAssembly, assemble=assemble, varshigh=varshigh, varsAddress=varsAddress, newCodegen=newCodegen, outputFile=outputFile)
+        errors=errors, writeAssembly=writeAssembly, assemble=assemble, varshigh=varshigh, varsAddress=varsAddress, newCodegen=newCodegen, outputFile=outputFile, irComments=irComments)
 }

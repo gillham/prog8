@@ -42,7 +42,9 @@ class TestDaemonProtocol : FunSpec({
             cwd = "/home/user/project",
             llvmTriple = "riscv32-unknown-elf",
             llvmCompileArgs = listOf("-g", "-mcpu=cortex-a15"),
-            llvmLinkArgs = listOf("-L/a b", "-lfoo", "x=\"y\"")
+            llvmLinkArgs = listOf("-L/a b", "-lfoo", "x=\"y\""),
+            generateDocumentation = false,
+            irComments = true
         )
 
         val encoded = DaemonProtocol.encodeRequest(request)
@@ -80,6 +82,7 @@ class TestDaemonProtocol : FunSpec({
         decoded.llvmTriple shouldBe request.llvmTriple
         decoded.llvmCompileArgs shouldBe request.llvmCompileArgs
         decoded.llvmLinkArgs shouldBe request.llvmLinkArgs
+        decoded.irComments shouldBe request.irComments
     }
 
     test("DaemonRequest roundtrip with null optional fields") {

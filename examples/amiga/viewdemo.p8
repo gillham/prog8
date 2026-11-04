@@ -1,38 +1,51 @@
-; Bare-metal display demo: plain old ECS 640x256x5 hires screen (32 colors).
-; The custom.compute_display helper computes shadow registers, which are
-; patched into a copper list (blitcop-style) that programs the display
+; Bare-metal 320x256 lores display with concentric color rectangles.
+; The custom.compute_display helper computes shadow registers, which the
+; copper builder emits into a copper list that programs the display
 ; every frame. A small CPU palette is required, otherwise everything
 ; renders black (the color registers are never touched by the copper).
 
-%import exec
 %import graphics
 %import custom
+%import playfield
+%import copper
+%import textio
 
 main {
-    const word WIDTH = 640
+    const word WIDTH = 320
     const word HEIGHT = 256
     const ubyte DEPTH = 4
+    const uword RECTANGLE_COUNT = 15
+    const uword RECTANGLE_SPACING = 8
 
-    ; Chip-RAM bitmap backing the display; the shadow registers live in the
-    ; custom.compute_display returns a pointer to them).
+    ubyte[8] pixelMasks = [$80, $40, $20, $10, $08, $04, $02, $01]
+    ; Chip-RAM bitmap backing the display and its shadow display registers.
     ^^graphics.BitMap bm
     ^^custom.DisplayRegs regs
 
     sub start() {
-        if setup_bitmap() == false {
-            return
+        ubyte chipset = custom.detect_chipset()
+        when chipset {
+            custom.CHIPSET::OCS -> {
+                txt.print("Detected chipset: OCS\n")
+            }
+            custom.CHIPSET::ECS -> {
+                txt.print("Detected chipset: ECS\n")
+            }
+            custom.CHIPSET::AGA -> {
+                txt.print("Detected chipset: AGA\n")
+            }
         }
-        regs = custom.compute_display(WIDTH, HEIGHT, WIDTH, DEPTH, custom.DISPLAY_HIRES, 0)
-        if regs == 0 {
-            free_bitmap()
+        if not playfield.create(WIDTH, HEIGHT, WIDTH, HEIGHT, DEPTH, custom.DISPLAY_DEFAULT, 0)
             return
-        }
-        build_copperlist()
+        bm = playfield.bitmap
+        regs = playfield.regs
+        uword planeBase = build_copperlist()
+        playfield.patch_copper(copper.list, planeBase)
         custom.grab_system(true)
         custom.waitvsync()
         ; Activate the copper list: it programs the display registers and
         ; reloads the bitplane pointers every frame by itself.
-        custom.COP1LC = &copperdata.copper_list
+        custom.COP1LC = copper.list
         custom.DMACON = custom.DMAF_SETCLR | custom.DMAF_MASTER | custom.DMAF_COPPER
         custom.COPJMP1 = 0
         setup_palette()
@@ -42,27 +55,36 @@ main {
         }
         custom.FMODE = $0000      ; back to 16-bit fetch before the OS takes over
         custom.restore_system()
-        free_bitmap()
+        playfield.destroy()
     }
 
-    sub build_copperlist() {
-        ; Patch the shadow register values into the copper list below.
-        copperdata.copper_list[35] = regs.bplcon0
-        copperdata.copper_list[37] = regs.diwstrt
-        copperdata.copper_list[39] = regs.diwstop
-        copperdata.copper_list[41] = regs.ddfstrt
-        copperdata.copper_list[43] = regs.ddfstop
-        copperdata.copper_list[45] = regs.fmode
-        copperdata.copper_list[47] = regs.bpl1mod
-        copperdata.copper_list[49] = regs.bpl2mod
-        for p in 0 to DEPTH - 1 {
-            copperdata.copper_list[3 + p * 4] = msw(bm.Planes[p])
-            copperdata.copper_list[5 + p * 4] = lsw(bm.Planes[p])
-        }
+    sub build_copperlist() -> uword {
+        ; Build the copper list with the copper helper. Returns the base
+        ; value-word index of the bitplane pointer slots, ready to pass to
+        ; playfield.patch_copper(). DMACON enables raster DMA; copper DMA
+        ; itself is enabled up front and the list ends with CEND so the
+        ; copper restarts from COP1LC each frame.
+        copper.init(&copperdata.copper_list, len(copperdata.copper_list))
+        void copper.move($0096, $8300)    ; DMACON: SET | DMAEN | BPLEN
+        uword planeBase = copper.attach_planes(DEPTH)
+        void copper.move($0100, regs.bplcon0)
+        void copper.move($008e, regs.diwstrt)
+        void copper.move($0090, regs.diwstop)
+        void copper.move($0092, regs.ddfstrt)
+        void copper.move($0094, regs.ddfstop)
+        void copper.move($01fc, regs.fmode)
+        void copper.move($0108, regs.bpl1mod)
+        void copper.move($010a, regs.bpl2mod)
+        void copper.move($0102, 0)        ; BPLCON1: reset fine scrolling
+        void copper.move($01e4, regs.diwhigh)
+        void copper.move($0104, 0)        ; BPLCON2: single-playfield priorities
+        copper.end()
+        return planeBase
     }
 
     sub setup_palette() {
-        ; 32 distinct colors so every grid cell is distinguishable.
+        ; Set the 15 colors used by the rectangle outlines.
+        custom.set_color(0, 0)
         for c in 1 to 15 {
             ubyte r = ((c as uword) * 8) as ubyte
             ubyte g = (((c * 37) as uword) & 255) as ubyte
@@ -71,44 +93,38 @@ main {
         }
     }
 
-    sub setup_bitmap() -> bool {
-        bm = exec.AllocMem(sizeof(graphics.BitMap), exec.MEMF_CLEAR)
-        if bm == 0
-            return false
-        graphics.InitBitMap(bm, DEPTH as byte, WIDTH, HEIGHT)
-        for p in 0 to DEPTH - 1 {
-            bm.Planes[p] = graphics.AllocRaster(WIDTH as uword, HEIGHT as uword)
-            if bm.Planes[p] == 0
-                return false
-        }
-        return true
-    }
-
-    sub free_bitmap() {
-        for p in 0 to bm.Depth - 1 {
-            graphics.FreeRaster(bm.Planes[p], bm.BytesPerRow * 8, bm.Rows)
-        }
-        exec.FreeMem(bm, sizeof(graphics.BitMap))
-    }
-
     sub paint_stuff() {
-        ; Fill an 80x32 grid of 8x8 cells (640x256 pixels) so every scanline
-        ; is drawn up to and including the 256th line.
-        uword bpr = bm.BytesPerRow
-        for row in 0 to 31 {
-            for col in 0 to 79 {
-                ubyte color = ((row * 80 + col) & 15) as ubyte
-                uword base = (row as uword) * 8 * bpr + (col as uword) + (row as uword)
-                for p in 0 to bm.Depth - 1 {
-                    ^^ubyte plane = bm.Planes[p] as ^^ubyte
-                    ubyte fill = 0
-                    if (color & ($01 << p)) != 0
-                        fill = $ff
-                    for dy in 0 to 6 {
-                        plane[base + (dy as uword) * bpr] = fill
-                    }
-                }
-            }
+        for layer in 0 to RECTANGLE_COUNT - 1 {
+            uword inset = layer * RECTANGLE_SPACING
+            uword right = (WIDTH - 1) as uword - inset
+            uword bottom = (HEIGHT - 1) as uword - inset
+            ubyte color = (layer + 1) as ubyte
+            draw_hline(inset, right, inset, color)
+            draw_hline(inset, right, bottom, color)
+            draw_vline(inset, inset, bottom, color)
+            draw_vline(right, inset, bottom, color)
+        }
+    }
+
+    sub draw_hline(uword left, uword right, uword y, ubyte color) {
+        for x in left to right
+            plot_pixel(x, y, color)
+    }
+
+    sub draw_vline(uword x, uword top, uword bottom, ubyte color) {
+        for y in top to bottom
+            plot_pixel(x, y, color)
+    }
+
+    sub plot_pixel(uword x, uword y, ubyte color) {
+        uword byteOffset = y * bm.BytesPerRow + (x >> 3)
+        ubyte mask = pixelMasks[lsb(x) & 7]
+        for p in 0 to DEPTH - 1 {
+            pointer address = bm.Planes[p] + byteOffset
+            if (color & ($01 << p)) != 0
+                @(address) |= mask
+            else
+                @(address) &= ~mask
         }
     }
 }
@@ -116,29 +132,7 @@ main {
 copperdata {
     %option amiga_chipram
 
-    ; Raw copper list words: register offset, value per MOVE.
-    ; The BPLCON0/DIW/DDF/FMODE/MOD values and the bitplane pointers are
-    ; patched in by build_copperlist(); plane slots beyond DEPTH stay zero.
-    ; DMACON enables raster DMA; copper DMA itself is enabled up front and
-    ; the list ends with CEND so the copper restarts from COP1LC each frame.
-    uword[52] copper_list = [
-        $0096, $8300,    ; MOVE DMACON: SET | DMAEN | BPLEN
-        $00e0, 0, $00e2, 0,    ; MOVE BPL1PT (patched)
-        $00e4, 0, $00e6, 0,    ; MOVE BPL2PT (patched)
-        $00e8, 0, $00ea, 0,    ; MOVE BPL3PT (patched)
-        $00ec, 0, $00ee, 0,    ; MOVE BPL4PT (patched)
-        $00f0, 0, $00f2, 0,    ; MOVE BPL5PT (patched)
-        $00f4, 0, $00f6, 0,    ; MOVE BPL6PT (patched)
-        $00f8, 0, $00fa, 0,    ; MOVE BPL7PT (patched)
-        $00fc, 0, $00fe, 0,    ; MOVE BPL8PT (patched)
-        $0100, 0,    ; MOVE BPLCON0 (patched)
-        $008e, 0,    ; MOVE DIWSTRT (patched)
-        $0090, 0,    ; MOVE DIWSTOP (patched)
-        $0092, 0,    ; MOVE DDFSTRT (patched)
-        $0094, 0,    ; MOVE DDFSTOP (patched)
-        $01fc, 0,    ; MOVE FMODE (patched)
-        $0108, 0,    ; MOVE BPL1MOD (patched)
-        $010a, 0,    ; MOVE BPL2MOD (patched)
-        $ffff, $fffe     ; END
-    ]
+    ; Word buffer owned by the copper builder (see main.build_copperlist()):
+    ; DMACON + 4 planes + 11 register MOVEs + END = 42 words.
+    uword[48] copper_list
 }

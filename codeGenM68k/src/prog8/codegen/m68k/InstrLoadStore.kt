@@ -20,11 +20,18 @@ internal fun AsmGen.translateLoadStore(insn: IRInstruction, suppressRegfileStore
                 is ImmediateOperand.Integer -> {
                     if (suppressRegfileStore)
                         return
-                    if(value.value == 0)
-                        if (regAllocation[VirtualRegister.int(dst)]?.startsWith("a") == true)
+                    if(value.value == 0) {
+                        // moveq is faster than clr.l on a data register (4 vs 6 cycles on
+                        // the 68000) with identical flags; the full-long clear is a safe
+                        // superset for byte/word vregs, whose upper bits are don't-care.
+                        val phys = regAllocation[VirtualRegister.int(dst)]
+                        if (phys?.startsWith("a") == true)
                             emitLine("suba.l  ${operand(dst)}, ${operand(dst)}")
+                        else if (phys?.startsWith("d") == true)
+                            emitLine("moveq  #0, $phys")
                         else
                             emitLine("clr$s  ${operand(dst)}")
+                    }
                     else
                         emitMoveToIntRegister("#${value.value}", dst, type)
                     invalidateD0CacheForSlot(dst)
@@ -108,8 +115,7 @@ internal fun AsmGen.translateLoadStore(insn: IRInstruction, suppressRegfileStore
             val dst = insn.requireIntDest().intNumber
             val target = resolveMemory(insn.requireMemory())
             emitLoadD0FromAddress(target, IRDataType.BYTE)
-            emitLine("ext.w   d0")
-            emitLine("ext.l   d0")
+            emitSignExtendByteToLong(SCRATCH_D0)
             emitStoreD0(dst, IRDataType.LONG)
         }
 
@@ -122,8 +128,12 @@ internal fun AsmGen.translateLoadStore(insn: IRInstruction, suppressRegfileStore
             val destType = if (isLong) IRDataType.LONG else if (srcType == IRDataType.BYTE) IRDataType.WORD else IRDataType.LONG
             emitLoadD0FromAddress(source, srcType)
             if (isSign) {
-                if (srcType == IRDataType.BYTE) emitLine("ext.w   d0")
-                if (destType == IRDataType.LONG) emitLine("ext.l   d0")
+                if (srcType == IRDataType.BYTE && destType == IRDataType.LONG)
+                    emitSignExtendByteToLong(SCRATCH_D0)
+                else {
+                    if (srcType == IRDataType.BYTE) emitLine("ext.w   d0")
+                    if (destType == IRDataType.LONG) emitLine("ext.l   d0")
+                }
             } else {
                 val mask = if (srcType == IRDataType.BYTE) "#\$ff" else "#\$ffff"
                 if (destType == IRDataType.WORD) emitLine("and.w   $mask, d0")
@@ -150,8 +160,10 @@ internal fun AsmGen.translateLoadStore(insn: IRInstruction, suppressRegfileStore
 
         Opcode.STOREIM -> {
             val value = insn.requireImmediateInt()
-            val target = resolveMemory(insn.requireMemory())
-            if(value == 0)
+            val memory = insn.requireMemory()
+            val target = resolveMemory(memory)
+            // never clr an I/O address: the dummy read can hit hardware with read side effects.
+            if(value == 0 && !memoryIsIOAddress(memory))
                 emitLine("clr$s  $target")
             else
                 emitLine("move$s  #$value, $target")
@@ -167,8 +179,13 @@ internal fun AsmGen.translateLoadStore(insn: IRInstruction, suppressRegfileStore
         }
 
         Opcode.STOREZM, Opcode.STOREZI, Opcode.STOREZX -> {
-            val target = resolveMemory(insn.requireMemory())
-            emitLine("clr$s  $target")
+            val memory = insn.requireMemory()
+            val target = resolveMemory(memory)
+            // never clr an I/O address: the dummy read can hit hardware with read side effects.
+            if (memoryIsIOAddress(memory))
+                emitLine("move$s  #0, $target")
+            else
+                emitLine("clr$s  $target")
             invalidateD0CacheForAddress(target)
         }
 

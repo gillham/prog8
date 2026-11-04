@@ -39,7 +39,8 @@ class CompilationOptions(val output: OutputType,
                          var privateSymbols: Boolean = false,
                          var outputFile: Path? = null,
                          // the linker arguments for the %link directives of the llvm targets: -l<name> options and absolute file paths
-                         var linkLibraries: List<String> = emptyList()
+                         var linkLibraries: List<String> = emptyList(),
+                         var irComments: Boolean = false
 ) {
     init {
         compTarget.initializeMemoryAreas(this)
@@ -81,6 +82,7 @@ class CompilationOptions(val output: OutputType,
             private var newCodegen: Boolean = false
             private var symbolDefs: Map<String, String> = emptyMap()
             private var outputFile: Path? = null
+            private var irComments: Boolean = false
 
             fun output(output: OutputType) = apply { this.output = output }
             fun launcher(launcher: CbmPrgLauncherType) = apply { this.launcher = launcher }
@@ -113,6 +115,7 @@ class CompilationOptions(val output: OutputType,
             fun symbolDefs(symbolDefs: Map<String, String>) = apply { this.symbolDefs = symbolDefs }
             fun newCodegen(newCodegen: Boolean) = apply { this.newCodegen = newCodegen }
             fun outputFile(outputFile: Path?) = apply { this.outputFile = outputFile }
+            fun irComments(irComments: Boolean) = apply { this.irComments = irComments }
 
             fun build(): CompilationOptions {
                 return CompilationOptions(
@@ -121,7 +124,7 @@ class CompilationOptions(val output: OutputType,
                     includeSourcelines, dumpVariables, dumpSymbols, newCodegen, varsHighBank, varsGolden,
                     breakpointCpuInstruction, ignoreFootguns, outputDir, quiet,
                     profilingInstrumentation, symbolDefs
-                ).apply { this.outputFile = this@Builder.outputFile }
+                ).apply { this.outputFile = this@Builder.outputFile; this.irComments = this@Builder.irComments }
             }
         }
     }

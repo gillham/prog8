@@ -4,7 +4,6 @@ TODO
 Future Things and Ideas
 ^^^^^^^^^^^^^^^^^^^^^^^
 - extend the ``-gendoc`` command to generate user reference documentation from Markdown docstrings; see ``ideas/markdown-docstrings-and-reference-docs.md`` for the plan.
-- update the amiga examples to use the new ``copper``/``playfield``/``palette`` helpers where possible (``viewdemo``, ``blitcop``, ``3d``, ``rasters`` still hand-roll bitmap allocation, raw copper words and palette loops).
 - add documentation for more library modules instead of just linking to the source code
 - add float support to the configurable compiler targets. Restrictions: just have "cbm-style floats" as an option (to that it can slot into the current float codegen), where "all" you have to specify is the addresses of AYINT and GIVAYF and FADDT and all their friends.
 - Change scoping rules for qualified symbols so that they don't always start from the root but behave like other programming languages (look in local scope first), maybe only when qualified symbol starts with '.' such as: .local.value = 33, or the other way around? i.e. require new syntax to explicitly look up from global scope. That would give a backwards compatible solution. See ideas/scoping-qualified-symbols.md for a brevity-focused exploration (opt-in `.a.b` local-first, `a.b` stays global; `::a.b` reserved for future flip).
@@ -22,6 +21,7 @@ Future Things and Ideas
 Won't do's or deferred
 ^^^^^^^^^^^^^^^^^^^^^^
 - Deferred: support arrays-of-struct-instances as struct fields (e.g. ``struct Outer { Inner[4] inners }``). Currently rejected with an error.
+- Deferred: support ``&array[i].field`` syntax to take the address of a struct field in an array. Currently only ``&array[i] + offsetof(Struct.field)`` works; ``&array[i].field`` is parsed as a field access on the resulting pointer and rejected by the checker.
 - Deferred: support typed pointer arrays as struct fields, curretly requires untyped pointers arrays.
 - Deferred: support immediate struct instance variables (e.g. ``Enemy e``) instead of only ``^^Enemy`` pointers and ``Enemy[]`` arrays. Attempted Aug 2026 and rolled back — requires value-type IR (currently ``STRUCT_INSTANCE`` is pointer-only, see ``DataTypes.kt:22`` and ``IRCodeGen.kt:2332``; field access assumes ``^^Struct`` indirection). Far-off; use ``^^Enemy`` or ``Enemy[N]``.
 - Deferred: make a form of "manual generics" possible, see ``ideas/polymorphism.md`` (this is already done hardcoded for several of the builtin functions)

@@ -304,7 +304,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
     }
 
     fun emitLine(code: String, comment: String = "") {
-        val clean = code.replace(", ", ",")
+        val clean = normalizeInstruction(code.replace(", ", ","))
         output.append("    ")
         output.append(clean)
         if (comment.isNotEmpty()) {
@@ -312,6 +312,37 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             output.append(comment)
         }
         output.appendLine()
+    }
+
+    /**
+     * Normalize a generated instruction line to vasm mot idiom: lowercase mnemonic
+     * + exactly two spaces before the operands. Only the mnemonic is touched:
+     * operands may hold case-sensitive text (string literals in dc.b) and colons
+     * (d1:d0 register pairs), which stay verbatim. Comment-only lines pass through.
+     */
+    private fun normalizeInstruction(line: String): String {
+        val text = line.trim()
+        if (text.isEmpty() || text.startsWith(';'))
+            return text
+        var label = ""
+        var rest = text
+        val colon = rest.indexOf(':')
+        val space = rest.indexOfFirst { it.isWhitespace() }
+        if (colon >= 0 && (space < 0 || colon < space)) {
+            label = rest.substring(0, colon + 1)
+            rest = rest.substring(colon + 1).trim()
+            if (rest.isEmpty())
+                return label
+        }
+        val split = rest.indexOfFirst { it.isWhitespace() }
+        if (split < 0) {
+            val mnemonic = rest.lowercase()
+            return if (label.isEmpty()) mnemonic else "$label  $mnemonic"
+        }
+        val mnemonic = rest.substring(0, split).lowercase()
+        val operands = rest.substring(split).trim()
+        val instr = if (operands.isEmpty()) mnemonic else "$mnemonic  $operands"
+        return if (label.isEmpty()) instr else "$label  $instr"
     }
 
     fun emitLabel(label: String) {
@@ -695,14 +726,14 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         return when (val node = program.st.lookup(name)) {
             is IRStMemVar -> {
                 val addr = node.address.toInt()
-                $$"$${addr.toUInt().toString(16).padStart(8, '0')}"
+                $$"$$${addr.toUInt().toString(16).padStart(8, '0')}"
             }
             is IRStConstant -> {
                 if (node.memorySlabName != null)
                     constLabel(name)
                 else {
                     val addr = node.value!!.toInt()
-                    $$"$${addr.toUInt().toString(16).padStart(8, '0')}"
+                    $$"$$${addr.toUInt().toString(16).padStart(8, '0')}"
                 }
             }
             is IRStStructInstance, is IRStStaticVariable, is IRStMemorySlab -> fixNameSymbols(name)
@@ -750,6 +781,35 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
     }
 
     /**
+     * True when a store-zero to [memory] must not use `clr`: the target is an
+     * I/O address, which may be a hardware register with read side effects
+     * (e.g. Amiga custom-chip registers at $dffxxx). `clr` performs a dummy read
+     * before the write on the 68000, so these targets get `move #0` instead.
+     * Delegates to the compilation target's [ICompilationTarget.isIOAddress];
+     * frame slots, the regfile, plain RAM and unknown symbols keep `clr`.
+     */
+    fun memoryIsIOAddress(memory: MemoryReference): Boolean {
+        val base: AddressBase = when (memory) {
+            is MemoryReference.Direct -> memory.base
+            is MemoryReference.Indexed -> memory.base
+            is MemoryReference.Indirect -> return false
+        }
+        return when (base) {
+            is AddressBase.Absolute -> target.isIOAddress(base.address.value)
+            is AddressBase.FrameSlot -> false
+            is AddressBase.Symbol -> when (val node = program.st.lookup(base.name)) {
+                is IRStMemVar -> target.isIOAddress(node.address)
+                is IRStConstant -> {
+                    val value = node.value
+                    node.memorySlabName == null && value != null &&
+                        target.isIOAddress(value.toInt().toUInt())
+                }
+                else -> false
+            }
+        }
+    }
+
+    /**
      * Centralized lowering of a MemoryReference (Direct/Indexed/Indirect) into the effective
      * m68k operand/addressing-mode text, emitting whatever setup instructions the mode requires
      * (lea for a symbol/index base, index register loading/scaling, or a pointer load into a0).
@@ -776,7 +836,10 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                         invalidateD0Cache()
                         emitLine("moveq  #0, $SCRATCH_D0")
                         emitLoadD0(idx, IRDataType.WORD)
-                        if (scale != 1) {
+                        // On the 68020 the scale folds into the full-extension form below;
+                        // manual scaling is only needed on the 68000 or for other scales.
+                        val scaled020 = program.options.compTarget.cpu >= CpuType.M68020 && scale in setOf(2, 4, 8)
+                        if (scale != 1 && !scaled020) {
                             invalidateD0Cache()
                             when (scale) {
                                 2 -> emitLine("add.l  $SCRATCH_D0,$SCRATCH_D0")
@@ -786,7 +849,8 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                             }
                         }
                         emitLine("lea  $baseAddr, $SCRATCH_A0")
-                        "(0, $SCRATCH_A0, $SCRATCH_D0.l)"
+                        if (scaled020) "(0, $SCRATCH_A0, $SCRATCH_D0.l*$scale)"
+                        else "(0, $SCRATCH_A0, $SCRATCH_D0.l)"
                     } else {
                         emitLine("lea  $baseAddr, $SCRATCH_A0")
                         when {
@@ -941,7 +1005,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         emitRaw("; Assembler: vasm with Motorola syntax (http://sun.hasenbraten.de/vasm/release/vasm.html)")
         val assemblerCommand = assemblerCommandM68k(options, program.name)
         if(assemblerCommand != null) emitRaw(assemblerCommandComment(assemblerCommand))
-        emitRaw("\n    section .text,code")
+        emitRaw("\n    section  .text,code")
 
         // user-supplied symbol definitions
         if (options.symbolDefs.isNotEmpty()) {
@@ -1000,7 +1064,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             val blockLabel = fixNameSymbols(block.label)
             val chipram = target.name in setOf("amiga500", "amiga1200") && block.options.amigaChipram
             if (chipram) {
-                emitRaw("    SECTION code_c,code,chip   ; amiga CHIP ram code")
+                emitRaw("    section  code_c,code,chip   ; amiga CHIP ram code")
             }
             emitRaw("; Block: $blockLabel")
             emitLabel(blockLabel)
@@ -1024,7 +1088,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                 }
             }
             if (chipram) {
-                emitRaw("    SECTION .text,code  ; back to normal code section")
+                emitRaw("    section  .text,code  ; back to normal code section")
             }
             emitRaw("")
         }
@@ -1039,7 +1103,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         if (firstChunk != null)
             emitSourceComment(firstChunk.sourceLinesPositions)
         emitRaw("")
-        emitLine("ALIGN 2")
+        emitLine("align  2")
         emitLabel(subLabel)
         val entrypointNames = setOf("p8b_main.p8s_start", "main.start")
         if(sub.label in entrypointNames)
@@ -1112,7 +1176,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         // asm-peephole boundary marker: the '; Subroutine:' lines delimit code units; do not alter or remove.
         emitRaw("")
         emitRaw("; ---- Subroutine: $asmLabel ----")
-        emitLine("ALIGN 2")
+        emitLine("align  2")
         emitLabel(asmLabel)
         emitRaw(sub.asmChunk.assembly)
         emitRaw("; End of subroutine: $asmLabel")
@@ -1379,7 +1443,8 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         suppressRegfileStore: Boolean = false
     ) {
         // No IR echo for zero-clear stores: prologue clear runs would drown in "; storezm" noise.
-        if (insn.opcode != Opcode.STOREZM)
+        // IR echo comments are opt-in via -ircomments (off by default); source-line comments are unaffected.
+        if (insn.opcode != Opcode.STOREZM && program.options.irComments)
             emitRaw("        ; $insn")
         when (insn.opcode) {
             Opcode.EXTQ, Opcode.EXTQS, Opcode.LSIGL, Opcode.FFROMSQ, Opcode.FFROMUQ, Opcode.FTOSQ, Opcode.FTOUQ -> quadNotSupported()
@@ -1469,7 +1534,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             }
 
         if (chipramVars.isNotEmpty() || chipramStructs.isNotEmpty()) {
-            emitRaw("    SECTION data_c,data,chip   ; amiga CHIP ram initialized data")
+            emitRaw("    section  data_c,data,chip   ; amiga CHIP ram initialized data")
         }
         if (chipramVars.isNotEmpty()) {
             emitRaw("; static variables with initial values (amiga chip ram)")
@@ -1481,7 +1546,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         if (chipramStructs.isNotEmpty()) {
             emitRaw("; struct instances with initial values (amiga chip ram)")
             for (si in chipramStructs) {
-                emitRaw("    ALIGN  2")
+                emitRaw("    align  2")
                 emitLabel(fixNameSymbols(si.name))
                 for (fieldValue in si.values) {
                     val m68kSize = when (fieldValue.dt) {
@@ -1515,7 +1580,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             emitRaw("")
         }
         if (chipramVars.isNotEmpty() || chipramStructs.isNotEmpty()) {
-            emitRaw("    SECTION .data,data  ; initialized variables (writable)")
+            emitRaw("    section  .data,data  ; initialized variables (writable)")
         }
         if (normalVars.isNotEmpty()) {
             emitRaw("; static variables with initial values")
@@ -1528,7 +1593,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         if (dataFloatConstants.isNotEmpty()) {
             emitRaw("; float constants (single precision, 4 bytes each)")
             for ((label, value) in dataFloatConstants) {
-                emitRaw("    ALIGN  4")
+                emitRaw("    align  4")
                 emitRaw("$label:")
                 emitRaw("    dc.s  $value")
             }
@@ -1539,7 +1604,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         if (normalStructs.isNotEmpty()) {
             emitRaw("; struct instances with initial values")
             for (si in normalStructs) {
-                emitRaw("    ALIGN  2")
+                emitRaw("    align  2")
                 emitLabel(fixNameSymbols(si.name))
                 for (fieldValue in si.values) {
                     val m68kSize = when (fieldValue.dt) {
@@ -1574,7 +1639,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         }
 
         if (normalVars.isNotEmpty() || dataFloatConstants.isNotEmpty() || normalStructs.isNotEmpty()) {
-            emitRaw("    SECTION .text,code  ; back to code section")
+            emitRaw("    section  .text,code  ; back to code section")
         }
     }
 
@@ -1626,13 +1691,13 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             dt.isString && init is IRVariableInitializer.Str -> {
                 val bytes = program.encoding.encodeString(init.text, init.encoding)
                 val values = bytes.map { it.toString(10) } + "0"
-                emitLine("ALIGN  2")
+                emitLine("align  2")
                 emitRaw("$label:")
                 emitChunkedDc("dc.b", values, v.name)
             }
             dt.isArray && init is IRVariableInitializer.Array -> {
                 if(dt.sub==BaseDataType.STRUCT_INSTANCE) {
-                    emitLine("ALIGN  2")
+                    emitLine("align  2")
                     emitRaw("$label:")
                     for(elt in init.elements) {
                         val sym = (elt as? IRStSymbolicReference.Symbol)?.name ?: error("expected struct instance symbol for ${v.name}")
@@ -1674,17 +1739,17 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                     }
                     when (elemSize) {
                         1 -> {
-                            emitLine("ALIGN  2")
+                            emitLine("align  2")
                             emitRaw("$label:")
                             emitChunkedDc("dc.b", values, v.name)
                         }
                         2 -> {
-                            emitLine("ALIGN  2")
+                            emitLine("align  2")
                             emitRaw("$label:")
                             emitChunkedDc("dc.w", values, v.name)
                         }
                         4 -> {
-                            emitLine("ALIGN  $elemSize")
+                            emitLine("align  $elemSize")
                             emitRaw("$label:")
                             emitChunkedDc("dc.l", values, v.name)
                         }
@@ -1709,17 +1774,17 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                         emitLine("dc.b  $initValue", v.name)
                     }
                     DataType.WORD, DataType.UWORD -> {
-                        emitLine("ALIGN  2")
+                        emitLine("align  2")
                         emitRaw("$label:")
                         emitLine("dc.w  $initValue", v.name)
                     }
                     DataType.LONG -> {
-                        emitLine("ALIGN  4")
+                        emitLine("align  4")
                         emitRaw("$label:")
                         emitLine("dc.l  $initValue", v.name)
                     }
                     DataType.FLOAT -> {
-                        emitLine("ALIGN  4")
+                        emitLine("align  4")
                         emitRaw("$label:")
                         emitLine("dc.s  $initFloat", v.name)
                     }
@@ -1841,7 +1906,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                 .sortedWith(compareByDescending<Triple<IRStStaticVariable, Int, Int>> { it.third }.thenByDescending { it.second })
             for ((v, size, alignment) in sorted) {
                 if (alignment >= 2) {
-                    emitRaw("    ALIGN  $alignment")
+                    emitRaw("    align  $alignment")
                 }
                 emitLabel(fixNameSymbols(v.name))
                 val typeComment = if(v.dt.isArray) {
@@ -1857,7 +1922,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             emitRaw("")
             emitRaw("; struct instances (zeroed)")
             for (si in structs) {
-                emitRaw("    ALIGN  2")
+                emitRaw("    align  2")
                 emitLabel(fixNameSymbols(si.name))
                 emitLine("ds.b  ${si.size}     ; struct ${si.structName}")
             }
@@ -1869,7 +1934,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             emitRaw("; memory slabs")
             for (slab in slabs) {
                 val alignment = max(2, slab.align.toInt())
-                emitRaw("    ALIGN  $alignment")
+                emitRaw("    align  $alignment")
                 emitLabel(fixNameSymbols(slab.name))
                 emitLine("ds.b  ${slab.size}")
             }
@@ -1877,16 +1942,16 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
 
         // amiga CHIP ram BSS (variables, structs and slabs belonging to chipram blocks)
         if (chipramBssVars.isNotEmpty() || chipramStructsNoInit.isNotEmpty() || chipramSlabs.isNotEmpty()) {
-            emitRaw("    SECTION bss_c,bss,chip   ; amiga CHIP ram bss")
-            emitRaw("    ALIGN  4")
+            emitRaw("    section  bss_c,bss,chip   ; amiga CHIP ram bss")
+            emitRaw("    align  4")
             emitBssVars(chipramBssVars)
             emitStructsNoInit(chipramStructsNoInit)
             emitSlabs(chipramSlabs)
         }
 
         // normal bss section
-        emitRaw("    SECTION .bss,bss    ; bss section")
-        emitRaw("    ALIGN  4")
+        emitRaw("    section  .bss,bss    ; bss section")
+        emitRaw("    align  4")
         emitLabel("prog8_bss_section_start")
         emitBssVars(normalBssVars)
         emitStructsNoInit(normalStructsNoInit)
@@ -1894,14 +1959,14 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
 
         // register file (always at the end of BSS variables)
         emitRaw("    ; flat integer virtual register file:")
-        emitRaw("    ALIGN  4")
+        emitRaw("    align  4")
         emitLabel(REGFILE_LABEL)
         emitLine("ds.b  ${regFileLayout.totalSize}")
 
         // float register file
         if (floatRegFileLayout.totalSize > 0) {
             emitRaw("    ; flat float virtual register file:")
-            emitRaw("    ALIGN  4")
+            emitRaw("    align  4")
             emitLabel(FLOAT_REGFILE_LABEL)
             emitLine("ds.b  ${floatRegFileLayout.totalSize}")
         }
@@ -1910,7 +1975,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         if(program.options.output == OutputType.RAW)
             emitLabel("prog8_program_end")
 
-        emitRaw("    SECTION .text,code  ; end of bss section")
+        emitRaw("    section  .text,code  ; end of bss section")
         emitRaw("")
     }
 }

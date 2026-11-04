@@ -75,7 +75,8 @@ class CompilerArguments(val filepath: Path,
                         val generateDocumentation: Boolean = false,
                         val llvmTriple: String? = null,
                         val llvmCompileArgs: List<String> = emptyList(),
-                        val llvmLinkArgs: List<String> = emptyList())
+                        val llvmLinkArgs: List<String> = emptyList(),
+                        val irComments: Boolean = false)
 
 
 fun compileProgram(args: CompilerArguments): CompilationResult? {
@@ -147,6 +148,7 @@ fun compileProgram(args: CompilerArguments): CompilationResult? {
                 profilingInstrumentation = args.profilingInstrumentation
                 asmListfile = args.asmListfile
                 includeSourcelines = args.includeSourcelines
+                irComments = args.irComments
                 newCodegen = args.newCodegen
                 dumpVariables = args.dumpVariables
                 dumpSymbols = args.dumpSymbols
