@@ -267,11 +267,19 @@ private fun FunctionLowering.printString(site: CallSite, number: Int) {
 // putchar() and not printf() or fputs(): those need a format string, or the platform-specific stdout symbol
 private fun FunctionLowering.putchar(): LlvmValue.Global = external("putchar", builder.mapper.cInt, listOf(builder.mapper.cInt))
 
-/** GET_C(): the next byte from stdin, read with C's getchar(); its negative EOF becomes 0, as in the VM. */
+/**
+ * GET_C(): the next byte from stdin, read with C's getchar() or the profile's routine for it; its negative EOF becomes 0,
+ * as in the VM, which is also the result without either.
+ */
 private fun FunctionLowering.getChar(site: CallSite, number: Int) {
     arguments(site, number, 0)
+    if (builder.lacks("getchar")) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I8))
+        return
+    }
     val cInt = builder.mapper.cInt
-    val code = derive("ch", cInt) { LlvmInstruction.Call(it, external("getchar", cInt, emptyList()), emptyList(), cInt) }
+    val getchar = external(builder.profile?.getcharSymbol ?: "getchar", cInt, emptyList())
+    val code = derive("ch", cInt) { LlvmInstruction.Call(it, getchar, emptyList(), cInt) }
     result(site, convert(intrinsic("llvm.smax.${LlvmPrinter.format(cInt)}", cInt, code, LlvmValue.IntConstant(0, cInt)), LlvmType.I8, "ch"))
 }
 

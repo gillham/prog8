@@ -15,6 +15,7 @@ import prog8.code.target.LlvmToolLocator
 import prog8.code.target.LlvmTripleProfile
 import prog8.code.target.CompilationTargets
 import prog8.code.target.getCompilationTargetByName
+import java.io.File
 import java.nio.file.Path
 import java.nio.file.NoSuchFileException
 import kotlin.io.path.createDirectories
@@ -448,6 +449,33 @@ class TestLlvmTripleProfile: FunSpec({
         }
     }
 
+    test("the z80-test profile loads without running clang, with 16-bit pointers and C int, and the z88dk tool environment") {
+        val profile = LlvmTripleProfile.resolve("z80-test")
+        profile.triple shouldBe "z80-unknown-none-z88dk"
+        profile.pointerBits shouldBe 16
+        profile.cIntSize shouldBe 2
+        profile.cLongSize shouldBe 4
+        profile.programArgs shouldBe false
+        profile.outputExtension shouldBe ".bin"
+        profile.clangArgs shouldBe listOf("--target=z80-unknown-none-z88dk")
+        profile.libcLacks.containsAll(listOf("qsort", "free", "opendir", "strtod", "sqrtf")) shouldBe true
+        (profile.libcLacks intersect setOf("putchar", "getchar", "fopen", "strcmp", "snprintf", "exit")) shouldBe emptySet()
+        profile.getcharSymbol shouldBe "fgetc_cons"
+        val z88dk = mapOf("Z88DK" to "/opt/z88dk")
+        profile.tools.directories { z88dk[it] }.map { it.invariantSeparatorsPathString } shouldBe listOf("/opt/z88dk/bin")
+        profile.tools.variables { z88dk[it] } shouldBe mapOf("ZCCCFG" to "/opt/z88dk/lib/config")
+        shouldThrow<IllegalArgumentException> { profile.tools.directories { null } }.message!! shouldContain "Z88DK"
+    }
+
+    test("the data layout and C int and long sizes of the z80-test profile are what its clang reports")
+        .config(enabled = System.getenv("LLVM_Z80") != null && System.getenv("Z88DK") != null) {
+        val profile = LlvmTripleProfile.resolve("z80-test")
+        val reported = LlvmTripleProfile.askClang(profile.triple, profile.clangArgs, profile.resolveClang(null).shouldNotBeNull(), profile.tools)
+        usedLayout(profile.dataLayout) shouldBe usedLayout(reported.dataLayout)
+        profile.cLongSize shouldBe reported.cLongSize
+        profile.cIntSize shouldBe reported.cIntSize
+    }
+
     test("the llvm16 target has 2-byte pointers, 4-byte floats and real addresses, and defaults to the mos-sim profile") {
         val llvm16 = LlvmTarget(2)
         llvm16.name shouldBe LlvmTarget.NAME16
@@ -504,5 +532,61 @@ class TestLlvmTripleProfile: FunSpec({
         (getCompilationTargetByName("llvm", "x86_64-unknown-linux-gnu") as LlvmTarget).targetTriple shouldBe "x86_64-unknown-linux-gnu"
         shouldThrow<IllegalArgumentException> { getCompilationTargetByName("cx16", "wasm32-wasip1") }
         shouldThrow<IllegalArgumentException> { getCompilationTargetByName("llvm32", "x86_64-unknown-linux-gnu") }
+    }
+
+    test("tool_path and tool_env are parsed, expanded on use, and an unset variable in them names the profile") {
+        val profile = LlvmTripleProfile.load(profileFile("tools", validProfile($$"tool_path = ${PROG8_TOOLS}/bin ~/tools\ntool_env = ZCCCFG=${PROG8_TOOLS}/lib/config EMPTY= A_1=x=y")))
+        val env = mapOf("PROG8_TOOLS" to "/opt/z88dk")
+        val home = System.getProperty("user.home")
+        profile.tools.directories(env::get) shouldBe listOf(Path.of("/opt/z88dk/bin"), Path.of("$home/tools"))
+        profile.tools.variables(env::get) shouldBe mapOf("ZCCCFG" to "/opt/z88dk/lib/config", "EMPTY" to "", "A_1" to "x=y")
+        shouldThrow<IllegalArgumentException> { profile.tools.directories { null } }.message shouldBe
+            "environment variable PROG8_TOOLS used in the tool_path of llvm triple profile '${directory.resolve("tools.properties")}' is not set"
+        shouldThrow<IllegalArgumentException> { profile.tools.variables { null } }.message!! shouldContain "the tool_env of llvm triple profile"
+        val unset = LlvmTripleProfile.load(profileFile("toolsunset", validProfile($$"tool_path = ${PROG8_NO_SUCH_VARIABLE}")))
+        shouldThrow<IllegalArgumentException> { unset.processBuilder(listOf("x")) }.message!! shouldContain "PROG8_NO_SUCH_VARIABLE used in the tool_path of llvm triple profile"
+
+        fun rejected(name: String, toolEnv: String) =
+            shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(profileFile(name, validProfile("tool_env = $toolEnv"))) }.message!!
+        rejected("envnovalue", "ZCCCFG") shouldContain "which is not NAME=value"
+        rejected("envnoname", "=x") shouldContain "which is not NAME=value"
+        rejected("envbadname", "1A=x") shouldContain "invalid variable name '1A'"
+        rejected("envpath", "PATH=/x") shouldContain "can't set PATH, tool_path is for that"
+        rejected("envpathcase", "Path=/x") shouldContain "can't set PATH"
+        rejected("envtwice", "A=1 A=2") shouldContain "sets A more than once"
+    }
+
+    test("a profile without tool_path and tool_env starts its processes as they are, one with them gets their environment") {
+        val plain = LlvmTripleProfile.load(profileFile("notools", validProfile())).processBuilder(listOf("prog8-tool", "a"))
+        plain.command() shouldBe listOf("prog8-tool", "a")
+        plain.environment() shouldBe ProcessBuilder().environment()
+
+        val bin = directory.resolve("toolbin").createDirectories()
+        val profile = LlvmTripleProfile.load(profileFile("withtools", validProfile("tool_path = ${bin.invariantSeparatorsPathString}\ntool_env = ZZTEST=hello")))
+        val builder = profile.processBuilder(listOf("prog8-no-such-tool", "a"))
+        builder.command() shouldBe listOf("prog8-no-such-tool", "a")
+        builder.environment()["ZZTEST"] shouldBe "hello"
+        // Windows names it Path
+        fun pathOf(environment: Map<String, String>) = environment.entries.firstOrNull { it.key.equals("PATH", ignoreCase = true) }?.value
+        val path = checkNotNull(pathOf(builder.environment()))
+        path shouldBe listOfNotNull(bin.toString(), pathOf(ProcessBuilder().environment())?.takeIf { it.isNotEmpty() }).joinToString(File.pathSeparator)
+    }
+
+    test("a bare program name is looked up in tool_path first, which reaches the started process with tool_env, and so is a bare clang")
+        .config(enabled = !System.getProperty("os.name").startsWith("Windows")) {
+        val bin = directory.resolve("toolpathbin").createDirectories()
+        val tool = bin.resolve("zztool").also {
+            it.writeText($$"#!/bin/sh\necho \"$ZZTEST ${PATH%%:*} $1\"\n")
+            it.toFile().setExecutable(true)
+        }
+        val clang = bin.resolve("zzclang").also { it.writeText("#!/bin/sh\n"); it.toFile().setExecutable(true) }
+        val profile = LlvmTripleProfile.load(profileFile("toolrun", validProfile($$"tool_path = $${bin.invariantSeparatorsPathString}\ntool_env = ZZTEST=${PROG8_NO_SUCH_VARIABLE:-hello}\nclang = zzclang")))
+        val builder = profile.processBuilder(listOf("zztool", "arg"))
+        builder.command().first() shouldBe tool.toString()
+        val process = builder.redirectErrorStream(true).start()
+        process.inputStream.bufferedReader().use { it.readText() } shouldBe "hello $bin arg\n"
+        process.waitFor() shouldBe 0
+        profile.resolveClang(null) shouldBe clang
+        shouldThrow<IllegalArgumentException> { LlvmToolLocator.resolveClang(null, "zzclang", "p") }.message!! shouldContain "was not found"
     }
 })

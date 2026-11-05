@@ -20,7 +20,7 @@ class TestLlvmCFunctionNames: FunSpec({
         val libm = Regex("""\b(libmName|floatIntrinsic)\("([A-Za-z_][A-Za-z0-9_]*)"""")
         val declared = literal.findAll(text).map { it.groupValues[2] }.filterNot { it.startsWith("llvm.") }.toSet() +
             libm.findAll(text).flatMap { listOf(it.groupValues[2], it.groupValues[2] + "f") } +
-            Libc.entries.map { it.name.lowercase() } + listOf("opendir", "readdir")
+            Libc.entries.map { it.name.lowercase() } + listOf("opendir", "readdir", "getchar")
         declared shouldContainAll listOf("putchar", "getchar", "exit", "usleep", "strtod", "snprintf", "printf", "fopen", "tan", "atan2f")
         (declared - LlvmTripleProfile.C_FUNCTIONS).shouldBeEmpty()
     }

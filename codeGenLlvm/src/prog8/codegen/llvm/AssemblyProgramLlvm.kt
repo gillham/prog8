@@ -6,6 +6,7 @@ import prog8.code.core.IErrorReporter
 import prog8.code.core.OutputFiles
 import prog8.code.target.LlvmTarget
 import prog8.code.target.LlvmToolLocator
+import prog8.code.target.LlvmTripleProfile
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.writeText
@@ -55,14 +56,29 @@ internal class AssemblyProgramLlvm(
             profileClangMissing = true
             null
         }
-        val command = validation(file, target?.targetTriple, namedClang, !profileClangMissing)
-        if (command == null) {
+        var command = validation(file, target?.targetTriple, namedClang, !profileClangMissing)
+        var builder: ProcessBuilder? = null
+        if (command != null) {
+            try {
+                builder = LlvmTripleProfile.processBuilder(target?.profile?.takeUnless { profileClangMissing }, command)
+            } catch (x: IllegalArgumentException) {
+                if (target?.clangOption != null) {
+                    System.err.println("Can't check the LLVM IR in '$file': ${x.message}")
+                    return false
+                }
+                // as with a missing profile clang: only a build needs the profile's tool environment
+                profileClangMissing = true
+                command = validation(file, target?.targetTriple, null, false)
+                builder = command?.let { ProcessBuilder(it) }
+            }
+        }
+        if (command == null || builder == null) {
             if (!options.quiet)
                 println("LLVM IR written to '$file', but not checked: " +
                     if (profileClangMissing) "the clang of the triple profile and llvm-as were not found" else "neither llvm-as nor clang was found")
             return true
         }
-        val process = ProcessBuilder(command).redirectErrorStream(true).start()
+        val process = builder.redirectErrorStream(true).start()
         val output = process.inputStream.bufferedReader().use { it.readText() }
         if (!process.waitFor(5, TimeUnit.MINUTES)) {
             process.destroyForcibly()

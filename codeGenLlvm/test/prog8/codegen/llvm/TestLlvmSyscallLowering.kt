@@ -76,6 +76,20 @@ class TestLlvmSyscallLowering: FunSpec({
         LlvmPrinter.print(module).lines() shouldHave "declare i32 @getchar()"
     }
 
+    test("syscall 69 calls the profile's getchar_symbol instead, and gives 0 without any console input routine") {
+        val z80 = TestProgram(LlvmTarget(2, LlvmTripleProfile.resolve("z80-test"))).apply { readCharSub() }.module()
+        z80.function("main.readchar").lines() shouldHave "  %ch.1 = call i16 @fgetc_cons()"
+        LlvmPrinter.print(z80).lines().let { text ->
+            text shouldHave "declare i16 @fgetc_cons()"
+            text.none { "@getchar(" in it } shouldBe true
+        }
+        val mosSim = LlvmTripleProfile.resolve("mos-sim")
+        val noInput = LlvmTripleProfile("nogetchar", mosSim.triple, mosSim.dataLayout, 4, cIntSize = 2, libcLacks = setOf("getchar"))
+        val module = TestProgram(LlvmTarget(2, noInput)).apply { readCharSub() }.module()
+        module.function("main.readchar").lines() shouldHave "  store i8 0, ptr %r1.slot"
+        LlvmPrinter.print(module).lines().none { "@getchar(" in it } shouldBe true
+    }
+
     test("the input syscall reads stdin in a native program for the host, and gives 0 at its end").config(enabledOrReasonIf = requiresNativeHost) {
         val module = TestProgram(hostLlvmTarget).apply { readCharSub(); echoSub() }.module().withMainCalling("main.echo")
         val (exitCode, output) = compileAndRun(LlvmPrinter.print(module), input = "hi\n")

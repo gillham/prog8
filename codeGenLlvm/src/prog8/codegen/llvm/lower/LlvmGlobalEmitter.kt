@@ -152,11 +152,14 @@ internal class LlvmGlobalEmitter(private val program: IRProgram, private val sta
             })
         }
         else ->
-            if (isAddress(value) && (value.type != LlvmType.Ptr || offset % mapper.pointerBytes != 0L)) {
+            if (isAddress(value) && (value.type != LlvmType.Ptr || offset % pointerAlignment != 0L)) {
                 deferred += offset to value
                 LlvmValue.ZeroInitializer(value.type)
             } else value
     }
+
+    // a pointer at an offset that its data layout doesn't align is stored at startup instead, which some object formats need
+    private val pointerAlignment: Long = ((target as? LlvmTarget)?.profile?.pointerAlignment ?: mapper.pointerBytes).toLong()
 
     private fun isAddress(value: LlvmValue): Boolean = when (value) {
         is LlvmValue.Global, is LlvmValue.ConstantGep -> true

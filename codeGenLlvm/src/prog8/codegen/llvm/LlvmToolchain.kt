@@ -41,12 +41,12 @@ internal object LlvmToolchain {
         }
         val compileCommand = compileCommand(clang.toString(), profileArgs, optLevel, extraCompileArgs)
         if (linkCommand == null)
-            return runTool(clangLinkCommand(compileCommand, llFile, outputFile, extraLinkArgs + linkLibraries + profileLinkArgs), "clang", outputFile) ||
+            return runTool(clangLinkCommand(compileCommand, llFile, outputFile, extraLinkArgs + linkLibraries + profileLinkArgs), "clang", outputFile, profile) ||
                 failed("clang couldn't build '$outputFile' from '$llFile'")
         val objectFile = outputFile.resolveSibling("${outputFile.fileName}.o")
         var startupFiles = emptyList<Path>()
         try {
-            if (!runTool(compileCommand + listOf("-c", llFile.toString(), "-o", objectFile.toString()), "clang", outputFile))
+            if (!runTool(compileCommand + listOf("-c", llFile.toString(), "-o", objectFile.toString()), "clang", outputFile, profile))
                 return failed("clang couldn't compile '$llFile'")
             startupFiles = try {
                 profile?.writeStartupSources(outputFile).orEmpty()
@@ -54,7 +54,7 @@ internal object LlvmToolchain {
                 return failed("Can't build '$outputFile': a startup source of the llvm triple profile couldn't be written: ${x.message}")
             }
             val link = linkCommandFor(linkCommand, objectFile, outputFile, startupFiles, extraLinkArgs, linkLibraries)
-            return runTool(link, link.first(), outputFile) || failed("the link command couldn't build '$outputFile' from '$objectFile'")
+            return runTool(link, link.first(), outputFile, profile) || failed("the link command couldn't build '$outputFile' from '$objectFile'")
         } finally {
             Files.deleteIfExists(objectFile)
             startupFiles.forEach { Files.deleteIfExists(it) }
@@ -105,12 +105,15 @@ internal object LlvmToolchain {
         return false
     }
 
-    /** Runs a build step, printing its output; false when it couldn't start, didn't finish in 5 minutes or failed. */
-    private fun runTool(command: List<String>, tool: String, outputFile: Path): Boolean {
+    /** Runs a build step in the tool environment of [profile], printing its output; false when it couldn't start, didn't finish in 5 minutes or failed. */
+    private fun runTool(command: List<String>, tool: String, outputFile: Path, profile: LlvmTripleProfile?): Boolean {
         val process = try {
-            ProcessBuilder(command).redirectErrorStream(true).start()
+            LlvmTripleProfile.processBuilder(profile, command).redirectErrorStream(true).start()
         } catch (x: IOException) {
             System.err.println("Can't build '$outputFile': $tool could not be started: ${x.message}")
+            return false
+        } catch (x: IllegalArgumentException) {
+            System.err.println("Can't build '$outputFile': ${x.message}")
             return false
         }
         // read on another thread, so that the timeout also stops a tool that hangs with its output still open
@@ -128,17 +131,18 @@ internal object LlvmToolchain {
 
     /**
      * Runs [executable] with the program arguments [args] on the console of this process until it exits, and returns its exit code;
-     * with a [runCommand], that command runs it instead (see [LlvmTripleProfile.runCommandFor]). Throws an IOException when it
-     * can't be started, or when it is still running after [timeoutSeconds]; it is stopped then.
+     * with a [runCommand], that command runs it instead (see [LlvmTripleProfile.runCommandFor]), in the tool environment of [profile].
+     * Throws an IOException when it can't be started, or when it is still running after [timeoutSeconds]; it is stopped then.
      */
-    fun runExecutable(executable: Path, quiet: Boolean, runCommand: List<String>? = null, timeoutSeconds: Int? = null, args: List<String> = emptyList()): Int {
+    fun runExecutable(executable: Path, quiet: Boolean, runCommand: List<String>? = null, timeoutSeconds: Int? = null, args: List<String> = emptyList(),
+                      profile: LlvmTripleProfile? = null): Int {
         if (!quiet)
             println("Running $executable...")
         System.out.flush()
         // absolute, because a name without a directory would be looked up on the PATH
         val file = executable.toAbsolutePath().toString()
         val command = LlvmTripleProfile.runCommandFor(runCommand, file, args)
-        val process = ProcessBuilder(if (isWindows) command.map(::escapeQuotesForWindows) else command).inheritIO().start()
+        val process = LlvmTripleProfile.processBuilder(profile, if (isWindows) command.map(::escapeQuotesForWindows) else command).inheritIO().start()
         if (timeoutSeconds == null)
             return process.waitFor()
         if (!process.waitFor(timeoutSeconds.toLong(), TimeUnit.SECONDS)) {
@@ -185,7 +189,7 @@ class LlvmProgramRunner : ILlvmProgramRunner {
                              clangOption: String?): Int? {
         val executable = executableOf(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, linkLibraries, clangOption) ?: return null
         return try {
-            LlvmToolchain.runExecutable(executable, quiet, profile?.runCommand, profile?.runTimeoutSeconds, programArgs)
+            LlvmToolchain.runExecutable(executable, quiet, profile?.runCommand, profile?.runTimeoutSeconds, programArgs, profile)
         } catch (x: IOException) {
             System.err.println("Can't run '$executable': ${x.message}")
             null

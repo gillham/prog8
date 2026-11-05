@@ -505,7 +505,7 @@ main {
         val source = libraryDir.resolve("tripler.c").also { it.writeText("int p8test_triple(int x) { return x * 3; }\n") }
         val objectFile = libraryDir.resolve("tripler.o")
         withClue("compiling the library") {
-            execute(clangOf(hostLlvmProfile), "-c", source.toString(), "-o", objectFile.toString()).first shouldBe 0
+            execute(clangOf(hostLlvmProfile), "-c", source.toString(), "-o", objectFile.toString(), profile = hostLlvmProfile).first shouldBe 0
         }
         dir.resolve("tripler.p8").writeText("""
             %link "lib dir/tripler.o", "$system"
@@ -586,6 +586,18 @@ main {
         }
         val pointerSum = compiledLlFile(compileText(LlvmTarget(2), false, source, outputDir.resolve("llvm16-add").createDirectories(), assemble = false)).readLines()
         pointerSum.any { it.trim().matches(Regex("""%\S+ = add i16 %\S+, %\S+""")) } shouldBe true
+    }
+
+    test("a profile whose tool_path variable isn't set still compiles to a checked .ll file, only a build needs its tools") {
+        val dir = outputDir.resolve("unset-tool-path").createDirectories()
+        val profileFile = dir.resolve("unsettools.properties").also {
+            it.writeText("triple = z80-unknown-none-z88dk\n" +
+                "datalayout = e-m:o-p:16:8-i16:8-i32:8-i64:8-i128:8-f16:8-f32:8-f64:8-f128:8-ve-a:8-n8:16\n" +
+                "c_int_size = 2\nc_long_size = 4\n" +
+                $$"tool_path = ${PROG8_TEST_NEVER_SET}/bin\n" + $$"tool_env = ZZTEST=${PROG8_TEST_NEVER_SET}\n")
+        }
+        val source = "%zeropage basicsafe\nmain {\n sub start() {\n  ubyte @shared b = 3\n }\n}"
+        compiledLlFile(compileText(LlvmTarget(2, LlvmTripleProfile.load(profileFile)), false, source, dir)).exists() shouldBe true
     }
 
     test("llvm16 indexes arrays of more than 256 bytes with the whole word index") {
@@ -711,7 +723,7 @@ main {
         val llFile = compiledLlFile(compileText(target, false, source, outputDir.resolve("mos-sim").createDirectories()))
         val executable = llFile.resolveSibling("hello16.sim")
         LlvmProgramRunner().build(llFile, executable, target.profile) shouldBe true
-        val (exitCode, output) = execute(*LlvmTripleProfile.runCommandFor(target.profile.runCommand, executable.toString(), emptyList()).toTypedArray())
+        val (exitCode, output) = execute(*LlvmTripleProfile.runCommandFor(target.profile.runCommand, executable.toString(), emptyList()).toTypedArray(), profile = target.profile)
         output shouldBe "hello 12345\n"
         exitCode shouldBe 3
     }
@@ -750,7 +762,7 @@ main {
         val llFile = compiledLlFile(compileText(target, false, lacksSource, outputDir.resolve("mos-sim-lacks").createDirectories()))
         val executable = llFile.resolveSibling("lacks16.sim")
         LlvmProgramRunner().build(llFile, executable, target.profile) shouldBe true
-        val (exitCode, output) = execute(*LlvmTripleProfile.runCommandFor(target.profile.runCommand, executable.toString(), emptyList()).toTypedArray())
+        val (exitCode, output) = execute(*LlvmTripleProfile.runCommandFor(target.profile.runCommand, executable.toString(), emptyList()).toTypedArray(), profile = target.profile)
         fun root(value: Long) = if (value < 0) 0L else kotlin.math.sqrt(value.toDouble()).toLong()
         val expected = buildString {
             append((0L..255L).joinToString(" ", postfix = "\n") { root(it).toString() })
@@ -762,33 +774,41 @@ main {
         exitCode shouldBe 0
     }
 
-    test("the llvm16 programs compute the right results in mos-sim").config(enabledOrReasonIf = requiresMosSim) {
-        withClue("the programs that notRunOnMos names") { notRunOnMos.keys.filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
-        val dir = outputDir.resolve("mos").createDirectories()
-        for ((name, source) in programs.filterKeys { it !in notRunOnMos }) {
-            for (optimize in listOf(false, true)) {
-                val llFile = compiledLlFile(compileText(LlvmTarget(2), optimize, source, dir))
-                val (exitCode, output) = buildAndRunMos(llFile)
-                withClue("$name optimize=$optimize: exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+    for (runner in llvm16ProgramRunners) {
+        val target = LlvmTarget(2, runner.profile)
+        val dirName = runner.profile.name
+        test("the llvm16 programs compute the right results in ${runner.displayName}").config(enabledOrReasonIf = runner.requires) {
+            val dir = outputDir.resolve(dirName).createDirectories()
+            for ((name, source) in programs.filterKeys { it !in runner.notRun }) {
+                for (optimize in listOf(false, true)) {
+                    val llFile = compiledLlFile(compileText(target, optimize, source, dir))
+                    val (exitCode, output) = runner.buildAndRun(llFile)
+                    withClue("$name optimize=$optimize: exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+                }
+            }
+        }
+
+        for ((name, program) in outputPrograms.filterKeys { it !in runner.notRun }) {
+            test("$name: gives the expected exit code and console output as an llvm16 program in ${runner.displayName}, which leaves no files behind").config(enabledOrReasonIf = runner.requires) {
+                for (optimize in listOf(false, true)) {
+                    withClue("optimize=$optimize") {
+                        val workingDirectory = outputDir.resolve("$dirName-run")
+                        workingDirectory.toFile().deleteRecursively()
+                        workingDirectory.createDirectories()
+                        val llFile = compiledLlFile(compileText(target, optimize, program.source, outputDir.resolve(dirName).createDirectories()))
+                        val (exitCode, output) = runner.buildAndRun(llFile, program.input, workingDirectory)
+                        withClue(output) { exitCode shouldBe program.exitCode }
+                        output shouldBe program.output
+                        withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
+                    }
+                }
             }
         }
     }
 
-    for ((name, program) in outputPrograms.filterKeys { it !in notRunOnMos }) {
-        test("$name: gives the expected exit code and console output as an llvm16 program in mos-sim, which leaves no files behind").config(enabledOrReasonIf = requiresMosSim) {
-            for (optimize in listOf(false, true)) {
-                withClue("optimize=$optimize") {
-                    val workingDirectory = outputDir.resolve("mos-run")
-                    workingDirectory.toFile().deleteRecursively()
-                    workingDirectory.createDirectories()
-                    val llFile = compiledLlFile(compileText(LlvmTarget(2), optimize, program.source, outputDir.resolve("mos").createDirectories()))
-                    val (exitCode, output) = buildAndRunMos(llFile, program.input, workingDirectory)
-                    withClue(output) { exitCode shouldBe program.exitCode }
-                    output shouldBe program.output
-                    withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
-                }
-            }
-        }
+    test("the notRun maps of the llvm16 program runners only name existing programs") {
+        for (runner in llvm16ProgramRunners)
+            withClue("the programs that the notRun map of ${runner.displayName} names") { runner.notRun.keys.filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
     }
 
     test($$"-o with the mos-c64 profile builds a C64 .prg file that loads at $0801 and starts with a BASIC SYS line").config(enabledOrReasonIf = requiresMosC64Clang) {
@@ -1449,7 +1469,7 @@ other {
         }
         val profile = checkNotNull(hostLlvmProfile)
         val cProgram = hostExecutable(dir.resolve("sizeof_file"))
-        execute(clangOf(profile), *profile.clangArgs.toTypedArray(), sizeofFile.toString(), "-o", cProgram.toString()).first shouldBe 0
+        execute(clangOf(profile), *profile.clangArgs.toTypedArray(), sizeofFile.toString(), "-o", cProgram.toString(), profile = profile).first shouldBe 0
         // this C program writes its stdout in text mode, which ends a line with \r\n on Windows
         val cSize = execute(cProgram.toString()).second.replace("\r\n", "\n")
         val program = stdioBindingsProgram("^^c_stdio.FILE", "txt.print_uw(sizeof(c_stdio.FILE))\ntxt.nl()")
@@ -1704,10 +1724,10 @@ private val requiresNativeLlvmAndAr: (TestCase) -> Enabled = {
  * Runs a bare metal program with qemu's [command]. On a Windows host, the double quotes of the semihosting arguments need
  * backslashes, as LlvmToolchain.runExecutable gives them, and qemu writes the console output with \r\n line ends.
  */
-private fun runOnQemu(command: List<String>, stdin: Path, directory: Path?): Pair<Int, String> {
+private fun runOnQemu(command: List<String>, stdin: Path, directory: Path?, profile: LlvmTripleProfile? = null): Pair<Int, String> {
     val windows = System.getProperty("os.name").startsWith("Windows")
     val words = if (windows) command.map { word -> Regex("""(\\*)"""").replace(word) { it.groupValues[1] + it.groupValues[1] + "\\\"" } } else command
-    val (exitCode, output) = execute(*words.toTypedArray(), stdin = stdin, directory = directory).also { Files.deleteIfExists(stdin) }
+    val (exitCode, output) = execute(*words.toTypedArray(), stdin = stdin, directory = directory, profile = profile).also { Files.deleteIfExists(stdin) }
     return exitCode to if (windows) output.replace("\r\n", "\n") else output
 }
 
@@ -1753,12 +1773,12 @@ private fun buildAndRunWasm(llFile: Path, input: String = "", args: List<String>
     val profile = LlvmTarget(4).profile
     val wasm = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + profile.outputExtension)
     val compiled = execute(clangOf(profile), *profile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module",
-        llFile.toString(), "-o", wasm.toString())
+        llFile.toString(), "-o", wasm.toString(), profile = profile)
     if (compiled.first != 0)
         return compiled
     val stdin = wasm.resolveSibling("${wasm.fileName}.stdin").also { it.writeText(input) }
     val command = LlvmTripleProfile.runCommandFor(profile.runCommand, wasm.toAbsolutePath().toString(), args)
-    return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent)
+    return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent, profile = profile)
 }
 
 private val requiresWasmAndAr: (TestCase) -> Enabled = {
@@ -1788,7 +1808,7 @@ private fun buildAndRunArm(llFile: Path, input: String = "", args: List<String> 
     val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + armProfile.outputExtension)
     val objectFile = elf.resolveSibling("${elf.fileName}.o")
     val compiled = execute(clangOf(armProfile), *armProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
-        llFile.toString(), "-o", objectFile.toString())
+        llFile.toString(), "-o", objectFile.toString(), profile = armProfile)
     if (compiled.first != 0)
         return compiled
     return linkAndRunOnQemu(armProfile, checkNotNull(armProfile.linkCommand), objectFile, elf, input, args, directory ?: llFile.parent)
@@ -1826,7 +1846,7 @@ private fun buildAndRunRiscv(llFile: Path, input: String = "", args: List<String
     val elf = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + riscvProfile.outputExtension)
     val objectFile = elf.resolveSibling("${elf.fileName}.o")
     val compiled = execute(clangOf(riscvProfile), *riscvProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
-        llFile.toString(), "-o", objectFile.toString())
+        llFile.toString(), "-o", objectFile.toString(), profile = riscvProfile)
     if (compiled.first != 0)
         return compiled
     val linkCommand = listOf(checkNotNull(riscvGcc).toString()) + checkNotNull(riscvProfile.linkCommand).drop(1)
@@ -1834,36 +1854,58 @@ private fun buildAndRunRiscv(llFile: Path, input: String = "", args: List<String
 }
 
 private val mosSimProfile = LlvmTripleProfile.resolve("mos-sim")
+private val z80Profile = LlvmTripleProfile.resolve("z80-test")
 
-/** Why the llvm-mos SDK can't build for [profile] here, or null when its clang (and the program of its run command, with [needsRunner]) is found. */
-private fun noLlvmMosReason(profile: LlvmTripleProfile, needsRunner: Boolean): String? {
-    if (System.getenv("LLVM_MOS") == null)
-        return "LLVM_MOS, the llvm-mos SDK directory, is not set"
+/**
+ * Why [profile] can't build for here, or null when the [variables] (name to what it names) are set and its clang is found,
+ * and with [needsTools] also the programs of its link and run commands.
+ */
+private fun noProfileToolsReason(profile: LlvmTripleProfile, variables: Map<String, String>, needsTools: Boolean): String? {
+    variables.entries.firstOrNull { System.getenv(it.key) == null }?.let { return "${it.key}, ${it.value}, is not set" }
     val clang = try { profile.resolveClang(null) } catch (x: IllegalArgumentException) { return x.message }
     if (clang == null)
         return "the clang of llvm triple profile '${profile.name}' was not found"
-    val runner = profile.runCommand?.first()
-    if (needsRunner && (runner == null || LlvmToolLocator.locate(runner) == null))
-        return "the program '$runner' of the run command of llvm triple profile '${profile.name}' was not found"
+    if (needsTools) {
+        val runner = profile.runCommand?.first() ?: return "llvm triple profile '${profile.name}' has no run command"
+        for ((program, command) in listOfNotNull(profile.linkCommand?.first()?.let { it to "link" }, runner to "run")) {
+            val found = try { LlvmToolLocator.locate(program) { profile.tools.directories() } } catch (x: IllegalArgumentException) { return x.message }
+            if (found == null)
+                return "the program '$program' of the $command command of llvm triple profile '${profile.name}' was not found"
+        }
+    }
     return null
 }
 
+private fun enabledUnless(reason: String?): Enabled = reason?.let { Enabled.disabled(it) } ?: Enabled.enabled
+
 private val requiresMosSim: (TestCase) -> Enabled = {
-    noLlvmMosReason(mosSimProfile, true)?.let { reason -> Enabled.disabled(reason) } ?: Enabled.enabled
+    enabledUnless(noProfileToolsReason(mosSimProfile, mapOf("LLVM_MOS" to "the llvm-mos SDK directory"), true))
 }
 
 private val requiresMosC64Clang: (TestCase) -> Enabled = {
-    noLlvmMosReason(LlvmTripleProfile.resolve("mos-c64"), false)?.let { reason -> Enabled.disabled(reason) } ?: Enabled.enabled
+    enabledUnless(noProfileToolsReason(LlvmTripleProfile.resolve("mos-c64"), mapOf("LLVM_MOS" to "the llvm-mos SDK directory"), false))
 }
 
-/** Builds the .ll file, compiled for llvm16, with the mos-sim profile as the compiler does, and runs it in mos-sim with [input] on stdin, in the working [directory]. */
-private fun buildAndRunMos(llFile: Path, input: String = "", directory: Path? = null): Pair<Int, String> {
-    val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + mosSimProfile.outputExtension)
-    if (!LlvmProgramRunner().build(llFile, executable, mosSimProfile))
-        return 1 to "building $executable failed, see the messages on stderr"
-    val stdin = executable.resolveSibling("${executable.fileName}.stdin").also { it.writeText(input) }
-    val command = LlvmTripleProfile.runCommandFor(mosSimProfile.runCommand, executable.toAbsolutePath().toString(), emptyList())
-    return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent).also { Files.deleteIfExists(stdin) }
+private val requiresZ80: (TestCase) -> Enabled = {
+    enabledUnless(noProfileToolsReason(z80Profile, mapOf("LLVM_Z80" to "the llvm-z80 directory", "Z88DK" to "the z88dk directory"), true))
+}
+
+/**
+ * An llvm16 profile whose run command runs the programs here, in [displayName]; [notRun] names the programs that don't run there,
+ * with the reason. [runnerOutput] matches what the runner itself prints, which is removed from the output.
+ */
+private class Llvm16ProgramRunner(val profile: LlvmTripleProfile, val displayName: String, val requires: (TestCase) -> Enabled, val notRun: Map<String, String>,
+                                  val runnerOutput: Regex? = null) {
+    /** Builds the .ll file, compiled for llvm16 with [profile], as the compiler does, and runs it with [input] on stdin, in the working [directory]. */
+    fun buildAndRun(llFile: Path, input: String = "", directory: Path? = null): Pair<Int, String> {
+        val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + profile.outputExtension)
+        if (!LlvmProgramRunner().build(llFile, executable, profile))
+            return 1 to "building $executable failed, see the messages on stderr"
+        val stdin = executable.resolveSibling("${executable.fileName}.stdin").also { it.writeText(input) }
+        val command = LlvmTripleProfile.runCommandFor(profile.runCommand, executable.toAbsolutePath().toString(), emptyList())
+        val (exitCode, output) = execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent, profile = profile).also { Files.deleteIfExists(stdin) }
+        return exitCode to (runnerOutput?.replace(output, "") ?: output)
+    }
 }
 
 /** Links [objectFile] and the startup sources of [profile] into [elf] with [linkCommand], and runs it on qemu with [input] and a Ctrl-D on stdin. */
@@ -1874,14 +1916,14 @@ private fun linkAndRunOnQemu(profile: LlvmTripleProfile, linkCommand: List<Strin
         if (word == "{startup}") startup.map { it.toString() }
         else listOf(word.replace("{object}", objectFile.toString()).replace("{file}", elf.toString()))
     }
-    val linked = execute(*link.toTypedArray())
+    val linked = execute(*link.toTypedArray(), profile = profile)
     Files.deleteIfExists(objectFile)
     startup.forEach { Files.deleteIfExists(it) }
     if (linked.first != 0)
         return linked
     val stdin = elf.resolveSibling("${elf.fileName}.stdin").also { it.writeText(input + "\u0004") }
     val command = LlvmTripleProfile.runCommandFor(profile.runCommand, elf.toAbsolutePath().toString(), args)
-    return runOnQemu(command, stdin, directory)
+    return runOnQemu(command, stdin, directory, profile)
 }
 
 private val emscriptenProfile = LlvmTripleProfile.resolve("wasm32-unknown-emscripten")
@@ -1917,18 +1959,18 @@ private fun buildAndRunEmscripten(llFile: Path, input: String = "", args: List<S
     val js = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + emscriptenProfile.outputExtension)
     val objectFile = js.resolveSibling("${js.fileName}.o")
     val compiled = execute(clangOf(emscriptenProfile), *emscriptenProfile.clangArgs.toTypedArray(), "-O2", "-Wno-override-module", "-c",
-        llFile.toString(), "-o", objectFile.toString())
+        llFile.toString(), "-o", objectFile.toString(), profile = emscriptenProfile)
     if (compiled.first != 0)
         return compiled
     val link = listOf(checkNotNull(emcc).toString()) + checkNotNull(emscriptenProfile.linkCommand).drop(1)
         .map { it.replace("{object}", objectFile.toString()).replace("{file}", js.toString()) }
-    val linked = execute(*link.toTypedArray())
+    val linked = execute(*link.toTypedArray(), profile = emscriptenProfile)
     Files.deleteIfExists(objectFile)
     if (linked.first != 0)
         return linked
     val stdin = js.resolveSibling("${js.fileName}.stdin").also { it.writeText(input) }
     val command = LlvmTripleProfile.runCommandFor(emscriptenProfile.runCommand, js.toAbsolutePath().toString(), args)
-    return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent)
+    return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent, profile = emscriptenProfile)
 }
 
 /** The program exits with 20 times its argument count, plus the length of its first argument, plus 1 if the second is "-v"; WASI only allows a status below 126. */
@@ -1949,8 +1991,8 @@ private fun launchesWithArguments(target: LlvmTarget, directory: Path) {
     printedOnStdout { target.launchEmulator(1, llFile, quiet = false) } shouldContain "Program exited with status 20"
 }
 
-private fun execute(vararg command: String, stdin: Path? = null, directory: Path? = null): Pair<Int, String> {
-    val builder = ProcessBuilder(*command).redirectErrorStream(true)
+private fun execute(vararg command: String, stdin: Path? = null, directory: Path? = null, profile: LlvmTripleProfile? = null): Pair<Int, String> {
+    val builder = LlvmTripleProfile.processBuilder(profile, command.toList()).redirectErrorStream(true)
     stdin?.let { builder.redirectInput(it.toFile()) }
     directory?.let { builder.directory(it.toFile()) }
     val process = builder.start()
@@ -2035,23 +2077,28 @@ private val notRunOnRiscv = setOf(
     "diskio directory listings of the files and subdirectories, sorted by name"
 ) + programsWithLp64Extsubs
 
-// the programs that don't run as they are on llvm16 in mos-sim, with the reason
-private val notRunOnMos: Map<String, String> =
-    (programsWith64BitAddresses - "abs, min, max, clamp, sgn and sqrt with quads and uquads, and sgn of unsigned values" + listOf(
+private val programsWithWideAddresses =
+    programsWith64BitAddresses - "abs, min, max, clamp, sgn and sqrt with quads and uquads, and sgn of unsigned values" + listOf(
         $$"32-bit literals above $7fff_ffff keep their written value as a uquad, quad or pointer, also in comparisons and regrouped constants",
         "untyped pointers",
         "pointer element updates and offsets beyond 64 KiB",
         "lsb, msb, lsw and msw of quads and addresses, and signed offsets to addresses"
-    )).associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
-    listOf(
-        "subroutines with parameters and return values",
-        "arrays",
-        "64-bit quad and uquad integers",
-        "quad and uquad conversions",
-        "extsubs call C library functions with long, quad, uquad, float, string and pointer types",
-        "floats library",
-        "floats printing, conversion to and from strings, and random numbers"
-    ).associateWith { "floats are not supported yet on llvm16" } +
+    )
+
+private val programsWithFloats = listOf(
+    "subroutines with parameters and return values",
+    "arrays",
+    "64-bit quad and uquad integers",
+    "quad and uquad conversions",
+    "extsubs call C library functions with long, quad, uquad, float, string and pointer types",
+    "floats library",
+    "floats printing, conversion to and from strings, and random numbers"
+)
+
+// the programs that don't run as they are on llvm16 in mos-sim, with the reason
+private val notRunOnMos: Map<String, String> =
+    programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
+    programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
     listOf(
         "command line arguments",
         "command line arguments when there are none",
@@ -2068,6 +2115,50 @@ private val notRunOnMos: Map<String, String> =
         "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the mos-sim C library lacks",
         "arena allocations aligned to 8 bytes, and sys.wait and sys.waitvsync" to "the llvm16 arena is the word arena, which doesn't align to 8 bytes"
     )
+
+// the programs that don't run as they are on llvm16 in z88dk-ticks, with the reason
+private val notRunOnZ80: Map<String, String> =
+    programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
+    programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
+    listOf(
+        "command line arguments",
+        "command line arguments when there are none",
+        "sys.argc and sys.argv with a single argument"
+    ).associateWith { "z88dk-ticks passes no command line, not even the program name: argc is 0" } +
+    listOf(
+        "diskio directories, renaming and deleting",
+        "diskio directory listings of the files and subdirectories, sorted by name"
+    ).associateWith { "z88dk +test has no directories, and z88dk-ticks can't rename or delete files" } +
+    // llvm-z80 calls these compiler-rt helpers in the z88dk environment, but has them only in its ELF and SDCC libraries
+    listOf(
+        "64-bit literals and constant folding",
+        "quad and uquad arithmetic, bitwise logic and shifts",
+        "quad and uquad arrays, structs and memory",
+        "quad number formatting",
+        "quad values computed and printed with textio, syslib and conv",
+        "fileio copying between two open files, seeking and the end of the file"
+    ).associateWith { "z88dk links no __muldi3, __divdi3, __udivdi3, __moddi3 and __umoddi3 for 64-bit multiplication and division" } +
+    listOf(
+        "the buffers, compression and wavfile modules, and consecutive pointer increments",
+        "number formatting",
+        "diskio writing, reading lines, seeking in and deleting a text file",
+        "diskio saving and loading memory"
+    ).associateWith { "z88dk links no __z80_memset_builtin, which llvm-z80 calls for a memset of a variable length" } +
+    mapOf(
+        "strings library" to "z88dk links no __z80_memmove_builtin, which llvm-z80 calls for a memmove of a variable length",
+        "math library" to "z88dk links no __umulhisi3, which llvm-z80 calls for a 16 by 16 bit multiplication with a 32-bit result",
+        "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the z88dk +test C library lacks",
+        "arena allocations aligned to 8 bytes, and sys.wait and sys.waitvsync" to "the llvm16 arena is the word arena, which doesn't align to 8 bytes",
+        "pointers to memory-mapped variables use the same storage as the variables" to
+            $$"the +test program starts at address 0, so its own variables are at the memory-mapped $0400"
+    )
+
+// declared after the notRun maps, which a top-level value can only use once they are initialized
+private val llvm16ProgramRunners = listOf(
+    Llvm16ProgramRunner(mosSimProfile, "mos-sim", requiresMosSim, notRunOnMos),
+    // z88dk-ticks prints the cycle count when the program exits, also with its -no-cycles option
+    Llvm16ProgramRunner(z80Profile, "z88dk-ticks", requiresZ80, notRunOnZ80, Regex("""\nTicks: \d+\n$"""))
+)
 
 // the 64-bit programs that don't use the constants of the llvm64 library, so they also run on the virtual machine
 private val quadProgramsForTheVm = listOf(

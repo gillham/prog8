@@ -1,9 +1,11 @@
 package prog8.code.target
 
 import prog8.code.source.ImportFileSystem
+import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.*
@@ -49,11 +51,18 @@ data class LlvmTripleProfile(
     val ioRanges: List<UIntRange> = emptyList(),
     val ioAllAddresses: Boolean = false,
     /** False when the program can't be given command line arguments. */
-    val programArgs: Boolean = true
+    val programArgs: Boolean = true,
+    val tools: LlvmToolEnvironment = LlvmToolEnvironment(name),
+    /** The C routine that reads the next console character as getchar() does, like fgetc_cons in z88dk, where getchar is a macro. */
+    val getcharSymbol: String = "getchar"
 ) {
     /** The pointer width in bits of the default address space, which LLVM takes as 64 when the data layout has no `p:` entry. */
     val pointerBits: Int = dataLayout.split('-').firstOrNull { it.startsWith("p:") }
         ?.split(':')?.getOrNull(1)?.toIntOrNull() ?: 64
+
+    /** The ABI alignment in bytes of a pointer in the default address space, its size unless the data layout's `p:` entry says less (`p:16:8`). */
+    val pointerAlignment: Int = (dataLayout.split('-').firstOrNull { it.startsWith("p:") }
+        ?.split(':')?.getOrNull(2)?.toIntOrNull() ?: pointerBits) / 8
 
     /**
      * The clang arguments with `${NAME}` (or `${NAME:-default}`) environment variables expanded,
@@ -85,7 +94,10 @@ data class LlvmTripleProfile(
         }
 
     /** The clang that builds for this profile: [clangOption] (the -clang option), else [clang], else the default one; see [LlvmToolLocator.resolveClang]. */
-    fun resolveClang(clangOption: String?): Path? = LlvmToolLocator.resolveClang(clangOption, clang, name)
+    fun resolveClang(clangOption: String?): Path? = LlvmToolLocator.resolveClang(clangOption, clang, name, tools)
+
+    /** A ProcessBuilder for [command] with the [tools] environment of this profile; see [LlvmToolEnvironment.processBuilder]. */
+    fun processBuilder(command: List<String>): ProcessBuilder = tools.processBuilder(command)
 
     /**
      * Writes the [startupSources] files that the link command builds along as `{startup}` next to [outputFile], and returns them.
@@ -148,8 +160,12 @@ data class LlvmTripleProfile(
         const val RESOURCE_DIR = "/prog8lib/llvm-triples"
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
             "link_command", "link_args", "run_timeout_seconds", "startup_source",
-            "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "file_offset_size",
-            "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args")
+            "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "file_offset_size", "getchar_symbol",
+            "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env")
+
+        /** A ProcessBuilder for [command] with the tool environment of [profile], or a plain one without a profile. */
+        fun processBuilder(profile: LlvmTripleProfile?, command: List<String>): ProcessBuilder =
+            profile?.processBuilder(command) ?: ProcessBuilder(command)
 
         /** The C library functions that the llvm code generator can call, which libc_lacks can name. */
         val C_FUNCTIONS: Set<String> = buildSet {
@@ -188,7 +204,7 @@ data class LlvmTripleProfile(
             require('"' !in it) { "the program argument '$it' has a double quote, which the semihosting command line can't pass on" }
             ",arg=" + (if (it.isEmpty() || it.any(Char::isWhitespace)) "\"$it\"" else it).replace(",", ",,")
         }
-        private val clangAnswers = ConcurrentHashMap<List<String>, ClangTargetInfo>()
+        private val clangAnswers = ConcurrentHashMap<List<Any>, ClangTargetInfo>()
 
         /** [clangOption] is the -clang option, which answers for a profile that leaves out what clang can supply. */
         fun load(path: Path, clangOption: String? = null): LlvmTripleProfile =
@@ -221,20 +237,20 @@ data class LlvmTripleProfile(
 
         /**
          * The normalized triple, data layout and C long and int sizes that [clang], or else the default clang, reports for [triple]
-         * with [clangArgs], which can change the ABI. Answers are kept for the life of the process.
+         * with [clangArgs], which can change the ABI, run in the [tools] environment. Answers are kept for the life of the process.
          * Throws an IllegalArgumentException when clang is missing or rejects them.
          */
-        internal fun askClang(triple: String, clangArgs: List<String>, clang: Path? = null): ClangTargetInfo {
+        internal fun askClang(triple: String, clangArgs: List<String>, clang: Path? = null, tools: LlvmToolEnvironment = LlvmToolEnvironment(null)): ClangTargetInfo {
             val found = clang ?: LlvmToolLocator.clang()
                 ?: throw IllegalArgumentException("clang, which could supply it, was not found on the PATH or in ${LlvmToolLocator.homebrewLlvmBin}")
-            val key = listOf(found.toString(), triple) + clangArgs
-            return clangAnswers[key] ?: queryClang(found, triple, clangArgs).also { clangAnswers[key] = it }
+            val key = listOf<Any>(found.toString(), triple, tools.withoutName()) + clangArgs
+            return clangAnswers[key] ?: queryClang(found, triple, clangArgs, tools).also { clangAnswers[key] = it }
         }
 
-        private fun queryClang(clang: Path, triple: String, clangArgs: List<String>): ClangTargetInfo {
+        private fun queryClang(clang: Path, triple: String, clangArgs: List<String>, tools: LlvmToolEnvironment): ClangTargetInfo {
             val command = listOf(clang.toString(), "--target=$triple") + clangArgs + listOf("-S", "-emit-llvm", "-x", "c", "-", "-o", "-")
             val process = try {
-                ProcessBuilder(command).start()
+                tools.processBuilder(command).start()
             } catch(x: IOException) {
                 throw IllegalArgumentException("clang could not be started: ${x.message}")
             }
@@ -264,10 +280,12 @@ data class LlvmTripleProfile(
             )
         }
 
-        internal fun expandEnvironment(args: List<String>, env: (String) -> String?): List<String> = args.map { arg ->
+        internal fun expandEnvironment(args: List<String>, env: (String) -> String?): List<String> = expandEnvironment(args, "the llvm triple profile", env)
+
+        internal fun expandEnvironment(args: List<String>, where: String, env: (String) -> String?): List<String> = args.map { arg ->
             environmentVariable.replace(arg) {
                 val variable = it.groupValues[1]
-                env(variable) ?: it.groups[3]?.value ?: throw IllegalArgumentException("environment variable $variable used in the llvm triple profile is not set")
+                env(variable) ?: it.groups[3]?.value ?: throw IllegalArgumentException("environment variable $variable used in $where is not set")
             }
         }
 
@@ -284,11 +302,16 @@ data class LlvmTripleProfile(
             val triple = required("triple")
             val clangArgs = words("clang_args").orEmpty()
             val clang = optional("clang")
+            val tools = LlvmToolEnvironment(name, words("tool_path").orEmpty(), words("tool_env").orEmpty().map {
+                val separator = it.indexOf('=')
+                require(separator > 0) { "the tool_env of llvm triple profile '$name' has '$it', which is not NAME=value" }
+                it.substring(0, separator) to it.substring(separator + 1)
+            })
             val asksClang = optional("datalayout") == null || optional("c_long_size") == null
             val fromClang by lazy {
                 try {
                     val profileClang = clang?.let { expandEnvironment(listOf(it)) { variable -> System.getenv(variable) }.single() }
-                    askClang(triple, expandEnvironment(clangArgs) { System.getenv(it) }, LlvmToolLocator.resolveClang(clangOption, profileClang, name))
+                    askClang(triple, expandEnvironment(clangArgs) { System.getenv(it) }, LlvmToolLocator.resolveClang(clangOption, profileClang, name, tools), tools)
                 } catch(x: IllegalArgumentException) {
                     throw IllegalArgumentException("llvm triple profile '$name' leaves out its datalayout or c_long_size, but ${x.message}")
                 }
@@ -340,7 +363,9 @@ data class LlvmTripleProfile(
                 words("libc_lacks").orEmpty().toSet(),
                 if (ioRanges == null || ioRanges == "*") emptyList() else parseAddressRanges(name, ioRanges),
                 ioRanges == "*",
-                programArgs
+                programArgs,
+                tools,
+                optional("getchar_symbol") ?: "getchar"
             )
         }
 
@@ -361,6 +386,68 @@ data class LlvmTripleProfile(
             }
         }
     }
+}
+
+
+/**
+ * The `tool_path` directories and `tool_env` variables of llvm triple profile [profileName], which every process started for it gets.
+ * Environment variables in them are expanded on use, as in the profile's clang_args.
+ */
+data class LlvmToolEnvironment(
+    val profileName: String?,
+    private val pathTemplate: List<String> = emptyList(),
+    private val variableTemplates: List<Pair<String, String>> = emptyList()
+) {
+    init {
+        for ((variable, _) in variableTemplates) {
+            require(variable.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "the tool_env of llvm triple profile '$profileName' has an invalid variable name '$variable'" }
+            require(!variable.equals("PATH", ignoreCase = true)) { "the tool_env of llvm triple profile '$profileName' can't set PATH, tool_path is for that" }
+        }
+        val twice = variableTemplates.groupBy { it.first }.filterValues { it.size > 1 }.keys
+        require(twice.isEmpty()) { "the tool_env of llvm triple profile '$profileName' sets ${twice.sorted().joinToString()} more than once" }
+    }
+
+    /** The tool_path directories, with environment variables and a leading ~ expanded. */
+    fun directories(env: (String) -> String? = System::getenv): List<Path> =
+        LlvmTripleProfile.expandEnvironment(pathTemplate, "the tool_path of llvm triple profile '$profileName'", env).map {
+            try {
+                ImportFileSystem.expandTilde(Path(it))
+            } catch (_: InvalidPathException) {
+                throw IllegalArgumentException("the tool_path of llvm triple profile '$profileName' has an invalid directory '$it'")
+            }
+        }
+
+    /** The tool_env variables, with environment variables expanded in their values. */
+    fun variables(env: (String) -> String? = System::getenv): Map<String, String> =
+        variableTemplates.associate { (variable, value) ->
+            variable to LlvmTripleProfile.expandEnvironment(listOf(value), "the tool_env of llvm triple profile '$profileName'", env).single()
+        }
+
+    /**
+     * A ProcessBuilder for [command] with the [variables] set and the [directories] in front of the PATH. A program without
+     * a directory is looked up in those directories first, since Java looks it up on its own PATH, not on the process's.
+     * Throws an IllegalArgumentException when an environment variable they use is not set.
+     */
+    fun processBuilder(command: List<String>): ProcessBuilder {
+        if (pathTemplate.isEmpty() && variableTemplates.isEmpty())
+            return ProcessBuilder(command)
+        val directories = directories()
+        val variables = variables()
+        val program = command.first().let { if (LlvmToolLocator.isBareName(it)) LlvmToolLocator.findIn(directories, it)?.toString() ?: it else it }
+        val builder = ProcessBuilder(listOf(program) + command.drop(1))
+        val environment = builder.environment()
+        environment.putAll(variables)
+        if (directories.isNotEmpty()) {
+            // Windows names it Path, and the map's keys ignore case there
+            val key = environment.keys.firstOrNull { it.equals("PATH", ignoreCase = isWindows) } ?: "PATH"
+            environment[key] = (directories.map(Path::toString) + listOfNotNull(environment[key]?.takeIf { it.isNotEmpty() })).joinToString(File.pathSeparator)
+        }
+        return builder
+    }
+
+    internal fun withoutName(): LlvmToolEnvironment = copy(profileName = null)
+
+    private val isWindows get() = System.getProperty("os.name").orEmpty().startsWith("Windows")
 }
 
 

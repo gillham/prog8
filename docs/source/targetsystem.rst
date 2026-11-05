@@ -314,6 +314,15 @@ These are the keys of a profile; an unknown key is an error:
     Extra arguments for clang when it builds the executable, separated by spaces, such as ``--target`` and ``--sysroot``.
     Environment variables can be used as ``${NAME}``, or as ``${NAME:-default}`` to use the default when the variable
     is not set; they only have to be set when clang is actually run.
+``tool_path``
+    Directories separated by spaces, put in front of the PATH of every program that is run for this profile: clang,
+    llvm-as, the ``link_command`` and the ``run_command``. A program or ``clang`` given by name is looked up in them
+    first. Environment variables work as in ``clang_args``, and a leading ``~`` is the home directory.
+    For z88dk: ``tool_path = ${Z88DK}/bin``.
+``tool_env``
+    Environment variables as ``NAME=value`` pairs separated by spaces, set for the same programs, such as
+    ``tool_env = ZCCCFG=${Z88DK}/lib/config``. Environment variables in the values work as in ``clang_args``.
+    It can't set ``PATH``; that is what ``tool_path`` is for.
 ``output_extension``
     The file name extension of the built executable, such as ``.wasm``. Without it, the executable is named as usual on the host.
 ``link_command``
@@ -359,6 +368,10 @@ These are the keys of a profile; an unknown key is an error:
     The C library routines that the file routines seek and tell the position in a file with, and the size in bytes of
     their offset. The defaults are ``fseek()`` and ``ftell()``, whose offset is a C ``long``. The Windows profiles name
     ``_fseeki64`` and ``_ftelli64`` with 8 bytes, because a C ``long`` has only 32 bits there.
+``getchar_symbol``
+    The C library routine that reads the next console character, the way ``getchar()`` does, which is the default.
+    The ``z80-test`` profile names ``fgetc_cons``, because ``getchar`` is a macro in z88dk. A profile that lists
+    ``getchar`` in ``libc_lacks`` has no console input: reading a character gives 0, as at the end of the input.
 ``libc_lacks``
     The C functions, separated by spaces, that the platform's C library doesn't have, such as ``opendir readdir closedir``.
     Only the names of C functions that Prog8 programs can call are accepted.

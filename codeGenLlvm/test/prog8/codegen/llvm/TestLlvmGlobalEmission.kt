@@ -215,6 +215,31 @@ class TestLlvmGlobalEmission: FunSpec({
             "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @.init.addresses, ptr null }]"
     }
 
+    test("on llvm16, whose data layouts align pointers to a byte, pointers at odd offsets stay static data without a module constructor") {
+        for (profile in listOf("mos-sim", "z80-test")) {
+            withClue(profile) {
+                val target16 = LlvmTarget(2, LlvmTripleProfile.resolve(profile))
+                target16.profile.pointerAlignment shouldBe 1
+                val symbols = IRSymbolTable().apply {
+                    add(nodeStruct(target16))
+                    add(variable("main.name", DataType.STR, IRVariableInitializer.Str("hi", Encoding.ISO), length = 3u))
+                    add(IRStStructInstance("prog8_struct_instances.node1", "main.Node", listOf(
+                        IRStructInitValue(BaseDataType.UBYTE, num(1.0)),
+                        IRStructInitValue(BaseDataType.UWORD, num(10.0)),
+                        IRStructInitValue(BaseDataType.UWORD, num(20.0)),
+                        IRStructInitValue(BaseDataType.UWORD, num(30.0)),
+                        IRStructInitValue(BaseDataType.POINTER, sym("main.name"))), 7u + target16.POINTER_MEM_SIZE))
+                }
+                val (module, _) = emit(symbols, target16)
+                module.functions.none { it.name == ".init.addresses" } shouldBe true
+                module.globals.none { it.name == "llvm.global_ctors" } shouldBe true
+                module.printed("prog8_struct_instances.node1") shouldContain "ptr @main.name"
+            }
+        }
+        LlvmTarget().profile.pointerAlignment shouldBe 8
+        LlvmTarget(4).profile.pointerAlignment shouldBe 4
+    }
+
     test("aligned pointers stay static data, integer address fields are stored at startup, constant data becomes writable for that") {
         val (module, _) = emit(linkSymbols(target))
         module.printed("prog8_struct_instances.link") shouldBe
@@ -497,7 +522,7 @@ private val nodeLlvmType = LlvmType.Struct(listOf(LlvmType.I8, LlvmType.I16, Llv
 private fun nodeStruct(target: ICompilationTarget) = IRStStructDef("main.Node", listOf(
     IRStStructField(DataType.UBYTE, "id"),
     IRStStructField(DataType.arrayFor(BaseDataType.UWORD, target), "values", 3),
-    IRStStructField(DataType.pointer(BaseDataType.UBYTE), "next")), 15u)
+    IRStStructField(DataType.pointer(BaseDataType.UBYTE), "next")), 7u + target.POINTER_MEM_SIZE)
 
 private object LinkType : ISubType {
     override val scopedNameString = "main.Link"

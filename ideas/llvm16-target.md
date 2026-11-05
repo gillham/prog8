@@ -131,10 +131,65 @@ The mos libc can't format, parse or compute floats beyond basic arithmetic. Prog
 - The f32 plumbing from step 1 and step 3 is still done in milestone 1.
 - Float support is the next milestone. It adds a small runtime: formatting, parsing, and sinf/cosf/atan2f/sqrtf/powf/logf/expf/floorf and so on. The runtime is either a C startup source compiled by the profile's clang, or Prog8 code.
 
+## Milestone 2: z80 through llvm-z80 and z88dk
+
+### Decisions
+Made by the user, 2026-11-04:
+- Use the llvm-z80 clang with `--target=z80-unknown-none-z88dk`.
+- Only one profile, for z88dk's `+test` platform, which runs in `z88dk-ticks`. Real machines come later.
+- A profile gives its tools an environment through `tool_path` and `tool_env` keys.
+- When `qsort` is lacking, the backend uses its own sort.
+
+### Facts (checked by hand)
+- **The data layout:** `e-m:o-p:16:8-i16:8-i32:8-i64:8-i128:8-f16:8-f32:8-f64:8-f128:8-ve-a:8-n8:16`. The C int is 2 bytes, long 4, and the C `double` is 4 bytes, the same as `float`.
+- **The pipeline:**
+  - clang writes z88dk assembly, and `clang -c` assembles it with `z88dk-z80asm`, found only through the PATH.
+  - `zcc +test -o out.bin obj.o` links it with z88dk's crt0 and C library. zcc needs `ZCCCFG=<z88dk>/lib/config`.
+  - `z88dk-ticks out.bin` runs it and passes the exit status on. Its default limit is 100M cycles; `-counter 0` means 10 cycles, not unlimited, so the profile sets a large `-counter`.
+- **What already works:** with only a profile file (`-target llvm16 -triple <file>`, the environment exported by hand), hello, crc, list and a small fib give the same results as llvm64. The full fib and strs benchmarks need more than 4G cycles.
+- **What the `+test` C library lacks:** getcwd, mkdir, chdir, rmdir, opendir, readdir, closedir, strdup, realloc, free, getchar, usleep, strtod, and every libm name.
+  - `-lm` would bring math later.
+  - It has fopen and the other f* functions, strcmp, qsort, printf, snprintf, putchar and exit. z88dk names its standard streams differently, but the backend only prints through putchar.
+- **qsort:** z88dk calls the comparison callback with its arguments swapped, so it sorts backwards. Calls from our code into the library are fine (checked with strcmp and snprintf).
+  - The backend only uses qsort to sort directory listings, which also need opendir. So on z80 it is enough to list qsort as lacking.
+- **Alignment:** the z88dk assembly format ignores it (warning: "alignment of 'prog8_slabs.memory_pool' is ignored"). A `memory(name, size, align)` slab is not aligned on z80.
+
+### Steps
+1. **Profile keys `tool_path` and `tool_env`:**
+   - `tool_path`: directories, env-expanded, put in front of the PATH with the OS's separator.
+   - `tool_env`: `NAME=value` pairs, env-expanded.
+   - Both apply to every process the llvm path starts for that profile: clang (build, `askClang`, IR validation), llvm-as, the link command and the run command.
+   - Parse tests, plus a test that the environment reaches a started process.
+   - llvm32, llvm64 and mos are unchanged.
+2. **The `z80-test` profile:**
+   - triple, data layout, `c_int_size 2`, `c_long_size 4`
+   - `clang = ${LLVM_Z80}/bin/clang`, `clang_args = --target=z80-unknown-none-z88dk`
+   - `tool_path = ${Z88DK}/bin`, `tool_env = ZCCCFG=${Z88DK}/lib/config`
+   - `link_command = zcc +test -o {file} {object}`
+   - `output_extension = .bin`, `run_command = z88dk-ticks -counter <large> {file}`
+   - `program_args = false`
+   - `libc_lacks` as above plus qsort; no `io_ranges` (the z80 has its own I/O ports)
+   - Check that the alignment warning doesn't fail a build, and document that slabs aren't aligned on this profile. Maybe the backend should warn when a slab asks for alignment on such a profile.
+3. **Console input:** getchar is lacking, so `txt.input_chars` and the other input routines get the libc_lacks failure result (check what that is today, and that it's sensible). Find out whether z88dk +test has a usable console read (e.g. `fgetc_cons`); if it does, use it later through a profile key rather than a z80 special case.
+4. **Tests:**
+   - Generalize the mos-sim runner in TestLlvmCompiler into one runner for llvm16 profiles that run programs.
+   - A `requiresZ80` guard: LLVM_Z80 and Z88DK are set, and clang, zcc and z88dk-ticks are found.
+   - The `programs` and `outputPrograms` maps run on z80, with a `notRunOnZ80` map. Every entry needs a reason that was observed, and unexplained failures are investigated as possible bugs.
+   Status: done. 25 programs run on z80 (optimized and -noopt), in about 7 s.
+   - Most exclusions come from llvm-z80's runtime helpers, which zcc can't link: `__z80_memset_builtin`, `__z80_memmove_builtin`, `__muldi3`, `__divdi3`, `__udivdi3`, `__moddi3`, `__umoddi3`, `__umulhisi3`. llvm-z80 ships them only as ELF (`z80_rt.a`) and SDCC (`z80_rt.lib`) libraries.
+   - The user will provide a z88dk-linkable build; the profile then links it, and those exclusions go.
+   - Also fixed: a pointer at an odd struct offset no longer needs a global constructor (`.init_array`, which the z88dk format can't hold). Pointers are only deferred when the data layout's pointer alignment (`LlvmTripleProfile.pointerAlignment`) requires it.
+   - z88dk-ticks can't remove or rename files, so `remove` and `rename` are in the profile's `libc_lacks`.
+   - z88dk-ticks prints a "Ticks: N" line when a program exits, and its `-no-cycles` option doesn't suppress it. The test runner strips that line.
+5. **Docs:** a z80 profile section in targetsystem.rst (`LLVM_Z80`, `Z88DK`, what's lacking, the alignment note), the new keys, todo.rst (real z80 machines, -lm for floats), and the AGENTS.md optional tools.
+6. **Optional:** an own sort in the backend when qsort is lacking, for directory listings. It only matters for a future platform that has opendir but no usable qsort.
+
+Each step keeps llvm32/llvm64 `.ll` byte-identical and mos-sim results unchanged. At the end: a full build with LLVM_MOS, LLVM_Z80 and Z88DK set, the remote check and the Windows suite.
+
 ## Later milestones
 - Floats on llvm16 (above).
 - After milestone 1: dedupe llvm32 and llvm64 (they differ only in comments and `sys.target`) into shared modules. This is separate work.
-- z80: a profile that builds an object or assembly file; nothing runs.
+- z80: real machines through other z88dk targets (ZX Spectrum, CP/M, MSX ...).
 - mc6809:
   - lift the `e` check, and audit the little-endian assumptions: the fputc word file format (InstrSyscall.kt:1051-1073), unions as byte arrays, and byte-in-word addressing in codeGenIntermediate (not audited)
   - investigate the collapse

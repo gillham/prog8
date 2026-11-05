@@ -7,6 +7,7 @@ import io.kotest.matchers.longs.shouldBeLessThan
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmToolEnvironment
 import prog8.code.target.LlvmTripleProfile
 import prog8.codegen.llvm.model.*
 import java.io.ByteArrayOutputStream
@@ -114,6 +115,24 @@ class TestLlvmToolchain: FunSpec({
         val executable = dir.resolve("recorded.elf")
         LlvmToolchain.compileToExecutable(llFile, executable, recording, extraLinkArgs = listOf("-L/a b", "-lfoo")) shouldBe true
         executable.readText().lines() shouldBe listOf(dir.resolve("recorded.elf.o").toString(), "-L/a b", "-lfoo", "")
+    }
+
+    test("the clang, link command and run command of a profile are found in its tool_path by a bare name, and get its tool_env").config(enabled = !System.getProperty("os.name").startsWith("Windows")) {
+        val bin = dir.resolve("toolbin").also { Files.createDirectories(it) }
+        fun script(name: String, body: String) = bin.resolve(name).also { it.writeText($$"#!/bin/sh\n[ \"$ZZTEST\" = hi ] || exit 9\n$$body\n"); it.toFile().setExecutable(true) }
+        script("zzclang", $$"while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then echo object > \"$2\"; fi; shift; done")
+        script("zzlink", $$"cp \"$1\" \"$2\"")
+        script("zzrun", $$"test \"$(cat \"$1\")\" = object && exit 5")
+        val target = LlvmTarget()
+        val profile = LlvmTripleProfile("tools", target.targetTriple, target.dataLayout, 8, linkCommandTemplate = listOf("zzlink", "{object}", "{file}"),
+            runCommandTemplate = listOf("zzrun", "{file}"), clangTemplate = "zzclang",
+            tools = LlvmToolEnvironment("tools", listOf(bin.toString()), listOf("ZZTEST" to "hi")))
+        val llFile = dir.resolve("tools.ll").also { it.writeText(programExitingWith(0)) }
+        val executable = dir.resolve("tools.bin")
+        LlvmToolchain.compileToExecutable(llFile, executable, profile) shouldBe true
+        executable.readText() shouldBe "object\n"
+        LlvmToolchain.runExecutable(executable, quiet = true, profile.runCommand, profile = profile) shouldBe 5
+        LlvmToolchain.runExecutable(executable, quiet = true, listOf("sh", "-c", $$"[ -z \"$ZZTEST\" ] && exit 3", "{file}")) shouldBe 3
     }
 
     test("a run that takes longer than its timeout is stopped, and reported as an IOException").config(enabled = !System.getProperty("os.name").startsWith("Windows")) {
