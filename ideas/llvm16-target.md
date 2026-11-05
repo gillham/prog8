@@ -178,6 +178,17 @@ Made by the user, 2026-11-04:
    Status: done. 25 programs run on z80 (optimized and -noopt), in about 7 s.
    - Most exclusions come from llvm-z80's runtime helpers, which zcc can't link: `__z80_memset_builtin`, `__z80_memmove_builtin`, `__muldi3`, `__divdi3`, `__udivdi3`, `__moddi3`, `__umoddi3`, `__umulhisi3`. llvm-z80 ships them only as ELF (`z80_rt.a`) and SDCC (`z80_rt.lib`) libraries.
    - The user will provide a z88dk-linkable build; the profile then links it, and those exclusions go.
+     - The sources are in llvm-z80's `compiler-rt/lib/builtins/z80/*.asm`, in SDCC syntax. `zcc +test -c` assembles a `.s` copy of each into a z88dk object, and `z88dk-z80asm -x` packs the objects into a library.
+     - Leave out the crt0 files and the C library functions z88dk already has (memset, strcmp, ...).
+     - Checked on 2026-11-05: the result links with `-l<lib>` and gives the host's results.
+     - Decision (user): llvm-z80's build installs it as `lib/z80/z80_rt_z88dk.lib`, and the profile adds `-l${LLVM_Z80}/lib/z80/z80_rt_z88dk` to its link command.
+     - zcc fails when an `-l` library is missing, so make that profile change only once the library is installed.
+     - Done 2026-11-05: the user installed it, and the profile links it; the z80 test guard requires it.
+   - What still doesn't run on z80, apart from the mos-sim reasons:
+     - z88dk-ticks' ftell always gives -1 (`ftell` is in libc_lacks), and it can't delete files.
+     - z88dk's fread doesn't set the end-of-file flag.
+     - The strings library test hits an llvm-z80 bug: LLVM assumes 16-byte alignment for globals over 128 bits (DataLayout::getPreferredAlign), which the z88dk format can't give, and an add becomes an or. Explicit `align 1` on the globals avoids it.
+     - Decision (user): fix it in llvm-z80. The repro is strlib.ll / strlib-align1.ll.
    - Also fixed: a pointer at an odd struct offset no longer needs a global constructor (`.init_array`, which the z88dk format can't hold). Pointers are only deferred when the data layout's pointer alignment (`LlvmTripleProfile.pointerAlignment`) requires it.
    - z88dk-ticks can't remove or rename files, so `remove` and `rename` are in the profile's `libc_lacks`.
    - z88dk-ticks prints a "Ticks: N" line when a program exits, and its `-no-cycles` option doesn't suppress it. The test runner strips that line.

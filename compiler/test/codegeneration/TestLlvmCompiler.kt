@@ -1887,7 +1887,9 @@ private val requiresMosC64Clang: (TestCase) -> Enabled = {
 }
 
 private val requiresZ80: (TestCase) -> Enabled = {
-    enabledUnless(noProfileToolsReason(z80Profile, mapOf("LLVM_Z80" to "the llvm-z80 directory", "Z88DK" to "the z88dk directory"), true))
+    enabledUnless(noProfileToolsReason(z80Profile, mapOf("LLVM_Z80" to "the llvm-z80 directory", "Z88DK" to "the z88dk directory"), true)
+        ?: Path(System.getenv("LLVM_Z80"), "lib", "z80", "z80_rt_z88dk.lib").takeUnless { it.exists() }
+            ?.let { "$it, llvm-z80's support library built for z88dk, was not found" })
 }
 
 /**
@@ -2129,24 +2131,15 @@ private val notRunOnZ80: Map<String, String> =
         "diskio directories, renaming and deleting",
         "diskio directory listings of the files and subdirectories, sorted by name"
     ).associateWith { "z88dk +test has no directories, and z88dk-ticks can't rename or delete files" } +
-    // llvm-z80 calls these compiler-rt helpers in the z88dk environment, but has them only in its ELF and SDCC libraries
     listOf(
-        "64-bit literals and constant folding",
-        "quad and uquad arithmetic, bitwise logic and shifts",
-        "quad and uquad arrays, structs and memory",
-        "quad number formatting",
-        "quad values computed and printed with textio, syslib and conv",
-        "fileio copying between two open files, seeking and the end of the file"
-    ).associateWith { "z88dk links no __muldi3, __divdi3, __udivdi3, __moddi3 and __umoddi3 for 64-bit multiplication and division" } +
-    listOf(
-        "the buffers, compression and wavfile modules, and consecutive pointer increments",
-        "number formatting",
         "diskio writing, reading lines, seeking in and deleting a text file",
         "diskio saving and loading memory"
-    ).associateWith { "z88dk links no __z80_memset_builtin, which llvm-z80 calls for a memset of a variable length" } +
+    ).associateWith { "the ftell of z88dk-ticks always gives -1, so the file position and size are unknown, and it can't delete a file" } +
     mapOf(
-        "strings library" to "z88dk links no __z80_memmove_builtin, which llvm-z80 calls for a memmove of a variable length",
-        "math library" to "z88dk links no __umulhisi3, which llvm-z80 calls for a 16 by 16 bit multiplication with a 32-bit result",
+        "fileio copying between two open files, seeking and the end of the file" to
+            "the fread of z88dk +test doesn't set the end-of-file flag, so a loop that reads until fileio.eof() never ends",
+        "strings library" to
+            "BUG (llvm-z80): it assumes a 16-byte alignment for large globals, which the z88dk format can't give, and turns an add into an or",
         "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the z88dk +test C library lacks",
         "arena allocations aligned to 8 bytes, and sys.wait and sys.waitvsync" to "the llvm16 arena is the word arena, which doesn't align to 8 bytes",
         "pointers to memory-mapped variables use the same storage as the variables" to

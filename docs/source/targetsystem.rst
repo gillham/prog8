@@ -23,7 +23,7 @@ Currently these machines can be selected as a compilation target (via the ``-tar
 - 'virtual': a builtin virtual machine (32-bit pointers, 16 MB memory)
 - 'llvm64' (or 'llvm'): a hosted 64-bit program, compiled to LLVM IR (see :ref:`llvm_triples`)
 - 'llvm32': a hosted 32-bit program, compiled to LLVM IR, such as WebAssembly with WASI
-- 'llvm16': a 16-bit program, compiled to LLVM IR and built with `llvm-mos <https://llvm-mos.org/>`_ (experimental, see :ref:`llvm16`)
+- 'llvm16': a 16-bit program, compiled to LLVM IR and built with `llvm-mos <https://llvm-mos.org/>`_ for the 6502 or with llvm-z80 and z88dk for the Z80 (experimental, see :ref:`llvm16`)
 - custom targets via a separate configuration file (see :ref:`customizable_target`)
 
 This chapter explains some relevant system details of the c64 and cx16 machines.
@@ -265,7 +265,7 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
 3. a profile built into the compiler: ``wasm32-wasip1``, ``wasm32-unknown-emscripten``, ``armv7a-none-eabihf``, ``riscv32-unknown-elf``,
    ``arm64-apple-macosx``, ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``,
    ``riscv64-unknown-linux-gnu``, ``riscv32-unknown-linux-gnu``, ``armv7-unknown-linux-gnueabihf``, ``x86_64-pc-windows-msvc``,
-   ``x86_64-w64-windows-gnu``, and for ``llvm16`` ``mos-sim`` and ``mos-c64``
+   ``x86_64-w64-windows-gnu``, and for ``llvm16`` ``mos-sim``, ``mos-c64`` and ``z80-test``
 4. any other triple that clang knows, such as ``aarch64-linux-musl`` or ``i686-unknown-linux-gnu``: the compiler asks
    clang for its normalized name, data layout and C ``long`` size, and builds with ``--target=<name>``.
    Run, link and startup settings need a profile file.
@@ -415,9 +415,9 @@ The llvm16 target
 -----------------
 
 The ``llvm16`` target (experimental) compiles the program to LLVM IR for CPUs with 16-bit pointers, and builds it with
-the `llvm-mos <https://llvm-mos.org/>`_ SDK for the 6502 family. The ``LLVM_MOS`` environment variable names the
-directory of the llvm-mos SDK, whose clang the profiles use; building fails without it, but writing the ``.ll`` file
-works. ``sys.target`` is 252. The built-in profiles are:
+the `llvm-mos <https://llvm-mos.org/>`_ SDK for the 6502 family, or for the Z80 (see :ref:`llvm16_z80`). The
+``LLVM_MOS`` environment variable names the directory of the llvm-mos SDK, whose clang the mos profiles use; building
+fails without it, but writing the ``.ll`` file works. ``sys.target`` is 252. The built-in profiles for the 6502 are:
 
 - ``mos-sim``, the default: builds for the SDK's 6502 simulator, which ``-emu`` runs with ``mos-sim``. The simulator
   prints the program's output and gives back its exit status.
@@ -454,6 +454,39 @@ library routines that need one behave as follows:
 - ``math.atan2()`` is a compile error when the program can reach it, as it needs ``atan2f`` and ``floorf``.
 
 An ``extsub`` of a C function that the library lacks doesn't link.
+
+.. _llvm16_z80:
+
+The Z80 with llvm-z80 and z88dk
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The built-in ``z80-test`` profile (``-target llvm16 -triple z80-test``) builds for the Z80 with the clang of llvm-z80
+and its ``z80-unknown-none-z88dk`` triple, which writes z88dk assembly. The ``zcc`` of `z88dk <https://z88dk.org/>`_
+links the program with z88dk's C library for its ``+test`` platform, and ``-emu`` runs it in ``z88dk-ticks``, which
+prints the program's output, reads its input, and gives back its exit status. ``LLVM_Z80`` names the llvm-z80
+directory and ``Z88DK`` the z88dk directory; the profile's ``tool_path`` and ``tool_env`` give the tools the PATH and
+``ZCCCFG`` they need. As with the mos profiles, writing the ``.ll`` file works without them. The program is also linked
+with ``lib/z80/z80_rt_z88dk.lib`` of llvm-z80: its compiler support routines (``__z80_memset_builtin``, ``__muldi3``
+and others) built for z88dk, which llvm-z80's build installs.
+
+Everything listed above for ``llvm16`` applies, except the real addresses: the Z80 has its own I/O ports, so the
+profile has no ``io_ranges``, and the ``+test`` program itself starts at address 0. Besides:
+
+- console input works: the profile reads characters with z88dk's ``fgetc_cons`` (``getchar_symbol``).
+- files: opening, reading, writing and seeking work on the host's files, but ``z88dk-ticks`` can't delete or rename a
+  file, and its ``ftell`` always fails, so deleting, renaming, the file position and size, and loading a file into
+  memory report a failure. z88dk's ``fread`` doesn't set the end of file, so ``fileio.eof()`` stays false after a read
+  past it: stop reading when a read returns fewer bytes than asked. Directories, ``curdir()`` and waiting behave as on
+  ``mos-sim``.
+- llvm-z80 assumes that a large global (more than 16 bytes) is aligned to 16 bytes, which the z88dk format can't
+  provide, so code that relies on that alignment can be wrong. The ``strings`` library shows it; this is a bug in
+  llvm-z80.
+- the z88dk assembly format ignores alignment, so a ``memory()`` slab is not aligned; clang warns about it, and also
+  prints a harmless "cannot compile inline asm" warning.
+- ``z88dk-ticks`` prints a ``Ticks:`` line with the number of cycles when the program exits.
+
+For a real Z80 machine, write a profile of your own that links for another z88dk platform, for example
+``link_command = zcc +zx -o {file} {object}`` for the ZX Spectrum, with that platform's ``libc_lacks``.
 
 
 Memory Model
