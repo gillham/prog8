@@ -614,6 +614,7 @@ main {
             "main {\n sub start() {\n float @shared f = 1.5\n }\n}",
             "main {\n sub start() {\n ubyte @shared b = 3\n uword @shared w = (b as float * 1.5) as uword\n }\n}",
             "%import floats\nmain {\n sub start() {\n }\n}",
+            "%import floats\n%import textio\nmain {\n sub start() {\n txt.print_f(floats.sin(1.0))\n }\n}",
             "%option enable_floats\nmain {\n sub start() {\n }\n}")
         for (source in sources) {
             withClue(source) {
@@ -693,9 +694,7 @@ main {
         emulated.count { it.contains("volatile") } shouldBe 0
     }
 
-    test("llvm16 builds and runs a program in mos-sim").config(enabledOrReasonIf = {
-        if (System.getenv("LLVM_MOS") == null) Enabled.disabled("LLVM_MOS, the llvm-mos SDK directory, is not set") else Enabled.enabled
-    }) {
+    test("llvm16 builds and runs a program in mos-sim").config(enabledOrReasonIf = requiresMosSim) {
         val source = """
 %import textio
 %zeropage basicsafe
@@ -746,9 +745,7 @@ main {
         errors.errors.single() shouldContain "math.atan2 needs C functions atan2f and floorf, which the C library of llvm triple profile 'mos-sim' lacks"
     }
 
-    test("llvm16 in mos-sim: integer square roots, no command line arguments, and the failure results of the syscalls whose C functions are lacking").config(enabledOrReasonIf = {
-        if (System.getenv("LLVM_MOS") == null) Enabled.disabled("LLVM_MOS, the llvm-mos SDK directory, is not set") else Enabled.enabled
-    }) {
+    test("llvm16 in mos-sim: integer square roots, no command line arguments, and the failure results of the syscalls whose C functions are lacking").config(enabledOrReasonIf = requiresMosSim) {
         val target = LlvmTarget(2)
         val llFile = compiledLlFile(compileText(target, false, lacksSource, outputDir.resolve("mos-sim-lacks").createDirectories()))
         val executable = llFile.resolveSibling("lacks16.sim")
@@ -763,6 +760,47 @@ main {
         }
         output shouldBe expected
         exitCode shouldBe 0
+    }
+
+    test("the llvm16 programs compute the right results in mos-sim").config(enabledOrReasonIf = requiresMosSim) {
+        withClue("the programs that notRunOnMos names") { notRunOnMos.keys.filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
+        val dir = outputDir.resolve("mos").createDirectories()
+        for ((name, source) in programs.filterKeys { it !in notRunOnMos }) {
+            for (optimize in listOf(false, true)) {
+                val llFile = compiledLlFile(compileText(LlvmTarget(2), optimize, source, dir))
+                val (exitCode, output) = buildAndRunMos(llFile)
+                withClue("$name optimize=$optimize: exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            }
+        }
+    }
+
+    for ((name, program) in outputPrograms.filterKeys { it !in notRunOnMos }) {
+        test("$name: gives the expected exit code and console output as an llvm16 program in mos-sim, which leaves no files behind").config(enabledOrReasonIf = requiresMosSim) {
+            for (optimize in listOf(false, true)) {
+                withClue("optimize=$optimize") {
+                    val workingDirectory = outputDir.resolve("mos-run")
+                    workingDirectory.toFile().deleteRecursively()
+                    workingDirectory.createDirectories()
+                    val llFile = compiledLlFile(compileText(LlvmTarget(2), optimize, program.source, outputDir.resolve("mos").createDirectories()))
+                    val (exitCode, output) = buildAndRunMos(llFile, program.input, workingDirectory)
+                    withClue(output) { exitCode shouldBe program.exitCode }
+                    output shouldBe program.output
+                    withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
+                }
+            }
+        }
+    }
+
+    test($$"-o with the mos-c64 profile builds a C64 .prg file that loads at $0801 and starts with a BASIC SYS line").config(enabledOrReasonIf = requiresMosC64Clang) {
+        val dir = outputDir.resolve("mos-c64").createDirectories()
+        val target = LlvmTarget(2, LlvmTripleProfile.resolve("mos-c64"))
+        compileText(target, false, nativeHello.source, dir, outputFile = dir.resolve("hello")).shouldNotBeNull()
+        val prg = Files.readAllBytes(dir.resolve("hello.prg")).map { it.toInt() and 255 }
+        withClue("the load address") { prg[0] + 256 * prg[1] shouldBe 0x0801 }
+        withClue("the SYS token after the link and the line number") { prg[6] shouldBe 0x9e }
+        val sysAddress = prg.drop(7).takeWhile { it != 0 }.map { it.toChar() }.joinToString("").trim().toInt()
+        val end = 0x0801 + prg.size - 2
+        withClue("the SYS address $sysAddress lies in the program") { (sysAddress in 0x0801 until end) shouldBe true }
     }
 
     test("-o without .ll builds a native executable with the LLVM IR next to it").config(enabledOrReasonIf = requiresNativeLlvm) {
@@ -1795,6 +1833,39 @@ private fun buildAndRunRiscv(llFile: Path, input: String = "", args: List<String
     return linkAndRunOnQemu(riscvProfile, linkCommand, objectFile, elf, input, args, directory ?: llFile.parent)
 }
 
+private val mosSimProfile = LlvmTripleProfile.resolve("mos-sim")
+
+/** Why the llvm-mos SDK can't build for [profile] here, or null when its clang (and the program of its run command, with [needsRunner]) is found. */
+private fun noLlvmMosReason(profile: LlvmTripleProfile, needsRunner: Boolean): String? {
+    if (System.getenv("LLVM_MOS") == null)
+        return "LLVM_MOS, the llvm-mos SDK directory, is not set"
+    val clang = try { profile.resolveClang(null) } catch (x: IllegalArgumentException) { return x.message }
+    if (clang == null)
+        return "the clang of llvm triple profile '${profile.name}' was not found"
+    val runner = profile.runCommand?.first()
+    if (needsRunner && (runner == null || LlvmToolLocator.locate(runner) == null))
+        return "the program '$runner' of the run command of llvm triple profile '${profile.name}' was not found"
+    return null
+}
+
+private val requiresMosSim: (TestCase) -> Enabled = {
+    noLlvmMosReason(mosSimProfile, true)?.let { reason -> Enabled.disabled(reason) } ?: Enabled.enabled
+}
+
+private val requiresMosC64Clang: (TestCase) -> Enabled = {
+    noLlvmMosReason(LlvmTripleProfile.resolve("mos-c64"), false)?.let { reason -> Enabled.disabled(reason) } ?: Enabled.enabled
+}
+
+/** Builds the .ll file, compiled for llvm16, with the mos-sim profile as the compiler does, and runs it in mos-sim with [input] on stdin, in the working [directory]. */
+private fun buildAndRunMos(llFile: Path, input: String = "", directory: Path? = null): Pair<Int, String> {
+    val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + mosSimProfile.outputExtension)
+    if (!LlvmProgramRunner().build(llFile, executable, mosSimProfile))
+        return 1 to "building $executable failed, see the messages on stderr"
+    val stdin = executable.resolveSibling("${executable.fileName}.stdin").also { it.writeText(input) }
+    val command = LlvmTripleProfile.runCommandFor(mosSimProfile.runCommand, executable.toAbsolutePath().toString(), emptyList())
+    return execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent).also { Files.deleteIfExists(stdin) }
+}
+
 /** Links [objectFile] and the startup sources of [profile] into [elf] with [linkCommand], and runs it on qemu with [input] and a Ctrl-D on stdin. */
 private fun linkAndRunOnQemu(profile: LlvmTripleProfile, linkCommand: List<String>, objectFile: Path, elf: Path, input: String, args: List<String>,
                              directory: Path): Pair<Int, String> {
@@ -1963,6 +2034,40 @@ private val notRunOnRiscv = setOf(
     "diskio directories, renaming and deleting",
     "diskio directory listings of the files and subdirectories, sorted by name"
 ) + programsWithLp64Extsubs
+
+// the programs that don't run as they are on llvm16 in mos-sim, with the reason
+private val notRunOnMos: Map<String, String> =
+    (programsWith64BitAddresses - "abs, min, max, clamp, sgn and sqrt with quads and uquads, and sgn of unsigned values" + listOf(
+        $$"32-bit literals above $7fff_ffff keep their written value as a uquad, quad or pointer, also in comparisons and regrouped constants",
+        "untyped pointers",
+        "pointer element updates and offsets beyond 64 KiB",
+        "lsb, msb, lsw and msw of quads and addresses, and signed offsets to addresses"
+    )).associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
+    listOf(
+        "subroutines with parameters and return values",
+        "arrays",
+        "64-bit quad and uquad integers",
+        "quad and uquad conversions",
+        "extsubs call C library functions with long, quad, uquad, float, string and pointer types",
+        "floats library",
+        "floats printing, conversion to and from strings, and random numbers"
+    ).associateWith { "floats are not supported yet on llvm16" } +
+    listOf(
+        "command line arguments",
+        "command line arguments when there are none",
+        "sys.argc and sys.argv with a single argument"
+    ).associateWith { "mos-sim passes no command line, not even the program name: argc is 0" } +
+    listOf(
+        "diskio writing, reading lines, seeking in and deleting a text file",
+        "diskio directories, renaming and deleting",
+        "diskio directory listings of the files and subdirectories, sorted by name",
+        "fileio copying between two open files, seeking and the end of the file",
+        "diskio saving and loading memory"
+    ).associateWith { "mos-sim has no file system" } +
+    mapOf(
+        "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the mos-sim C library lacks",
+        "arena allocations aligned to 8 bytes, and sys.wait and sys.waitvsync" to "the llvm16 arena is the word arena, which doesn't align to 8 bytes"
+    )
 
 // the 64-bit programs that don't use the constants of the llvm64 library, so they also run on the virtual machine
 private val quadProgramsForTheVm = listOf(

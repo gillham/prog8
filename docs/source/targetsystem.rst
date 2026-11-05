@@ -180,12 +180,12 @@ decided by the linker script instead.
 LLVM targets and triple profiles
 ================================
 
-The ``llvm64`` and ``llvm32`` targets compile the program to LLVM IR, which clang then builds into an
+The ``llvm64``, ``llvm32`` and ``llvm16`` targets compile the program to LLVM IR, which clang then builds into an
 executable for a particular platform, identified by its LLVM *target triple*. The target name fixes the
-pointer size (8 or 4 bytes); the ``-triple`` compiler option selects the platform, by naming a *triple profile*.
+pointer size (8, 4 or 2 bytes); the ``-triple`` compiler option selects the platform, by naming a *triple profile*.
 Without it, ``llvm64`` uses the built-in profile of the machine the compiler runs on (``arm64-apple-macosx``,
 ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu`` or ``riscv64-unknown-linux-gnu``,
-and ``arm64-apple-macosx`` on any other machine), and ``llvm32`` uses ``wasm32-wasip1``. So the same source gives
+and ``arm64-apple-macosx`` on any other machine), ``llvm32`` uses ``wasm32-wasip1``, and ``llvm16`` uses ``mos-sim``. So the same source gives
 a different ``.ll`` file on different machines; pass ``-triple`` to build for a fixed platform.
 Building needs clang 15 or newer, because the LLVM IR uses opaque pointers (the ``ptr`` type), which older
 versions don't read. The compiler's tests run with clang 18 and newer.
@@ -401,21 +401,46 @@ C ``long`` can't hold fails.
 The llvm16 target
 -----------------
 
-The ``llvm16`` target (experimental) compiles for 16-bit platforms with the `llvm-mos <https://llvm-mos.org/>`_ SDK:
-pointers have 2 bytes, as on the 6502 targets, and a C ``int`` has 2 bytes. The ``LLVM_MOS`` environment variable
-names the directory of the llvm-mos SDK; building fails without it, but writing the ``.ll`` file works. The default
-profile ``mos-sim`` builds for the SDK's 6502 simulator, which ``-emu`` runs with ``mos-sim``; it takes no program
-arguments. ``-triple mos-c64`` builds a Commodore 64 ``.prg`` file, which ``-emu`` starts in the VICE emulator ``x64sc``,
-in a window. Floats are not supported yet on ``llvm16``: a float variable, value or ``%import floats`` is an error.
-The C library of llvm-mos lacks some routines (the profiles' ``libc_lacks``); a program that needs one of them
-doesn't link yet. ``sys.target`` is 252.
+The ``llvm16`` target (experimental) compiles the program to LLVM IR for CPUs with 16-bit pointers, and builds it with
+the `llvm-mos <https://llvm-mos.org/>`_ SDK for the 6502 family. The ``LLVM_MOS`` environment variable names the
+directory of the llvm-mos SDK, whose clang the profiles use; building fails without it, but writing the ``.ll`` file
+works. ``sys.target`` is 252. The built-in profiles are:
 
-On ``llvm16`` constant addresses such as ``@($d020)`` and ``@(0)``, and memory-mapped variables such as
-``&ubyte border = $d020``, access the machine's real memory (the cx16 virtual registers ``cx16.r0`` to ``cx16.r15``
-at ``$ff0000`` remain ordinary variables). An access at a constant address, or at a memory-mapped variable plus a
-constant offset or an index, is volatile when it touches an address in the profile's ``io_ranges``, and so is any
-access at address 0; accesses through pointers that are computed at runtime are never volatile, so read and write
-I/O registers through constant addresses or memory-mapped variables.
+- ``mos-sim``, the default: builds for the SDK's 6502 simulator, which ``-emu`` runs with ``mos-sim``. The simulator
+  prints the program's output and gives back its exit status.
+- ``mos-c64``: builds a Commodore 64 ``.prg`` file, which ``-emu`` starts in the VICE emulator ``x64sc``, in a window.
+
+Compared with ``llvm32`` and ``llvm64``:
+
+- pointers have 2 bytes, as on the 6502 targets, a C ``int`` has 2 bytes and a C ``long`` 4.
+- floats are not supported yet: a float variable, value or ``%import floats`` is an error.
+- the programs get no command line arguments (``program_args = false``): ``sys.argc()`` is 0, ``sys.argv()`` is an
+  empty string, and giving arguments after ``--`` is an error.
+- ``sqrt`` of an integer is computed without floats.
+- the value stack of ``push()`` and ``pop()`` has 256 bytes, instead of 1024.
+- as on the other llvm targets, array indexes are words, so an array can have up to 65535 bytes, and ``%asm``,
+  ``asmsub`` bodies and ``extsub`` with an address are errors (see :ref:`llvm_triples`).
+
+**Real addresses.** Constant addresses such as ``@($d020)`` and ``@(0)`` access the machine's real memory; address 0
+is not a null pointer here. A memory-mapped variable such as ``&ubyte border = $d020`` is at its real address when it
+lies entirely below ``$10000``; others, such as the cx16 virtual registers ``cx16.r0`` to ``cx16.r15`` at ``$ff0000``,
+remain ordinary variables. An access at a constant address, or at a memory-mapped variable plus a constant offset or
+an index, is volatile when it touches an address in the profile's ``io_ranges`` (``$fff0-$ffff`` on ``mos-sim``,
+``0-1,$d000-$dfff`` on ``mos-c64``), and so is any access at address 0. Accesses through pointers that are computed at
+runtime are never volatile, so read and write I/O registers through constant addresses or memory-mapped variables.
+
+**What the C library lacks.** The C library of llvm-mos has no math library, no ``strtod``, no ``usleep`` and no
+directory routines, and the simulator has no files. The profiles list those routines in ``libc_lacks``, and the
+library routines that need one behave as follows:
+
+- files, on ``mos-sim`` only: opening a file fails, so the diskio and fileio routines that load, save, read, write,
+  seek, delete or rename report a failure.
+- directories: ``diskio.mkdir``, ``chdir`` and ``rmdir`` fail, and ``diskio.directory`` and its variants report a failure.
+- ``diskio.curdir()`` returns an empty string.
+- ``sys.wait()`` and ``sys.waitvsync()`` return immediately.
+- ``math.atan2()`` is a compile error when the program can reach it, as it needs ``atan2f`` and ``floorf``.
+
+An ``extsub`` of a C function that the library lacks doesn't link.
 
 
 Memory Model

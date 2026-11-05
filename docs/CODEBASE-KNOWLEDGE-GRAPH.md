@@ -260,8 +260,8 @@ Package `prog8.codegen.m68k.*`. Entry `Main.kt` -> `prog8-m68kgen`. Reads `.p8ir
 | `AsmGen`, `AssemblyProgramM68k`, `Instr*` (Arithmetic/Bitwise/Branch/Control/LoadStore/Syscall) | Opcode emission |
 | `AsmOptimizer` | Peephole/selection optimization |
 
-### 4.10b `codeGenLlvm` (LLVM IR backend - `llvm32` and `llvm64`)
-Package `prog8.codegen.llvm.*`. Unlike the 6502 and M68K backends it is not a standalone binary: `LlvmCodeGenerator` runs inside the compiler, runs `IRCodeGen` for the IR, lowers that to an LLVM module, writes `<name>.ll`, and with `-o <name>` also builds a native executable with clang. The targets themselves (`LlvmTarget`, 4- or 8-byte pointers), the per-triple settings (`LlvmTripleProfile`, from `.properties` files in `codeCore/res/prog8lib/llvm-triples`) and the tool lookup (`LlvmToolLocator`) are in `codeCore/.../code/target`.
+### 4.10b `codeGenLlvm` (LLVM IR backend - `llvm16`, `llvm32` and `llvm64`)
+Package `prog8.codegen.llvm.*`. Unlike the 6502 and M68K backends it is not a standalone binary: `LlvmCodeGenerator` runs inside the compiler, runs `IRCodeGen` for the IR, lowers that to an LLVM module, writes `<name>.ll`, and with `-o <name>` also builds a native executable with clang. The targets themselves (`LlvmTarget`, 2-, 4- or 8-byte pointers), the per-triple settings (`LlvmTripleProfile`, from `.properties` files in `codeCore/res/prog8lib/llvm-triples`) and the tool lookup (`LlvmToolLocator`) are in `codeCore/.../code/target`.
 | Entity | Purpose |
 |--------|---------|
 | `LlvmCodeGenerator`, `AssemblyProgramLlvm` | Orchestration; validates the IR with llvm-as or clang, builds the executable |
@@ -276,7 +276,8 @@ Design decisions worth knowing:
 - Status flags: the IR sets them only for `CMP`, `CMPI`, `SGN`, `BITTST`, `SEC`, `CLC` and carry from shifts and rotates, and the lowering tracks them per block; the frontend warns for `if_xx` after other statements.
 - A scalar variable or parameter that only its own subroutine uses, never by address and not `@dirty` or `@shared`, lives in a stack slot (`StackLocals`); the rest, including all arrays, stays a global. `StackFrameLayout` (M68K) is not reused: its frame slots are specific to that backend.
 - Inline `%asm` is an error (`AstChecker`); `%ir` is the way to write low-level code. `asmsub` bodies in `%asm` fall under the same rule.
-- Library code is in `compiler/res/prog8lib/llvm32` and `llvm64` (hosted: stdin/stdout, files and directories through the C library); `docs/import-all-llvm*.p8` list the modules for the symbol dumps.
+- Library code is in `compiler/res/prog8lib/llvm16`, `llvm32` and `llvm64` (hosted: stdin/stdout, files and directories through the C library); `docs/import-all-llvm*.p8` list the modules for the symbol dumps.
+- `llvm16` (llvm-mos, `mos-sim` and `mos-c64` profiles) differs through the profile keys `c_int_size`, `clang`, `libc_lacks`, `io_ranges` and `program_args` and a few places: `LlvmTypeMapper` (`wideInt` keeps a LONG register at 32 bits, `cInt` for C int sites, `floatType` f32), `LlvmTarget.realAddresses` (constant addresses and memory-mapped variables below `$10000` are real, volatile inside `io_ranges`; `InstrMemory.kt`, `LlvmGlobalEmitter`), and `libc_lacks` lowering in `InstrSyscall.kt` (a syscall that needs a missing C function gives its failure result). Floats are rejected there for now (`LlvmTarget.supportsFloats`).
 
 ### 4.11 `virtualmachine` (IR executor)
 Package `prog8.vm.*`.

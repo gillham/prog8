@@ -12,6 +12,7 @@ import prog8.code.core.Position
 import prog8.code.sanitize
 import prog8.code.source.ImportFileSystem
 import prog8.code.source.SourceCode
+import prog8.code.target.LlvmTarget
 import prog8.parser.Prog8Parser
 import java.io.File
 import java.nio.file.Path
@@ -110,6 +111,9 @@ class ModuleImporter(private val program: Program,
             ?: throw SyntaxError("invalid import directive, expected a module name", import.position)
         if("$moduleName.p8" == import.position.file)
             throw SyntaxError("cannot import self", import.position)
+        // reported here, before the float routines the program calls become undefined symbol errors
+        if(moduleName == "floats" && (compTarget as? LlvmTarget)?.supportsFloats == false)
+            errors.err(LlvmTarget.FLOATS_UNSUPPORTED, import.position)
 
         val existing = program.modules.singleOrNull { it.name.equals(moduleName, ignoreCase = true) }
         if (existing!=null) {

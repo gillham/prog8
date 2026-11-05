@@ -225,11 +225,13 @@ One or more .p8 module files
     (for the machine code monitor) are immediately loaded into the emulator (if it supports them)
     On the ``virtual`` target ``-emu`` runs the program in the internal virtual machine, and ``prog8c`` exits with the program's exit status.
 
-    The ``llvm64`` and ``llvm32`` targets have no emulator: there ``-emu`` builds the LLVM IR into an executable
+    The ``llvm64``, ``llvm32`` and ``llvm16`` targets have no emulator: there ``-emu`` builds the LLVM IR into an executable
     with clang, and runs it. The program's exit status is printed afterwards, and ``prog8c`` exits with that status.
     When the triple profile has a ``run_command``, that command runs the executable instead (see :ref:`llvm_triples`):
     the default ``llvm32`` profile builds a ``.wasm`` file and runs it with ``wasmtime``, and the ``armv7a-none-eabihf``
     and ``riscv32-unknown-elf`` profiles build a ``.elf`` file and run it on ``qemu-system-arm`` and ``qemu-system-riscv32``.
+    The default ``llvm16`` profile runs the program in the llvm-mos simulator ``mos-sim``, and ``mos-c64`` starts
+    its ``.prg`` file in the VICE emulator ``x64sc`` (see :ref:`llvm16`); these programs take no arguments.
     Everything after a standalone ``--`` on the command line is passed on to the program as its arguments, which it reads
     with ``sys.argc()`` and ``sys.argv()``, for example ``prog8c -target llvm32 -emu program.p8 -- -v "two words"``.
     Other targets report an error for such arguments.
@@ -281,11 +283,12 @@ One or more .p8 module files
     A file name without an extension is allowed as well.
     On the ``virtual`` target the program artifact is the IR file, so ``.p8ir`` is always enforced there:
     ``-o build/game`` writes ``build/game.p8ir``.
-    On the ``llvm64`` target a name ending in ``.ll`` gets the LLVM IR, and any other name is the native executable
+    On the llvm targets a name ending in ``.ll`` gets the LLVM IR, and any other name is the executable
     that clang builds from the LLVM IR in ``<stem>.ll`` next to it (this needs clang to be installed):
     ``-o build/game`` writes ``build/game.ll`` and ``build/game``. A name without an extension gets the extension
     of the triple profile's programs, when it has one: with ``x86_64-pc-windows-msvc``, ``-o build/game`` writes
-    ``build/game.exe``, and with ``wasm32-wasip1`` it writes ``build/game.wasm``.
+    ``build/game.exe``, with ``wasm32-wasip1`` it writes ``build/game.wasm``, and with the llvm16 profile ``mos-c64``
+    it writes ``build/game.prg``.
     This option cannot be combined with ``-out``, and it only works when a single source file is compiled.
     It is silently ignored when no program artifact is produced anyway: with ``-noasm``, ``-check``,
     ``-dumpsymbols`` or ``-gendoc``.
@@ -327,25 +330,27 @@ One or more .p8 module files
     ``c64`` = Commodore 64, ``c128`` = Commodore 128, ``cx16`` = Commander X16, ``pet32`` - Commodore PET model 4032,
     ``qemu68k`` = Qemu M68k (experimental), ``amiga500`` = Amiga 500 (experimental), ``amiga1200`` = Amiga 1200 (experimental),
     ``virtual`` = builtin virtual machine, ``llvm64`` (or ``llvm``) and ``llvm32`` = hosted programs compiled to LLVM IR
-    (by default for the 64-bit platform the compiler runs on and for 32-bit WebAssembly with WASI).
+    (by default for the 64-bit platform the compiler runs on and for 32-bit WebAssembly with WASI),
+    ``llvm16`` = 16-bit programs compiled to LLVM IR and built with llvm-mos (experimental, by default for its 6502 simulator).
     You can also specify a file name as target, prog8 will then try to read the target
     machine's configuration and properties from that configuration file instead of using one of the built-in targets.
     See :ref:`customizable_target` for details about this.
 
 ``-triple <name|file>``
-    Selects the platform of the ``llvm64`` and ``llvm32`` targets: the name or file of a triple profile, which gives the
+    Selects the platform of the ``llvm64``, ``llvm32`` and ``llvm16`` targets: the name or file of a triple profile, which gives the
     LLVM target triple, its data layout, and how clang builds and ``-emu`` runs the executable; or any triple that clang
-    knows, which clang then supplies the data layout for. The default for ``llvm64`` is the profile of the machine the compiler runs on, and ``wasm32-wasip1`` for ``llvm32``.
+    knows, which clang then supplies the data layout for. The default for ``llvm64`` is the profile of the machine the compiler runs on,
+    ``wasm32-wasip1`` for ``llvm32``, and ``mos-sim`` for ``llvm16`` (``mos-c64`` builds a Commodore 64 program).
     It is an error with the other targets. See :ref:`llvm_triples` for the lookup order and the profile keys.
 
 ``-clang <name|file>``
-    The clang that the ``llvm64`` and ``llvm32`` targets build the executable with, instead of the ``clang`` of the triple
+    The clang that the llvm targets build the executable with, instead of the ``clang`` of the triple
     profile or the clang found on the PATH; a name without a directory is looked up on the PATH. It also answers for a
     profile that leaves out keys that clang supplies, and its llvm-as checks the ``.ll`` file.
     It is kept in the ``.p8ir`` file, and is an error with the other targets.
 
 ``-Xcompile <argument>``, ``-Xlink <argument>``
-    Pass one extra argument to the clang compile step, or to the link step, when the ``llvm64`` and ``llvm32`` targets
+    Pass one extra argument to the clang compile step, or to the link step, when the llvm targets
     build an executable. Repeat the option for more arguments; each value is passed as is, also when it starts with ``-``
     or contains spaces, for example ``-Xlink "-L/opt/my libs" -Xlink -lmylib`` or ``-Xcompile -mcpu=cortex-a7``.
     The ``-Xcompile`` arguments come after the profile's ``clang_args``. The ``-Xlink`` arguments go at the end of the

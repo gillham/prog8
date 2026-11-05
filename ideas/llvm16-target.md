@@ -27,6 +27,12 @@ Made by the user:
 
 ## Milestone 1: llvm16 on llvm-mos, in buildable steps
 
+Status: done (steps 1-6).
+- Also fixed along the way: on targets with 2-byte pointers the IR used byte-sized array indexes, so arrays over 256 bytes wrapped on llvm16. The fix is `IMemSizer.wordArrayIndexes`, which is true on the llvm targets.
+- `%import floats` gives the float error at the import itself, before undefined-symbol errors.
+- On mos-sim, 36 of the llvm test programs run; the 35 that don't are listed with their reasons in `notRunOnMos` in TestLlvmCompiler.
+- The later milestones are in `docs/source/todo.rst`.
+
 Each step keeps llvm32 and llvm64 unchanged. Check that with llvm-opt-check (0 differences) and byte-identical `.ll` output for the examples, then a full build.
 
 ### Step 1: backend refactor, no behaviour change
