@@ -2138,8 +2138,6 @@ private val notRunOnZ80: Map<String, String> =
     mapOf(
         "fileio copying between two open files, seeking and the end of the file" to
             "the fread of z88dk +test doesn't set the end-of-file flag, so a loop that reads until fileio.eof() never ends",
-        "strings library" to
-            "BUG (llvm-z80): it assumes a 16-byte alignment for large globals, which the z88dk format can't give, and turns an add into an or",
         "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the z88dk +test C library lacks",
         "arena allocations aligned to 8 bytes, and sys.wait and sys.waitvsync" to "the llvm16 arena is the word arena, which doesn't align to 8 bytes",
         "pointers to memory-mapped variables use the same storage as the variables" to

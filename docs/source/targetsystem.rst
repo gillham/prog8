@@ -478,9 +478,6 @@ profile has no ``io_ranges``, and the ``+test`` program itself starts at address
   memory report a failure. z88dk's ``fread`` doesn't set the end of file, so ``fileio.eof()`` stays false after a read
   past it: stop reading when a read returns fewer bytes than asked. Directories, ``curdir()`` and waiting behave as on
   ``mos-sim``.
-- llvm-z80 assumes that a large global (more than 16 bytes) is aligned to 16 bytes, which the z88dk format can't
-  provide, so code that relies on that alignment can be wrong. The ``strings`` library shows it; this is a bug in
-  llvm-z80.
 - the z88dk assembly format ignores alignment, so a ``memory()`` slab is not aligned; clang warns about it, and also
   prints a harmless "cannot compile inline asm" warning.
 - ``z88dk-ticks`` prints a ``Ticks:`` line with the number of cycles when the program exits.

@@ -189,6 +189,7 @@ Made by the user, 2026-11-04:
      - z88dk's fread doesn't set the end-of-file flag.
      - The strings library test hits an llvm-z80 bug: LLVM assumes 16-byte alignment for globals over 128 bits (DataLayout::getPreferredAlign), which the z88dk format can't give, and an add becomes an or. Explicit `align 1` on the globals avoids it.
      - Decision (user): fix it in llvm-z80. The repro is strlib.ll / strlib-align1.ll.
+     - Fixed in llvm-z80 2026-11-05 (globals without an explicit alignment get align 1 in z88dk mode); the strings test runs on z80 again.
    - Also fixed: a pointer at an odd struct offset no longer needs a global constructor (`.init_array`, which the z88dk format can't hold). Pointers are only deferred when the data layout's pointer alignment (`LlvmTripleProfile.pointerAlignment`) requires it.
    - z88dk-ticks can't remove or rename files, so `remove` and `rename` are in the profile's `libc_lacks`.
    - z88dk-ticks prints a "Ticks: N" line when a program exits, and its `-no-cycles` option doesn't suppress it. The test runner strips that line.
