@@ -42,6 +42,7 @@ import prog8.vm.ProgramExitException
 import prog8.vm.VirtualMachine
 import prog8tests.helpers.ErrorReporterForTests
 import prog8tests.helpers.compileText
+import prog8tests.helpers.fixturesDir
 import prog8tests.helpers.hostLlvmProfile
 import prog8tests.helpers.hostLlvmTarget
 import prog8tests.helpers.noHostLlvmProfileReason
@@ -56,6 +57,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.io.path.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readLines
 import kotlin.io.path.writeBytes
@@ -776,10 +778,10 @@ main {
 
     for (runner in llvm16ProgramRunners) {
         val target = LlvmTarget(2, runner.profile)
-        val dirName = runner.profile.name
-        test("the llvm16 programs compute the right results in ${runner.displayName}").config(enabledOrReasonIf = runner.requires) {
+        val dirName = runner.directoryName
+        if (programs.keys.any(runner::runs)) test("the llvm16 programs compute the right results in ${runner.displayName}").config(enabledOrReasonIf = runner.requires) {
             val dir = outputDir.resolve(dirName).createDirectories()
-            for ((name, source) in programs.filterKeys { it !in runner.notRun }) {
+            for ((name, source) in programs.filterKeys(runner::runs)) {
                 for (optimize in listOf(false, true)) {
                     val llFile = compiledLlFile(compileText(target, optimize, source, dir))
                     val (exitCode, output) = runner.buildAndRun(llFile)
@@ -788,7 +790,7 @@ main {
             }
         }
 
-        for ((name, program) in outputPrograms.filterKeys { it !in runner.notRun }) {
+        for ((name, program) in outputPrograms.filterKeys(runner::runs)) {
             test("$name: gives the expected exit code and console output as an llvm16 program in ${runner.displayName}, which leaves no files behind").config(enabledOrReasonIf = runner.requires) {
                 for (optimize in listOf(false, true)) {
                     withClue("optimize=$optimize") {
@@ -796,7 +798,7 @@ main {
                         workingDirectory.toFile().deleteRecursively()
                         workingDirectory.createDirectories()
                         val llFile = compiledLlFile(compileText(target, optimize, program.source, outputDir.resolve(dirName).createDirectories()))
-                        val (exitCode, output) = runner.buildAndRun(llFile, program.input, workingDirectory)
+                        val (exitCode, output) = runner.buildAndRun(llFile, program.input, workingDirectory, program.args.takeIf { runner.profile.programArgs }.orEmpty())
                         withClue(output) { exitCode shouldBe program.exitCode }
                         output shouldBe program.output
                         withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
@@ -806,9 +808,33 @@ main {
         }
     }
 
-    test("the notRun maps of the llvm16 program runners only name existing programs") {
-        for (runner in llvm16ProgramRunners)
+    test("the notRun maps and only sets of the llvm16 program runners only name existing programs") {
+        for (runner in llvm16ProgramRunners) {
             withClue("the programs that the notRun map of ${runner.displayName} names") { runner.notRun.keys.filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
+            withClue("the programs that the only set of ${runner.displayName} names") { runner.only.orEmpty().filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
+        }
+    }
+
+    for (linker in z88dkLinkOnlyProfiles) {
+        val profile = linker.profile
+        val target = LlvmTarget(2, profile)
+        test("the llvm16 programs build, optimized, into ${profile.outputExtension.ifEmpty { "extensionless" }} files with the ${profile.name} profile").config(enabledOrReasonIf = { enabledUnless(z88dkReason(profile)) }) {
+            val dir = outputDir.resolve("${profile.name}-link").createDirectories()
+            val sources = programs + outputPrograms.mapValues { it.value.source }
+            val failed = sources.filterKeys { it !in linker.notLinked }.filter { (_, source) ->
+                val result = compileText(target, true, source, dir) ?: return@filter true
+                val llFile = compiledLlFile(result)
+                val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + profile.outputExtension)
+                Files.deleteIfExists(executable)
+                !LlvmProgramRunner().build(llFile, executable, profile) || !executable.exists()
+            }.keys
+            withClue("the programs that didn't compile or build, see the messages on stdout and stderr") { failed shouldBe emptySet() }
+        }
+    }
+
+    test("the notLinked maps of the z88dk link-only profiles only name existing programs") {
+        for (linker in z88dkLinkOnlyProfiles)
+            withClue(linker.profile.name) { linker.notLinked.keys.filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
     }
 
     test($$"-o with the mos-c64 profile builds a C64 .prg file that loads at $0801 and starts with a BASIC SYS line").config(enabledOrReasonIf = requiresMosC64Clang) {
@@ -1866,8 +1892,7 @@ private fun noProfileToolsReason(profile: LlvmTripleProfile, variables: Map<Stri
     if (clang == null)
         return "the clang of llvm triple profile '${profile.name}' was not found"
     if (needsTools) {
-        val runner = profile.runCommand?.first() ?: return "llvm triple profile '${profile.name}' has no run command"
-        for ((program, command) in listOfNotNull(profile.linkCommand?.first()?.let { it to "link" }, runner to "run")) {
+        for ((program, command) in listOfNotNull(profile.linkCommand?.first()?.let { it to "link" }, profile.runCommand?.first()?.let { it to "run" })) {
             val found = try { LlvmToolLocator.locate(program) { profile.tools.directories() } } catch (x: IllegalArgumentException) { return x.message }
             if (found == null)
                 return "the program '$program' of the $command command of llvm triple profile '${profile.name}' was not found"
@@ -1886,25 +1911,57 @@ private val requiresMosC64Clang: (TestCase) -> Enabled = {
     enabledUnless(noProfileToolsReason(LlvmTripleProfile.resolve("mos-c64"), mapOf("LLVM_MOS" to "the llvm-mos SDK directory"), false))
 }
 
-private val requiresZ80: (TestCase) -> Enabled = {
-    enabledUnless(noProfileToolsReason(z80Profile, mapOf("LLVM_Z80" to "the llvm-z80 directory", "Z88DK" to "the z88dk directory"), true)
+/** Why [profile], built on z80-z88dk, can't build or run here, or null. */
+private fun z88dkReason(profile: LlvmTripleProfile): String? =
+    noProfileToolsReason(profile, mapOf("LLVM_Z80" to "the llvm-z80 directory", "Z88DK" to "the z88dk directory"), true)
         ?: Path(System.getenv("LLVM_Z80"), "lib", "z80", "z80_rt_z88dk.lib").takeUnless { it.exists() }
-            ?.let { "$it, llvm-z80's support library built for z88dk, was not found" })
+            ?.let { "$it, llvm-z80's support library built for z88dk, was not found" }
+
+private val requiresZ80: (TestCase) -> Enabled = { enabledUnless(z88dkReason(z80Profile)) }
+
+private fun testProfile(name: String) = LlvmTripleProfile.load(fixturesDir.resolve("llvm-triples/$name.properties").toAbsolutePath())
+
+private val tnylpoProfile = testProfile("tnylpo-cpm")
+
+// the run commands of these test profiles start with python, so the emulators are checked here, and zcc in their base profiles
+private val requiresTnylpo: (TestCase) -> Enabled = {
+    enabledUnless(z88dkReason(LlvmTripleProfile.resolve("z80-cpm"))
+        ?: "tnylpo not found on the PATH".takeIf { LlvmToolLocator.find("tnylpo") == null }
+        ?: "python3 not found on the PATH".takeIf { python3 == null })
+}
+
+// trs80gp opens a window for every run, so its tests only run when TRS80GP names it
+private val requiresTrs80gp: (TestCase) -> Enabled = {
+    val trs80gp = System.getenv("TRS80GP")
+    enabledUnless(z88dkReason(LlvmTripleProfile.resolve("z80-trs80-cmd"))
+        ?: "TRS80GP, the path of the trs80gp emulator, is not set".takeIf { trs80gp == null }
+        ?: "TRS80GP names $trs80gp, which doesn't exist".takeIf { trs80gp != null && !Path(trs80gp).isRegularFile() }
+        ?: "python3 not found on the PATH".takeIf { python3 == null })
 }
 
 /**
  * An llvm16 profile whose run command runs the programs here, in [displayName]; [notRun] names the programs that don't run there,
- * with the reason. [runnerOutput] matches what the runner itself prints, which is removed from the output.
+ * with the reason, and [only], when given, the only programs that run there. [runnerOutput] matches what the runner itself prints,
+ * which is removed from the output. With [pythonScript] the run command's first word is replaced by the python found here.
  */
 private class Llvm16ProgramRunner(val profile: LlvmTripleProfile, val displayName: String, val requires: (TestCase) -> Enabled, val notRun: Map<String, String>,
-                                  val runnerOutput: Regex? = null) {
-    /** Builds the .ll file, compiled for llvm16 with [profile], as the compiler does, and runs it with [input] on stdin, in the working [directory]. */
-    fun buildAndRun(llFile: Path, input: String = "", directory: Path? = null): Pair<Int, String> {
+                                  val runnerOutput: Regex? = null, val only: Set<String>? = null, val pythonScript: Boolean = false) {
+    fun runs(program: String) = program !in notRun && (only == null || program in only)
+
+    // a profile loaded from a file is named by its path
+    val directoryName = Path(profile.name).fileName.toString().removeSuffix(".properties")
+
+    /**
+     * Builds the .ll file, compiled for llvm16 with [profile], as the compiler does, and runs it with [input] on stdin and the command line [args],
+     * in the working [directory].
+     */
+    fun buildAndRun(llFile: Path, input: String = "", directory: Path? = null, args: List<String> = emptyList()): Pair<Int, String> {
         val executable = llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll") + profile.outputExtension)
         if (!LlvmProgramRunner().build(llFile, executable, profile))
             return 1 to "building $executable failed, see the messages on stderr"
         val stdin = executable.resolveSibling("${executable.fileName}.stdin").also { it.writeText(input) }
-        val command = LlvmTripleProfile.runCommandFor(profile.runCommand, executable.toAbsolutePath().toString(), emptyList())
+        val command = LlvmTripleProfile.runCommandFor(profile.runCommand, executable.toAbsolutePath().toString(), args)
+            .let { if (pythonScript) listOf(checkNotNull(python3)) + it.drop(1) else it }
         val (exitCode, output) = execute(*command.toTypedArray(), stdin = stdin, directory = directory ?: llFile.parent, profile = profile).also { Files.deleteIfExists(stdin) }
         return exitCode to (runnerOutput?.replace(output, "") ?: output)
     }
@@ -2144,11 +2201,104 @@ private val notRunOnZ80: Map<String, String> =
             $$"the +test program starts at address 0, so its own variables are at the memory-mapped $0400"
     )
 
+// what no z88dk platform runs as it is
+private val notRunOnZ88dk: Map<String, String> =
+    programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
+    programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
+    mapOf(
+        "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which every z88dk C library lacks",
+        "arena allocations aligned to 8 bytes, and sys.wait and sys.waitvsync" to "the llvm16 arena is the word arena, which doesn't align to 8 bytes"
+    )
+
+// the programs that don't run as they are on llvm16 in tnylpo, with the reason
+private val notRunOnTnylpo: Map<String, String> = notRunOnZ88dk +
+    listOf(
+        "console input",
+        "line input ends the program at the end of the input",
+        "line input reports the end of the input with eof_exit false"
+    ).associateWith {
+        "tnylpo turns each LF of the input into a CR, so a CR LF line end is two line ends, and at the end of the input it " +
+            "gives ^Z (CP/M's end of file) forever, which z88dk's fgetc_cons passes on as a character"
+    } +
+    listOf(
+        "diskio writing, reading lines, seeking in and deleting a text file",
+        "diskio saving and loading memory"
+    ).associateWith { "a CP/M file is a whole number of 128-byte records, so its size is rounded up and a read goes on past the written end" } +
+    listOf(
+        "diskio directories, renaming and deleting",
+        "diskio directory listings of the files and subdirectories, sorted by name"
+    ).associateWith { "CP/M has no directories" } +
+    mapOf(
+        "command line arguments" to "the CCP upper-cases the command line and splits it at spaces, without quoting, so an empty argument is lost",
+        "sys.argc and sys.argv with a single argument" to "z88dk's CP/M startup code gives an empty program name",
+        "command line arguments when there are none" to "z88dk's CP/M startup code gives an empty program name",
+        "fileio copying between two open files, seeking and the end of the file" to
+            "the fread of z88dk's CP/M library doesn't set the end-of-file flag, so a loop that reads until fileio.eof() never ends",
+        "strings library" to "CP/M's console output expands a tab into spaces",
+        "pointers to memory-mapped variables use the same storage as the variables" to
+            $$"the CP/M program starts at $0100, so the memory-mapped $0400 is in its own code"
+    )
+
+// the programs that don't run as they are on llvm16 in trs80gp, with the reason
+private val notRunOnTrs80gp: Map<String, String> = notRunOnZ88dk +
+    listOf(
+        "console input",
+        "line input ends the program at the end of the input",
+        "line input reports the end of the input with eof_exit false"
+    ).associateWith { "trs80gp's keyboard can't be fed from the standard input, so the program waits for input forever" } +
+    listOf(
+        "command line arguments",
+        "command line arguments when there are none",
+        "sys.argc and sys.argv with a single argument"
+    ).associateWith { "trs80gp passes no command line, and z88dk's TRS-80 startup code then gives argc 0, without a program name" } +
+    listOf(
+        "diskio writing, reading lines, seeking in and deleting a text file",
+        "diskio directories, renaming and deleting",
+        "diskio directory listings of the files and subdirectories, sorted by name",
+        "fileio copying between two open files, seeking and the end of the file",
+        "diskio saving and loading memory"
+    ).associateWith { "the file routines of z88dk's TRS-80 cmd library fail to open files in trs80gp, also from C, and some runs hang" } +
+    mapOf(
+        "pointers to memory-mapped variables use the same storage as the variables" to
+            $$"the memory-mapped $0400 is in the TRS-80's ROM, so the stores to it are lost"
+    )
+
+// a few programs for the other TRS-80 models, as a run takes about 2 seconds
+private val trs80gpSmokeTests = setOf(
+    "text output",
+    "number formatting",
+    "strings library",
+    "memory routines and sys.exit",
+    "recursive subroutines with only scalar locals and parameters"
+)
+
 // declared after the notRun maps, which a top-level value can only use once they are initialized
 private val llvm16ProgramRunners = listOf(
     Llvm16ProgramRunner(mosSimProfile, "mos-sim", requiresMosSim, notRunOnMos),
     // z88dk-ticks prints the cycle count when the program exits, also with its -no-cycles option
-    Llvm16ProgramRunner(z80Profile, "z88dk-ticks", requiresZ80, notRunOnZ80, Regex("""\nTicks: \d+\n$"""))
+    Llvm16ProgramRunner(z80Profile, "z88dk-ticks", requiresZ80, notRunOnZ80, Regex("""\nTicks: \d+\n$""")),
+    Llvm16ProgramRunner(tnylpoProfile, "tnylpo (CP/M)", requiresTnylpo, notRunOnTnylpo, pythonScript = true),
+    Llvm16ProgramRunner(testProfile("trs80gp-m3"), "trs80gp (TRS-80 Model III, LDOS)", requiresTrs80gp, notRunOnTrs80gp, pythonScript = true),
+    Llvm16ProgramRunner(testProfile("trs80gp-m1"), "trs80gp (TRS-80 Model I, TRSDOS)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
+    Llvm16ProgramRunner(testProfile("trs80gp-m4"), "trs80gp (TRS-80 Model 4, TRSDOS 6)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true)
+)
+
+/** A z88dk profile whose programs are only built, as nothing here runs them; [notLinked] names the programs that don't build, with the reason. */
+private class Z88dkLinkOnlyProfile(name: String, val notLinked: Map<String, String>) {
+    val profile = LlvmTripleProfile.resolve(name)
+}
+
+private val notLinkedOnZ88dk: Map<String, String> =
+    programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
+    programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
+    mapOf("math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the z88dk C libraries lack")
+
+private val z88dkLinkOnlyProfiles = listOf(
+    Z88dkLinkOnlyProfile("z80-trs80", notLinkedOnZ88dk),
+    Z88dkLinkOnlyProfile("z80-trs80-cmd", notLinkedOnZ88dk),
+    Z88dkLinkOnlyProfile("z80-cpm", notLinkedOnZ88dk),
+    Z88dkLinkOnlyProfile("z80-zx", notLinkedOnZ88dk),
+    Z88dkLinkOnlyProfile("z80-c128", notLinkedOnZ88dk)
 )
 
 // the 64-bit programs that don't use the constants of the llvm64 library, so they also run on the virtual machine

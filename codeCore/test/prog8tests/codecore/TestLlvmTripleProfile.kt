@@ -52,6 +52,15 @@ class TestLlvmTripleProfile: FunSpec({
         "armv7a-none-eabihf" to Triple("armv7-unknown-none-eabihf", 32, 4),
     )
 
+    // the z88dk platform profiles with their output_extension and program_args
+    val embeddedZ88dk = mapOf(
+        "z80-trs80" to (".cas" to false),
+        "z80-trs80-cmd" to (".cmd" to true),
+        "z80-cpm" to (".com" to true),
+        "z80-zx" to (".tap" to false),
+        "z80-c128" to ("" to false),
+    )
+
     test("every embedded profile loads, with the pointer width of its data layout") {
         for ((name, values) in embedded) {
             val profile = LlvmTripleProfile.resolve(name)
@@ -466,13 +475,43 @@ class TestLlvmTripleProfile: FunSpec({
         shouldThrow<IllegalArgumentException> { profile.tools.directories { null } }.message!! shouldContain "Z88DK"
     }
 
-    test("the data layout and C int and long sizes of the z80-test profile are what its clang reports")
+    test("the data layout and C int and long sizes of the z80 profiles are what their clang reports")
         .config(enabled = System.getenv("LLVM_Z80") != null && System.getenv("Z88DK") != null) {
-        val profile = LlvmTripleProfile.resolve("z80-test")
-        val reported = LlvmTripleProfile.askClang(profile.triple, profile.clangArgs, profile.resolveClang(null).shouldNotBeNull(), profile.tools)
-        usedLayout(profile.dataLayout) shouldBe usedLayout(reported.dataLayout)
-        profile.cLongSize shouldBe reported.cLongSize
-        profile.cIntSize shouldBe reported.cIntSize
+        for (name in listOf("z80-test") + embeddedZ88dk.keys) {
+            val profile = LlvmTripleProfile.resolve(name)
+            val reported = LlvmTripleProfile.askClang(profile.triple, profile.clangArgs, profile.resolveClang(null).shouldNotBeNull(), profile.tools)
+            withClue(name) {
+                usedLayout(profile.dataLayout) shouldBe usedLayout(reported.dataLayout)
+                profile.cLongSize shouldBe reported.cLongSize
+                profile.cIntSize shouldBe reported.cIntSize
+            }
+        }
+    }
+
+    test("the z88dk platform profiles build on z80-z88dk with their own link command, output, I/O ranges and lacking functions") {
+        val base = LlvmTripleProfile.resolve("z80-test")
+        val trs80Io = listOf(0x37e0u..0x37ffu, 0x3800u..0x3bffu, 0x3c00u..0x3fffu)
+        for ((name, expected) in embeddedZ88dk) {
+            val profile = LlvmTripleProfile.resolve(name)
+            withClue(name) {
+                profile.name shouldBe name
+                profile.triple shouldBe base.triple
+                profile.dataLayout shouldBe base.dataLayout
+                profile.pointerBits shouldBe 16
+                profile.getcharSymbol shouldBe "fgetc_cons"
+                profile.runCommand shouldBe null
+                profile.outputExtension shouldBe expected.first
+                profile.programArgs shouldBe expected.second
+                profile.ioRanges shouldBe (if (name.startsWith("z80-trs80")) trs80Io else emptyList())
+                val linkCommand = profile.linkCommand.shouldNotBeNull()
+                linkCommand.take(2) shouldBe listOf("zcc", "+" + name.removePrefix("z80-").removeSuffix("-cmd"))
+                ("{startup}" in linkCommand) shouldBe true
+                profile.libcLacks.containsAll(listOf("qsort", "opendir", "strtod", "usleep", "sqrtf")) shouldBe true
+                (profile.libcLacks intersect setOf("putchar", "fopen", "fgetc", "strcmp", "snprintf", "exit")) shouldBe emptySet()
+            }
+        }
+        LlvmTripleProfile.resolve("z80-trs80-cmd").libcLacks.containsAll(listOf("ftell", "rename")) shouldBe true
+        (LlvmTripleProfile.resolve("z80-trs80-cmd").libcLacks intersect setOf("free", "realloc", "strdup")) shouldBe emptySet()
     }
 
     test("the llvm16 target has 2-byte pointers, 4-byte floats and real addresses, and defaults to the mos-sim profile") {
@@ -700,5 +739,47 @@ class TestLlvmTripleProfile: FunSpec({
         process.waitFor() shouldBe 0
         profile.resolveClang(null) shouldBe clang
         shouldThrow<IllegalArgumentException> { LlvmToolLocator.resolveClang(null, "zzclang", "p") }.message!! shouldContain "was not found"
+    }
+
+    // a python.org install on Windows has no python3 command, and its python is Python 3
+    val python = listOf("python3", "python").firstOrNull { LlvmToolLocator.find(it) != null }
+    val profileScript = Path.of("..", "scripts", "z88dk-profile.py").toAbsolutePath().normalize().toString()
+
+    fun runProfileScript(vararg args: String): String {
+        val process = ProcessBuilder(listOf(python!!, profileScript) + args).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        withClue(output) { process.waitFor() shouldBe 0 }
+        return output
+    }
+
+    test("the C functions of the z88dk profile generator are those that libc_lacks can name").config(enabled = python != null) {
+        runProfileScript("--list-functions").lines().filter { it.isNotBlank() }.toSet() shouldBe LlvmTripleProfile.C_FUNCTIONS
+    }
+
+    test("the z88dk profile generator finds for +test what z80-test lacks, apart from the functions that link but misbehave")
+        .config(enabled = python != null && System.getenv("Z88DK") != null) {
+        val generated = directory.resolve("generated-z80-test.properties")
+        runProfileScript("test", "-o", generated.toString())
+        generated.readText() shouldContain "\nbase = z80-z88dk\n"
+        val profile = LlvmTripleProfile.load(generated, null, noUserProfiles)
+        profile.libcLacks shouldBe LlvmTripleProfile.resolve("z80-test").libcLacks - setOf("remove", "rename", "ftell", "qsort")
+        profile.outputExtension shouldBe ".bin"
+        profile.triple shouldBe "z80-unknown-none-z88dk"
+    }
+
+    test("the link command, output and libc_lacks of each z88dk platform profile are what the profile generator finds, plus qsort")
+        .config(enabled = python != null && System.getenv("Z88DK") != null) {
+        for (name in embeddedZ88dk.keys) {
+            val platform = if (name == "z80-c128") listOf("c128", "disk") else name.removePrefix("z80-").split("-")
+            val generated = directory.resolve("generated-$name.properties")
+            runProfileScript(*(platform + listOf("-o", generated.toString())).toTypedArray())
+            val profile = LlvmTripleProfile.resolve(name)
+            val found = LlvmTripleProfile.load(generated, null, noUserProfiles)
+            withClue(name) {
+                profile.linkCommand shouldBe found.linkCommand
+                profile.outputExtension shouldBe found.outputExtension
+                profile.libcLacks shouldBe found.libcLacks + "qsort"
+            }
+        }
     }
 })

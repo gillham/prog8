@@ -341,7 +341,25 @@ Made by the user, 2026-11-05:
      - ZX and C128: not run, since there is no headless emulator.
    - **Building:** `prog8c -o <dir>/<name>` builds the executable for the llvm targets without running it; `-out` only writes the `.ll`.
 3. **Generator script**, with a test that runs it for `+test`. The test compares with the link-only part of `z80-test`'s `libc_lacks`, since `remove`, `rename`, `ftell` and `qsort` are lacking there because they misbehave, not because they don't link (skips without Z88DK).
-4. **The five built-in profiles:** generate them, finish them by hand, and give each a link-only test that compiles a few programs (hello, the strings and math libraries, a file program) and checks that zcc links them. The tests skip without `LLVM_Z80`/`Z88DK`.
+   Status: done 2026-11-05 (`scripts/z88dk-profile.py`).
+   - **The probe:** an asm probe, assembled by zcc, references every C function. zcc reports all undefined symbols in one run. When a library module needs something missing, halving the list finds the culprit.
+   - **The heap:** `_heap` is fixed with `-pragma-define:CRT_HEAP_AMALLOC=1` (3/4 of free memory at run time), added only when a link fails without it, as on TRS-80 `cmd`. `CLIB_MALLOC_HEAP_SIZE=-1` means no heap, and a positive size is stored in the program file.
+   - **Output naming:** `-create-app -o {stem}.bin` when the app file has exactly the probe's stem. Otherwise the raw binary with `-o {file}`, which is how CP/M ends up with `.com`.
+   - **Results:**
+     - test `.bin`, trs80 `.cas`, trs80 cmd `.cmd`, cpm `.com`, zx `.tap`, c128 `.T64`.
+     - All of them lack the math functions, the directory functions, usleep and strtod. All but trs80 cmd also lack free, realloc and strdup. trs80 cmd also lacks ftell and rename.
+     - Refused: agon, `cpm --clib 8080`, gb.
+     - A generated trs80 cmd profile with the step 2 hooks ran in trs80gp (`-m3 -ld`) with the right status and printer output.
+4. Status: done 2026-11-05.
+   - **The profiles:** `z80-trs80` (.cas, no args), `z80-trs80-cmd` (.cmd, args, heap pragma), `z80-cpm` (.com, args), `z80-zx` (.tap) and `z80-c128` (`-subtype=disk`: a PRG without extension at $5000). Each has the generator's libc_lacks plus qsort. The TRS-80 io_ranges are `$37e0-$37ff,$3800-$3bff,$3c00-$3fff`.
+   - **Tests:** each profile builds about 50 test programs (link only, ~7 s each). A drift test reruns the generator for every profile.
+   - **Excluded:** besides floats and wide addresses, the atan2 program, since every z88dk library lacks atan2f and floorf.
+   - **The C128 (user's decision, 2026-11-05):** `z80-c128` uses z88dk's `disk` subtype. It gives a plain PRG at $5000, loaded with `LOAD"NAME",8,1` and started with `BANK 0:SYS 20480`.
+     - The `.T64` didn't autostart: VICE loads only its first entry.
+     - A single RUN-able PRG works: a BASIC line `10 BANK 0:SYS 20480` at $1C01, padded to $5000, with spaces over the crt0's screen at $2000. It is about 15 KB. In x128, autostart ran it. It was left out to keep things simple; a developer may want their own loader.
+     - zcc also leaves a `<stem>.bin` next to the `.cas`, `.tap` and C128 files.
+
+   **The five built-in profiles:** generate them, finish them by hand, and give each a link-only test that compiles a few programs (hello, the strings and math libraries, a file program) and checks that zcc links them. The tests skip without `LLVM_Z80`/`Z88DK`.
 5. **The emulator runs:**
    - Runner scripts, support sources and test profiles, run in this order: TRS-80 Model I/III/4, then CP/M with tnylpo.
    - The test profiles go in a new test resource directory (e.g. `compiler/test/res/llvm-triples/`) and are resolved by file path.
@@ -349,6 +367,20 @@ Made by the user, 2026-11-05:
    - Each gets a `requires<Emulator>` guard that checks the emulator itself (found on the PATH or through a variable such as `TRS80GP`), since `run_command`'s first word is now python.
    - Each gets its own `notRunOn<...>` map, built from `notRunOnZ80` plus or minus its differences. Every exclusion has an observed reason.
    - CP/M is the first z80 platform where file I/O, `ftell`, `remove` and `rename` should all work, so the diskio and fileio tests that ticks can't run are expected to pass there.
+   Status: done 2026-11-05.
+   - **Where:** the test profiles and runner scripts are in `compiler/test/fixtures/llvm-triples/`, next to the hook sources, not in `scripts/`: `tnylpo-cpm`, `trs80gp-m3` (LDOS), and `trs80gp-m1` (TRSDOS) and `trs80gp-m4` (TRSDOS 6) on top of `trs80gp-m3`. The run commands are `${PYTHON:-python3} {profile_dir}/run-*.py`; the tests replace the first word with the python they find.
+   - **Runner scripts:** `run-trs80gp.py` copies the `.cmd` to `prog.cmd` in a temporary directory and prints the printer file as it is (LF line ends already, no conversion). `run-tnylpo.py` copies the `.com` to `prog.com` in a temporary directory and runs it by path, with a configuration of its own that makes the current directory drive A, so the working directory gets only the program's own files. Both stop the emulator after 50 s (status 124).
+   - **Guards:** tnylpo on the PATH; trs80gp only through `TRS80GP`, as it opens a window per run. m3 runs everything, m1 and m4 five programs (`only`).
+   - **Program arguments:** the llvm16 runners now pass an output program's arguments when the profile has `program_args`.
+   - **Excluded on CP/M** (besides floats, wide addresses, atan2 and the 8-byte arena):
+     - console and line input: tnylpo turns LF into CR (a CR LF is two line ends) and gives ^Z forever at the end of the input, which `fgetc_cons` returns as a character, so the line input programs hang.
+     - files are whole 128-byte records: sizes round up, and reads go past the written end (diskio writing, saving and loading).
+     - fileio copying: z88dk's CP/M `fread` doesn't set the end-of-file flag either; reads give 0 forever.
+     - no directories; the CCP upper-cases and splits the arguments; argv[0] is empty (the three argument programs); the console expands tabs (strings library); `$0400` is in the program's code.
+   - **Excluded on trs80gp:** console input (no stdin), arguments (no command line; z88dk's TRS-80 crt0 then gives argc 0, while with arguments argv[0] is an empty name), `$0400` is ROM, and **every file program**.
+   - **Surprise, TRS-80 files:** z88dk's `-ltrsdos` file routines fail in trs80gp, also from a plain C program linked with zcc: `fopen` for writing and reading (`TEST/TXT`, `TEST/TXT:0`, `SYS0/SYS`) returns NULL on Model I TRSDOS and LDOS, and hangs on Model III LDOS and Model 4. Not yet known whether it's z88dk's library or the emulator setup. The z80-trs80-cmd docs still say the file routines work; that is unverified.
+   - **Model 4:** the smoke programs pass under TRSDOS 6 (output through the printer port), so z88dk's Model III code runs in Model 4 mode; the screen output itself wasn't checked.
+   - **Results and timings** (each program optimized and not, build included): tnylpo 15 tests in 16 s; trs80gp Model III 16 tests in 157 s; Model I and Model 4 5 tests each in 22 s and 27 s. All pass.
 6. **Research items** (the result gets written down whether or not it is fixed):
    - Why TRSDOS 1.3 on the Model III doesn't start a directly loaded `.cmd`. Check whether it's trs80gp or z88dk's `.cmd` format: try a `.cmd` from another source, and loading from a disk image.
    - Whether z88dk's Model I/III console works under TRSDOS 6 in Model 4 mode.

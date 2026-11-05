@@ -265,7 +265,8 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
 3. a profile built into the compiler: ``wasm32-wasip1``, ``wasm32-unknown-emscripten``, ``armv7a-none-eabihf``, ``riscv32-unknown-elf``,
    ``arm64-apple-macosx``, ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``,
    ``riscv64-unknown-linux-gnu``, ``riscv32-unknown-linux-gnu``, ``armv7-unknown-linux-gnueabihf``, ``x86_64-pc-windows-msvc``,
-   ``x86_64-w64-windows-gnu``, and for ``llvm16`` ``mos-sim``, ``mos-c64`` and ``z80-test`` (``z80-z88dk`` is only a base, see ``base`` below)
+   ``x86_64-w64-windows-gnu``, and for ``llvm16`` ``mos-sim``, ``mos-c64``, ``z80-test``, ``z80-trs80``, ``z80-trs80-cmd``,
+   ``z80-cpm``, ``z80-zx`` and ``z80-c128`` (``z80-z88dk`` is only a base, see ``base`` below)
 4. any other triple that clang knows, such as ``aarch64-linux-musl`` or ``i686-unknown-linux-gnu``: the compiler asks
    clang for its normalized name, data layout and C ``long`` size, and builds with ``--target=<name>``.
    Run, link and startup settings need a profile file.
@@ -499,9 +500,78 @@ profile has no ``io_ranges``, and the ``+test`` program itself starts at address
   prints a harmless "cannot compile inline asm" warning.
 - ``z88dk-ticks`` prints a ``Ticks:`` line with the number of cycles when the program exits.
 
-For a real Z80 machine, write a profile of your own with ``base = z80-z88dk`` that links for another z88dk platform, for example
+For a Z80 machine without a built-in profile (see :ref:`llvm16_z80_platforms`), write a profile of your own with ``base = z80-z88dk`` that links for another z88dk platform, for example
 ``link_command = zcc +zx -create-app -o {stem}.bin {object} -l${LLVM_Z80}/lib/z80/z80_rt_z88dk`` with ``output_extension = .tap`` for the
 ZX Spectrum, with that platform's ``libc_lacks``.
+
+``scripts/z88dk-profile.py <platform> [subtype] [--clib NAME] [-l LIB ...] [-o FILE]`` writes such a profile (it needs
+``Z88DK``), for example ``scripts/z88dk-profile.py cpm -o ~/.prog8/llvm/z80-cpm.properties``. It reads the platform's
+configuration in z88dk's ``lib/config``, refuses subtypes and C libraries for other CPUs (8080, Game Boy, Rabbit,
+eZ80) and z88dk's new and sdcc C libraries, and links small probe programs with ``zcc`` to work out the link command,
+the ``output_extension`` (the ``-create-app`` file, or the plain binary when that file isn't named after the ``-o``
+name, as on CP/M) and the ``libc_lacks`` of functions that don't link. When the C library needs a malloc heap to link,
+the link command gets ``-pragma-define:CRT_HEAP_AMALLOC=1``, a heap of 3/4 of the free memory. Check by hand what a
+link can't show: ``io_ranges``, ``getchar_symbol``, ``program_args``, a ``run_command``, and functions that link but
+misbehave on the platform, which belong in ``libc_lacks`` too.
+
+.. _llvm16_z80_platforms:
+
+**Built-in Z80 machine profiles.** These profiles are built on ``z80-z88dk`` like ``z80-test``, and link for a real
+machine with z88dk's classic C library. They have no ``run_command``, so build the program with ``-o`` and load the
+output file into the machine or an emulator yourself:
+
+=================  ===========================  ==========  ===================  ============
+Profile            ``zcc`` platform             Output      ``io_ranges``        Arguments
+=================  ===========================  ==========  ===================  ============
+``z80-trs80``      ``+trs80``                   ``.cas``    ``$37e0-$3fff``      no
+``z80-trs80-cmd``  ``+trs80 -subtype=cmd``      ``.cmd``    ``$37e0-$3fff``      yes
+``z80-cpm``        ``+cpm``                     ``.com``    none                 yes
+``z80-zx``         ``+zx``                      ``.tap``    none                 no
+``z80-c128``       ``+c128 -subtype=disk``      none        none                 no
+=================  ===========================  ==========  ===================  ============
+
+What ``z80-test`` lists above applies to them as well, except the file notes, which are about ``z88dk-ticks``. All of
+them lack the math, directory, ``usleep`` and ``strtod`` functions, and ``qsort`` because z88dk's calls the comparison
+function with its arguments swapped. All but ``z80-trs80-cmd`` also lack ``free``, ``realloc`` and ``strdup``, as
+their C library has no malloc heap. The programs
+that the compiler's tests build for ``z80-test`` also build for these profiles. The tests also run them for CP/M in
+tnylpo and, when ``TRS80GP`` names the trs80gp binary, for the TRS-80 in trs80gp (Model III with LDOS, and a few on
+the Model I and 4). They do that through test profiles in ``compiler/test/fixtures/llvm-triples``, built on
+``z80-cpm`` and ``z80-trs80-cmd``, whose support sources mirror the console output where the runner script can catch
+it (the TRS-80 printer) and pass on the exit status (a last output line on CP/M, as tnylpo always exits with 0).
+
+- ``z80-trs80``: the TRS-80 Model I and III, as a cassette file. The program starts at ``$5200``. Its ``io_ranges``
+  are the Model I's memory-mapped devices at ``$37e0-$37ff`` (the printer at ``$37e8`` and the disk controller),
+  the keyboard matrix at ``$3800-$3bff`` and the video RAM at ``$3c00-$3fff``; the Model III has its printer on
+  port ``$f8`` instead. Without a DOS the file routines are stubs that fail. Load the ``.cas`` file with ``SYSTEM``
+  from cassette: enter the name (its first six letters) or its first letter, and ``/`` to start it once it is loaded.
+- ``z80-trs80-cmd``: a ``.cmd`` program for TRSDOS or LDOS on the Model I and III, started from the DOS prompt, which
+  passes its command line. The file routines go through z88dk's TRSDOS library; ``ftell`` and ``rename`` are
+  lacking, so the file position and size, loading a file into memory and renaming report a failure. In trs80gp,
+  opening a file doesn't work yet, even from a C program built with zcc: it fails on the Model I and hangs on the
+  Model III with LDOS and on the Model 4. The link command reserves
+  3/4 of the free memory for the malloc heap at startup (``-pragma-define:CRT_HEAP_AMALLOC=1``), which ``strdup``,
+  ``realloc`` and ``free`` need. The program returns to the DOS prompt when it ends. In the trs80gp emulator,
+  ``trs80gp -m3 -ld prog.cmd`` boots LDOS on a Model III and runs it (``-m1`` is a Model I); TRSDOS 1.3, the default
+  DOS on the Model III, doesn't start a directly loaded ``.cmd`` there, so use LDOS. z88dk's TRS-80 support is for
+  the Model I and III memory map; it doesn't support the Model 4's own mode.
+- ``z80-cpm``: a ``.com`` program for CP/M 2.2 and later, with file I/O through the BDOS. The command line comes
+  from the CCP, which turns it into upper case. tnylpo (``tnylpo prog.com``) and RunCPM run it on the host; tnylpo
+  works in the current directory and gives its files lower case names on the host.
+- ``z80-zx``: the ZX Spectrum, as a tape file with a BASIC loader, for an emulator such as Fuse: ``LOAD ""`` loads
+  and starts it. The ULA is on port ``$fe``, and the screen at ``$4000`` is plain
+  RAM, so the profile has no ``io_ranges``. There are no files: the file routines fail.
+- ``z80-c128``: the Commodore 128 with its Z80. The output is a program file without an extension that loads at
+  ``$5000``: put it on a disk image (for example with VICE's ``c1541``), load it with ``LOAD"NAME",8,1`` and start
+  it with ``BANK 0:SYS 20480``. Its first code runs on the 8502: it puts a jump to the Z80 code at ``$FFEE`` and
+  switches to the Z80, which returns to BASIC when the program ends. zcc also writes a ``.ldr`` BASIC loader, which
+  loads the program under the name it was linked as. The console is z88dk's ANSI terminal on the 40 column screen,
+  which z88dk moves to ``$2000``; back in BASIC the screen at ``$0400`` returns and the program's output is gone, so
+  a program whose output should stay readable waits for a key before it ends. On the Z80 the VIC, SID and CIAs are I/O ports, so a
+  Prog8 ``@($d020)`` or a memory-mapped variable at a chip's address writes RAM, not the chip, and the profile has
+  no ``io_ranges``. There are no files: the file routines fail.
+
+The ZX Spectrum and the C128 reach their hardware only through I/O ports, which Prog8 code can't access yet.
 
 
 Memory Model
