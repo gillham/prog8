@@ -265,7 +265,7 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
 3. a profile built into the compiler: ``wasm32-wasip1``, ``wasm32-unknown-emscripten``, ``armv7a-none-eabihf``, ``riscv32-unknown-elf``,
    ``arm64-apple-macosx``, ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``,
    ``riscv64-unknown-linux-gnu``, ``riscv32-unknown-linux-gnu``, ``armv7-unknown-linux-gnueabihf``, ``x86_64-pc-windows-msvc``,
-   ``x86_64-w64-windows-gnu``, and for ``llvm16`` ``mos-sim``, ``mos-c64`` and ``z80-test``
+   ``x86_64-w64-windows-gnu``, and for ``llvm16`` ``mos-sim``, ``mos-c64`` and ``z80-test`` (``z80-z88dk`` is only a base, see ``base`` below)
 4. any other triple that clang knows, such as ``aarch64-linux-musl`` or ``i686-unknown-linux-gnu``: the compiler asks
    clang for its normalized name, data layout and C ``long`` size, and builds with ``--target=<name>``.
    Run, link and startup settings need a profile file.
@@ -292,6 +292,16 @@ gets the extension ``.exe``. A wasm32 program needs clang's wasm32 runtime libra
 with didn't include it, so it had to be copied there from a build that has it.
 These are the keys of a profile; an unknown key is an error:
 
+``base``
+    Another profile that this one is built on: it gets every key of the base that it doesn't have itself, and its own
+    keys replace those of the base whole (a ``libc_lacks`` list is not merged, for instance). The base is a file path,
+    relative to the directory of the profile that names it (``~`` is the home directory), then ``~/.prog8/llvm/<name>.properties``,
+    then a profile built into the compiler; a built-in profile can only have a built-in base. A base can have a base
+    of its own, but not in a cycle. The keys are combined before anything else, so a ``datalayout`` that neither one
+    has still comes from clang. The profile keeps its own name, and ``base`` and ``abstract`` are not passed on.
+``abstract``
+    ``true`` for a profile that is only a base for other profiles, such as the built-in ``z80-z88dk``: using it with
+    ``-triple`` is an error. The default is ``false``.
 ``triple`` (required)
     The LLVM target triple written into the module, for example ``wasm32-unknown-wasip1``.
 ``datalayout``
@@ -328,7 +338,10 @@ These are the keys of a profile; an unknown key is an error:
 ``link_command``
     A command that links the executable, for platforms that clang can't link for itself, such as bare metal ones
     with the C library of a GCC toolchain. clang then only compiles the program into an object file, which the command
-    gets as ``{object}``, and it writes the executable to ``{file}``. Environment variables work as in ``clang_args``.
+    gets as ``{object}``, and it writes the executable to ``{file}``. ``{stem}`` is that path without the profile's
+    ``output_extension``, for linkers that add their own extension, such as ``-o {stem}.bin``; the command must have
+    ``{file}`` or ``{stem}``. Environment variables work as in ``clang_args``, and ``{profile_dir}`` is the directory
+    of the profile file that has the ``link_command``, which can't be a profile built into the compiler.
     The libraries of the program's ``%link`` directives go at the end of the command, or in the place of a ``{libs}`` word.
     Without it, clang builds the executable in one go.
 ``link_args``
@@ -337,15 +350,17 @@ These are the keys of a profile; an unknown key is an error:
     can't have them; it puts them in that command instead. Environment variables work as in ``clang_args``.
 ``startup_source``
     Source files separated by spaces, such as boot code in assembly, that the link command builds along with the program;
-    a word ``{startup}`` becomes their paths. They are looked up next to the profile file; for a profile built into the
-    compiler, they come with the compiler.
-    A profile with it must have ``{startup}`` in its ``link_command``, and one without it must not.
+    a word ``{startup}`` becomes their paths. They are looked up next to the profile file that has the ``startup_source``,
+    which can be a base; for a profile built into the compiler, they come with the compiler.
+    A profile with it must have ``{startup}`` in its ``link_command``; without it, ``{startup}`` becomes nothing, so a
+    base's link command can have it for the profiles built on it.
 ``run_command``
     The command that ``-emu`` uses to run the executable, with ``{file}`` in place of its path, for example ``wasmtime {file}``.
     Without it, the executable is run directly. The program arguments given after ``--`` go at the end of the command,
     or in place of a word ``{args}``; ``{semihosting_args}`` inside a word becomes the ``,arg=`` entries of qemu's
     ``-semihosting-config`` for the executable and its arguments, as in ``enable=on,target=native{semihosting_args}``.
-    Environment variables work as in ``clang_args``.
+    Environment variables work as in ``clang_args``, and ``{profile_dir}`` as in ``link_command``, for a runner script
+    next to the profile: ``run_command = python3 {profile_dir}/run.py {file}``.
 ``program_args``
     ``false`` for platforms whose programs can't get command line arguments: giving them after ``--`` is then an error.
     The default is ``true``.
@@ -463,7 +478,9 @@ The Z80 with llvm-z80 and z88dk
 The built-in ``z80-test`` profile (``-target llvm16 -triple z80-test``) builds for the Z80 with the clang of llvm-z80
 and its ``z80-unknown-none-z88dk`` triple, which writes z88dk assembly. The ``zcc`` of `z88dk <https://z88dk.org/>`_
 links the program with z88dk's C library for its ``+test`` platform, and ``-emu`` runs it in ``z88dk-ticks``, which
-prints the program's output, reads its input, and gives back its exit status. ``LLVM_Z80`` names the llvm-z80
+prints the program's output, reads its input, and gives back its exit status. It is built on the abstract
+``z80-z88dk`` profile, which has what every z88dk platform shares: the triple, clang, data layout, sizes, ``tool_path``,
+``tool_env`` and ``getchar_symbol``; ``z80-test`` adds the link and run commands and ``libc_lacks``. ``LLVM_Z80`` names the llvm-z80
 directory and ``Z88DK`` the z88dk directory; the profile's ``tool_path`` and ``tool_env`` give the tools the PATH and
 ``ZCCCFG`` they need. As with the mos profiles, writing the ``.ll`` file works without them. The program is also linked
 with ``lib/z80/z80_rt_z88dk.lib`` of llvm-z80: its compiler support routines (``__z80_memset_builtin``, ``__muldi3``
@@ -482,8 +499,9 @@ profile has no ``io_ranges``, and the ``+test`` program itself starts at address
   prints a harmless "cannot compile inline asm" warning.
 - ``z88dk-ticks`` prints a ``Ticks:`` line with the number of cycles when the program exits.
 
-For a real Z80 machine, write a profile of your own that links for another z88dk platform, for example
-``link_command = zcc +zx -o {file} {object}`` for the ZX Spectrum, with that platform's ``libc_lacks``.
+For a real Z80 machine, write a profile of your own with ``base = z80-z88dk`` that links for another z88dk platform, for example
+``link_command = zcc +zx -create-app -o {stem}.bin {object} -l${LLVM_Z80}/lib/z80/z80_rt_z88dk`` with ``output_extension = .tap`` for the
+ZX Spectrum, with that platform's ``libc_lacks``.
 
 
 Memory Model

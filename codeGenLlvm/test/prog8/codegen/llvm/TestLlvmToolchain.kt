@@ -97,6 +97,15 @@ class TestLlvmToolchain: FunSpec({
             listOf("gcc", "boot.S", "console.c", "p.o", "-lm", "-o", "p.elf", "-L/a b", "-lfoo")
     }
 
+    test("{stem} in the link command is the output file without the output extension, and {startup} without startup sources is nothing") {
+        LlvmToolchain.linkCommandFor(listOf("zcc", "{startup}", "{object}", "-o", "{stem}.bin", "x{startup}y"), Path.of("p.tap.o"), Path.of("dir", "p.tap"), emptyList(), emptyList(),
+            outputExtension = ".tap") shouldBe listOf("zcc", "p.tap.o", "-o", Path.of("dir", "p").toString() + ".bin", "xy")
+        LlvmToolchain.linkCommandFor(listOf("zcc", "{object}", "-o", "{stem}"), Path.of("p.o"), Path.of("p.bin"), emptyList(), emptyList()) shouldBe
+            listOf("zcc", "p.o", "-o", "p.bin")
+        LlvmToolchain.linkCommandFor(listOf("zcc", "{object}", "-o", "{stem}"), Path.of("p.o"), Path.of("p.bin"), emptyList(), emptyList(), outputExtension = ".com") shouldBe
+            listOf("zcc", "p.o", "-o", "p.bin")
+    }
+
     test("the %link libraries go after the -Xlink arguments, or in the place of a {libs} word of the link command") {
         LlvmToolchain.linkCommandFor(listOf("gcc", "{object}", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), emptyList(), listOf("-L/a"), listOf("-lfoo", "/b/x.a")) shouldBe
             listOf("gcc", "p.o", "-o", "p.elf", "-L/a", "-lfoo", "/b/x.a")

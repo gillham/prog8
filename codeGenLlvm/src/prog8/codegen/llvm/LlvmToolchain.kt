@@ -53,7 +53,7 @@ internal object LlvmToolchain {
             } catch (x: IOException) {
                 return failed("Can't build '$outputFile': a startup source of the llvm triple profile couldn't be written: ${x.message}")
             }
-            val link = linkCommandFor(linkCommand, objectFile, outputFile, startupFiles, extraLinkArgs, linkLibraries)
+            val link = linkCommandFor(linkCommand, objectFile, outputFile, startupFiles, extraLinkArgs, linkLibraries, profile?.outputExtension.orEmpty())
             return runTool(link, link.first(), outputFile, profile) || failed("the link command couldn't build '$outputFile' from '$objectFile'")
         } finally {
             Files.deleteIfExists(objectFile)
@@ -85,12 +85,14 @@ internal object LlvmToolchain {
         compileCommand + listOf(llFile.toString(), "-o", outputFile.toString()) + extraLinkArgs
 
     internal fun linkCommandFor(template: List<String>, objectFile: Path, outputFile: Path, startupFiles: List<Path>, extraLinkArgs: List<String>,
-                                linkLibraries: List<String> = emptyList()): List<String> {
+                                linkLibraries: List<String> = emptyList(), outputExtension: String = ""): List<String> {
+        val file = outputFile.toString()
+        val stem = if (outputExtension.isNotEmpty() && file.endsWith(outputExtension)) file.dropLast(outputExtension.length) else file
         val command = template.flatMap {
             when (it) {
                 LIBS -> linkLibraries
                 STARTUP -> startupFiles.map(Path::toString)
-                else -> listOf(it.replace("{object}", objectFile.toString()).replace("{file}", outputFile.toString())
+                else -> listOf(it.replace("{object}", objectFile.toString()).replace("{file}", file).replace("{stem}", stem)
                     .replace(STARTUP, startupFiles.joinToString(" ")))
             }
         } + extraLinkArgs

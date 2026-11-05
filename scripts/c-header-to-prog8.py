@@ -73,18 +73,26 @@ def expand_env(text: str) -> str:
     return re.sub(r"\$\{(\w+)(:-([^}]*))?\}", repl, text)
 
 
-def read_profile(name: str) -> dict:
-    path = Path(name)
+def read_profile(name: str, relative_to: Path | None = None) -> dict:
+    path = Path(name).expanduser()
+    if relative_to is not None:
+        path = relative_to / path
     if not path.is_file():
         path = PROFILES / f"{name}.properties"
     if not path.is_file():
-        sys.exit(f"no triple profile '{name}': give a built-in name ({', '.join(sorted(p.stem for p in PROFILES.glob('*.properties')))}) or a .properties file")
+        concrete = sorted(p.stem for p in PROFILES.glob("*.properties") if not re.search(r"(?m)^\s*abstract\s*=\s*true\s*$", p.read_text()))
+        sys.exit(f"no triple profile '{name}': give a built-in name ({', '.join(concrete)}) or a .properties file")
     props = {}
     for line in path.read_text().splitlines():
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             key, value = line.split("=", 1)
             props[key.strip()] = value.strip()
+    # the keys of a base profile, which the profile's own keys replace
+    if "base" in props:
+        base = read_profile(props.pop("base"), path.parent)
+        base.pop("abstract", None)
+        props = base | props
     return props
 
 

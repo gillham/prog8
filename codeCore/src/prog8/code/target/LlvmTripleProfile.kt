@@ -75,7 +75,7 @@ data class LlvmTripleProfile(
     val linkArgs: List<String>
         get() = expandEnvironment(linkArgsTemplate) { System.getenv(it) }
 
-    /** The command that links clang's object file `{object}` into the executable `{file}`, with environment variables expanded as in [clangArgs]. */
+    /** The command that links clang's object file `{object}` into the executable `{file}` (`{stem}` without its extension), with environment variables expanded as in [clangArgs]. */
     val linkCommand: List<String>?
         get() = linkCommandTemplate?.let { template -> expandEnvironment(template) { System.getenv(it) } }
 
@@ -130,11 +130,11 @@ data class LlvmTripleProfile(
         }
         require(cLongSize == 4 || cLongSize == 8) { "the llvm triple profile '$name' has c_long_size $cLongSize, it must be 4 or 8" }
         require(runCommandTemplate == null || runCommandTemplate.any { "{file}" in it }) { "the run_command of llvm triple profile '$name' must contain {file}" }
-        require(linkCommandTemplate == null || (linkCommandTemplate.any { "{object}" in it } && linkCommandTemplate.any { "{file}" in it })) {
-            "the link_command of llvm triple profile '$name' must contain {object} and {file}"
+        require(linkCommandTemplate == null || (linkCommandTemplate.any { "{object}" in it } && linkCommandTemplate.any { "{file}" in it || "{stem}" in it })) {
+            "the link_command of llvm triple profile '$name' must contain {object}, and {file} or {stem}"
         }
-        require(startupSources.isNotEmpty() == (linkCommandTemplate?.any { "{startup}" in it } == true)) {
-            "llvm triple profile '$name' needs both a startup_source and {startup} in its link_command, or neither"
+        require(startupSources.isEmpty() || linkCommandTemplate?.any { "{startup}" in it } == true) {
+            "llvm triple profile '$name' has a startup_source, so it needs {startup} in its link_command"
         }
         for (source in startupSources)
             require(if (directory != null) directory.resolve(source).isRegularFile()
@@ -181,6 +181,7 @@ data class LlvmTripleProfile(
         private val tripleName = Regex("[A-Za-z0-9_][A-Za-z0-9_.-]*")
         private const val ARGS = "{args}"
         private const val SEMIHOSTING_ARGS = "{semihosting_args}"
+        private const val PROFILE_DIR = "{profile_dir}"
 
         /**
          * The command that runs [file] with the program arguments [args]: [runCommand] with `{file}` replaced, or else the file itself.
@@ -204,26 +205,32 @@ data class LlvmTripleProfile(
             require('"' !in it) { "the program argument '$it' has a double quote, which the semihosting command line can't pass on" }
             ",arg=" + (if (it.isEmpty() || it.any(Char::isWhitespace)) "\"$it\"" else it).replace(",", ",,")
         }
+        private val userProfiles: Path get() = ImportFileSystem.userHome.resolve(".prog8/llvm")
         private val clangAnswers = ConcurrentHashMap<List<Any>, ClangTargetInfo>()
 
         /** [clangOption] is the -clang option, which answers for a profile that leaves out what clang can supply. */
-        fun load(path: Path, clangOption: String? = null): LlvmTripleProfile =
-            path.inputStream().use { parse(path.toString(), it, path.toAbsolutePath().parent, clangOption) }
+        fun load(path: Path, clangOption: String? = null): LlvmTripleProfile = load(path, clangOption, userProfiles)
+
+        internal fun load(path: Path, clangOption: String?, userDirectory: Path): LlvmTripleProfile =
+            parse(path.toString(), readLayer(path, path.toString()), clangOption, userDirectory)
 
         /**
          * Finds [nameOrPath] as a file, then as `~/.prog8/llvm/<name>.properties`, then as a profile embedded in the compiler;
          * any other triple name gets the data layout and C long size that clang reports for it.
          */
-        fun resolve(nameOrPath: String, clangOption: String? = null): LlvmTripleProfile {
+        fun resolve(nameOrPath: String, clangOption: String? = null): LlvmTripleProfile = resolve(nameOrPath, clangOption, userProfiles)
+
+        /** [userDirectory] takes the place of `~/.prog8/llvm`. */
+        internal fun resolve(nameOrPath: String, clangOption: String?, userDirectory: Path): LlvmTripleProfile {
             val file = ImportFileSystem.expandTilde(Path(nameOrPath))
             if(file.isRegularFile())
-                return load(file, clangOption)
-            val userFile = ImportFileSystem.userHome.resolve(".prog8/llvm/$nameOrPath.properties")
+                return load(file, clangOption, userDirectory)
+            val userFile = userDirectory.resolve("$nameOrPath.properties")
             if(userFile.isRegularFile())
-                return userFile.inputStream().use { parse(nameOrPath, it, userFile.parent, clangOption) }
-            val resource = LlvmTripleProfile::class.java.getResourceAsStream("$RESOURCE_DIR/$nameOrPath.properties")
-            if(resource != null)
-                return resource.use { parse(nameOrPath, it, clangOption = clangOption) }
+                return parse(nameOrPath, readLayer(userFile, nameOrPath), clangOption, userDirectory)
+            val embedded = embeddedLayer(nameOrPath)
+            if(embedded != null)
+                return parse(nameOrPath, embedded, clangOption, userDirectory)
             val notFound = "unknown llvm triple '$nameOrPath': no such file, no $userFile, and no embedded profile"
             if(!nameOrPath.matches(tripleName))
                 throw IllegalArgumentException(notFound)
@@ -289,10 +296,57 @@ data class LlvmTripleProfile(
             }
         }
 
-        /** [directory] holds the profile file, which a startup_source is relative to; null for an embedded profile. */
-        private fun parse(name: String, input: InputStream, directory: Path? = null, clangOption: String? = null): LlvmTripleProfile {
+        private fun readLayer(file: Path, label: String): ProfileLayer {
+            val absolute = file.toAbsolutePath().normalize()
             val props = Properties()
-            props.load(input)
+            absolute.inputStream().use { props.load(it) }
+            return ProfileLayer(absolute.toString(), label, props, absolute.parent)
+        }
+
+        private fun embeddedLayer(name: String): ProfileLayer? =
+            LlvmTripleProfile::class.java.getResourceAsStream("$RESOURCE_DIR/$name.properties")?.use { embeddedLayer(name, it) }
+
+        private fun embeddedLayer(name: String, input: InputStream) = ProfileLayer("embedded:$name", name, Properties().apply { load(input) }, null)
+
+        /** Parses [input] as if it were the profile [name] embedded in the compiler. */
+        internal fun parseAsEmbedded(name: String, input: InputStream): LlvmTripleProfile = parse(name, embeddedLayer(name, input), null, userProfiles)
+
+        /** A file profile's base is a path relative to it, then a user profile, then an embedded one; an embedded profile's base can only be embedded. */
+        private fun findBase(base: String, child: ProfileLayer, userDirectory: Path): ProfileLayer {
+            val where = if (child.directory != null) {
+                val file = try { child.directory.resolve(ImportFileSystem.expandTilde(Path(base))) } catch (_: InvalidPathException) { null }
+                if (file?.isRegularFile() == true)
+                    return readLayer(file, file.toString())
+                val userFile = userDirectory.resolve("${if (base.matches(tripleName)) base else "<name>"}.properties")
+                if (base.matches(tripleName) && userFile.isRegularFile())
+                    return readLayer(userFile, base)
+                "no such file next to it, no $userFile, and no embedded profile"
+            } else "no embedded profile has that name, and a profile built into the compiler can only have an embedded base"
+            return (if (base.matches(tripleName)) embeddedLayer(base) else null)
+                ?: throw IllegalArgumentException("the base '$base' of llvm triple profile '${child.label}' was not found: $where")
+        }
+
+        private fun layersOf(profile: ProfileLayer, userDirectory: Path): List<ProfileLayer> {
+            val layers = mutableListOf(profile)
+            while (true) {
+                val base = layers.last().base ?: return layers
+                val next = findBase(base, layers.last(), userDirectory)
+                require(layers.none { it.id == next.id }) {
+                    "llvm triple profile '${profile.label}' has a cycle of bases: ${(layers + next).joinToString(" -> ") { it.label }}"
+                }
+                layers.add(next)
+            }
+        }
+
+        private fun parse(name: String, profile: ProfileLayer, clangOption: String?, userDirectory: Path): LlvmTripleProfile {
+            require(!profile.isAbstract) { "llvm triple profile '$name' is abstract: it can only be the base of other profiles" }
+            val props = Properties()
+            val supplier = mutableMapOf<String, ProfileLayer>()
+            for (layer in layersOf(profile, userDirectory).asReversed())
+                for (key in layer.properties.stringPropertyNames() - setOf(ProfileLayer.BASE, ProfileLayer.ABSTRACT)) {
+                    props.setProperty(key, layer.properties.getProperty(key))
+                    supplier[key] = layer
+                }
             val unknown = props.stringPropertyNames() - knownKeys
             require(unknown.isEmpty()) { "unknown keys in llvm triple profile '$name': ${unknown.sorted().joinToString()}" }
             fun required(key: String) = props.getProperty(key)?.trim()?.takeIf { it.isNotEmpty() }
@@ -337,6 +391,15 @@ data class LlvmTripleProfile(
             val runTimeout = props.getProperty("run_timeout_seconds")?.trim()?.let {
                 it.toIntOrNull() ?: throw IllegalArgumentException("llvm triple profile '$name' has a non-numeric run_timeout_seconds")
             }
+            fun command(key: String) = words(key)?.takeIf { it.isNotEmpty() }?.map { word ->
+                if (PROFILE_DIR !in word) word
+                else {
+                    val layer = supplier.getValue(key)
+                    val dir = layer.directory ?: throw IllegalArgumentException(
+                        "the $key of llvm triple profile '${layer.label}' uses {profile_dir}, which can't be used in a profile built into the compiler")
+                    word.replace(PROFILE_DIR, dir.toString())
+                }
+            }
             return LlvmTripleProfile(
                 name,
                 triple,
@@ -344,13 +407,13 @@ data class LlvmTripleProfile(
                 cLongSize,
                 clangArgs,
                 props.getProperty("output_extension", "").trim(),
-                words("run_command")?.takeIf { it.isNotEmpty() },
+                command("run_command"),
                 props.getProperty("strict_indirect_signatures", "false").trim().toBoolean(),
                 props.getProperty("c_main_symbol", "main").trim(),
-                words("link_command")?.takeIf { it.isNotEmpty() },
+                command("link_command"),
                 runTimeout,
                 words("startup_source").orEmpty(),
-                directory,
+                (supplier["startup_source"] ?: profile).directory,
                 words("link_args").orEmpty(),
                 direntNameOffset,
                 optional("opendir_symbol") ?: "opendir",
@@ -448,6 +511,22 @@ data class LlvmToolEnvironment(
     internal fun withoutName(): LlvmToolEnvironment = copy(profileName = null)
 
     private val isWindows get() = System.getProperty("os.name").orEmpty().startsWith("Windows")
+}
+
+
+/** One profile file of a chain of `base` keys, known by [id] for finding cycles; [directory] is null for a profile embedded in the compiler. */
+private class ProfileLayer(val id: String, val label: String, val properties: Properties, val directory: Path?) {
+    val base: String? = properties.getProperty(BASE)?.trim()?.takeIf { it.isNotEmpty() }
+    val isAbstract: Boolean = when (val value = properties.getProperty(ABSTRACT)?.trim()) {
+        null, "", "false" -> false
+        "true" -> true
+        else -> throw IllegalArgumentException("llvm triple profile '$label' has abstract '$value', it must be true or false")
+    }
+
+    companion object {
+        const val BASE = "base"
+        const val ABSTRACT = "abstract"
+    }
 }
 
 

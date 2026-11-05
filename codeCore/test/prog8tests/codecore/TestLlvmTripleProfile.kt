@@ -148,9 +148,8 @@ class TestLlvmTripleProfile: FunSpec({
 
         fun rejected(name: String, properties: String): String =
             shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(sources.resolve("$name.properties").also { it.writeText(properties) }) }.message!!
-        rejected("nostartup", validProfile("link_command = gcc {startup} {object} -o {file}")) shouldContain "startup_source and {startup}"
-        rejected("noplaceholder", validProfile("link_command = gcc {object} -o {file}\nstartup_source = boot.S")) shouldContain "startup_source and {startup}"
-        rejected("nolink", validProfile("startup_source = boot.S")) shouldContain "startup_source and {startup}"
+        rejected("noplaceholder", validProfile("link_command = gcc {object} -o {file}\nstartup_source = boot.S")) shouldContain "needs {startup} in its link_command"
+        rejected("nolink", validProfile("startup_source = boot.S")) shouldContain "needs {startup} in its link_command"
         rejected("missing", validProfile("link_command = gcc {startup} {object} -o {file}\nstartup_source = boot.S missing.c")) shouldContain "'missing.c'"
     }
 
@@ -174,8 +173,8 @@ class TestLlvmTripleProfile: FunSpec({
         rejected("unknownkey", validProfile("pointer_size = 4")) shouldContain "unknown keys"
         rejected("runcommand", validProfile("run_command = wasmtime")) shouldContain "{file}"
         rejected("mainsymbol", validProfile("c_main_symbol = not a name")) shouldContain "c_main_symbol"
-        rejected("linkobject", validProfile("link_command = gcc -o {file}")) shouldContain "{object} and {file}"
-        rejected("linkfile", validProfile("link_command = gcc {object}")) shouldContain "{object} and {file}"
+        rejected("linkobject", validProfile("link_command = gcc -o {file}")) shouldContain "{object}, and {file} or {stem}"
+        rejected("linkfile", validProfile("link_command = gcc {object}")) shouldContain "{object}, and {file} or {stem}"
         rejected("timeouttext", validProfile("run_timeout_seconds = soon")) shouldContain "non-numeric run_timeout_seconds"
         rejected("timeoutzero", validProfile("run_timeout_seconds = 0")) shouldContain "positive"
     }
@@ -554,6 +553,119 @@ class TestLlvmTripleProfile: FunSpec({
         rejected("envpath", "PATH=/x") shouldContain "can't set PATH, tool_path is for that"
         rejected("envpathcase", "Path=/x") shouldContain "can't set PATH"
         rejected("envtwice", "A=1 A=2") shouldContain "sets A more than once"
+    }
+
+    val noUserProfiles = directory.resolve("no-user-profiles")
+
+    test("a base profile supplies the keys that a profile leaves out, through a chain of bases, and each key is replaced whole") {
+        val bases = directory.resolve("bases").createDirectories()
+        bases.resolve("first.properties").writeText(validProfile("c_main_symbol = first_main\noutput_extension = .first\nlibc_lacks = fopen fclose\nabstract = true"))
+        bases.resolve("second.properties").writeText("base = first.properties\noutput_extension = .second\nprogram_args = false")
+        val child = profileFile("chained", "base = bases/second.properties\nlibc_lacks = remove")
+        val profile = LlvmTripleProfile.load(child, null, noUserProfiles)
+        profile.name shouldBe child.toString()
+        profile.tools.profileName shouldBe child.toString()
+        profile.triple shouldBe "test-triple"
+        profile.dataLayout shouldBe wasmLayout
+        profile.cMainSymbol shouldBe "first_main"
+        profile.outputExtension shouldBe ".second"
+        profile.programArgs shouldBe false
+        profile.libcLacks shouldBe setOf("remove")
+        LlvmTripleProfile.resolve(child.toString(), null, noUserProfiles).name shouldBe child.toString()
+    }
+
+    test("a relative base is found next to the profile that names it, not in the working directory, then in the user profiles, then embedded") {
+        val sub = directory.resolve("relative").resolve("sub").createDirectories()
+        sub.resolve("parent.properties").writeText(validProfile("output_extension = .parent"))
+        val child = sub.resolve("child.properties").also { it.writeText("base = parent.properties") }
+        LlvmTripleProfile.load(child, null, noUserProfiles).outputExtension shouldBe ".parent"
+        val users = directory.resolve("userprofiles").createDirectories()
+        users.resolve("userbase.properties").writeText(validProfile("output_extension = .user"))
+        LlvmTripleProfile.load(profileFile("onuser", "base = userbase"), null, users).outputExtension shouldBe ".user"
+        users.resolve("z80-z88dk.properties").writeText(validProfile())
+        LlvmTripleProfile.load(profileFile("onembedded", "base = z80-z88dk"), null, noUserProfiles).triple shouldBe "z80-unknown-none-z88dk"
+        LlvmTripleProfile.load(profileFile("onuserfirst", "base = z80-z88dk"), null, users).triple shouldBe "test-triple"
+        withClue("an embedded profile only has embedded bases") {
+            LlvmTripleProfile.resolve("z80-test", null, users).triple shouldBe "z80-unknown-none-z88dk"
+        }
+    }
+
+    test("a base that is not found, or a cycle of bases, is an error that names the profiles") {
+        val missing = profileFile("missingbase", "base = prog8-no-such-base")
+        shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(missing, null, noUserProfiles) }.message!! shouldContain
+            "the base 'prog8-no-such-base' of llvm triple profile '$missing' was not found"
+        profileFile("cycle1", "base = cycle2.properties")
+        val cycle2 = profileFile("cycle2", "base = cycle1.properties")
+        shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(cycle2, null, noUserProfiles) }.message!! shouldContain "has a cycle of bases"
+        shouldThrow<IllegalArgumentException> { LlvmTripleProfile.parseAsEmbedded("embeddedchild", "base = missingbase".byteInputStream()) }.message!! shouldContain
+            "a profile built into the compiler can only have an embedded base"
+        val self = profileFile("selfbase", "base = selfbase.properties")
+        shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(self, null, noUserProfiles) }.message!! shouldContain "has a cycle of bases"
+        shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(profileFile("badabstract", validProfile("abstract = yes"))) }.message!! shouldContain
+            "abstract 'yes'"
+    }
+
+    test("an abstract profile can only be a base") {
+        shouldThrow<IllegalArgumentException> { LlvmTripleProfile.resolve("z80-z88dk") }.message!! shouldContain
+            "llvm triple profile 'z80-z88dk' is abstract: it can only be the base of other profiles"
+        val abstract = profileFile("abstractbase", "abstract = true\ntriple = test-triple")
+        shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(abstract) }.message!! shouldContain "is abstract"
+        LlvmTripleProfile.load(profileFile("concrete", "base = abstractbase.properties\ndatalayout = $wasmLayout\nc_long_size = 4"), null, noUserProfiles).triple shouldBe "test-triple"
+    }
+
+    test("a startup_source is read from the directory of the profile that supplies it") {
+        val lower = directory.resolve("startupbase").createDirectories()
+        lower.resolve("boot.S").writeText("; base boot code")
+        lower.resolve("base.properties").writeText(validProfile("link_command = gcc {startup} {object} -o {file}\nstartup_source = boot.S"))
+        val upper = directory.resolve("startupchild").createDirectories()
+        val child = upper.resolve("child.properties").also { it.writeText("base = ../startupbase/base.properties\nrun_command = run {file}") }
+        LlvmTripleProfile.load(child, null, noUserProfiles).writeStartupSources(directory.resolve("based.elf")).single().readText() shouldBe "; base boot code"
+        upper.resolve("own.S").writeText("; own boot code")
+        val own = upper.resolve("own.properties").also { it.writeText("base = ../startupbase/base.properties\nstartup_source = own.S") }
+        LlvmTripleProfile.load(own, null, noUserProfiles).writeStartupSources(directory.resolve("own.elf")).single().readText() shouldBe "; own boot code"
+    }
+
+    test("{startup} may be in a link command without a startup_source") {
+        val profile = LlvmTripleProfile.load(profileFile("emptystartup", validProfile("link_command = zcc {startup} {object} -o x{startup}y {file}")))
+        profile.startupSources shouldBe emptyList()
+        profile.linkCommand shouldBe listOf("zcc", "{startup}", "{object}", "-o", "x{startup}y", "{file}")
+        LlvmTripleProfile.load(profileFile("stemonly", validProfile("link_command = zcc {object} -o {stem}.bin"))).linkCommand shouldBe
+            listOf("zcc", "{object}", "-o", "{stem}.bin")
+    }
+
+    test("{profile_dir} in link_command and run_command is the directory of the profile that supplies the key") {
+        val spaced = directory.resolve("profile dir").createDirectories()
+        spaced.resolve("dirbase.properties").writeText(validProfile("run_command = python3 {profile_dir}/run.py {file}\nlink_command = ld {object} -T{profile_dir}/x.ld -o {file}"))
+        val other = directory.resolve("otherdir").createDirectories()
+        val child = other.resolve("dirchild.properties").also { it.writeText("base = ../profile dir/dirbase.properties\nlink_command = ld {object} -L{profile_dir} -o {file}") }
+        val profile = LlvmTripleProfile.load(child, null, noUserProfiles)
+        profile.runCommand shouldBe listOf("python3", "${spaced.toAbsolutePath().normalize()}/run.py", "{file}")
+        profile.linkCommand shouldBe listOf("ld", "{object}", "-L${other.toAbsolutePath().normalize()}", "-o", "{file}")
+        shouldThrow<IllegalArgumentException> {
+            LlvmTripleProfile.parseAsEmbedded("embeddeddir", validProfile("run_command = python3 {profile_dir}/run.py {file}").byteInputStream())
+        }.message shouldBe "the run_command of llvm triple profile 'embeddeddir' uses {profile_dir}, which can't be used in a profile built into the compiler"
+    }
+
+    test("z80-test, built on z80-z88dk, is the profile it was before") {
+        val before = profileFile("z80-test-before", $$"""
+            triple = z80-unknown-none-z88dk
+            datalayout = e-m:o-p:16:8-i16:8-i32:8-i64:8-i128:8-f16:8-f32:8-f64:8-f128:8-ve-a:8-n8:16
+            c_int_size = 2
+            c_long_size = 4
+            clang = ${LLVM_Z80}/bin/clang
+            clang_args = --target=z80-unknown-none-z88dk
+            tool_path = ${Z88DK}/bin
+            tool_env = ZCCCFG=${Z88DK}/lib/config
+            link_command = zcc +test -o {file} {object} -l${LLVM_Z80}/lib/z80/z80_rt_z88dk
+            output_extension = .bin
+            run_command = z88dk-ticks -counter 100000000000 {file}
+            program_args = false
+            getchar_symbol = fgetc_cons
+            libc_lacks = remove rename ftell getcwd mkdir chdir rmdir opendir readdir closedir strdup realloc free usleep strtod qsort \
+                sin sinf cos cosf tan tanf atan atanf atan2 atan2f sqrt sqrtf pow powf log logf log2 log2f fabs fabsf floor floorf ceil ceilf roundeven roundevenf
+            """)
+        val old = LlvmTripleProfile.load(before)
+        LlvmTripleProfile.resolve("z80-test") shouldBe old.copy(name = "z80-test", tools = old.tools.copy(profileName = "z80-test"), directory = null)
     }
 
     test("a profile without tool_path and tool_env starts its processes as they are, one with them gets their environment") {

@@ -198,10 +198,175 @@ Made by the user, 2026-11-04:
 
 Each step keeps llvm32/llvm64 `.ll` byte-identical and mos-sim results unchanged. At the end: a full build with LLVM_MOS, LLVM_Z80 and Z88DK set, the remote check and the Windows suite.
 
+## Milestone 3: z88dk platforms
+
+### Decisions
+Made by the user, 2026-11-05:
+- A `base = <profile>` key: a profile inherits every key of its base and overrides some.
+- A generator script writes a profile for any z88dk platform and subtype, into `~/.prog8/llvm/`.
+- Built-in profiles: TRS-80 (`default` and `cmd` subtypes), CP/M, ZX Spectrum, C128 (the Z80 side).
+- The Agon and other eZ80 work are deferred (user, 2026-11-05): the eZ80 may bring other complications. The Agon facts below are kept for then.
+- Emulators available: `trs80gp` (Model I/III/4), `tnylpo` and `RunCPM` (CP/M), `agon-cli-emulator` (fab-agon-emulator). The user has C128 and Agon hardware; a friend has a TRS-80 Model 4D.
+
+### Facts (checked by hand, 2026-11-05)
+- **z88dk's config:**
+  - Platforms: `lib/config/<platform>.cfg`, 115 of them.
+  - Variants: `SUBTYPE` lines, 493 in all. A subtype fixes the libraries and the output form.
+  - `CLIB` lines select the C library; `default`/`classic` is the one llvm-z80's z88dk mode is known to work with.
+  - Not a Z80, so out of scope: 8080/8085, Rabbit (`rcmx000`) and the Game Boy (`gb`).
+- **TRS-80 (`+trs80`):**
+  - z88dk's crt0 targets the Model I/III memory map: video `$3C00`, keyboard `$3800`, programs at `$5200`, himem read from the Model I or III ROM.
+  - Subtypes:
+    - `default` (`-lndos`, file calls are stubs)
+    - `disk` (`.cmd`, no file library at all)
+    - `cmd` (`.cmd`, `-ltrsdos`, Model I/III TRSDOS through `*DO`)
+    - `m2` (Model II)
+    - `wav`, and two EG2000 subtypes
+  - Nothing targets Model 4 native mode (80 columns, video `$F800`, keyboard `$F400`, LS-DOS 6 calls).
+- **trs80gp headless runs:**
+  - `trs80gp -m<1|3|4> [-ld] -ee -batch -turbo prog.cmd` boots a DOS and runs the `.cmd` from its prompt. A run takes about 2 s.
+  - With `-ee`, a program exits the emulator with status BC by writing function 128 to port `$47` (`ld bc,status / ld a,128 / out ($47),a`).
+  - With `-batch`, printer output goes to `trs80-printer.txt` in the current directory.
+  - The printer is on port `$F8` on the Model III/4: wait while bit 7 of `in ($F8)` is set, or characters get lost. On the Model I it is memory-mapped at `$37E8`.
+  - The `+trs80 -subtype=cmd` test program loaded and exited with its status under:
+    - `-m1` with TRSDOS and with LDOS
+    - `-m3 -ld`
+    - `-m4` with TRSDOS 6 and with LDOS
+  - Under `-m3` with TRSDOS 1.3 (the default) the `.cmd` never starts: the screen stops at "TRSDOS Ready" and a line of `0....`. Not explained yet.
+  - `-m4` with TRSDOS 6 runs in Model 4 mode. The test only shows that loading and exiting work; a program that prints through z88dk's Model III console may not.
+  - Other useful options: `-id N` waits N frames, `-it` writes the text VRAM to `trs80-text-N.bin`, `-ix` exits once the command line input has been sent.
+- **CP/M (`+cpm`, subtype `default`, `.com`):**
+  - `tnylpo -b prog.com` runs it headless, with console output on stdout. File I/O works in the current directory; the files are lower case on the host.
+  - tnylpo's exit status is always 0.
+  - The other `+cpm` subtypes are disk images for about 150 specific machines; those are for the generator, not built in.
+- **Agon (`+agon`, deferred):**
+  - z88dk builds an eZ80 **Z80-mode** MOS program at address 0 of its segment, with a "MOS" header (ADL 0), linked with the classic C library from the ez80, z180 and z80 directories.
+  - `agon-cli-emulator --sdcard <dir> -u -z` boots MOS 2.3.3 headless, and runs `<dir>/autoexec.txt`. A line naming a program in `<dir>/bin/` runs it.
+  - Debug ports: writing `out (0),a` ends the emulator with status A; `out ($30),a` echoes a character to stdout. A run takes about 0.1 s.
+  - Console output through MOS/VDP doesn't reach stdout: the fake VDP prints only its own messages.
+- **ZX Spectrum (`+zx`):** subtype `default` gives a `.tap`, with `-lndos`. The screen is at `$4000`; the ULA is port `$FE`. No headless emulator.
+- **C128 (`+c128`):**
+  - The Z80 side, with an ANSI-terminal console and `-lndos`.
+  - In Z80 mode the VIC, SID and CIAs are I/O ports, not memory: a Prog8 `@($d020)` writes RAM.
+  - No headless emulator.
+- **ticks can run eZ80 code:** `z88dk-ticks -mez80_z80` emulates an eZ80 in Z80 mode, so the `z80-test` programs can also run on the Agon's CPU.
+- **Agon can't link clang's object:** zcc says "CPU incompatible: ... compiled for z80, incompatible with ez80_z80".
+  - `-Wa,-mez80_z80` doesn't help. `-mcpu=ez80` is listed by `-mcpu=help`, but clang rejects it ("unsupported option"; `-target-cpu ez80`: "unknown target CPU").
+  - What links: `clang -S` to assembly, which zcc then assembles itself.
+- **Link pitfalls found by the review:**
+  - `+trs80 -subtype=cmd` fails with "undefined symbol: _heap" (malloc-classic). Its `-DAMALLOC` only works for C that zcc compiles. `-pragma-define:CLIB_MALLOC_HEAP_SIZE=<n>` fixes it.
+  - `+zx -create-app -o z.tap` fails ("Input and output file names must be different"); `-o z.bin` gives `z.tap`.
+  - `+cpm -create-app -o prog.bin` gives `PROG.COM`, in upper case, which tnylpo rejects. Without `-create-app`, `-o prog.com` is already a valid COM file.
+- **Hooking output and exit (checked on +test, +cpm, +agon):**
+  - Defining `fputc_cons` in a support `.asm` gives "duplicate definition", because every crt0 defines it as an alias (z88dk `lib/crt/classic/crt_runtime_selection.inc`).
+  - What works: `-pragma-redirect:fputc_cons=prog8_fputc`, with the support `.asm` defining `prog8_fputc`, which calls on to `fputc_cons_native`.
+  - Code in `SECTION code_crt_exit` is spliced into crt0's exit path with HL holding the status. That covers `exit(n)` and a `return` from main; the TRS-80 crt0 doesn't save HL first.
+  - Profile keys for the symbols would miss paths: a normal end returns from main without calling `exit`, and directory listings print with `printf`.
+- **Profiles can build support code:** `startup_source` names files next to the profile (or embedded), which the link command gets as `{startup}`. zcc assembles an `.asm` passed this way next to clang's object (also with the dotted names `writeStartupSources` gives them).
+
+### Design
+- **`base` key:**
+  - `base = <name|file>` is resolved like `-triple`: a file, then `~/.prog8/llvm/`, then embedded. A relative path is relative to the directory of the profile that names it, not the working directory.
+  - The `Properties` are merged before they are interpreted: the base's keys first, then the profile's own replace them. That keeps the clang query for a missing `datalayout` working.
+  - Chains are allowed; a cycle is an error.
+  - A `startup_source` file is relative to the layer that supplied the key, which may be embedded under a file profile. So the profile keeps the source directory per layer, not one `directory`.
+  - The profile keeps its own name: the `.p8ir` file records `llvmTriple=<name>`, which must resolve again.
+  - Every key is replaced whole: no merging of lists such as `libc_lacks`.
+  - `abstract = true` marks a profile that is only a base. Using one directly is an error, since without a `link_command` the backend would quietly link with plain clang.
+- **New placeholders:**
+  - `{stem}` in `link_command`: the output path without its extension. It handles zcc's own naming: `+zx` writes `<stem>.tap` from `-o <stem>.bin`.
+  - `{startup}` may be used without a `startup_source` and then expands to nothing. That way a base link command already has the slot, and a test profile only adds `startup_source`.
+  - A placeholder for the directory of the profile, so a `run_command` can name a runner script next to it.
+- **Embedded profiles:**
+  - `z80-z88dk`: everything the z88dk profiles share (clang, clang_args, data layout, sizes, `tool_path`, `tool_env`, `getchar_symbol`, `program_args`). It has no link command, so it can't be used alone.
+  - `z80-test`: rebuilt on it, with no change in what it does.
+  - `z80-trs80`, `z80-trs80-cmd`, `z80-cpm`, `z80-zx`, `z80-c128`, each with:
+    - a link command: `zcc +<platform> [-subtype=..] [-create-app] -o {file}|{stem}.. {startup} {object} -l..z80_rt_z88dk`, with the per-platform fixes from the facts (the heap size pragma for TRS-80 `cmd`, no `-create-app` for CP/M, `{stem}.bin` for the ZX)
+    - its own `output_extension`, `libc_lacks` and `io_ranges` (TRS-80 Model I/III: keyboard `$3800-$3BFF`, video `$3C00-$3FFF`, printer `$37E8`; none for CP/M and C128; ZX: none, since its screen is plain RAM)
+    - no `run_command`: running needs a machine or an emulator set up by the user, and the docs say how.
+- **Test-only profiles** live with the tests (`compiler/test/res/llvm-triples/` or similar), not in the compiler. Each is a few lines on top of a real one (`base`, `startup_source`, `run_command`, and the redirect pragma, which means repeating the link command):
+  - `trs80gp-m1`, `trs80gp-m3` (LDOS) and `trs80gp-m4` on `z80-trs80-cmd`
+  - `tnylpo-cpm` on `z80-cpm`
+  
+  They add a support source and a `run_command` that calls a runner script.
+- **Support sources for test runs** (z80 asm, assembled by zcc):
+  - Mirror console output to where the emulator can capture it: the TRS-80 printer (port or memory-mapped, by model).
+  - Turn the program's exit status into the emulator's exit (trs80gp's `$47` function 128).
+  - How they hook in: output through `-pragma-redirect:_putchar=_prog8_putchar` in the link command, exit through code in `SECTION code_crt_exit` (see step 2). This needs no backend change, so the llvm32/llvm64 `.ll` output can't change.
+  - On the TRS-80 the exit hook calls `$47` function 128 with BC set from HL.
+- **Runner scripts** (`scripts/llvm16-run/*.py`): each turns its emulator's conventions into stdout plus an exit status, so the test runner stays generic.
+  - trs80gp: a temporary directory, then the printer file printed to stdout, and trs80gp's status passed on.
+  - tnylpo: since its status is always 0, the support source prints a final marker line with the status, which the script strips and turns into its exit status.
+  - All of them need a timeout, since a hung program never exits the emulator.
+  - They run with `python3`, or `python` on Windows. They are found through the profile-directory placeholder.
+- **Generator, `scripts/z88dk-profile.py <platform> [subtype] [-l lib ...] [-o file]`:**
+  - Reads the platform's `.cfg` and refuses non-Z80 CLIBs and platforms.
+  - Writes a `base = z80-z88dk` profile:
+    - `link_command`
+    - `output_extension`: found by linking a probe and looking at the files it creates
+    - `libc_lacks`: the names from `LlvmTripleProfile.C_FUNCTIONS` that are unresolved when a probe calling all of them is linked
+  - Leaves `io_ranges` and `getchar_symbol` as commented placeholders for the user.
+  - The built-in profiles are generated with it, then finished by hand, so it gets used and tested.
+
+### Steps
+1. **Profile mechanics:**
+   - `base`, `abstract`, `{stem}`, an empty `{startup}`, and the profile-directory placeholder, with profile tests.
+   - `z80-z88dk` plus `z80-test` on top of it; the z80 test results are unchanged.
+   Status: done 2026-11-05.
+   - An embedded profile's base can only be embedded.
+   - A `base` name is looked up in `~/.prog8/llvm/` and embedded only when it is a plain name.
+   - `program_args` stays in `z80-test`, so each platform profile sets it itself.
+2. **The hook sources:** one `.asm` per emulator for output and exit, linked with `zcc +test` first and run in ticks (output mirrored, status kept). Also check what an exit from Prog8 does on each platform (back to DOS, MOS or BASIC).
+   Status: done 2026-11-05. The sources are in `compiler/test/fixtures/llvm-triples/`. What was found:
+   - **Output hook:**
+     - Redirecting `fputc_cons` doesn't work for the TRS-80 `cmd` subtype. Its crt0 reopens stdout on TRSDOS's `*DO` device, so putchar never reaches fputc_cons.
+     - Redirecting `_putchar` to a hook that calls the library's `___putchar` gives "duplicate definition".
+     - What works: `-pragma-redirect:_putchar=_prog8_putchar`, with `trs80gp-output.c` (compiled by zcc) doing `fputc(c, stdout)` itself after mirroring the character to the printer. z88dk's putchar module is then never linked.
+   - **trs80gp detection:**
+     - Function 255 doesn't visibly set the carry flag.
+     - `out ($47),255` followed by `in a,($47)` reads 1 when `-ee` is on, as trs80gp's BASIC example does.
+     - Outside trs80gp (ticks, real hardware) the hooks do nothing.
+   - **trs80gp results:**
+     - With `trs80gp-output.c` and `trs80gp-exit.asm`, the printer file holds the program's output (LF line ends) and trs80gp exits with the status: 3 from `sys.exit(3)`, 0 from a normal return.
+     - That works on `-m1` (TRSDOS and LDOS), `-m3 -ld`, and `-m4` (TRSDOS 6 and LDOS). `-m3` with TRSDOS 1.3 still doesn't start the program.
+     - In ticks, output and status are unchanged.
+   - **CP/M:**
+     - The CP/M crt0 has its own `code_crt_exit` code (restoring the default drive through the BDOS), which runs first and changes HL.
+     - `cpm-exit-marker.asm` therefore reads the status where crt0 saved it, `(__cpm_base_address+$80)`.
+     - tnylpo prints the program's output, then `\nPROG8-EXIT=<hex>\n` (CR LF becomes LF). The runner removes exactly that.
+   - **The TRS-80 exit hook relies on HL** still holding the status. The TRS-80 crt0 and libraries add no `code_crt_exit` code of their own; if a program with open files changes that, read the status elsewhere.
+   - **Where an exit goes:**
+     - TRS-80: back to the DOS prompt ("LDOS Ready").
+     - CP/M: back to CP/M (tnylpo exits).
+     - ZX and C128: not run, since there is no headless emulator.
+   - **Building:** `prog8c -o <dir>/<name>` builds the executable for the llvm targets without running it; `-out` only writes the `.ll`.
+3. **Generator script**, with a test that runs it for `+test`. The test compares with the link-only part of `z80-test`'s `libc_lacks`, since `remove`, `rename`, `ftell` and `qsort` are lacking there because they misbehave, not because they don't link (skips without Z88DK).
+4. **The five built-in profiles:** generate them, finish them by hand, and give each a link-only test that compiles a few programs (hello, the strings and math libraries, a file program) and checks that zcc links them. The tests skip without `LLVM_Z80`/`Z88DK`.
+5. **The emulator runs:**
+   - Runner scripts, support sources and test profiles, run in this order: TRS-80 Model I/III/4, then CP/M with tnylpo.
+   - The test profiles go in a new test resource directory (e.g. `compiler/test/res/llvm-triples/`) and are resolved by file path.
+   - Each gets an entry in `llvm16ProgramRunners` (TestLlvmCompiler), which is already generic.
+   - Each gets a `requires<Emulator>` guard that checks the emulator itself (found on the PATH or through a variable such as `TRS80GP`), since `run_command`'s first word is now python.
+   - Each gets its own `notRunOn<...>` map, built from `notRunOnZ80` plus or minus its differences. Every exclusion has an observed reason.
+   - CP/M is the first z80 platform where file I/O, `ftell`, `remove` and `rename` should all work, so the diskio and fileio tests that ticks can't run are expected to pass there.
+6. **Research items** (the result gets written down whether or not it is fixed):
+   - Why TRSDOS 1.3 on the Model III doesn't start a directly loaded `.cmd`. Check whether it's trs80gp or z88dk's `.cmd` format: try a `.cmd` from another source, and loading from a disk image.
+   - Whether z88dk's Model I/III console works under TRSDOS 6 in Model 4 mode.
+7. **Docs:**
+   - targetsystem.rst: the `base` key, the generator, each built-in profile with its memory map, I/O and what's lacking, and how to run it on hardware or an emulator.
+   - AGENTS.md: the new tools and variables.
+   - todo.rst: the Model 4 native mode profile (its own crt0) and port I/O builtins for platforms whose hardware is on I/O ports (C128, ZX).
+
+Each step keeps llvm32/llvm64 `.ll` byte-identical and the mos-sim and z80-test results unchanged.
+
 ## Later milestones
 - Floats on llvm16 (above).
+- TRS-80 Model 4 native mode: 80 columns, video `$F800`, keyboard `$F400`, LS-DOS 6 calls. z88dk has no crt0 for it.
+- Port I/O from Prog8 (`in`/`out` builtins, or an `io_ports` profile key), for the C128 Z80 side, the ZX ULA and the Agon.
+- Agon and eZ80 (deferred from milestone 3):
+  - zcc refuses clang's z80 object for `+agon` (CPU incompatible). Either llvm-z80 marks its objects for ez80_z80, or a profile key hands zcc clang's assembly instead (a second pipeline).
+  - Then: a `z80-agon` profile, an `agon-cli-emulator` runner (temporary SD card with `bin/` and `autoexec.txt`, output mirrored to port `$30`, exit through `out (0)`), and the `z80-test` programs on `z88dk-ticks -mez80_z80`.
 - After milestone 1: dedupe llvm32 and llvm64 (they differ only in comments and `sys.target`) into shared modules. This is separate work.
-- z80: real machines through other z88dk targets (ZX Spectrum, CP/M, MSX ...).
 - mc6809:
   - lift the `e` check, and audit the little-endian assumptions: the fputc word file format (InstrSyscall.kt:1051-1073), unions as byte arrays, and byte-in-word addressing in codeGenIntermediate (not audited)
   - investigate the collapse
