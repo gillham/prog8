@@ -322,6 +322,20 @@ class TestLlvmTripleProfile: FunSpec({
         rejected("args", validProfile("program_args = yes")) shouldContain "program_args 'yes'"
     }
 
+    test("file_extension_separator is a single character other than '.', set on z80-trs80-cmd and the profiles built on it") {
+        LlvmTripleProfile.load(profileFile("separator", validProfile("file_extension_separator = /"))).fileExtensionSeparator shouldBe '/'
+        LlvmTripleProfile.load(profileFile("noseparator", validProfile("file_extension_separator ="))).fileExtensionSeparator shouldBe null
+        LlvmTripleProfile.resolve("z80-trs80-cmd").fileExtensionSeparator shouldBe '/'
+        LlvmTripleProfile.resolve("z80-trs80").fileExtensionSeparator shouldBe null
+        LlvmTripleProfile.resolve("z80-test").fileExtensionSeparator shouldBe null
+        for (value in listOf("//", ".", "\\u00e9"))
+            withClue(value) {
+                shouldThrow<IllegalArgumentException> {
+                    LlvmTripleProfile.load(profileFile("badseparator", validProfile("file_extension_separator = $value")))
+                }.message shouldContain "file_extension_separator"
+            }
+    }
+
     test("run_command and clang expand environment variables on use, keeping the {file} and {args} placeholders") {
         val profile = LlvmTripleProfile.load(profileFile("runenv", validProfile(
             $$"run_command = ${PROG8_NO_SUCH_VARIABLE:-qemu} -kernel {file} {args}\nclang = ${PROG8_NO_SUCH_VARIABLE:-/opt/x}/bin/clang")))
@@ -503,9 +517,12 @@ class TestLlvmTripleProfile: FunSpec({
                 profile.outputExtension shouldBe expected.first
                 profile.programArgs shouldBe expected.second
                 profile.ioRanges shouldBe (if (name.startsWith("z80-trs80")) trs80Io else emptyList())
-                val linkCommand = profile.linkCommand.shouldNotBeNull()
-                linkCommand.take(2) shouldBe listOf("zcc", "+" + name.removePrefix("z80-").removeSuffix("-cmd"))
-                ("{startup}" in linkCommand) shouldBe true
+                // the link command names the support library through LLVM_Z80
+                if (System.getenv("LLVM_Z80") != null) {
+                    val linkCommand = profile.linkCommand.shouldNotBeNull()
+                    linkCommand.take(2) shouldBe listOf("zcc", "+" + name.removePrefix("z80-").removeSuffix("-cmd"))
+                    ("{startup}" in linkCommand) shouldBe true
+                }
                 profile.libcLacks.containsAll(listOf("qsort", "opendir", "strtod", "usleep", "sqrtf")) shouldBe true
                 (profile.libcLacks intersect setOf("putchar", "fopen", "fgetc", "strcmp", "snprintf", "exit")) shouldBe emptySet()
             }

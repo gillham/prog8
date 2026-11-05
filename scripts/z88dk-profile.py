@@ -14,7 +14,8 @@ linked by zcc itself, then find out:
 - output_extension and how zcc names its output: the -create-app file (which can have no extension), or the plain
   binary when that file's name doesn't follow the -o name
 - whether the link command needs a malloc heap (classic malloc's _heap), which it then gets with the
-  CRT_HEAP_AMALLOC pragma: 3/4 of the free memory, set up at run time
+  CRT_HEAP_AMALLOC pragma: 3/4 of the free memory, set up at run time; with CRT_HEAP_ENABLE too when the
+  platform's crt0 can take the top of memory from the system (TRS-80: HIGH$), as the heap otherwise ends at the stack
 What a probe can't find out is left for the user to check: io_ranges, getchar_symbol, program_args, run_command,
 and functions that link but misbehave on the platform (libc_lacks names those too, as z80-test does).
 
@@ -42,6 +43,8 @@ C_FUNCTIONS = ["fopen", "fclose", "fgetc", "fputc", "fread", "fwrite", "fseek", 
 # the functions that only need classic malloc's heap to link; lacking them is better than reserving a heap
 ALLOCATION_FUNCTIONS = {"free", "realloc", "strdup"}
 HEAP_PRAGMA = "-pragma-define:CRT_HEAP_AMALLOC=1"
+# the TRS-80 cmd crt0 keeps the DOS's stack, below the program, so without this the heap wraps around into the ROM
+HEAP_TOP_PRAGMA = "-pragma-define:CRT_HEAP_ENABLE=1"
 NOT_Z80_OPTIONS = {"-m8080", "-m8085", "-mgbz80", "-mr2ka", "-mr3k", "-mr4k", "-mr5k", "-mr6k", "-mkc160", "-mvm1"}
 REFUSED_CLIBS = {"new", "sdcc_ix", "sdcc_iy"}
 UNDEFINED = re.compile(r"^(\S+?):\d+: error: undefined symbol: (\S+)", re.MULTILINE)
@@ -56,7 +59,7 @@ def read_config(z88dk, platform):
     if not (configs / f"{platform}.cfg").is_file():
         names = sorted(p.stem for p in configs.glob("*.cfg"))
         fail(f"unknown platform '{platform}'; the platforms are: {' '.join(names)}")
-    options, clibs, subtypes = [], {}, {}
+    options, clibs, subtypes, crt0 = [], {}, {}, None
     for line in (configs / f"{platform}.cfg").read_text(errors="replace").splitlines():
         words = line.split()
         if not words:
@@ -67,7 +70,13 @@ def read_config(z88dk, platform):
             clibs[words[1]] = words[2:]
         elif words[0] == "SUBTYPE" and len(words) > 1:
             subtypes[words[1]] = words[2:]
-    return options, clibs, subtypes
+        elif words[0] == "CRT0" and len(words) > 1:
+            crt0 = Path(words[1].replace("DESTDIR", str(z88dk)) + ".asm")
+    return options, clibs, subtypes, crt0
+
+
+def crt0_has_heap_top(crt0):
+    return crt0 is not None and crt0.is_file() and "DEFINED_CRT_HEAP_ENABLE" in crt0.read_text(errors="replace")
 
 
 def option_value(words, name):
@@ -232,7 +241,7 @@ def main():
     if not z88dk:
         fail("Z88DK must name the z88dk directory")
 
-    options, clibs, subtypes = read_config(z88dk, args.platform)
+    options, clibs, subtypes, crt0 = read_config(z88dk, args.platform)
     subtype, clib = check_configuration(args.platform, args.subtype, args.clib, options, clibs, subtypes)
     selection = ([f"-subtype={args.subtype}"] if args.subtype else []) + ([f"-clib={args.clib}"] if args.clib else [])
     libraries = [f"-l{lib}" for lib in args.libraries]
@@ -255,6 +264,8 @@ def main():
             if pragmas:
                 fail(f"these functions still lack a heap with {HEAP_PRAGMA}: {' '.join(sorted(heap_users))}")
             lacking |= heap_users
+        if pragmas and crt0_has_heap_top(crt0):
+            pragmas.append(HEAP_TOP_PRAGMA)
         create_app, output_arg, extension = output_naming(linker, pragmas)
         verify_naming(linker, pragmas, create_app, output_arg, extension)
 

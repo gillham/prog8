@@ -54,7 +54,9 @@ data class LlvmTripleProfile(
     val programArgs: Boolean = true,
     val tools: LlvmToolEnvironment = LlvmToolEnvironment(name),
     /** The C routine that reads the next console character as getchar() does, like fgetc_cons in z88dk, where getchar is a macro. */
-    val getcharSymbol: String = "getchar"
+    val getcharSymbol: String = "getchar",
+    /** The character that replaces the last `.` of a file name the C library gets, like `/` for TRSDOS's NAME/EXT; null keeps the name. */
+    val fileExtensionSeparator: Char? = null
 ) {
     /** The pointer width in bits of the default address space, which LLVM takes as 64 when the data layout has no `p:` entry. */
     val pointerBits: Int = dataLayout.split('-').firstOrNull { it.startsWith("p:") }
@@ -154,6 +156,9 @@ data class LlvmTripleProfile(
             require(unknown.isEmpty()) { "the libc_lacks of llvm triple profile '$name' has names of C functions that Prog8 doesn't call: ${unknown.sorted().joinToString()}" }
         }
         require(ioRanges.none { it.isEmpty() }) { "the io_ranges of llvm triple profile '$name' has a range that ends before it starts" }
+        require(fileExtensionSeparator == null || (fileExtensionSeparator in ' '..'~' && fileExtensionSeparator != '.')) {
+            "the file_extension_separator of llvm triple profile '$name' must be a printable ASCII character other than '.'"
+        }
     }
 
     companion object {
@@ -161,7 +166,7 @@ data class LlvmTripleProfile(
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
             "link_command", "link_args", "run_timeout_seconds", "startup_source",
             "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "file_offset_size", "getchar_symbol",
-            "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env")
+            "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env")
 
         /** A ProcessBuilder for [command] with the tool environment of [profile], or a plain one without a profile. */
         fun processBuilder(profile: LlvmTripleProfile?, command: List<String>): ProcessBuilder =
@@ -388,6 +393,9 @@ data class LlvmTripleProfile(
                 "false" -> false
                 else -> throw IllegalArgumentException("llvm triple profile '$name' has program_args '$value', it must be true or false")
             }
+            val fileExtensionSeparator = optional("file_extension_separator")?.let {
+                it.singleOrNull() ?: throw IllegalArgumentException("the file_extension_separator of llvm triple profile '$name' must be a single character, not '$it'")
+            }
             val runTimeout = props.getProperty("run_timeout_seconds")?.trim()?.let {
                 it.toIntOrNull() ?: throw IllegalArgumentException("llvm triple profile '$name' has a non-numeric run_timeout_seconds")
             }
@@ -428,7 +436,8 @@ data class LlvmTripleProfile(
                 ioRanges == "*",
                 programArgs,
                 tools,
-                optional("getchar_symbol") ?: "getchar"
+                optional("getchar_symbol") ?: "getchar",
+                fileExtensionSeparator
             )
         }
 

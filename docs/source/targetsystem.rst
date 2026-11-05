@@ -394,6 +394,11 @@ These are the keys of a profile; an unknown key is an error:
 ``io_ranges``
     The memory-mapped I/O addresses, as comma-separated addresses and ranges in decimal or ``$`` hexadecimal,
     such as ``0-1,$d000-$dfff``, or ``*`` for every constant address.
+``file_extension_separator``
+    A character, other than ``.``, that replaces the last ``.`` of a file name before the C library's ``fopen``,
+    ``remove`` or ``rename`` gets it, for a DOS whose file names have another separator. The program's string stays as
+    it is: the name is copied to a buffer of 64 bytes, and a longer name is cut off. Without the key, names are passed
+    as they are. ``z80-trs80-cmd`` sets ``/``.
 
 The ``-Xcompile`` and ``-Xlink`` options add arguments to a single build without a profile of your own:
 ``-Xcompile`` arguments come after ``clang_args``, ``-Xlink`` arguments at the end of the ``link_command``, or at the
@@ -510,7 +515,9 @@ configuration in z88dk's ``lib/config``, refuses subtypes and C libraries for ot
 eZ80) and z88dk's new and sdcc C libraries, and links small probe programs with ``zcc`` to work out the link command,
 the ``output_extension`` (the ``-create-app`` file, or the plain binary when that file isn't named after the ``-o``
 name, as on CP/M) and the ``libc_lacks`` of functions that don't link. When the C library needs a malloc heap to link,
-the link command gets ``-pragma-define:CRT_HEAP_AMALLOC=1``, a heap of 3/4 of the free memory. Check by hand what a
+the link command gets ``-pragma-define:CRT_HEAP_AMALLOC=1``, a heap of 3/4 of the free memory, and also
+``-pragma-define:CRT_HEAP_ENABLE=1`` when the platform's crt0 can then end the heap at the system's top of memory
+(the TRS-80's HIGH$), as the heap otherwise ends at the stack pointer. Check by hand what a
 link can't show: ``io_ranges``, ``getchar_symbol``, ``program_args``, a ``run_command``, and functions that link but
 misbehave on the platform, which belong in ``libc_lacks`` too.
 
@@ -547,14 +554,29 @@ it (the TRS-80 printer) and pass on the exit status (a last output line on CP/M,
   from cassette: enter the name (its first six letters) or its first letter, and ``/`` to start it once it is loaded.
 - ``z80-trs80-cmd``: a ``.cmd`` program for TRSDOS or LDOS on the Model I and III, started from the DOS prompt, which
   passes its command line. The file routines go through z88dk's TRSDOS library; ``ftell`` and ``rename`` are
-  lacking, so the file position and size, loading a file into memory and renaming report a failure. In trs80gp,
-  opening a file doesn't work yet, even from a C program built with zcc: it fails on the Model I and hangs on the
-  Model III with LDOS and on the Model 4. The link command reserves
-  3/4 of the free memory for the malloc heap at startup (``-pragma-define:CRT_HEAP_AMALLOC=1``), which ``strdup``,
-  ``realloc`` and ``free`` need. The program returns to the DOS prompt when it ends. In the trs80gp emulator,
-  ``trs80gp -m3 -ld prog.cmd`` boots LDOS on a Model III and runs it (``-m1`` is a Model I); TRSDOS 1.3, the default
-  DOS on the Model III, doesn't start a directly loaded ``.cmd`` there, so use LDOS. z88dk's TRS-80 support is for
-  the Model I and III memory map; it doesn't support the Model 4's own mode.
+  lacking, so the file position and size, loading a file into memory and renaming report a failure. ``fread``
+  doesn't set the end-of-file flag, so a loop that reads until ``fileio.eof()`` never ends. A DOS file name is
+  ``NAME/EXT``, where a ``.`` would start the file's password, so the profile's ``file_extension_separator`` turns
+  the last ``.`` of a file name into ``/``: ``memory.prg`` becomes ``MEMORY/PRG`` for the DOS. The DOS's limits of
+  8 characters for the name and 3 for the extension still apply. The link command gives the malloc heap the memory from the end of the program to
+  HIGH$ (``-pragma-define:CRT_HEAP_AMALLOC=1 -pragma-define:CRT_HEAP_ENABLE=1``); the library's ``open`` allocates
+  each file's FCB and buffer there, and ``strdup``, ``realloc`` and ``free`` need it. Without ``CRT_HEAP_ENABLE``
+  the heap would end at the DOS's stack, below the program, and wrap into the ROM, so every ``fopen`` fails. The
+  program returns to the DOS prompt when it ends. In the trs80gp emulator, ``trs80gp -m3 -ld prog.cmd`` boots LDOS
+  on a Model III and runs it (``-m1`` is a Model I). There, writing files works on the Model III LDOS disk; the
+  Model I TRSDOS 2.3 boot disk is write-protected (``-im wp 0 off`` lifts that) and the Model I LDOS boot disk
+  has no free space.
+
+  TRSDOS 1.3, the default DOS on the Model III, starts a program with its stack at ``$4089``, in the system's
+  variables. z88dk's startup code puts 64 bytes on it for ``atexit``, which moves the stack down onto those
+  variables, and the program hangs before ``main``. Adding ``-pragma-define:REGISTER_SP=-0x4411`` to the
+  link command (the stack at HIGH$, which the Model III keeps at ``$4411``; drop ``CRT_HEAP_ENABLE`` then, so the
+  heap ends below the stack) makes programs run on TRSDOS 1.3, but only on the Model III; files still don't work
+  there (``fopen`` hangs with the FCB in the heap).
+
+  z88dk's TRS-80 support is for the Model I and III memory map; it doesn't support the Model 4's own mode. Under
+  TRSDOS 6 on a Model 4, a program loads and exits, but its console output doesn't reach the screen, and the file
+  routines hang, as TRSDOS 6 has none of the Model I/III DOS entry points that z88dk's library calls.
 - ``z80-cpm``: a ``.com`` program for CP/M 2.2 and later, with file I/O through the BDOS. The command line comes
   from the CCP, which turns it into upper case. tnylpo (``tnylpo prog.com``) and RunCPM run it on the host; tnylpo
   works in the current directory and gives its files lower case names on the host.

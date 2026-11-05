@@ -596,6 +596,63 @@ class TestLlvmSyscallLowering: FunSpec({
         text.none { ".sys.curdir.buf" in it } shouldBe true
     }
 
+    test("with a file_extension_separator, fopen, remove and rename get the file names with their last '.' replaced, through internal wrappers") {
+        val mosC64 = LlvmTripleProfile.resolve("mos-c64")
+        val plain = TestProgram(LlvmTarget(2, mosC64)).apply { allFileSyscallsSub(); allHandleSyscallsSub() }.module()
+        LlvmPrinter.print(plain).lines().let { text ->
+            text.none { ".file.name" in it || "@.file.fopen" in it || "@.file.remove" in it || "@.file.rename" in it } shouldBe true
+        }
+        plain.function("main.files").lines().let { lines ->
+            lines.any { "call i16 @remove(ptr " in it } shouldBe true
+            lines.any { "call i16 @rename(ptr " in it } shouldBe true
+        }
+        plain.function("main.handles").lines().any { "call ptr @fopen(ptr " in it } shouldBe true
+
+        val module = TestProgram(LlvmTarget(2, mosC64.copy(fileExtensionSeparator = '/'))).apply { allFileSyscallsSub(); allHandleSyscallsSub() }.module()
+        val files = module.function("main.files").lines()
+        files.any { "call i16 @.file.remove(ptr " in it } shouldBe true
+        files.any { "call i16 @.file.rename(ptr " in it } shouldBe true
+        files.none { "@remove(" in it || "@rename(" in it } shouldBe true
+        module.function("main.handles").lines().any { "call ptr @.file.fopen(ptr " in it } shouldBe true
+        module.function(".file.open").lines().any { "call ptr @.file.fopen(ptr %name, ptr %mode)" in it } shouldBe true
+        module.function(".file.fopen").text() shouldBe """
+            define internal ptr @.file.fopen(ptr %p0, ptr %p1) {
+            entry:
+              call void @.file.name(ptr %p0, ptr @.file.name.buf0)
+              %result = call ptr @fopen(ptr @.file.name.buf0, ptr %p1)
+              ret ptr %result
+            }
+            """.trimIndent() + "\n"
+        module.function(".file.rename").lines().let { lines ->
+            lines shouldHave "  call void @.file.name(ptr %p0, ptr @.file.name.buf0)"
+            lines shouldHave "  call void @.file.name(ptr %p1, ptr @.file.name.buf1)"
+            lines shouldHave "  %result = call i16 @rename(ptr @.file.name.buf0, ptr @.file.name.buf1)"
+        }
+        module.function(".file.remove").lines() shouldHave "  %result = call i16 @remove(ptr @.file.name.buf0)"
+        module.function(".file.name").lines().let { lines ->
+            lines shouldHave "  %is_dot = icmp eq i8 %char, 46"
+            lines shouldHave "  %full = icmp eq i16 %index, 63"
+            lines shouldHave "  store i8 47, ptr %at"
+        }
+        val text = LlvmPrinter.print(module).lines()
+        text shouldHave "@.file.name.buf0 = internal global [64 x i8] zeroinitializer"
+        text shouldHave "@.file.name.buf1 = internal global [64 x i8] zeroinitializer"
+        text.count { it.startsWith("define internal void @.file.name(") } shouldBe 1
+    }
+
+    test("with a file_extension_separator, a native program for the host gets files whose last '.' is the separator").config(enabledOrReasonIf = requiresNativeHost) {
+        val directory = createTempDirectory("prog8-file-names").toRealPath()
+        try {
+            val target = LlvmTarget(8, checkNotNull(hostLlvmTarget.profile).copy(fileExtensionSeparator = '_'))
+            val module = TestProgram(target).apply { fileNameChecks(directory.toString()) }.module().withMainCalling("main.check")
+            val (exitCode, output) = compileAndRun(LlvmPrinter.print(module))
+            withClue("exit code = the number of the failed check; $output") { exitCode shouldBe 0 }
+            directory.listDirectoryEntries().map { it.name }.sorted() shouldBe listOf("d.e_txt", "x".repeat(63))
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
     test("a C function that the C library lacks and that a syscall still calls is an internal error that names the syscall") {
         val mosSim = LlvmTripleProfile.resolve("mos-sim")
         val profile = LlvmTripleProfile("noputchar", mosSim.triple, mosSim.dataLayout, 4, cIntSize = 2, libcLacks = setOf("putchar"))
@@ -761,6 +818,24 @@ private fun TestProgram.allFileSyscallsSub() {
         syscall 65 (): r16.l
         return
         """)
+}
+
+/** main.check for file names in the [directory]: a name of 70 letters and `.bin` is cut off before its `.` in the name buffer. */
+private fun TestProgram.fileNameChecks(directory: String) {
+    string("main.dir", directory)
+    string("main.first", "a.b.bin")
+    string("main.second", "c.txt")
+    string("main.renamed", "d.e.txt")
+    string("main.long", "x".repeat(70) + ".bin")
+    variable("main.bytes", DataType.arrayFor(BaseDataType.UBYTE, target),
+        IRVariableInitializer.Array((1..4).map { IRStSymbolicReference.Numeric(it.toDouble()) }), 4u)
+    sub("main.check", returns = listOf(DataType.UBYTE), code = Checks().apply {
+        check("load.p ra.p,#main.dir; syscall 50 (ra.p): rb.b", Is("rb.b", 1))
+        for (name in listOf("main.first", "main.second", "main.long"))
+            check("load.b ra.b,#1.b; load.p rb.p,#$name; load.p rc.p,#main.bytes; load.w rd.w,#4.w; syscall 42 (ra.b, rb.p, rc.p, rd.w): re.b", Is("re.b", 1))
+        check("load.p ra.p,#main.second; load.p rb.p,#main.renamed; syscall 44 (ra.p, rb.p): rc.b", Is("rc.b", 1))
+        check("load.p ra.p,#main.first; syscall 43 (ra.p): rb.b", Is("rb.b", 1))
+    }.subroutine())
 }
 
 /** Every file handle syscall once, with the quad offset and the byte origin that fileio passes to FSEEK. */

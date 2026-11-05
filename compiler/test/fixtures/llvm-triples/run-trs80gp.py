@@ -32,7 +32,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="trs80gp-") as directory:
         # the DOS gets the program under this name
         shutil.copyfile(program, os.path.join(directory, "prog.cmd"))
-        command = [trs80gp, "-ee", "-batch", "-turbo"] + options + ["prog.cmd"]
+        # the Model I TRSDOS boot disk is write-protected; changes to trs80gp's own disk images are never saved
+        command = [trs80gp, "-ee", "-batch", "-turbo", "-im", "wp", "0", "off"] + options + ["prog.cmd"]
         try:
             status = subprocess.run(command, cwd=directory, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL, timeout=TIMEOUT_SECONDS).returncode

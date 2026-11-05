@@ -2252,13 +2252,16 @@ private val notRunOnTrs80gp: Map<String, String> = notRunOnZ88dk +
         "sys.argc and sys.argv with a single argument"
     ).associateWith { "trs80gp passes no command line, and z88dk's TRS-80 startup code then gives argc 0, without a program name" } +
     listOf(
-        "diskio writing, reading lines, seeking in and deleting a text file",
         "diskio directories, renaming and deleting",
-        "diskio directory listings of the files and subdirectories, sorted by name",
-        "fileio copying between two open files, seeking and the end of the file",
-        "diskio saving and loading memory"
-    ).associateWith { "the file routines of z88dk's TRS-80 cmd library fail to open files in trs80gp, also from C, and some runs hang" } +
+        "diskio directory listings of the files and subdirectories, sorted by name"
+    ).associateWith { "TRSDOS and LDOS have no directories" } +
     mapOf(
+        "diskio writing, reading lines, seeking in and deleting a text file" to
+            "z88dk's TRS-80 cmd library lacks ftell, so the file position and size are unknown and seeking fails",
+        "diskio saving and loading memory" to
+            "load needs ftell, which z88dk's TRS-80 cmd library lacks",
+        "fileio copying between two open files, seeking and the end of the file" to
+            "the fread of z88dk's TRS-80 cmd library doesn't set the end-of-file flag, so a loop that reads until fileio.eof() never ends",
         "pointers to memory-mapped variables use the same storage as the variables" to
             $$"the memory-mapped $0400 is in the TRS-80's ROM, so the stores to it are lost"
     )

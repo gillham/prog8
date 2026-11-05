@@ -232,8 +232,8 @@ Made by the user, 2026-11-05:
     - `-m1` with TRSDOS and with LDOS
     - `-m3 -ld`
     - `-m4` with TRSDOS 6 and with LDOS
-  - Under `-m3` with TRSDOS 1.3 (the default) the `.cmd` never starts: the screen stops at "TRSDOS Ready" and a line of `0....`. Not explained yet.
-  - `-m4` with TRSDOS 6 runs in Model 4 mode. The test only shows that loading and exiting work; a program that prints through z88dk's Model III console may not.
+  - Under `-m3` with TRSDOS 1.3 (the default) the `.cmd` never starts: z88dk's startup code overruns TRSDOS 1.3's small stack (see step 6).
+  - `-m4` with TRSDOS 6 runs in Model 4 mode. Loading and exiting work; console output doesn't reach the screen (step 6).
   - Other useful options: `-id N` waits N frames, `-it` writes the text VRAM to `trs80-text-N.bin`, `-ix` exits once the command line input has been sent.
 - **CP/M (`+cpm`, subtype `default`, `.com`):**
   - `tnylpo -b prog.com` runs it headless, with console output on stdout. File I/O works in the current directory; the files are lower case on the host.
@@ -378,18 +378,57 @@ Made by the user, 2026-11-05:
      - fileio copying: z88dk's CP/M `fread` doesn't set the end-of-file flag either; reads give 0 forever.
      - no directories; the CCP upper-cases and splits the arguments; argv[0] is empty (the three argument programs); the console expands tabs (strings library); `$0400` is in the program's code.
    - **Excluded on trs80gp:** console input (no stdin), arguments (no command line; z88dk's TRS-80 crt0 then gives argc 0, while with arguments argv[0] is an empty name), `$0400` is ROM, and **every file program**.
-   - **Surprise, TRS-80 files:** z88dk's `-ltrsdos` file routines fail in trs80gp, also from a plain C program linked with zcc: `fopen` for writing and reading (`TEST/TXT`, `TEST/TXT:0`, `SYS0/SYS`) returns NULL on Model I TRSDOS and LDOS, and hangs on Model III LDOS and Model 4. Not yet known whether it's z88dk's library or the emulator setup. The z80-trs80-cmd docs still say the file routines work; that is unverified.
+   - **Surprise, TRS-80 files:** z88dk's `-ltrsdos` file routines fail in trs80gp, also from a plain C program linked with zcc: `fopen` for writing and reading (`TEST/TXT`, `TEST/TXT:0`, `SYS0/SYS`) returns NULL on Model I TRSDOS and LDOS, and hangs on Model III LDOS and Model 4. Explained and fixed in step 6 (a z88dk heap bug); Model 4 can't work.
    - **Model 4:** the smoke programs pass under TRSDOS 6 (output through the printer port), so z88dk's Model III code runs in Model 4 mode; the screen output itself wasn't checked.
    - **Results and timings** (each program optimized and not, build included): tnylpo 15 tests in 16 s; trs80gp Model III 16 tests in 157 s; Model I and Model 4 5 tests each in 22 s and 27 s. All pass.
 6. **Research items** (the result gets written down whether or not it is fixed):
    - Why TRSDOS 1.3 on the Model III doesn't start a directly loaded `.cmd`. Check whether it's trs80gp or z88dk's `.cmd` format: try a `.cmd` from another source, and loading from a disk image.
    - Whether z88dk's Model I/III console works under TRSDOS 6 in Model 4 mode.
+   - Why z88dk's TRS-80 file routines fail in trs80gp.
+   Status: done 2026-11-05. Repros and a README for z88dk are in the session scratchpad (`step6/upstream/`).
+   - **Files, the cause:** a z88dk heap bug. The `cmd` subtype's `-DAMALLOC` takes the heap's top from SP, as `trs80_crt0.asm` reads HIGH$ only under `CRT_HEAP_ENABLE`, which nothing defines. The cmd crt0 keeps the DOS's stack, below the program (SP $41A2 Model I TRSDOS, $417E Model I LDOS, $4185 Model III LDOS; BSS ends near $62B0), so the size wraps and malloc returns ROM addresses ($08B3-$08D0). `open()` mallocs its FCB and buffer, so @FSPEC fails (errno 19) and every fopen gives NULL. Also in a plain zcc C program.
+   - **The fix:** `-pragma-define:CRT_HEAP_ENABLE=1` next to `CRT_HEAP_AMALLOC=1`: the heap then runs from the program's end to HIGH$ (malloc gave $FEDE). Added to `z80-trs80-cmd`, the trs80gp test profile, and the generator (which adds it when the platform's crt0 tests `DEFINED_CRT_HEAP_ENABLE`).
+   - **Then:** a C program's fopen "w", fputs, fclose, fopen "r", fgets work on Model III LDOS and on Model I TRSDOS 2.3 once drive 0 isn't write-protected: its boot disk is (DOS COPY says "HIT WRITE ERROR"; `-im wp 0 off` lifts it, so `run-trs80gp.py` now passes that). The Model I LDOS boot disk has 0 K free (a file is created with no data), and blank disks in drive 1 (`:tb1`, `:lb1`) didn't help (error 26), not looked into further.
+   - **The Prog8 file programs still fail on Model III LDOS**, each for a known reason, so they stay excluded (with the reasons now in `notRunOnTrs80gp`): `ftell` is lacking (f_tell 0/0, seeks fail, `diskio.load` needs it), `fread` never sets the end of file (the fileio copy loop runs forever reading 0), and `.` in a TRSDOS name starts the password, so `memory.prg` and `memory.bin` are one file (the second save fails; with `memory/prg` both save). Directories don't exist.
+   - **Update, the `.` collision:** fixed by the profile key `file_extension_separator = /` on `z80-trs80-cmd`: the generated code copies each file name of fopen, remove and rename to a 64-byte static buffer and replaces its last `.` there, so `name.prg` reaches the DOS as `NAME/PRG`. A program writing, reading and deleting `name.prg` and `name.bin` passes on Model III LDOS (on the Model I the writes fail as before, also with `name/prg` names). `ftell` and the end of file still keep the file programs excluded.
+   - **TRSDOS 1.3, the cause:** not trs80gp: a hand-made 14-byte `.cmd` (store to $3C00, exit through $47) runs from TRSDOS 1.3. TRSDOS 1.3 enters with SP=$4089; the crt0 reserves 64 bytes on it for atexit, which moves the stack down to $4049 and below, onto system variables (the clock bytes are around $4041; that the interrupt corrupts it there is the likely, not proven, mechanism). A smaller stack use (no atexit reserve) or a stack elsewhere fixes it, which supports that. Exit probes patched into a z88dk asm-only `.cmd` show it gets past crt0_init and sbrk and hangs in the command line scan, which has no stack use itself. The "0...." line is TRSDOS 1.3's own empty command field ($B0 cursor, then dots), so the screen shows the DOS waiting.
+   - **TRSDOS 1.3 workaround:** `-pragma-define:REGISTER_SP=-0x4411` (SP from HIGH$, at $4411 on the Model III, $FFFF there) runs the asm program and the Prog8 hello (output and status 3), without `CRT_HEAP_ENABLE` so the heap ends below the stack. `CLIB_EXIT_STACK_SIZE=0` runs the asm program but not Prog8's hello. Model III only ($4411 is something else on the Model I), so not in the built-in profile. Files still hang on TRSDOS 1.3: direct DOS calls with a static FCB work, OPEN_NEW with the FCB in the heap ($D7xx) hangs.
+   - **Model 4 (TRSDOS 6 and LS-DOS 6):** the program's console output doesn't show: the 80-column screen keeps the DOS's boot text, and RAM at $3C00 is unchanged (00 FF pattern), so nothing is corrupted there; only the printer copy appears. $4418-$442F read 00 FF ..., no Model I/III DOS vectors, so fopen hangs. A program waiting in getchar ended in the TRSDOS 6 DEBUG monitor when trs80gp injected a key. Typed input to getchar didn't arrive on Model III LDOS either, so keyboard input wasn't verified anywhere.
 7. **Docs:**
    - targetsystem.rst: the `base` key, the generator, each built-in profile with its memory map, I/O and what's lacking, and how to run it on hardware or an emulator.
    - AGENTS.md: the new tools and variables.
    - todo.rst: the Model 4 native mode profile (its own crt0) and port I/O builtins for platforms whose hardware is on I/O ports (C128, ZX).
 
 Each step keeps llvm32/llvm64 `.ll` byte-identical and the mos-sim and z80-test results unchanged.
+
+**Milestone 3 status: done 2026-11-05.**
+- **Mac:**
+  - Full build without the tool variables: 3444 tests, 0 failures, 98 skipped.
+  - With `LLVM_MOS`, `LLVM_Z80` and `Z88DK` set: 3444 tests, 0 failures, 33 skipped (26 of them trs80gp tests, which need `TRS80GP`).
+- **Remote check:** all 10 combinations passed, 72 programs.
+- **Windows suite:** 3417 tests counted, 0 failures, 106 skipped. The 27 tests of `simpleAst` were not copied back; every other test name matches the Mac run.
+
+## Milestone 4: a z88dk textio
+
+### Decisions
+Made by the user, 2026-11-05:
+- **Starts after milestone 3** is finished, including the docs, the remote check and the Windows suite.
+- **A profile key names a library family:** `library = z88dk` in `z80-z88dk`, so every profile built on it inherits it, generated ones included. The compiler then looks in `prog8lib/llvm16/z88dk/` before `prog8lib/llvm16/` and `prog8lib/`. The directory is named after the family, not the profile.
+- **The z88dk `textio.p8`** keeps the `txt.*` interface and uses z88dk's classic console routines (`gotoxy`, `clrscr`, `textcolor`, `fgetc_cons`, ...).
+- **Hardware-specific versions are left to the developer,** such as TRS-80 video RAM at `$3C00`. A project's own `textio.p8` already comes first, because the filesystem is searched before the built-in library. The docs should say so, maybe with an example.
+- **Maybe later:** a list value (`library = trs80 z88dk`, searched in order) for per-platform layers. Not until a platform needs one.
+
+### The routines to support first
+These are the ones the user's program uses:
+- `txt.chrout`, `txt.print`, `txt.print_ub`, `txt.print_uw`, `txt.spc`, `txt.nl`
+- `txt.cls`, `txt.plot`
+- `txt.color`, `txt.setclr`, `txt.rvs_on`, `txt.rvs_off`
+- `txt.setchr`, `txt.getchr` (screen character access by position)
+
+### To find out first
+- **Which console routines each platform supports:** `+test`, TRS-80, CP/M, ZX and C128 differ. The TRS-80 crt0 uses z88dk's generic console; the C128 uses the ANSI terminal; `+test` and CP/M have only a stream.
+- **How `setchr`/`getchr` can work:** they read and write the screen by position. z88dk's generic console may have a character read-back; otherwise these become platform-specific.
+- **Calling the C console routines from Prog8** on llvm16, in the way `putchar` and `fgetc_cons` are called.
 
 ## Later milestones
 - Floats on llvm16 (above).

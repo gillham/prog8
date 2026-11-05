@@ -772,6 +772,9 @@ private fun argumentHelper(count: LlvmValue.Global, arguments: LlvmValue.Global,
 
 // PATH_MAX of Linux; that of macOS is 1024
 private const val CURDIR_BUFFER_SIZE = 4096
+// a DOS file spec such as TRSDOS's NAME/EXT.PASSWORD:DRIVE is far shorter; a longer name is cut off
+private const val FILE_NAME_BUFFER_SIZE = 64
+private val FILE_NAME_ROUTINES = setOf(Libc.FOPEN, Libc.REMOVE, Libc.RENAME)
 private const val SEEK_SET = 0L
 private const val SEEK_END = 2L
 
@@ -815,13 +818,91 @@ private fun LlvmFunctionBuilder.cType(type: CType): LlvmType = when (type) {
     CType.OFFSET -> mapper.fileOffset
 }
 
+/** The C routine, or with the profile's file_extension_separator for one that takes file names, its [fileNameWrapper]. */
 private fun LlvmFunctionBuilder.libc(routine: Libc): LlvmValue.Global {
+    val separator = profile?.fileExtensionSeparator
+    if (separator != null && routine in FILE_NAME_ROUTINES)
+        return helperFunction(".file.${routine.name.lowercase()}") { fileNameWrapper(routine, separator) }
+    return cLibrary(routine)
+}
+
+private fun LlvmFunctionBuilder.cLibrary(routine: Libc): LlvmValue.Global {
     val name = when (routine) {
         Libc.FSEEK -> profile?.fseekSymbol
         Libc.FTELL -> profile?.ftellSymbol
         else -> null
     } ?: routine.name.lowercase()
     return LlvmValue.Global(externalFunction(name, cType(routine.returnType), routine.parameterTypes.map { cType(it) }).name)
+}
+
+/**
+ * The C [routine] with the same signature, but whose file name arguments, the first one or both for rename(), are copied to
+ * static buffers of their own with the last `.` replaced by [separator], so that the program's strings stay as they are.
+ */
+private fun LlvmFunctionBuilder.fileNameWrapper(routine: Libc, separator: Char): LlvmFunction {
+    val parameters = routine.parameterTypes.mapIndexed { index, type -> LlvmValue.Local("p$index", cType(type)) }
+    val nameCount = if (routine == Libc.RENAME) 2 else 1
+    val convert = helperFunction(".file.name") { fileNameHelper(separator) }
+    val code = mutableListOf<LlvmInstruction>()
+    val args = parameters.mapIndexed { index, parameter ->
+        if (index >= nameCount) parameter
+        else runtimeGlobal(".file.name.buf$index", LlvmType.Array(FILE_NAME_BUFFER_SIZE, LlvmType.I8)).also {
+            code += LlvmInstruction.Call(null, convert, listOf(parameter, it), LlvmType.Void)
+        }
+    }
+    val returnType = cType(routine.returnType)
+    val result = LlvmValue.Local("result", returnType)
+    code += LlvmInstruction.Call(result, cLibrary(routine), args, returnType)
+    code += LlvmInstruction.Ret(result)
+    return helper(".file.${routine.name.lowercase()}", returnType, parameters, "entry" to code)
+}
+
+/** `void (ptr name, ptr buffer)`: copies the name to the buffer, cut off to fit, and replaces its last `.` with [separator]. */
+private fun LlvmFunctionBuilder.fileNameHelper(separator: Char): LlvmFunction {
+    val intPtr = mapper.intPtr
+    val name = LlvmValue.Local("name", LlvmType.Ptr)
+    val buffer = LlvmValue.Local("buffer", LlvmType.Ptr)
+    val index = LlvmValue.Local("index", intPtr)
+    val dot = LlvmValue.Local("dot", intPtr)
+    val from = LlvmValue.Local("from", LlvmType.Ptr)
+    val char = LlvmValue.Local("char", LlvmType.I8)
+    val to = LlvmValue.Local("to", LlvmType.Ptr)
+    val end = LlvmValue.Local("end", LlvmType.I1)
+    val full = LlvmValue.Local("full", LlvmType.I1)
+    val stop = LlvmValue.Local("stop", LlvmType.I1)
+    val isDot = LlvmValue.Local("is_dot", LlvmType.I1)
+    val lastDot = LlvmValue.Local("last_dot", intPtr)
+    val next = LlvmValue.Local("next", intPtr)
+    val found = LlvmValue.Local("found", LlvmType.I1)
+    val at = LlvmValue.Local("at", LlvmType.Ptr)
+    val none = LlvmValue.IntConstant(-1, intPtr)
+    return helper(".file.name", LlvmType.Void, listOf(name, buffer),
+        "entry" to listOf(LlvmInstruction.Br("loop")),
+        "loop" to listOf(
+            LlvmInstruction.Phi(index, listOf(LlvmValue.IntConstant(0, intPtr) to "entry", next to "copy")),
+            LlvmInstruction.Phi(dot, listOf(none to "entry", lastDot to "copy")),
+            LlvmInstruction.GetElementPtr(from, LlvmType.I8, name, listOf(index), inBounds = true),
+            LlvmInstruction.Load(char, from),
+            LlvmInstruction.GetElementPtr(to, LlvmType.I8, buffer, listOf(index), inBounds = true),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, end, char, LlvmValue.IntConstant(0, LlvmType.I8)),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, full, index, LlvmValue.IntConstant(FILE_NAME_BUFFER_SIZE - 1L, intPtr)),
+            LlvmInstruction.BinaryOp(BinaryOperator.OR, stop, end, full),
+            LlvmInstruction.CondBr(stop, "done", "copy")),
+        "copy" to listOf(
+            LlvmInstruction.Store(char, to),
+            LlvmInstruction.Icmp(IcmpCondition.EQ, isDot, char, LlvmValue.IntConstant('.'.code.toLong(), LlvmType.I8)),
+            LlvmInstruction.Select(lastDot, isDot, index, dot),
+            LlvmInstruction.BinaryOp(BinaryOperator.ADD, next, index, LlvmValue.IntConstant(1, intPtr)),
+            LlvmInstruction.Br("loop")),
+        "done" to listOf(
+            LlvmInstruction.Store(LlvmValue.IntConstant(0, LlvmType.I8), to),
+            LlvmInstruction.Icmp(IcmpCondition.SGE, found, dot, LlvmValue.IntConstant(0, intPtr)),
+            LlvmInstruction.CondBr(found, "replace", "kept")),
+        "replace" to listOf(
+            LlvmInstruction.GetElementPtr(at, LlvmType.I8, buffer, listOf(dot), inBounds = true),
+            LlvmInstruction.Store(LlvmValue.IntConstant(separator.code.toLong(), LlvmType.I8), at),
+            LlvmInstruction.Ret(null)),
+        "kept" to listOf(LlvmInstruction.Ret(null)))
 }
 
 /** The FILE pointer of the stream that the file syscalls read from, which is null when there is none. */
