@@ -5,8 +5,11 @@ import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.ints.shouldBeGreaterThan
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
+import prog8.code.ast.PtFunctionCall
+import prog8.code.ast.walkAst
 import prog8.code.target.Amiga500Target
 import prog8.code.target.Qemu68kTarget
+import prog8.code.target.VMTarget
 import prog8tests.helpers.ErrorReporterForTests
 import prog8tests.helpers.compileText
 
@@ -663,5 +666,29 @@ main {
         // not a single-byte loop counter.
         lines.any { it.startsWith("move.w") && it.endsWith(",d1") } shouldBe true
         lines.count { it.startsWith("dbra  d1,.ac_loop_") } shouldBe 2
+    }
+
+    test("@(&w) is the high byte and @(&w+1) the low byte of a word variable on big-endian m68k") {
+        val src = $$"""
+main {
+    sub start() {
+        uword @shared w = $1234
+        ubyte @shared first = @(&w)
+        ubyte @shared second = @(&w+1)
+    }
+}"""
+        fun byteReads(result: prog8.compiler.CompilationResult): List<String> {
+            val names = mutableListOf<String>()
+            walkAst(result.codegenAst!!.entrypoint()!!) { node, _ ->
+                if(node is PtFunctionCall && node.name in setOf("lsb", "msb"))
+                    names += node.name
+                true
+            }
+            return names
+        }
+        for(optimize in listOf(false, true)) {
+            byteReads(compileText(Qemu68kTarget(), optimize, src, outputDir, writeAssembly = true, assemble = false)!!) shouldBe listOf("msb", "lsb")
+            byteReads(compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!) shouldBe listOf("lsb", "msb")
+        }
     }
 })

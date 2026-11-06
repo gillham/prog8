@@ -9,6 +9,7 @@ txt {
     extsub wherey() -> word
     extsub cvpeek(word x, word y) -> word
     extsub screensize(^^uword w, ^^uword h)
+    extsub getk() -> word
 
 sub width() -> ubyte {
     uword w, h
@@ -24,6 +25,16 @@ sub height() -> ubyte {
 
 sub home() {
     plot(0, 0)
+}
+
+sub getkey() -> ubyte {
+    ; ---- the key pressed, or 0 when there is none, without waiting (z88dk's getk)
+    return lsb(getk())
+}
+
+sub waitkey() -> ubyte {
+    ; ---- wait for a key and return it: chrin(), which is z88dk's fgetc_cons on these profiles
+    return chrin()
 }
 
 sub column(ubyte col) {

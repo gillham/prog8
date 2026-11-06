@@ -34,6 +34,7 @@ class LlvmTarget(
     override val defaultOutputType = OutputType.RAW
     override val defaultLauncherType = CbmPrgLauncherType.NONE
 
+    override val isBigEndian: Boolean get() = profile.isBigEndian
     val targetTriple: String get() = profile.triple
     val dataLayout: String get() = profile.dataLayout
 
@@ -121,18 +122,25 @@ class LlvmTarget(
     override fun getFloatAsmBytes(num: Number): String =
         convertFloatToBytes(num.toDouble()).joinToString(", ") { "$%02x".format(it.toInt()) }
 
-    // little-endian IEEE-754 single or double; the triple profile guarantees a little-endian data layout
+    // little-endian IEEE-754 single or double
     override fun convertFloatToBytes(num: Double): List<UByte> {
+        requireLittleEndianFloats()
         val size = FLOAT_MEM_SIZE.toInt()
         val bits = if(size == 4) num.toFloat().toRawBits().toLong() else num.toRawBits()
         return List(size) { (bits ushr (8 * it)).toUByte() }
     }
 
     override fun convertBytesToFloat(bytes: List<UByte>): Double {
+        requireLittleEndianFloats()
         val size = FLOAT_MEM_SIZE.toInt()
         require(bytes.size==size) { "need $size bytes" }
         val bits = bytes.foldIndexed(0L) { index, bits, byte -> bits or (byte.toLong() shl (8 * index)) }
         return if(size == 4) Float.fromBits(bits.toInt()).toDouble() else Double.fromBits(bits)
+    }
+
+    private fun requireLittleEndianFloats() {
+        if(isBigEndian)
+            throw UnsupportedOperationException("float to bytes conversion is not supported on the big-endian llvm triple profile '${profile.name}'")
     }
 
     override fun launchEmulator(selectedEmulator: Int, programFile: Path, quiet: Boolean) {

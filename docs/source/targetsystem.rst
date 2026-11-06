@@ -23,7 +23,7 @@ Currently these machines can be selected as a compilation target (via the ``-tar
 - 'virtual': a builtin virtual machine (32-bit pointers, 16 MB memory)
 - 'llvm64' (or 'llvm'): a hosted 64-bit program, compiled to LLVM IR (see :ref:`llvm_triples`)
 - 'llvm32': a hosted 32-bit program, compiled to LLVM IR, such as WebAssembly with WASI
-- 'llvm16': a 16-bit program, compiled to LLVM IR and built with `llvm-mos <https://llvm-mos.org/>`_ for the 6502 or with llvm-z80 and z88dk for the Z80 (experimental, see :ref:`llvm16`)
+- 'llvm16': a 16-bit program, compiled to LLVM IR and built with `llvm-mos <https://llvm-mos.org/>`_ for the 6502, with llvm-z80 and z88dk for the Z80, or with llvm-mc6809 for the 6809 (experimental, see :ref:`llvm16`)
 - custom targets via a separate configuration file (see :ref:`customizable_target`)
 
 This chapter explains some relevant system details of the c64 and cx16 machines.
@@ -266,7 +266,7 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
    ``arm64-apple-macosx``, ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``,
    ``riscv64-unknown-linux-gnu``, ``riscv32-unknown-linux-gnu``, ``armv7-unknown-linux-gnueabihf``, ``x86_64-pc-windows-msvc``,
    ``x86_64-w64-windows-gnu``, and for ``llvm16`` ``mos-sim``, ``mos-c64``, ``z80-test``, ``z80-trs80``, ``z80-trs80-cmd``,
-   ``z80-cpm``, ``z80-zx`` and ``z80-c128`` (``z80-z88dk`` is only a base, see ``base`` below)
+   ``z80-cpm``, ``z80-zx``, ``z80-c128``, ``mc6809-sim`` and ``mc6809-coco`` (``z80-z88dk`` is only a base, see ``base`` below)
 4. any other triple that clang knows, such as ``aarch64-linux-musl`` or ``i686-unknown-linux-gnu``: the compiler asks
    clang for its normalized name, data layout and C ``long`` size, and builds with ``--target=<name>``.
    Run, link and startup settings need a profile file.
@@ -307,7 +307,8 @@ These are the keys of a profile; an unknown key is an error:
     The LLVM target triple written into the module, for example ``wasm32-unknown-wasip1``.
 ``datalayout``
     The LLVM data layout string of that triple, as printed by ``clang --target=<triple> -S -emit-llvm -x c /dev/null -o -``.
-    It must be little-endian (start with ``e``), and its pointer width (the ``p:`` entry, 64 bits when there is none)
+    It starts with ``e`` for a little-endian or ``E`` for a big-endian target; on a big-endian target the bytes
+    of a word or long in memory follow the machine's order (so ``@(&w)`` is the high byte of the word ``w``). Its pointer width (the ``p:`` entry, 64 bits when there is none)
     must match the target: 16 bits for ``llvm16``, 32 bits for ``llvm32``, 64 bits for ``llvm64``.
     Without it, clang supplies it for ``triple`` and ``clang_args``, which then must not need an unset environment variable.
 ``c_long_size``
@@ -436,6 +437,9 @@ of its Prog8 types. On WebAssembly a mismatch with the C library's own type, suc
 The built-in ``wasm32-wasip1`` profile passes ``-Wl,--fatal-warnings``, so such a mismatch fails the build instead.
 On wasm32 the C ``int``, ``long`` and ``size_t`` types are all ``long`` in Prog8. A file seek to an offset that a 32-bit
 C ``long`` can't hold fails.
+A C function whose name starts with ``_``, such as picolibc's ``__decb_getc``, can't be declared as an ``extsub``,
+as Prog8 identifiers can't start with an underscore: call it through a small C wrapper with another name, in a profile's
+``startup_source`` (as ``mc6809-coco`` does for ``txt.getkey()``).
 
 
 .. _llvm16:
@@ -444,7 +448,7 @@ The llvm16 target
 -----------------
 
 The ``llvm16`` target (experimental) compiles the program to LLVM IR for CPUs with 16-bit pointers, and builds it with
-the `llvm-mos <https://llvm-mos.org/>`_ SDK for the 6502 family, or for the Z80 (see :ref:`llvm16_z80`). The
+the `llvm-mos <https://llvm-mos.org/>`_ SDK for the 6502 family, or for the Z80 (see :ref:`llvm16_z80`) or the 6809 (see :ref:`llvm16_6809`). The
 ``LLVM_MOS`` environment variable names the directory of the llvm-mos SDK, whose clang the mos profiles use; building
 fails without it, but writing the ``.ll`` file works. ``sys.target`` is 252. The built-in profiles for the 6502 are:
 
@@ -606,6 +610,33 @@ while the screen is 64 by 16 on the TRS-80, 32 by 24 on the ZX Spectrum and 40 b
 address from ``DEFAULT_WIDTH``, such as ``$3c00 + row * DEFAULT_WIDTH + col`` on the TRS-80, reads and writes the
 wrong place from the second row on.
 
+**Keyboard input on llvm16.** Every llvm16 textio has ``txt.getkey()``, which gives the key pressed or 0 when there is
+none, without waiting, and ``txt.waitkey()``, which waits for a key and gives it. What they use depends on the textio:
+
+- the llvm16 textio (``mos-sim``, ``mos-c64``, ``z80-test``, ``z80-cpm``, ``mc6809-sim`` and generated profiles), where
+  the console is a stream: ``waitkey`` is ``txt.chrin()``, the next character of stdin, so it gives 0 at the end of the
+  input (on CP/M in tnylpo, which then gives ``^Z`` forever, 26). There is no keyboard polling: the C libraries of these
+  profiles can't read stdin without waiting, so ``getkey`` always gives 0. On ``mos-c64`` the SDK's ``getchar`` reads
+  through the KERNAL's ``CHRIN``, a whole line with the screen editor, so ``waitkey`` waits for RETURN and then gives the
+  line a character at a time. ``txt.input_line()`` doesn't echo what it reads: a terminal shows what is typed itself.
+- the z88dk and z88dk-ansi textios (``z80-trs80``, ``z80-trs80-cmd``, ``z80-zx``, ``z80-c128``): ``getkey`` is z88dk's
+  ``getk()`` (``int getk(void)``) and ``waitkey`` is ``txt.chrin()``, z88dk's ``fgetc_cons()`` (``int fgetc_cons(void)``),
+  which waits for a key and doesn't echo it. On the TRS-80 ``getk`` calls the ROM's keyboard scan (``$002b``), which reports
+  a new key press; on the ZX Spectrum it takes the ROM's last key (``LAST-K``) and clears it; on the C128 it scans the
+  keyboard matrix and gives the key that is held down, again on each call while it is held, as ``in_Inkey()`` does
+  (``in_Inkey()`` gives the key held down now, ``getk()`` on the other platforms the next key press). Enter is the
+  platform's code, 13 on the TRS-80 and the C128, unless z88dk's ``STANDARDESCAPECHARS`` is on.
+- the coco textio (``mc6809-coco``): ``getkey`` calls Color BASIC's ``POLCAT`` (picolibc's ``char __decb_getc(void)``,
+  through the wrapper ``int prog8_coco_getkey(void)`` in the profile's startup source), which reports each key press
+  once, and ``waitkey`` calls it until it gives a key. Enter is 13 there, while ``txt.chrin()`` (picolibc's ``getchar``,
+  which polls ``POLCAT`` too) gives it as 10. Both read the same keyboard, so a key goes to whichever reads first.
+
+On the machine profiles (the z88dk, z88dk-ansi and coco textios) the key routines don't echo, so ``txt.input_line()``
+(and ``input_chars``, ``readln`` and ``prompt``, which use it) echoes each character it stores through ``txt.chrout()``,
+and a new line at Enter, as BASIC does. Backspace (8, the CoCo's and the TRS-80's left arrow; 12 and 127 are taken as
+it too, the delete key of the ZX Spectrum and the C128) removes the last character from the screen and the buffer.
+Other control codes, and the characters past the maximum length, are ignored. There is no end of the input there.
+
 - ``z80-trs80``: the TRS-80 Model I and III, as a cassette file. The program starts at ``$5200``. The Model I has
   memory-mapped devices at ``$37e0-$37ff`` (the printer at ``$37e8`` and the disk controller), both models the
   keyboard matrix at ``$3800-$3bff`` and the video RAM at ``$3c00-$3fff``; the Model III has its printer on port
@@ -654,6 +685,88 @@ wrong place from the second row on.
 
 The ZX Spectrum and the C128 reach their hardware only through I/O ports, which Prog8 code can't access yet.
 
+.. _llvm16_6809:
+
+The 6809 with llvm-mc6809
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The built-in ``mc6809-sim`` profile (``-target llvm16 -triple mc6809-sim``) builds a bare-metal 6809 program with the
+``mc6809-clang`` of the `llvm-mc6809 <https://github.com/markrvmurray/llvm-mc6809>`_ release bundle, which includes the
+picolibc C library; ``LLVM_MC6809`` names its directory. As with the other llvm16 profiles, writing the ``.ll`` file
+works without it. The program is linked with ``-mcrt0=semihost``, the startup code for a simulator, and ``-emu`` runs
+it in ``usim09batch``, which prints the program's output, reads its input and gives back its exit status. Build
+``usim09batch`` from Mark Murray's USim fork (``markrvmurray/usim``, not the original USim) at the revision that
+llvm-mc6809's CI pins, and put it on the PATH; it builds on Unix-like systems only. The run command stops a program after
+2 billion instructions, and ``usim09batch`` then exits with status 124. The profile also links a small support source
+that waits for the simulated console to send the last character before the program halts, which the simulator would
+otherwise lose.
+
+Everything listed above for ``llvm16`` applies, with ``io_ranges`` of ``$ffc0-$ffcf``, the simulator's devices. Besides:
+
+- the 6809 is big-endian, and so are the program's words, longs and quads in memory: ``peekw``, ``pokew``, word
+  arrays, struct fields and byte views of words, such as ``@(&w)`` and ``@(&w+1)``, follow the machine's byte order:
+  ``@(&w)`` is the most significant byte here. Use ``lsb``, ``msb``, ``setlsb``, ``setmsb`` and ``mkword`` for code that
+  must give the same result on every target.
+- the cx16 virtual registers keep their meaning: ``cx16.r0L`` is still the low byte of ``cx16.r0``, which on a
+  big-endian target lies at the register's address + 1. The two words of each pair such as ``cx16.r0r1sl`` are
+  swapped as well, so that ``cx16.r0`` stays the low word of the long; so the addresses of ``cx16.r0`` to ``cx16.r15``
+  are not ascending.
+- the 2-byte header that ``diskio.save`` writes, and that ``diskio.load`` skips, keeps the low byte of the address
+  first, as in a Commodore ``.prg`` file.
+- console input works, through picolibc's ``getchar``.
+- there are no files: ``fopen`` links but always fails, so the file routines report a failure. Directories,
+  ``curdir()`` and waiting behave as on ``mos-sim``. picolibc is built without floats, and has no math library
+  routines, ``strtod`` or ``usleep``.
+
+The built-in ``mc6809-coco`` profile (``-target llvm16 -triple mc6809-coco``) builds a program for the Color Computer 2
+and 3 with Extended or Disk Extended Color BASIC, with the ``clang`` of the same release bundle for the
+``mc6809-unknown-decb`` triple. ``-o name`` gives ``name.bin``, a machine language file for ``LOADM``: the program and its
+direct page load at ``$3F00``. Nothing here runs it, so ``-emu`` doesn't work. Copy the file to a Disk BASIC disk image,
+for example with the ToolShed tools: ``decb dskini disk.dsk`` makes an empty one, and
+``decb copy -2 -b name.bin disk.dsk,NAME.BIN`` copies the program to it. Then on the CoCo, or in an
+emulator such as XRoar (``xroar -machine coco3 -load-fd0 disk.dsk``, or ``-machine coco2bus`` for a CoCo 2), type::
+
+    CLEAR 200,&H3EFF
+    LOADM"NAME"
+    EXEC
+
+The ``CLEAR`` moves BASIC's strings and stack below the program; without it the program gets no memory for
+``malloc``. The program, its data and its heap share the memory from ``$3F00`` to the top of RAM, ``$7FFF`` in BASIC on
+a 32 KB or 64 KB machine and on the CoCo 3, so about 16 KB. When the program ends it returns to BASIC, without an exit
+status. XRoar's ``-run`` and ``-load`` options start a ``.bin`` before BASIC has set up the machine, which doesn't work.
+
+Everything listed above for ``mc6809-sim`` applies, apart from these:
+
+- every constant address is volatile (``io_ranges = *``), as on the other machine profiles: the hardware is at
+  ``$FF00-$FFFF``, and BASIC's interrupt changes variables in RAM.
+- the console goes through the BASIC ROM, to the 32x16 text screen at ``$0400``, and input reads the keyboard.
+  The screen has no lower case: BASIC shows lower case letters as inverse upper case ones. The profile's
+  ``library = coco`` gives ``txt`` the coco textio for that screen (the CoCo 3's 40 and 80 column screens and graphics
+  modes are not used):
+
+  - output goes to BASIC's ``CHROUT`` unbuffered, through the profile's ``putchar_symbol``, a small C routine embedded
+    in the compiler that turns ``\n`` into the carriage return that ``CHROUT`` wants. ``CHROUT`` handles carriage return
+    and backspace, scrolls at the end of the screen, and ignores the other control codes (line feed, 7, 9, 12, 27, ...).
+  - ``txt.width()`` and ``txt.height()`` give 32 and 16. ``txt.cls()`` fills the screen with spaces;
+    ``txt.plot()``, ``txt.home()`` and ``txt.column()`` set BASIC's cursor ``CURPOS`` (``$0088``, the screen address
+    where ``CHROUT`` prints next, ``txt.CURPOS``), so they also move where BASIC prints after the program.
+  - ``txt.setchr()`` and ``txt.getchr()`` use screen memory (``txt.SCREEN``), converting between ASCII and the VDG's
+    codes: ``@`` to ``_`` are ``$40-$5F``, space to ``?`` ``$60-$7F``, and lower case is inverse upper case
+    ``$00-$1F``, as BASIC prints it. 128-255 are the graphics blocks, unchanged; ``setchr`` shows 0-31 as 64-95.
+    ``getchr`` gives the character that ``setchr`` put there, inverse letters as lower case and the other inverse
+    characters (``$20-$3F``) as their normal ones; 255 off the screen.
+  - reverse video: ``txt.rvs_on()`` sets ``txt.inverse_mode`` to 128 and ``txt.rvs_off()`` back to 0. While it is set,
+    ``txt.chrout()`` (and so ``txt.print()``) makes each character from 32 to 127 inverse in screen memory after
+    ``CHROUT`` has printed it, which also works when the character scrolled the screen.
+  - there are no colors: VDG text has no per-character colors, so ``txt.color()`` and ``txt.setclr()`` do nothing, and
+    ``txt.setcc()`` and ``txt.fill_screen()`` ignore the color. ``txt.bell()`` does nothing.
+  - input goes through picolibc's ``getchar``, which waits for a key and doesn't echo it; ``txt.input_line()`` echoes
+    what it reads, with backspace (the left arrow) removing the last character. ``txt.getkey()`` and ``txt.waitkey()``
+    read the keyboard without waiting and waiting (see "Keyboard input on llvm16" above). ``DEFAULT_WIDTH`` and
+    ``DEFAULT_HEIGHT`` are the generic llvm16 ones.
+- there are no files: picolibc for DECB has no ``open`` or ``unlink``, and as on ``mos-sim`` the file routines
+  report a failure. There is no command line, and no floats or math library routines.
+
 
 Memory Model
 ============
@@ -670,7 +783,7 @@ The size of a pointer (memory address) depends on the target's CPU architecture:
 - **virtual target**: **4 bytes** (32-bit address space, 16 MB)
 - **llvm64 target**: **8 bytes** (the 64-bit address space of the host)
 - **llvm32 target**: **4 bytes** (32-bit platforms such as wasm32)
-- **llvm16 target**: **2 bytes** (16-bit platforms such as the 6502 with llvm-mos)
+- **llvm16 target**: **2 bytes** (16-bit platforms: the 6502 with llvm-mos, the Z80 with llvm-z80, the 6809 with llvm-mc6809)
 
 The ``pointer`` type keyword automatically takes the correct size for the target,
 making it the natural choice for variables that hold a memory address in portable code.

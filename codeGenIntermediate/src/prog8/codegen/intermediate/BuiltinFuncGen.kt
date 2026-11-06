@@ -990,7 +990,7 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         val result = mutableListOf<IRCodeChunkBase>()
         val target = call.args[0]
         val isConstZeroValue = call.args[1].asConstInteger()==0
-        val isBigEndian = codeGen.options.compTarget.cpu.isBigEndian
+        val isBigEndian = codeGen.options.compTarget.isBigEndian
         fun byteOffset(elementSize: Int) = if(msb != isBigEndian) elementSize - 1 else 0
         when(target) {
             is PtIdentifier -> {

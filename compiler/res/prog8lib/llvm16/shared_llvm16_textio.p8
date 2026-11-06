@@ -1,4 +1,4 @@
-; The llvm16 Text I/O routines that don't depend on the console: printing text and numbers, and reading input.
+; The llvm16 Text I/O routines that don't depend on the console: printing numbers through print() and reading input.
 ; Merged into the txt block of the llvm16 textio and of the textio of each library family, such as z88dk.
 
 %import conv
@@ -47,20 +47,6 @@ sub iso() {
 
 sub iso_off() {
     ; llvm16 target is iso always, this is just for code compatibility
-}
-
-sub chrout(ubyte char) {
-    %ir {{
-        loadm.b r99100.b,[txt.chrout.char]
-        syscall 2 (r99100.b)
-    }}
-}
-
-sub  print (str text) {
-    %ir {{
-        loadm.p r99200.p,[txt.print.text]
-        syscall 3 (r99200.p)
-    }}
 }
 
 sub  print_ub0  (ubyte value) {
@@ -176,33 +162,6 @@ bool eof_flag = false
 sub eof() -> bool {
     ; ---- true when the last line input found the end of the input (only when eof_exit is false)
     return eof_flag
-}
-
-sub  input_line  (str buffer, ubyte maxlength) -> ubyte  {
-    ; ---- read a line from stdin into the buffer, which needs room for maxlength chars and the terminating 0 byte.
-    ;      Returns the length. The line end is not stored, and the rest of a longer line is skipped.
-    ;      When the input has already ended, the program ends with exit status 1, or with eof_exit false, returns 0 and eof() is true.
-    ubyte count = 0
-    bool started = false
-    eof_flag = false
-    repeat {
-        ubyte char = chrin()
-        if char == 0 and not started {
-            if eof_exit
-                sys.exit(1)
-            eof_flag = true
-            break
-        }
-        if char == 0 or char == '\n'
-            break
-        started = true
-        if char != '\r' and count < maxlength {
-            buffer[count] = char
-            count++
-        }
-    }
-    buffer[count] = 0
-    return count
 }
 
 sub  input_chars  (str buffer) -> ubyte  {

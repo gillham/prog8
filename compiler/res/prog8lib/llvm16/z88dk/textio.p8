@@ -4,6 +4,8 @@
 ; txt.print_f is not here: floats are not supported yet on llvm16.
 
 %import shared_llvm16_textio
+%import shared_llvm16_putchar_textio
+%import shared_llvm16_echo_input_textio
 %import shared_z88dk_textio
 
 txt {

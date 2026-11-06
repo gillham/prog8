@@ -40,12 +40,13 @@ wavfile {
             or header[12]!=iso:'f' or header[13]!=iso:'m' or header[14]!=iso:'t' or header[15]!=iso:' ' {
             return false
         }
-        ; uword filesize = peekw(header+4)
-        uword chunksize = peekw(header+16)
+        ; the header is little-endian whatever the machine is, so its words are read a byte at a time
+        ; uword filesize = mkword(header[5], header[4])
+        uword chunksize = mkword(header[17], header[16])
         wavefmt = peek(header+20)
         nchannels = peek(header+22)
-        sample_rate = peekw(header+24)    ; we assume sample rate <= 65535 so we can ignore the upper word
-        block_align = peekw(header+32)
+        sample_rate = mkword(header[25], header[24])    ; we assume sample rate <= 65535 so we can ignore the upper word
+        block_align = mkword(header[33], header[32])
         bits_per_sample = peek(header+34)
         if wavefmt==Format::DVI_ADPCM or wavefmt==Format::ADPCM
             bits_per_sample *= 4
@@ -54,9 +55,9 @@ wavfile {
         uword @zp offset = chunksize + 20
         repeat 20 {
             header += offset
-            chunksize = peekw(header+4)        ; assume chunk size never exceeds 64kb so ignore upper word
+            chunksize = mkword(header[5], header[4])        ; assume chunk size never exceeds 64kb so ignore upper word
             if header[0]==iso:'d' and header[1]==iso:'a' and header[2]==iso:'t' and header[3]==iso:'a' {
-                data_size = mklong2(peekw(header+6), chunksize)
+                data_size = mklong2(mkword(header[7], header[6]), chunksize)
                 data_offset = (header - wav_data) as uword + 8
                 return true
             }

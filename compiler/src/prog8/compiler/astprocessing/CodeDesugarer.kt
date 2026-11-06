@@ -805,13 +805,16 @@ _after:
         // for word variables:
         // @(&var) --> lsb(var)
         // @(&var+1) --> msb(var)           NOTE: ONLY WHEN VAR IS AN ACTUAL WORD VARIABLE (POINTER)
+        // on a big-endian target the two are swapped
 
+        val firstByte = if(target.isBigEndian) "msb" else "lsb"
+        val secondByte = if(target.isBigEndian) "lsb" else "msb"
         val addrOf = memread.addressExpression as? AddressOf
         if(addrOf?.arrayIndex!=null)
             return noModifications
         if(addrOf!=null && addrOf.identifier?.inferType(program)?.isWords==true) {
-            val lsb = FunctionCallExpression(IdentifierReference(listOf("lsb"), memread.position), mutableListOf(addrOf.identifier!!), memread.position)
-            return listOf(AstReplaceNode(memread, lsb, parent))
+            val read = FunctionCallExpression(IdentifierReference(listOf(firstByte), memread.position), mutableListOf(addrOf.identifier!!), memread.position)
+            return listOf(AstReplaceNode(memread, read, parent))
         }
         val expr = memread.addressExpression as? BinaryExpression
         if(expr!=null && expr.operator=="+") {
@@ -820,10 +823,10 @@ _after:
             if(addressOf!=null && offset==1) {
                 val variable = addressOf.identifier?.targetVarDecl()
                 if(variable!=null && variable.datatype.isWord) {
-                    val msb = FunctionCallExpression(IdentifierReference(listOf("msb"), memread.position), mutableListOf(
+                    val read = FunctionCallExpression(IdentifierReference(listOf(secondByte), memread.position), mutableListOf(
                         addressOf.identifier!!
                     ), memread.position)
-                    return listOf(AstReplaceNode(memread, msb, parent))
+                    return listOf(AstReplaceNode(memread, read, parent))
                 }
             }
         }

@@ -95,6 +95,9 @@ interface ICompilationTarget: IStringEncoding, IMemSizer {
     val BSSGOLDENRAM_END: UInt
 
     val cpu: CpuType
+    /** Byte order of the target machine; an llvm target takes it from its profile's data layout. */
+    val isBigEndian: Boolean
+        get() = cpu.isBigEndian
     var zeropage: Zeropage
     val libraryPath: Path?
     val customLauncher: List<String>

@@ -68,6 +68,8 @@ class TestLlvmTripleProfile: FunSpec({
             profile.triple shouldBe values.first
             profile.pointerBits shouldBe values.second
             profile.cLongSize shouldBe values.third
+            profile.isBigEndian shouldBe false
+            LlvmTarget(profile.pointerBits / 8, profile).isBigEndian shouldBe false
         }
     }
 
@@ -168,11 +170,23 @@ class TestLlvmTripleProfile: FunSpec({
         LlvmTripleProfile.load(noPointerEntry).pointerBits shouldBe 64
     }
 
+    test("a big-endian data layout makes a big-endian llvm16 target, which can't convert floats to bytes") {
+        val big = LlvmTripleProfile.load(profileFile("bigendian",
+            "triple = mc6809\ndatalayout = E-p:16:8-p1:8:8-S8-m:e-i1:8-i8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:0-n8:16\nc_long_size = 4\nc_int_size = 2"))
+        big.isBigEndian shouldBe true
+        big.pointerBits shouldBe 16
+        val target = LlvmTarget(2, big)
+        target.isBigEndian shouldBe true
+        shouldThrow<UnsupportedOperationException> { target.convertFloatToBytes(1.5) }
+        LlvmTarget(2).isBigEndian shouldBe false
+        LlvmTarget(2).convertFloatToBytes(1.5).size shouldBe 4
+    }
+
     test("invalid profiles are rejected with a message about the problem") {
         fun rejected(name: String, properties: String): String =
             shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(profileFile(name, properties)) }.message!!
 
-        rejected("bigendian", "triple = t\ndatalayout = E-m:e-p:32:32\nc_long_size = 4") shouldContain "little-endian"
+        rejected("noendian", "triple = t\ndatalayout = m:e-p:32:32\nc_long_size = 4") shouldContain "must start with 'e'"
         rejected("badpointer", "triple = t\ndatalayout = e-p:x:32\nc_long_size = 4") shouldContain "pointer entry"
         rejected("longsize", "triple = t\ndatalayout = $wasmLayout\nc_long_size = 2") shouldContain "c_long_size 2"
         rejected("longtext", "triple = t\ndatalayout = $wasmLayout\nc_long_size = four") shouldContain "non-numeric c_long_size"
@@ -261,7 +275,8 @@ class TestLlvmTripleProfile: FunSpec({
         musl.clangArgs shouldBe listOf("--target=aarch64-linux-musl")
         LlvmTripleProfile.resolve("x86_64-pc-windows-msvc").cLongSize shouldBe 4
         LlvmTripleProfile.resolve("i686-unknown-linux-gnu").pointerBits shouldBe 32
-        shouldThrow<IllegalArgumentException> { LlvmTripleProfile.resolve("aarch64_be-linux-gnu") }.message!! shouldContain "little-endian"
+        LlvmTripleProfile.resolve("aarch64_be-linux-gnu").isBigEndian shouldBe true
+        musl.isBigEndian shouldBe false
         shouldThrow<IllegalArgumentException> { LlvmTripleProfile.resolve("prog8-no-such-triple") }.message!! shouldContain "clang rejects it"
     }
 
@@ -522,6 +537,72 @@ class TestLlvmTripleProfile: FunSpec({
                 profile.cIntSize shouldBe reported.cIntSize
             }
         }
+    }
+
+    test("the mc6809-sim profile loads without running clang, big-endian with 16-bit pointers and C int, and links with the clang of LLVM_MC6809 and its drain code") {
+        val profile = LlvmTripleProfile.resolve("mc6809-sim")
+        profile.triple shouldBe "mc6809"
+        profile.dataLayout shouldBe "E-p:16:8-p1:8:8-S8-m:e-i1:8-i8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:0-n8:16"
+        profile.isBigEndian shouldBe true
+        LlvmTarget(2, profile).isBigEndian shouldBe true
+        profile.pointerBits shouldBe 16
+        profile.cIntSize shouldBe 2
+        profile.cLongSize shouldBe 4
+        profile.programArgs shouldBe false
+        profile.outputExtension shouldBe ".elf"
+        profile.ioRanges shouldBe listOf(0xffc0u..0xffcfu)
+        profile.startupSources shouldBe listOf("mc6809-semihost-drain.c")
+        profile.runCommand!!.first() shouldBe "usim09batch"
+        profile.libcLacks.containsAll(listOf("rename", "opendir", "usleep", "strtod", "sqrtf")) shouldBe true
+        (profile.libcLacks intersect setOf("putchar", "getchar", "fopen", "remove", "strdup", "qsort", "exit")) shouldBe emptySet()
+        if (System.getenv("LLVM_MC6809") == null)
+            shouldThrow<IllegalArgumentException> { profile.clang }.message!! shouldContain "LLVM_MC6809"
+        else {
+            profile.clang shouldBe System.getenv("LLVM_MC6809") + "/bin/mc6809-clang"
+            profile.linkCommand.shouldNotBeNull().let { ("-mcrt0=semihost" in it && "{startup}" in it) shouldBe true }
+        }
+    }
+
+    test("the data layout and C int and long sizes of the mc6809-sim profile are what its clang reports").config(enabled = System.getenv("LLVM_MC6809") != null) {
+        val profile = LlvmTripleProfile.resolve("mc6809-sim")
+        val reported = LlvmTripleProfile.askClang(profile.triple, profile.clangArgs, profile.resolveClang(null).shouldNotBeNull())
+        usedLayout(profile.dataLayout) shouldBe usedLayout(reported.dataLayout)
+        profile.cLongSize shouldBe reported.cLongSize
+        profile.cIntSize shouldBe reported.cIntSize
+    }
+
+    test("the mc6809-coco profile builds a DECB .bin with the clang of LLVM_MC6809, big-endian, with every address volatile and the file calls and math lacking") {
+        val profile = LlvmTripleProfile.resolve("mc6809-coco")
+        profile.triple shouldBe "mc6809-unknown-decb"
+        profile.dataLayout shouldBe LlvmTripleProfile.resolve("mc6809-sim").dataLayout
+        profile.isBigEndian shouldBe true
+        profile.pointerBits shouldBe 16
+        profile.cIntSize shouldBe 2
+        profile.cLongSize shouldBe 4
+        profile.programArgs shouldBe false
+        profile.outputExtension shouldBe ".bin"
+        profile.ioAllAddresses shouldBe true
+        profile.runCommand shouldBe null
+        profile.startupSources shouldBe listOf("mc6809-coco-console.c")
+        profile.putcharSymbol shouldBe "prog8_coco_putchar"
+        profile.library shouldBe "coco"
+        profile.libcLacks.containsAll(listOf("fopen", "remove", "rename", "opendir", "usleep", "strtod", "sqrtf")) shouldBe true
+        (profile.libcLacks intersect setOf("putchar", "getchar", "fclose", "fputc", "strdup", "realloc", "qsort", "exit")) shouldBe emptySet()
+        if (System.getenv("LLVM_MC6809") == null)
+            shouldThrow<IllegalArgumentException> { profile.clang }.message!! shouldContain "LLVM_MC6809"
+        else {
+            profile.clang shouldBe System.getenv("LLVM_MC6809") + "/bin/clang"
+            profile.clangArgs shouldBe listOf("--target=mc6809-unknown-decb")
+            profile.linkCommand shouldBe listOf(System.getenv("LLVM_MC6809") + "/bin/clang", "--target=mc6809-unknown-decb", "{startup}", "{object}", "-o", "{file}")
+        }
+    }
+
+    test("the data layout and C int and long sizes of the mc6809-coco profile are what its clang reports").config(enabled = System.getenv("LLVM_MC6809") != null) {
+        val profile = LlvmTripleProfile.resolve("mc6809-coco")
+        val reported = LlvmTripleProfile.askClang(profile.triple, profile.clangArgs, profile.resolveClang(null).shouldNotBeNull())
+        usedLayout(profile.dataLayout) shouldBe usedLayout(reported.dataLayout)
+        profile.cLongSize shouldBe reported.cLongSize
+        profile.cIntSize shouldBe reported.cIntSize
     }
 
     test("the z88dk platform profiles build on z80-z88dk with their own link command, output, I/O ranges and lacking functions") {

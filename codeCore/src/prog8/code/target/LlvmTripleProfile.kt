@@ -62,6 +62,9 @@ data class LlvmTripleProfile(
     /** The character that replaces the last `.` of a file name the C library gets, like `/` for TRSDOS's NAME/EXT; null keeps the name. */
     val fileExtensionSeparator: Char? = null
 ) {
+    /** True when the data layout starts with `E`. */
+    val isBigEndian: Boolean get() = dataLayout.startsWith("E")
+
     /** The pointer width in bits of the default address space, which LLVM takes as 64 when the data layout has no `p:` entry. */
     val pointerBits: Int = dataLayout.split('-').firstOrNull { it.startsWith("p:") }
         ?.split(':')?.getOrNull(1)?.toIntOrNull() ?: 64
@@ -130,7 +133,9 @@ data class LlvmTripleProfile(
             ?: throw IllegalArgumentException("the startup_source '$source' of llvm triple profile '$name' is not embedded in the compiler")
 
     init {
-        require(dataLayout.startsWith("e")) { "the llvm triple profile '$name' must have a little-endian data layout (starting with 'e')" }
+        require(dataLayout.startsWith("e") || dataLayout.startsWith("E")) {
+            "the data layout of llvm triple profile '$name' must start with 'e' (little-endian) or 'E' (big-endian)"
+        }
         require(dataLayout.split('-').none { it.startsWith("p:") && it.split(':').getOrNull(1)?.toIntOrNull() == null }) {
             "the llvm triple profile '$name' has an invalid pointer entry in its data layout"
         }

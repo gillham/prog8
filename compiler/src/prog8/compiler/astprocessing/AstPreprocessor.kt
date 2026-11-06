@@ -17,61 +17,38 @@ class AstPreprocessor(val program: Program,
         implicitForIteratorDecls.before(forLoop, parent)
 
     override fun before(program: Program): Iterable<AstModification> {
+        val bigEndian = options.compTarget.isBigEndian
         if(options.zeropage==ZeropageType.KERNALSAFE || options.zeropage==ZeropageType.FULL) {
             // there may be enough space in the zero page to put the cx16 virtual registers there.
             // unfortunately, can't be the same address as CommanderX16.
             val reg0 = options.compTarget.zeropage.allocatedVariables["cx16.r0"]
             if(reg0!=null) {
                 // cx16.r0 is in zeropage, relocate
-                relocateCx16VirtualRegisters(program, reg0.address)
+                relocateCx16VirtualRegisters(program, reg0.address, bigEndian)
+                return noModifications
             }
+        }
+        if(bigEndian) {
+            // the syslib declares the registers in little-endian order; the r0r1 pair stays at the base address in both
+            val pair = program.allBlocks.singleOrNull { it.name == "cx16" }
+                ?.statements?.filterIsInstance<VarDecl>()?.singleOrNull { it.name == "r0r1sl" }
+            val baseAddress = (pair?.value as? NumericLiteral)?.number?.toUInt()
+            if(baseAddress!=null)
+                relocateCx16VirtualRegisters(program, baseAddress, true)
         }
         return noModifications
     }
 
-    private fun relocateCx16VirtualRegisters(program: Program, baseAddress: UInt) {
+    private fun relocateCx16VirtualRegisters(program: Program, baseAddress: UInt, bigEndian: Boolean) {
         val cx16block = program.allBlocks.single { it.name == "cx16" }
         val memVars = cx16block.statements
             .filterIsInstance<VarDecl>()
             .associateBy { it.name }
 
-        fun getRegValueChecked(key: String): VarDecl  = memVars[key] ?: throw NoSuchElementException("no definition found for 'cx16.$key' in syslib.p8")
-
-        for (regnum in 0u..15u) {
-            val rX = getRegValueChecked("r$regnum")
-            val rXL = getRegValueChecked("r${regnum}L")
-            val rXH = getRegValueChecked("r${regnum}H")
-            val rXs = getRegValueChecked("r${regnum}s")
-            val rXsL = getRegValueChecked("r${regnum}sL")
-            val rXsH = getRegValueChecked("r${regnum}sH")
-            val rXbL = getRegValueChecked("r${regnum}bL")
-            val rXbH = getRegValueChecked("r${regnum}bH")
-            setAddress(rX, baseAddress + 2u * regnum)
-            setAddress(rXL, baseAddress + 2u * regnum)
-            setAddress(rXH, baseAddress + 2u * regnum + 1u)
-            setAddress(rXs, baseAddress + 2u * regnum)
-            setAddress(rXsL, baseAddress + 2u * regnum)
-            setAddress(rXsH, baseAddress + 2u * regnum + 1u)
-            setAddress(rXbL, baseAddress + 2u * regnum)
-            setAddress(rXbH, baseAddress + 2u * regnum + 1u)
+        for((name, address) in cx16VirtualRegisterAddresses(baseAddress, bigEndian)) {
+            val decl = memVars[name] ?: throw NoSuchElementException("no definition found for 'cx16.$name' in syslib.p8")
+            setAddress(decl, address)
         }
-
-        val r0r1sl = getRegValueChecked("r0r1sl")
-        val r2r3sl = getRegValueChecked("r2r3sl")
-        val r4r5sl = getRegValueChecked("r4r5sl")
-        val r6r7sl = getRegValueChecked("r6r7sl")
-        val r8r9sl = getRegValueChecked("r8r9sl")
-        val r10r11sl = getRegValueChecked("r10r11sl")
-        val r12r13sl = getRegValueChecked("r12r13sl")
-        val r14r15sl = getRegValueChecked("r14r15sl")
-        setAddress(r0r1sl, baseAddress + 0u)
-        setAddress(r2r3sl, baseAddress + 4u)
-        setAddress(r4r5sl, baseAddress + 8u)
-        setAddress(r6r7sl, baseAddress + 12u)
-        setAddress(r8r9sl, baseAddress + 16u)
-        setAddress(r10r11sl, baseAddress + 20u)
-        setAddress(r12r13sl, baseAddress + 24u)
-        setAddress(r14r15sl, baseAddress + 28u)
     }
 
     private fun setAddress(vardecl: VarDecl, address: UInt) {
@@ -633,4 +610,29 @@ class AstPreprocessor(val program: Program,
             }
         }
     }
+}
+
+
+/**
+ * The addresses of the cx16 virtual registers and their byte and long aliases, from [baseAddress] on.
+ * On a big-endian machine each pair rNrM is swapped (rM at the lower address), so the pair's long still has rN as its low word.
+ */
+internal fun cx16VirtualRegisterAddresses(baseAddress: UInt, bigEndian: Boolean): Map<String, UInt> {
+    val addresses = mutableMapOf<String, UInt>()
+    val lowByte = if(bigEndian) 1u else 0u
+    val highByte = 1u - lowByte
+    for (regnum in 0u..15u) {
+        val word = baseAddress + 2u * (if(bigEndian) regnum xor 1u else regnum)
+        addresses["r$regnum"] = word
+        addresses["r${regnum}L"] = word + lowByte
+        addresses["r${regnum}H"] = word + highByte
+        addresses["r${regnum}s"] = word
+        addresses["r${regnum}sL"] = word + lowByte
+        addresses["r${regnum}sH"] = word + highByte
+        addresses["r${regnum}bL"] = word + lowByte
+        addresses["r${regnum}bH"] = word + highByte
+    }
+    for (pair in 0u..7u)
+        addresses["r${2u * pair}r${2u * pair + 1u}sl"] = baseAddress + 4u * pair
+    return addresses
 }

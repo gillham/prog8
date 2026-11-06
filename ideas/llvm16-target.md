@@ -536,6 +536,169 @@ Made by the user, 2026-11-05, after a plan review:
 - Not run: the remote check and the Windows suite. llvm32/llvm64 output is unchanged.
 - Not run on real hardware: the C128 program on the d64 in the session scratchpad (`m4s6/textio-c128.d64`).
 
+## Milestone 5: the 6809 (big-endian), draft
+
+Toolchain: the llvm-mc6809 1.0-rc2 release bundle in `~/.local/llvm-mc6809` (with picolibc and the `mc6809-*`
+wrappers), and `usim09batch` on the PATH (Mark Murray's USim fork, see the mc6809 notes under "Later milestones").
+
+### Research (2026-11-06; probes in the session scratchpad `m5research/`)
+- **The llvm backend is already endian-correct:** typed LLVM loads and stores, trunc/lshr, typed global
+  initializers. `InstrMemory.kt`, `InstrArithmetic.kt` and `LlvmGlobalEmitter.kt` need no change. Split word arrays are rejected on llvm anyway. The
+  `.file.save` header writes its start address low byte first by value, so that file format stays little-endian on
+  purpose (document it).
+- **The experiment.** A fake profile (`e` layout, rewritten to `E`/mc6809 before `mc6809-clang -mcrt0=semihost`) ran the llvm test programs on `usim09batch`:
+  - Of 39 self-checking programs: 17 pass, 17 fail to compile on both (floats, wide addresses), 1 fails on both (argc), and 4 fail on big-endian only.
+  - Of 30 output programs, 1 differs.
+- **Every big-endian failure comes from outside the backend:**
+  1. `setlsb`/`setmsb`: `BuiltinFuncGen.kt:993` takes `cpu.isBigEndian`, and `CpuType.LLVM16` is always false. `ExpressionSimplifier.kt:771,779,818,826` uses the same flag.
+  2. `CodeDesugarer.kt:803-831` rewrites `@(&wordvar)` to `lsb(var)` and `@(&wordvar+1)` to `msb(var)` on every target, also with `-noopt`. That is wrong on big-endian. It probably affects the m68k targets on `master` too, so check it there and log it in UPSTREAM-ISSUES if so.
+  3. The cx16 virtual registers in `llvm16/syslib.p8:175-240` (and llvm32): `rNL`/`rNH`/`rNrMsl` are memory aliases at little-endian offsets.
+  4. Library code built on item 3: `buffers.p8:67-69,127-129,186-188` and the crc16/crc32 in `llvm16/math.p8:314,351`.
+  5. Test p15 ("quad and uquad arrays, structs and memory") checks little-endian byte views on purpose.
+- `peek`, `peekw`, `pokew`, struct fields and word arrays already follow the native order on big-endian (probe).
+- **The 6809 under usim09batch:**
+  - It drops the last byte a program writes before it halts (not only `\n`); a short delay before the exit brings it back.
+  - semihost `exit` works, and `getchar` reads stdin.
+  - argc is 0 (`program_args = false`).
+  - `fopen` links but returns NULL: no files.
+  - About 150 M cycles/s. `--timeout=N` counts instructions and exits with 124.
+- **DECB:** header `00 <len> 3f00`; an empty main is 381 bytes. `fopen` doesn't link (no `open`), so `libc_lacks` must include the file calls. Nothing runs it automatically.
+
+### Decisions
+Made by the user, 2026-11-06:
+- **Native byte order on big-endian targets:** `peekw`/`pokew`, word arrays, struct fields and byte views of words follow the CPU, as LLVM already does.
+- **The cx16 virtual registers get a big-endian alias table,** chosen by the profile's byte order, so code using `r0L`/`r0H` keeps working. Library routines may move to `mkword`/`lsb`/`msb` where that is cleaner.
+- **Profiles:** `mc6809-sim` (bare metal on usim09batch, the full test suite) and `mc6809-coco` (DECB for the CoCo 2 and 3, link-only tests and a manual XRoar check). No 6309 variant yet.
+
+### Review findings (2026-11-06)
+- **The cx16 aliases: do it in the compiler.** `AstPreprocessor.relocateCx16VirtualRegisters` (`AstPreprocessor.kt:32-80`) already rewrites the addresses of the `rN`/`rNL`/`rNH`/`rNs*`/`rNbL`/`rNbH`/`rNrMsl` declarations (for the zero page on c64/c128/pet).
+  - The change: a branch for `compTarget.isBigEndian`, with L at +1 and H at +0, and the word pairs swapped so that `rNrMsl` keeps rN as its low word.
+  - That keeps one llvm16 syslib. No compiler-provided constant exists for this, and a family syslib per profile family would clash with the `library` key that the textios use.
+  - `buffers.p8` and the math crc then work unchanged.
+- **The `CodeDesugarer` `@(&w)` rewrite is wrong on m68k too:** on qemu68k, `@(&w)` becomes `lsb(w)`. It is the same code on `master` (U40).
+  - The fix: swap on big-endian (`@(&w)` is msb, `@(&w+1)` is lsb).
+  - This changes the m68k output: expect TestCompilerOnExamples size changes.
+- **`isBigEndian`:** an interface default `cpu.isBigEndian`, overridden by LlvmTarget from its profile. Its users:
+  - `BuiltinFuncGen.kt:993`
+  - `ExpressionSimplifier.kt:779,826`. Its `lsb(cx16.rN)` to `rNL` rewrite becomes correct on big-endian once the aliases are.
+
+  Also: the `e` check at `LlvmTripleProfile.kt:133`, and `LlvmTarget.convertFloatToBytes`/`convertBytesToFloat` (`-float2bytes`), which are hard little-endian; reject them on big-endian until llvm16 has floats.
+- **The dropped last byte:** `mc6809_putc` polls TDRE at `$FFC4` and writes `$FFC5`, but USim's mc6850 only sends the byte after some cycles, and `_exit` halts at once.
+  - The fix, verified: a support C file with `__attribute__((destructor)) static void drain(void){ while(!(*(volatile unsigned char*)0xffc4 & 2)); }`. It runs for a return from main and for `exit(n)`.
+  - It needs a `link_command` with `{startup}`, since a clang-only profile ignores startup sources: `mc6809-clang -mcrt0=semihost {startup} {object} -o {file}`.
+- **Tests:**
+  - A runner `Llvm16ProgramRunner(mc6809Sim, "usim09batch", ...)`, guarded by `LLVM_MC6809` and usim09batch on the PATH.
+  - A `notRunOn6809` map like `notRunOnMos`.
+  - p15 detects the byte order at run time (`peek(&probe)`), so one source serves every target.
+  - The output programs ran in about 7 s in the research.
+- **`mc6809-sim` io_ranges:** `$ffc0-$ffcf`, the simulator's devices.
+- **Order:** the desugarer fix and the alias relocation before the `e` check is lifted, so a big-endian profile never builds silently wrong code.
+- **Windows:** usim09batch is Unix-only, so its tests skip there.
+
+### Steps
+1. **Big-endian correctness:**
+   - Target-level `isBigEndian` (LlvmTarget from the profile), used by `BuiltinFuncGen` and `ExpressionSimplifier`.
+   - The `CodeDesugarer` `@(&w)`/`@(&w+1)` fix for big-endian, with U40 logged at the end of UPSTREAM-ISSUES, a repro in `bugs/` and m68k tests.
+   - The big-endian branch in `relocateCx16VirtualRegisters`.
+   - `float2bytes` rejected on big-endian llvm.
+   - Expect m68k example size updates. llvm32/llvm64 `.ll` unchanged.
+   Status: done 2026-11-06. What was found:
+   - `ICompilationTarget.isBigEndian` defaults to `cpu.isBigEndian`; LlvmTarget takes `LlvmTripleProfile.isBigEndian` (layout starts with `E`), false for every profile until step 2. `BuiltinFuncGen` (setlsb/setmsb) uses it.
+   - `ExpressionSimplifier.kt:779,826` keep `cpu.isBigEndian`: the `lsb(cx16.rN)` to `rNL` rewrite stays valid on a big-endian llvm target, whose aliases are relocated, and m68k has no cx16 block. Lines 771/818 are 6502-only.
+   - The `CodeDesugarer` rewrite only matches `uword`/`word` variables (and struct fields of those): `&w+2`/`+3`, longs and pointers aren't rewritten, so nothing else needed the swap.
+   - U40 is in UPSTREAM-ISSUES and `bugs/`: on `master`, qemu68k prints `52 18` for `@(&w)`, `@(&w+1)` of `$1234`; the branch prints `18 52`. No example's m68k output changed (98 qemu68k/amiga500 `.asm` files compared), and TestCompilerOnExamples has no m68k sizes.
+   - The cx16 registers: on a big-endian target `AstPreprocessor` relocates them from the `r0r1sl` address, with each pair swapped (`r1` at +0, `r0` at +2) and `L` at +1, `H` at +0. m68k has no cx16 block, so it isn't affected.
+   - The test of the relocation uses an `ICompilationTarget` delegating to llvm16 with `isBigEndian = true`, since a profile with an `E` layout can't be built yet. The float2bytes rejection can't be tested until step 2.
+   - The combined long registers (`@R0R1`) of the IR code generator load a long at `cx16.r0`'s address, which is wrong with the big-endian layout, but register parameters can't be declared on the llvm targets.
+   - The fake `e` profile still fails p07, p10, p38 and the crc output (exit 4, 3, 1, as in the research): they need the real `E` layout (step 3).
+   - Found on `master` too, not logged: `-noopt` on qemu68k fails to assemble every program tried, an empty `main` included (`andi.l #-2,a2` in `qemu.bootinfo_ptr`).
+2. **Lift the `e` check:** `LlvmTripleProfile` accepts `E` and exposes `isBigEndian`, with profile tests.
+   Status: done 2026-11-06.
+   - **The check:** a data layout must start with `e` or `E`. A big-endian profile gives a big-endian LlvmTarget, whose float conversion throws (tested). The cx16 relocation test now uses a real big-endian target.
+   - **A real big-endian check:** a bare-metal mc6809 profile (`-mcrt0=semihost`, run by usim09batch) runs the research's big-endian failures. p07 (setlsb/setmsb) and p10 (the cx16 registers) pass, and the math output (crc16/crc32) matches mos-sim apart from the dropped last byte. p15 still fails, as expected (step 3).
+   - **p38 failed at `wavfile.parse_header`,** which read the little-endian WAV header with `peekw`. User's decision: the shared `compiler/res/prog8lib/wavfile.p8` now reads the header words a byte at a time (`mkword(header[n+1], header[n])`), which makes the cx16 pcmaudio examples 3 bytes bigger. p38 passes.
+   - The m68k targets have their own `wavfile.p8`, so there is no master bug.
+3. **The `mc6809-sim` profile:**
+   - The settings:
+     - `clang = ${LLVM_MC6809}/bin/mc6809-clang`, plus a link command with `-mcrt0=semihost` and the drain support source
+     - c_int 2, long 4
+     - `program_args = false`
+     - files lacking
+     - `io_ranges = $ffc0-$ffcf`
+     - run by `usim09batch` with a timeout
+   - The runner entry and `notRunOn6809`, and p15 made byte-order aware.
+   - The full llvm16 test suite on it.
+   Status: done 2026-11-06.
+   - **The profile:** `mc6809-sim` links with `${LLVM_MC6809}/bin/mc6809-clang -mcrt0=semihost {startup} {object}`; the startup source `mc6809-semihost-drain.c` is the destructor that waits for TDRE at `$FFC4`. Without it `abc` printed as `ab`, also with `sys.exit(7)`; with it all 3 bytes arrive and the status stays 7.
+   - **libc_lacks, from linking a probe of every C function Prog8 calls:** rename, the directory calls, getcwd, usleep, strtod and all math. fopen, remove, strdup, qsort and realloc link. fopen returns NULL, so the file calls stay out of `libc_lacks`: the file routines already report the failure.
+   - **Tests:** the usim09batch runner skips without `LLVM_MC6809` or usim09batch. `notRunOn6809` has the same entries as mos-sim (wide addresses, floats, argc, files, atan2, the 8-byte arena) for the same observed reasons. No 6809-only failure. p15 detects the byte order (`peek(&probe)` of `$1234`) and indexes its byte views through it.
+   - The 6809 tests take about 13 s (mos-sim 16 s, z88dk-ticks 12 s).
+4. **The `mc6809-coco` DECB profile:**
+   - `mc6809-unknown-decb`, `.bin`, `io_ranges = *`, `program_args = false`, the file calls lacking, `c_int_size = 2`.
+   - Link-only tests, and a manual XRoar check (`CLEAR 200,&H3EFF`, `LOADM`, `EXEC`).
+   Status: done 2026-11-06.
+   - **The profile:** `${LLVM_MC6809}/bin/clang --target=mc6809-unknown-decb` (the same as `mc6809-decb-clang`, a link to clang), no link command: clang links the DECB crt0, picolibc, `libdecb` and `mc6809-decb.lds`. A Prog8 hello is 3765 bytes: `00 0eab 3f00`, the body, `ff 0000 4000` (exec at `_start`, `$4000`, after the direct page).
+   - **Memory:** the linker script has no limit. The heap (`libdecb` sbrk) runs from the program's end to BASIC's top of RAM (`[$0074]`, `$7FFF`) less 512 bytes, and is empty unless `[$0027]` (BASIC's top, which CLEAR sets) is below the program. The stack is BASIC's, below `$3EFF` after the CLEAR.
+   - **libc_lacks, from linking a probe of every C function Prog8 calls:** fopen (no `open`), remove (no `unlink`), rename, the directory calls, getcwd, usleep, strtod and all math. fclose, fgetc, fputc, fread, fwrite, fseek, ftell, ferror, feof, fflush, strdup, realloc, free, qsort, exit, printf and snprintf link.
+   - **Tests:** the z88dk link-only test class became `LinkOnlyProfile`, with a tools check per profile; mc6809-coco builds every llvm16 program except the wide-address, float and atan2 ones. Another test checks the DECB preamble, the single segment and the exec address of a `-o` build.
+   - **XRoar 1.12.1** (manual): `-run`/`-load` of the `.bin` start it at reset, before BASIC, and it crashes. What works: the `.bin` on an RS-DOS disk image, `xroar -ui null -ao null -machine coco3 -no-ratelimit -load-fd0 hello.dsk -type 'CLEAR 200,&H3EFF\r LOADM"HELLO"\r EXEC\r'`, with `-trap read=0xff00 -trap-range 20000-20000 -trap-snap s.sna` for a snapshot whose RAM holds the screen (physical `$70400` on the 512K CoCo 3, `$0400` on the CoCo 2). On the CoCo 3 `-type` loses the first key after a command, hence the space before `LOADM` and `EXEC`. CoCo 3 and CoCo 2 (`coco2bus`, Disk BASIC 1.1) both print the hello and a sum and return to `OK`; `txt.chrin` reads a typed key.
+   - **The generic llvm16 txt** says 80x25 and its ANSI routines print `[2J[H` (the ESC is invisible). A CoCo textio (32x16, `$0400`, BASIC's CLS) would be a later step.
+5. **Docs:**
+   - The 6809 section: toolchain, `LLVM_MC6809`, `usim09batch`.
+   - Byte views of words follow the machine order on big-endian.
+   - The cx16 register layout on big-endian (the pairs swapped, so the rN addresses are not ascending).
+   - The `.file.save` header stays little-endian.
+   - AGENTS.md: the tools and Windows.
+   Status: done 2026-11-06.
+   - **Read-through:** the 6809 section covers both profiles. Added `decb dskini` to the disk recipe and the 6809 to the pointer size list, and `mc6809-coco` to AGENTS.md.
+   - **The `decb` recipe** (`decb dskini`, then `decb copy -2 -b`) was checked: XRoar ran the hello from that disk on the coco3 and the coco2bus, read back from snapshots.
+
+### Step 6: a CoCo textio (planned 2026-11-06)
+- **Decided by the user:**
+  - A `coco` library family for the 32x16 VDG screen, which covers the CoCo 1 and 2 and the CoCo 3 in its compatible mode.
+  - The CoCo 3's 40 and 80 column modes come later, as their own family (`coco3`).
+  - Reverse video is an `inverse_mode` flag, 0 or 128, as in the user's other ports (atari, gametank, mc64, sim6502 in `~/IdeaProjects/prog8targets/libraries`): `rvs_on` sets 128, and `chrout` applies it to the character.
+- **What the C library offers:** `libdecb` (picolibc `libos/decb/rom.S`) has only two routines:
+  - `__decb_putc(char)`: CHROUT through `[$A002]`, with DP 0.
+  - `__decb_getc()`: POLCAT through `[$A000]`. It returns the key, or 0 at once.
+
+  Prog8 on llvm can't call the ROM directly: no inline asm, and no `extsub` at an address.
+- **Design:** `mc6809-coco` gets `library = coco`. `prog8lib/llvm16/coco/textio.p8` imports the shared printing module and adds:
+  - `width`/`height`: 32 and 16.
+  - `cls`: fills `$0400-$05FF` with VDG spaces and sets Color BASIC's cursor CURPOS (`$0088`) to `$0400`.
+  - `plot`, `home`, `column`: through CURPOS (`$0400 + row*32 + col`).
+  - `setchr`/`getchr`: screen memory, with an ASCII to VDG code conversion. VDG normal characters have bit 6 set; inverse ones have it clear. Lower case shows as inverse upper case, as BASIC does it.
+  - Reverse video: while `inverse_mode` is set, printable characters go straight to screen memory with bit 6 cleared, and CURPOS advances. Control characters and scrolling stay with CHROUT.
+  - `color`/`setclr`: nothing. VDG text has no per-character colour; CSS changes the whole screen.
+  - The keyboard through `__decb_getc`: polled until there is a key for `chrin`, once for the non-blocking routines.
+  - `bell`: nothing.
+- **Unbuffered output in the right order:** `putchar_symbol` names a small C support function that turns `\n` into CR and calls `__decb_putc`. This needs a `link_command` with `{startup}` in `mc6809-coco`. Check first whether picolibc buffers stdout on DECB, and how CHROUT treats LF and other control codes.
+- **Tests:** link-only, plus XRoar runs with the screen read from snapshots, as in step 4: `getchr` after `setchr`, the cursor after `plot`, inverse characters.
+
+Status: done 2026-11-06. Probes and the XRoar runs are in the session scratchpad (`m5s6/`).
+- **Checked first:**
+  - **Buffering:** picolibc's DECB stdout is the posix one (`posixiob_stdout.c`): line-buffered (`__BLBF`) with a `BUFSIZ` buffer, flushed by a destructor. `write()` turns LF into CR and calls `__decb_putc`; `read()` polls `__decb_getc` until a key comes, turns CR into LF, and doesn't echo.
+  - **CHROUT** (C probe on the coco3 and the coco2bus, the same on both): CR always starts a new line, also at column 0. BS moves back and erases. LF, 7, 9, 12, 27 and 1 print nothing and don't move the cursor. `a`-`z` and `{|}~` DEL become inverse `$00-$1F`; 128-255 go to the screen as they are (graphics blocks). The last cell scrolls the screen up, leaving CURPOS at `$05E0`.
+  - **CURPOS** (`$0088`): big-endian, as `peekw`/`pokew` read it (`05 80` for `$0580`). Setting it moves where CHROUT prints next, on both machines.
+- **The profile:** `mc6809-coco` got `library = coco`, `putchar_symbol = prog8_coco_putchar`, `startup_source = mc6809-coco-console.c` (`int prog8_coco_putchar(int c)`: `\n` to CR, then `__decb_putc`) and `link_command = ${LLVM_MC6809}/bin/clang --target=mc6809-unknown-decb {startup} {object} -o {file}`. The compile step still gets `clang_args`. `getchar` stays picolibc's.
+- **chrout and print** moved out of `shared_llvm16_textio.p8` into `shared_llvm16_putchar_textio.p8`, imported by the llvm16, z88dk and z88dk-ansi textios, because the coco one needs its own (a merged block would override it). The three skeletons are unchanged.
+- **`prog8lib/llvm16/coco/textio.p8`:**
+  - The VDG codes: `@`-`_` are `$40-$5F`, space-`?` `$60-$7F`, and inverse is bit 6 clear (`$00-$3F`). `setchr` writes ASCII 32-63 as +64, 64-95 as they are, 96-127 as -96 (lower case as inverse upper case, as BASIC does), 0-31 as 64-95 and 128-255 unchanged. `getchr` turns that back: inverse letters `$00-$1F` give lower case, inverse `$20-$3F` the normal character; 255 off the screen.
+  - **Inverse:** `chrout` lets CHROUT print the character, then clears bit 6 at `CURPOS-1` when `inverse_mode` is set and the character is 32-127. That cell is the character's also after a scroll, so the end of a line and of the screen need no special case. `print` goes through `chrout` a character at a time.
+  - `cls`/`clear_screen` fill `$0400-$05FF` with `$60` and set CURPOS; `plot` (off the screen ignored), `home` and `column` set CURPOS. `color`, `setclr` and `bell` do nothing; `setcc` and `fill_screen` ignore the color. The txt skeleton is the llvm16 one plus `getchr`, `setclr`, `inverse_mode` and the constants `SCREEN`, `CURPOS`, `COLUMNS`, `ROWS` (`skeletons-llvm16-coco.txt`).
+  - No non-blocking key routine: the llvm16 txt has none.
+- **Tests:** "the coco textio routines" (`cocoTextioPrograms` in TestLlvmCompiler.kt) is link-only on `mc6809-coco`. By hand in XRoar, on the coco3 and the coco2bus, a version that loops at the end showed the expected screen and `RESULT 0` (all 15 checks: getchr after print, setchr and inverse print, the VDG codes of inverse characters, the cursor after setchr, and an inverse character at the last cell, which scrolled).
+- Not checked: input (`chrin`/`input_line`) with this profile; from picolibc's source, typed keys aren't echoed.
+
+### Keyboard routines and echoing line input (2026-11-06; probes in the session scratchpad `keys/`)
+- **`txt.getkey()`** (the key or 0, no wait) **and `txt.waitkey()`** (waits) in every llvm16 textio:
+  - generic llvm16 textio (mos-sim, mos-c64, z80-test, z80-cpm, mc6809-sim): `waitkey` is `chrin` (0 at the end of the input); `getkey` always gives 0, as these C libraries can't poll stdin. On mos-c64 `getchar` is the SDK's `cbm_k_chrin` line input, so `waitkey` waits for RETURN. Follow-up in todo.rst: real polling for mos-c64 (`cbm_k_getin`) and z80-cpm (`getk`), which needs a family of their own.
+  - z88dk and z88dk-ansi (`shared_z88dk_textio.p8`): `getkey` is `int getk(void)` (stdio.h, plain `__LIB__`, smallc), `waitkey` is `chrin`, which is `int fgetc_cons(void)` on these profiles (no echo). TRS-80 `getk` calls ROM `$002B`; ZX reads and clears LAST-K; the C128's scans the matrix and gives the held key on every call (like `in_Inkey`); its `fgetc_cons` waits for a release first.
+  - coco: `getkey` is POLCAT through picolibc's `char __decb_getc(void)`, `waitkey` polls it. Enter is 13 there; `chrin` (picolibc `read()`, one key per call, CR to LF) gives 10.
+- **C names that start with `_`** can't be an `extsub`: Prog8 identifiers can't start with an underscore. The workaround is a C wrapper with a plain name in a profile support source: `int prog8_coco_getkey(void)` in `mc6809-coco-console.c`. Two possible fixes noted in todo.rst, not implemented: an `extsub` syntax with the C symbol given separately (`extsub "__decb_getc" decb_getc()`, a grammar change), or a `remap_` prefix that the llvm backend strips from the C symbol (`extsub remap___decb_getc()`, no grammar change).
+- **Line input:** `input_line` moved out of `shared_llvm16_textio.p8`: the stream version (no echo, a terminal echoes) is `shared_llvm16_input_textio.p8`, imported by the generic textio; `shared_llvm16_echo_input_textio.p8` echoes each stored character through `chrout`, a new line at Enter (10 or 13), and takes 8, 12 and 127 as backspace (8, space, 8). It is imported by the coco, z88dk and z88dk-ansi textios, as fgetc_cons doesn't echo either (z88dk's own `fgets_cons` echoes and erases the same way; its delete key is 8, 12 on the ZX).
+- **Checked:** the program "getkey, waitkey and line input" (`keyboardPrograms` in TestLlvmCompiler.kt) reads `ABhello world!\nZ` and gives `0`, `65 66`, `10:hello worl`, `90 0` on mos-sim, z88dk-ticks and usim09batch, and `90 26` on tnylpo (^Z at the end of the input); it is linked for every link-only profile. XRoar 1.12.1 on the coco3 and the coco2bus, keys from `-type` after `EXEC`: `GETKEY 0` with no key typed; with `ABhelx\bo world!\rZ`, getkey 65, waitkey 66 104, the line echoed as `elo world!` (the x erased by BS), `LEN 10`, chrin 90, and then 1000 getkey calls gave 0 (no key reported twice). Not checked: a held key in XRoar (`-type` only presses keys), and anything on the TRS-80, ZX or C128 (no trs80gp here; the echoing input_line runs only on the coco).
+
 ## Later milestones
 - Floats on llvm16 (above).
 - TRS-80 Model 4 native mode: 80 columns, video `$F800`, keyboard `$F400`, LS-DOS 6 calls. z88dk has no crt0 for it.
@@ -548,6 +711,17 @@ Made by the user, 2026-11-05, after a plan review:
   - lift the `e` check, and audit the little-endian assumptions: the fputc word file format (InstrSyscall.kt:1051-1073), unions as byte arrays, and byte-in-word addressing in codeGenIntermediate (not audited)
   - investigate the collapse
   - USim
+  - Facts (checked 2026-11-06), for a later milestone with a test profile and a CoCo profile:
+    - **Toolchain:** llvm-mc6809 (`markrvmurray/llvm-mc6809`). Source in `~/devel/retro/6809/llvm-mc6809`, picolibc in `~/devel/retro/6809/picolibc`. A new build is installed in `~/.local/llvm-mc6809`; the earlier release bundle (1.0-rc2) is kept in `~/.local/llvm-mc6809.save`.
+    - **The new install is a raw LLVM install:** only `mc6809-clang`, no picolibc sysroot, so `#include <stdio.h>` fails. The release bundle (`scripts/roll-toolchain.sh`) adds picolibc and the `mc6809-decb-clang`, `mc6809-os9-clang` and `mc6809-run` wrappers. Prog8 needs no headers, but it does need the C library to link.
+    - **Triples:** `mc6809-unknown-decb` (CoCo DECB `LOADM` binary) and `mc6809-unknown-os9` (OS-9 module); without a vendor it is bare metal, with `-mcrt0=semihost` for a simulator. `-mcpu=hd6309` selects the 6309 and its library.
+    - **Data layout:** `E-p:16:8-p1:8:8-S8-m:e-i1:8-i8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:0-n8:16`. It is big-endian, so the backend's little-endian check and assumptions must go first. `int` and pointers are 2 bytes, `long` 4, `float` 4, `double` 8.
+    - **The C library** is picolibc. It is integer-only by default; `-mlibc=float` adds the MC6839 floating-point ROM (8 KB), and there is no float library for DECB.
+    - **DECB:** program and direct page at `$3F00`, loaded with a `LOADM` header (a C hello was 7.3 KB). Run it with `CLEAR 200,&H3EFF` (without that, BASIC's variables sit where the heap grows, so malloc and printf fail), then `LOADM"NAME"` and `EXEC`. Console output goes through the BASIC ROM, and returning from main goes back to BASIC.
+    - **CoCo screen:** 32x16 at `$0400`. The VDG has no lower case. Hardware is at `$FF00-$FFFF` (PIAs, SAM, and the GIME on the CoCo 3).
+    - **usim09batch / usim09pt:** from Mark Murray's USim fork `markrvmurray/usim`, not `raybellis/usim`. llvm-mc6809's CI pins `bf2e69d9e99ffb6dccd02854a0abcabc022ba912` and builds both with `make usim09batch usim09pt CXX='g++ --std=c++20 -Wall -Wextra'`. The lit tests run `usim09batch --timeout=100000 prog.hex`, found through `USIM09BATCH` or the PATH. That is the headless runner for a bare-metal test profile. The fork's current `usim09pt` also builds a video simulator from the author's own `pico-thing-video` firmware tree (`PICOVIDEO`, default `$HOME/Documents/PICO/pico-thing-video`), which is not public. At the pinned revision `usim09pt` needs only `main_picothing.o term.o ptyserial.o`, so build that revision (for example in a git worktree) to get both. `usim09pt` runs OS-9 modules on NitrOS-9 and also needs a NitrOS-9 image tree; it only matters for an OS-9 profile.
+    - **XRoar** (installed) emulates the `coco2b`, `coco3`, `coco3h` (6309) and others. `-run FILE` autoruns a DECB binary. The user installed a `coco3.rom`. No option to exit with a status or to dump the screen was found; the toolchain's docs use MAME (`mamecoco3-headless`) with a Lua script for CoCo runs instead.
+    - **MAME 6309:** llvm-mc6809's 6309 execution tests use `run-mc6809-mame` with a MAME `llvm6309` machine (`MAMELLVM6309`).
 - More mos platforms: cx16, mega65 (45GS02 via -mcpu).
 - Inline asm and register-passing `extsub` for KERNAL calls.
 

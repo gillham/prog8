@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA3 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 953e7187 in branch llvm
+Prerelease version from git commit adcfe18e in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 
 Compiling program import-all-llvm16.p8
@@ -620,6 +620,8 @@ txt  {
     eof  () -> bool
     fill_screen  (ubyte character, ubyte color)
     getchr  (ubyte col, ubyte row) -> ubyte
+    getk  () -> word
+    getkey  () -> ubyte
     height  () -> ubyte
     home  ()
     input_chars  (str buffer) -> ubyte
@@ -668,6 +670,7 @@ txt  {
     size  () -> ubyte, ubyte
     spc  ()
     uppercase  ()
+    waitkey  () -> ubyte
     wherex  () -> word
     wherey  () -> word
     width  () -> ubyte

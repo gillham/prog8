@@ -808,6 +808,19 @@ main {
             }
         }
 
+        if (runner.profile.library == null) for ((name, source) in keyboardPrograms.filterKeys(runner::runs)) {
+            test("$name: reads the keys of stdin as an llvm16 program in ${runner.displayName}").config(enabledOrReasonIf = runner.requires) {
+                for (optimize in listOf(false, true)) {
+                    withClue("optimize=$optimize") {
+                        val llFile = compiledLlFile(compileText(target, optimize, source, outputDir.resolve(dirName).createDirectories()))
+                        val (exitCode, output) = runner.buildAndRun(llFile, keyboardInput)
+                        withClue(output) { exitCode shouldBe 0 }
+                        output shouldBe keyboardOutput(if (dirName == "tnylpo-cpm") 26 else 0)
+                    }
+                }
+            }
+        }
+
         if (runner.profile.library == "z88dk") for ((name, program) in z88dkTextioPrograms.filterKeys(runner::runs)) {
             test("$name: gives the expected exit code and console output with the z88dk textio in ${runner.displayName}").config(enabledOrReasonIf = runner.requires) {
                 for (optimize in listOf(false, true)) {
@@ -831,13 +844,14 @@ main {
         }
     }
 
-    for (linker in z88dkLinkOnlyProfiles) {
+    for (linker in linkOnlyProfiles) {
         val profile = linker.profile
         val target = LlvmTarget(2, profile)
-        test("the llvm16 programs build, optimized, into ${profile.outputExtension.ifEmpty { "extensionless" }} files with the ${profile.name} profile").config(enabledOrReasonIf = { enabledUnless(z88dkReason(profile)) }) {
+        test("the llvm16 programs build, optimized, into ${profile.outputExtension.ifEmpty { "extensionless" }} files with the ${profile.name} profile").config(enabledOrReasonIf = { enabledUnless(linker.toolsReason(profile)) }) {
             val dir = outputDir.resolve("${profile.name}-link").createDirectories()
             val sources = programs + outputPrograms.mapValues { it.value.source } +
-                z88dkTextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "z88dk" || profile.library == "z88dk-ansi" }.orEmpty()
+                z88dkTextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "z88dk" || profile.library == "z88dk-ansi" }.orEmpty() +
+                cocoTextioPrograms.takeIf { profile.library == "coco" }.orEmpty() + keyboardPrograms
             val failed = sources.filterKeys { it !in linker.notLinked }.filter { (_, source) ->
                 val result = compileText(target, true, source, dir) ?: return@filter true
                 val llFile = compiledLlFile(result)
@@ -849,8 +863,8 @@ main {
         }
     }
 
-    test("the notLinked maps of the z88dk link-only profiles only name existing programs") {
-        for (linker in z88dkLinkOnlyProfiles)
+    test("the notLinked maps of the link-only profiles only name existing programs") {
+        for (linker in linkOnlyProfiles)
             withClue(linker.profile.name) { linker.notLinked.keys.filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
     }
 
@@ -864,6 +878,20 @@ main {
         val sysAddress = prg.drop(7).takeWhile { it != 0 }.map { it.toChar() }.joinToString("").trim().toInt()
         val end = 0x0801 + prg.size - 2
         withClue("the SYS address $sysAddress lies in the program") { (sysAddress in 0x0801 until end) shouldBe true }
+    }
+
+    test($$"-o with the mc6809-coco profile builds a DECB binary that LOADM puts at $3F00 and EXEC starts in the program").config(enabledOrReasonIf = requiresMc6809Clang) {
+        val dir = outputDir.resolve("mc6809-coco").createDirectories()
+        val target = LlvmTarget(2, LlvmTripleProfile.resolve("mc6809-coco"))
+        compileText(target, false, nativeHello.source, dir, outputFile = dir.resolve("hello")).shouldNotBeNull()
+        val bin = Files.readAllBytes(dir.resolve("hello.bin")).map { it.toInt() and 255 }
+        val length = 256 * bin[1] + bin[2]
+        withClue("the preamble") { listOf(bin[0], 256 * bin[3] + bin[4]) shouldBe listOf(0, 0x3f00) }
+        withClue("one segment and then the postamble") { bin.size shouldBe 5 + length + 5 }
+        val postamble = bin.takeLast(5)
+        postamble.take(3) shouldBe listOf(0xff, 0, 0)
+        val exec = 256 * postamble[3] + postamble[4]
+        withClue("the exec address $exec lies in the program") { (exec in 0x3f00 until 0x3f00 + length) shouldBe true }
     }
 
     test("-o without .ll builds a native executable with the LLVM IR next to it").config(enabledOrReasonIf = requiresNativeLlvm) {
@@ -1898,6 +1926,7 @@ private fun buildAndRunRiscv(llFile: Path, input: String = "", args: List<String
 
 private val mosSimProfile = LlvmTripleProfile.resolve("mos-sim")
 private val z80Profile = LlvmTripleProfile.resolve("z80-test")
+private val mc6809SimProfile = LlvmTripleProfile.resolve("mc6809-sim")
 
 /**
  * Why [profile] can't build for here, or null when the [variables] (name to what it names) are set and its clang is found,
@@ -1935,6 +1964,14 @@ private fun z88dkReason(profile: LlvmTripleProfile): String? =
             ?.let { "$it, llvm-z80's support library built for z88dk, was not found" }
 
 private val requiresZ80: (TestCase) -> Enabled = { enabledUnless(z88dkReason(z80Profile)) }
+
+private val requiresMc6809Sim: (TestCase) -> Enabled = {
+    enabledUnless(noProfileToolsReason(mc6809SimProfile, mapOf("LLVM_MC6809" to "the llvm-mc6809 directory"), true))
+}
+
+private val requiresMc6809Clang: (TestCase) -> Enabled = {
+    enabledUnless(noProfileToolsReason(LlvmTripleProfile.resolve("mc6809-coco"), mapOf("LLVM_MC6809" to "the llvm-mc6809 directory"), false))
+}
 
 private fun testProfile(name: String) = LlvmTripleProfile.load(fixturesDir.resolve("llvm-triples/$name.properties").toAbsolutePath())
 
@@ -2192,6 +2229,27 @@ private val notRunOnMos: Map<String, String> =
         "arena allocations aligned to 8 bytes, and sys.wait and sys.waitvsync" to "the llvm16 arena is the word arena, which doesn't align to 8 bytes"
     )
 
+// the programs that don't run as they are on llvm16 in usim09batch, with the reason
+private val notRunOn6809: Map<String, String> =
+    programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
+    programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
+    listOf(
+        "command line arguments",
+        "command line arguments when there are none",
+        "sys.argc and sys.argv with a single argument"
+    ).associateWith { "usim09batch passes no command line, not even the program name: argc is 0" } +
+    listOf(
+        "diskio writing, reading lines, seeking in and deleting a text file",
+        "diskio directories, renaming and deleting",
+        "diskio directory listings of the files and subdirectories, sorted by name",
+        "fileio copying between two open files, seeking and the end of the file",
+        "diskio saving and loading memory"
+    ).associateWith { "picolibc's semihost build for usim09batch has no file system: fopen links but returns NULL" } +
+    mapOf(
+        "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which picolibc lacks without its float library",
+        "arena allocations aligned to 8 bytes, and sys.wait and sys.waitvsync" to "the llvm16 arena is the word arena, which doesn't align to 8 bytes"
+    )
+
 // the programs that don't run as they are on llvm16 in z88dk-ticks, with the reason
 private val notRunOnZ80: Map<String, String> =
     programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
@@ -2311,6 +2369,7 @@ private val llvm16ProgramRunners = listOf(
     Llvm16ProgramRunner(mosSimProfile, "mos-sim", requiresMosSim, notRunOnMos),
     // z88dk-ticks prints the cycle count when the program exits, also with its -no-cycles option
     Llvm16ProgramRunner(z80Profile, "z88dk-ticks", requiresZ80, notRunOnZ80, Regex("""\nTicks: \d+\n$""")),
+    Llvm16ProgramRunner(mc6809SimProfile, "usim09batch", requiresMc6809Sim, notRunOn6809),
     Llvm16ProgramRunner(tnylpoProfile, "tnylpo (CP/M)", requiresTnylpo, notRunOnTnylpo, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m3"), "trs80gp (TRS-80 Model III, LDOS)", requiresTrs80gp, notRunOnTrs80gp, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m1"), "trs80gp (TRS-80 Model I, TRSDOS)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
@@ -2318,8 +2377,11 @@ private val llvm16ProgramRunners = listOf(
     Llvm16ProgramRunner(testProfile("trs80gp-cas"), "trs80gp (TRS-80 Model III, ROM BASIC, .cas)", requiresTrs80gp, notRunOnTrs80gpCas, pythonScript = true)
 )
 
-/** A z88dk profile whose programs are only built, as nothing here runs them; [notLinked] names the programs that don't build, with the reason. */
-private class Z88dkLinkOnlyProfile(name: String, val notLinked: Map<String, String>) {
+/**
+ * A profile whose programs are only built, as nothing here runs them; [notLinked] names the programs that don't build, with the reason.
+ * [toolsReason] tells why the profile can't build here, or null.
+ */
+private class LinkOnlyProfile(name: String, val notLinked: Map<String, String>, val toolsReason: (LlvmTripleProfile) -> String? = ::z88dkReason) {
     val profile = LlvmTripleProfile.resolve(name)
 }
 
@@ -2328,12 +2390,18 @@ private val notLinkedOnZ88dk: Map<String, String> =
     programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
     mapOf("math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the z88dk C libraries lack")
 
-private val z88dkLinkOnlyProfiles = listOf(
-    Z88dkLinkOnlyProfile("z80-trs80", notLinkedOnZ88dk),
-    Z88dkLinkOnlyProfile("z80-trs80-cmd", notLinkedOnZ88dk),
-    Z88dkLinkOnlyProfile("z80-cpm", notLinkedOnZ88dk),
-    Z88dkLinkOnlyProfile("z80-zx", notLinkedOnZ88dk),
-    Z88dkLinkOnlyProfile("z80-c128", notLinkedOnZ88dk)
+private val notLinkedOnCoco: Map<String, String> =
+    programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
+    programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
+    mapOf("math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which picolibc for DECB lacks")
+
+private val linkOnlyProfiles = listOf(
+    LinkOnlyProfile("z80-trs80", notLinkedOnZ88dk),
+    LinkOnlyProfile("z80-trs80-cmd", notLinkedOnZ88dk),
+    LinkOnlyProfile("z80-cpm", notLinkedOnZ88dk),
+    LinkOnlyProfile("z80-zx", notLinkedOnZ88dk),
+    LinkOnlyProfile("z80-c128", notLinkedOnZ88dk),
+    LinkOnlyProfile("mc6809-coco", notLinkedOnCoco) { profile -> noProfileToolsReason(profile, mapOf("LLVM_MC6809" to "the llvm-mc6809 directory"), false) }
 )
 
 // the 64-bit programs that don't use the constants of the llvm64 library, so they also run on the virtual machine
@@ -3727,9 +3795,19 @@ main {
     ^^Item @shared blank = ^^Item : []
     Item[2] @shared items = [[1, -5000000000, $ffff_ffff_ffff_ffff, [-1, 1]],
                              [2, 9223372036854775807, 3, [-3, 9007199254740993]]]
+    uword @shared probe = $1234
+    bool bigendian
 
     sub start() {
+        bigendian = peek(&probe) == $12
         sys.exit(check())
+    }
+
+    ; the offset of byte n of a quad, counted from the least significant
+    sub qb(ubyte n) -> ubyte {
+        if bigendian
+            return 7 - n
+        return n
     }
 
     sub check() -> ubyte {
@@ -3866,18 +3944,18 @@ main {
         owned.q = -2
         owned.u = $0123_4567_89ab_cdef
         owned.hist[i1] = -9223372036854775808
-        if itembuf[0] != $a5 or itembuf[1] != $fe or itembuf[8] != $ff or itembuf[9] != $ef or itembuf[16] != $01 or itembuf[25] != 0
+        if itembuf[0] != $a5 or itembuf[1 + qb(0)] != $fe or itembuf[1 + qb(7)] != $ff or itembuf[9 + qb(0)] != $ef or itembuf[9 + qb(7)] != $01 or itembuf[25 + qb(0)] != 0
             return 32
-        if itembuf[32] != $80 or itembuf[33] != 0 or peekq(&itembuf + 25) != -9223372036854775808 or peekq(&itembuf + 1) != -2
+        if itembuf[25 + qb(7)] != $80 or itembuf[33] != 0 or peekq(&itembuf + 25) != -9223372036854775808 or peekq(&itembuf + 1) != -2
             return 33
         owned.q *= -3
         owned.q <<= 40
         owned.u ^= $ffff_ffff_ffff_ffff
         owned.u >>= 8
-        if owned.q != 6597069766656 or owned.u != ($00fe_dcba_9876_5432 as uquad) or itembuf[15] != $fe or itembuf[16] != 0
+        if owned.q != 6597069766656 or owned.u != ($00fe_dcba_9876_5432 as uquad) or itembuf[9 + qb(6)] != $fe or itembuf[9 + qb(7)] != 0
             return 34
         owned^^ = stat^^
-        if owned.q != -10000000000 or owned.hist[i1] != -10000000000 or itembuf[0] != 7 or itembuf[16] != $0f
+        if owned.q != -10000000000 or owned.hist[i1] != -10000000000 or itembuf[0] != 7 or itembuf[9 + qb(7)] != $0f
             return 35
 
         items[i1].q += 1
@@ -3888,23 +3966,22 @@ main {
         if peek(&items + 33) != 2 or peekq(&items + 34) != -9223372036854775808 or peekq(&items + 58) - 9007199254740000 != 993
             return 37
 
-        ; little-endian, like the arm64 host
         pokeq(&membuf + 3, $0123_4567_89ab_cdef)
-        if membuf[2] != 0 or membuf[3] != $ef or membuf[4] != $cd or membuf[10] != $01 or membuf[11] != 0
+        if membuf[2] != 0 or membuf[3 + qb(0)] != $ef or membuf[3 + qb(1)] != $cd or membuf[3 + qb(7)] != $01 or membuf[11] != 0
             return 38
         for i in 0 to 7 {
-            membuf[16 + i] = i * $11
+            membuf[16 + qb(i)] = i * $11
         }
         if peekq(&membuf + 16) != $7766_5544_3322_1100
             return 39
-        membuf[23] = $f7
+        membuf[16 + qb(7)] = $f7
         if (peekq(&membuf + 16) as uquad) != $f766_5544_3322_1100 or peekq(&membuf + 16) != -619714147312856832
             return 40
-        if peekq(&qvals + 16) != 9007199254740993 or peek(&uvals + 15) != $80 or peek(&uvals + 16) != 5 or peek(&uvals + 20) != 1
+        if peekq(&qvals + 16) != 9007199254740993 or peek(&uvals + 8 + qb(7)) != $80 or peek(&uvals + 16 + qb(0)) != 5 or peek(&uvals + 16 + qb(4)) != 1
             return 41
         ^^uquad up = &&uvals[1]
         up++
-        if up^^ != ($1_0000_0005 as uquad) or up[1] != $ffff_ffff_ffff_ffff or up - &&uvals[0] != 2 or peek(up as pointer) != 5
+        if up^^ != ($1_0000_0005 as uquad) or up[1] != $ffff_ffff_ffff_ffff or up - &&uvals[0] != 2 or peek((up as pointer) + qb(0)) != 5
             return 42
         pokeq(&uzero + 8, -2)
         if uzero[1] != $ffff_ffff_ffff_fffe or uzero[0] != $ffff_ffff_ffff_fffe or uzero[2] != 5
@@ -5364,6 +5441,143 @@ main {
 }""", "{12}HELLO\nA 200 54321\n{22,37,42}AT{27,112}R{27,113}{22,40,32}X{22,37,45}{22,40,95}Y{22,37,45}{16,34}C{22,37,42}{16,35}A{16,34}" +
         "{22,37,46}{22,42,32}READ H0ARCX\n")
 )
+
+/**
+ * Programs for the coco textio, which has getchr(), setclr() and inverse_mode: the exit status is the number of the first
+ * screen read-back check that fails, and they are only linked (they were checked by hand in XRoar).
+ */
+private val cocoTextioPrograms = mapOf(
+    "the coco textio routines" to """
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.cls()
+        txt.print("HELLO")
+        txt.nl()
+        txt.chrout('A')
+        txt.spc()
+        txt.print_ub(200)
+        txt.spc()
+        txt.print_uw(54321)
+        txt.nl()
+        txt.plot(10, 5)
+        txt.print("AT")
+        txt.rvs_on()
+        txt.print("R1")
+        txt.rvs_off()
+        txt.setchr(0, 8, 'X')
+        txt.setchr(txt.width() - 1, 8, 'y')
+        txt.color(2)
+        txt.print("C")
+        txt.setclr(10, 5, 3)
+        txt.plot(0, 10)
+        txt.print("READ ")
+        txt.chrout(txt.getchr(0, 0))
+        txt.chrout(txt.getchr(4, 1))
+        txt.chrout(txt.getchr(10, 5))
+        txt.chrout(txt.getchr(12, 5))
+        txt.chrout(txt.getchr(14, 5))
+        txt.chrout(txt.getchr(0, 8))
+        txt.nl()
+        txt.print("lower ")
+        txt.print_ub(txt.width())
+        txt.chrout('x')
+        txt.print_ub(txt.height())
+        txt.nl()
+        ubyte result = check()
+        if result == 0 {
+            txt.plot(31, 15)
+            txt.rvs_on()
+            txt.print("Z")
+            txt.rvs_off()
+            result = scrolled()
+        }
+        txt.print("RESULT ")
+        txt.print_ub(result)
+        txt.nl()
+        sys.exit(result)
+    }
+
+    sub check() -> ubyte {
+        if txt.getchr(0, 0) != 'H'
+            return 1
+        if txt.getchr(4, 0) != 'O'
+            return 2
+        if txt.getchr(0, 1) != 'A'
+            return 3
+        if txt.getchr(2, 1) != '2'
+            return 4
+        if txt.getchr(10, 1) != '1'
+            return 5
+        if txt.getchr(10, 5) != 'A' or txt.getchr(11, 5) != 'T'
+            return 6
+        ; inverse R reads back as r, an inverse digit as the digit
+        if txt.getchr(12, 5) != 'r' or txt.getchr(13, 5) != '1'
+            return 7
+        if @(txt.SCREEN + 5*32 + 12) != $12 or @(txt.SCREEN + 5*32 + 13) != $31
+            return 8
+        ; setchr() put the cursor back
+        if txt.getchr(14, 5) != 'C'
+            return 9
+        if txt.getchr(0, 8) != 'X'
+            return 10
+        if txt.getchr(txt.width() - 1, 8) != 'y' or @(txt.SCREEN + 8*32 + 31) != $19
+            return 11
+        if txt.getchr(5, 10) != 'H' or txt.getchr(10, 10) != 'X'
+            return 12
+        if txt.width() != 32 or txt.height() != 16
+            return 13
+        return 0
+    }
+
+    sub scrolled() -> ubyte {
+        ; the inverse Z at the last cell scrolled the screen up by one line
+        if txt.getchr(0, 10) != 'l' or txt.getchr(5, 9) != 'H' or txt.getchr(31, 14) != 'z' or @(txt.SCREEN + 14*32 + 31) != $1a
+            return 14
+        if peekw(txt.CURPOS) != txt.SCREEN + 15*32
+            return 15
+        return 0
+    }
+}"""
+)
+
+/**
+ * Programs for txt.getkey() and txt.waitkey(), which only the llvm16 textios have: they read [keyboardInput] where the
+ * console is stdin, and are only linked for the other profiles.
+ */
+private val keyboardPrograms = mapOf(
+    "getkey, waitkey and line input" to """
+%import textio
+%zeropage basicsafe
+
+main {
+    ubyte[11] buffer
+
+    sub start() {
+        txt.print_ub(txt.getkey())
+        txt.nl()
+        txt.print_ub(txt.waitkey())
+        txt.chrout(' ')
+        txt.print_ub(txt.waitkey())
+        txt.nl()
+        txt.print_ub(txt.input_line(buffer, 10))
+        txt.chrout(':')
+        txt.print(buffer)
+        txt.nl()
+        txt.print_ub(txt.waitkey())
+        txt.chrout(' ')
+        txt.print_ub(txt.waitkey())
+        txt.nl()
+    }
+}"""
+)
+
+private const val keyboardInput = "ABhello world!\nZ"
+
+// getkey can't poll stdin, so it gives 0; at the end of the input waitkey gives 0, or on tnylpo CP/M's end of file ^Z (26)
+private fun keyboardOutput(endOfInputKey: Int) = "0\n65 66\n10:hello worl\n90 $endOfInputKey\n"
 
 private val outputPrograms = mapOf(
     "for loops over a str parameter, with a local and a qualified loop variable" to OutputProgram("""

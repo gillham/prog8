@@ -3,6 +3,8 @@
 ; txt.print_f is not here: floats are not supported yet on llvm16.
 
 %import shared_llvm16_textio
+%import shared_llvm16_putchar_textio
+%import shared_llvm16_input_textio
 %import shared_llvm16_ansi_textio
 
 txt {
@@ -18,6 +20,16 @@ sub height() -> ubyte {
 
 sub home() {
     print("\x1b[H")
+}
+
+sub getkey() -> ubyte {
+    ; ---- the key pressed, or 0 when there is none: always 0 here, as the C libraries of these profiles can't poll stdin
+    return 0
+}
+
+sub waitkey() -> ubyte {
+    ; ---- wait for the next key and return it: chrin(), so 0 at the end of the input
+    return chrin()
 }
 
 sub rvs_off() {

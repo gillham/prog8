@@ -255,3 +255,16 @@ Keeping the list: add new items at the end with the next number, and remove an i
   target (`master` a4b59f6b3); a local loop variable works. The new desugaring of a loop over a pointer to bytes in
   `CodeDesugarer` calls `names.single()` on the loop variable's name, which has two parts here.
 - Branch: fixed; a qualified loop variable is looked up instead of declared, and the index variable's name joins the parts.
+
+**U40. `@(&w)` reads the low byte of a word variable on the big-endian m68k targets**
+- Repro: `uword w = $1234`, then `print_ub(@(&w))` and `print_ub(@(&w+1))`: prints `52 18` on qemu68k instead of
+  `18 52` (`master` a4b59f6b3). `CodeDesugarer.after(DirectMemoryRead)` rewrites `@(&w)` to `lsb(w)` and `@(&w+1)` to
+  `msb(w)` on every target, also with `-noopt` (`-printast2` shows `lsb()`), but on a big-endian machine the byte at
+  the word's address is the high byte.
+- Branch: fixed; on a big-endian target the rewrite is `@(&w)` to `msb(w)` and `@(&w+1)` to `lsb(w)`.
+
+**U41. With `-noopt`, no qemu68k program assembles**
+- Repro: a program with an empty `main`, built with `-target qemu68k -noopt`: vasm stops with "instruction not
+  supported on selected architecture" at `andi.l #-2,a2` in `qemu.bootinfo_ptr` (`master` a4b59f6b3); optimized
+  builds and `amiga500 -noopt` assemble. The 68000's ANDI can't take an address register as its destination.
+- Branch: not fixed.
