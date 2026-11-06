@@ -599,6 +599,13 @@ your own next to the program (or in a ``-srcdirs`` directory): the compiler look
 built-in library, so that file replaces ``txt`` for the program. Keep the routine names of the built-in one, so
 the rest of the library still finds what it uses.
 
+**Use** ``txt.width()`` **and** ``txt.height()`` **for the screen size, not** ``txt.DEFAULT_WIDTH`` **and**
+``txt.DEFAULT_HEIGHT``. Those constants are 80 and 25 on every ``llvm16`` profile, as one library serves them all,
+while the screen is 64 by 16 on the TRS-80, 32 by 24 on the ZX Spectrum and 40 by 25 on the C128.
+``txt.width()`` and ``txt.height()`` ask z88dk for the real size. Screen code of your own that computes a video RAM
+address from ``DEFAULT_WIDTH``, such as ``$3c00 + row * DEFAULT_WIDTH + col`` on the TRS-80, reads and writes the
+wrong place from the second row on.
+
 - ``z80-trs80``: the TRS-80 Model I and III, as a cassette file. The program starts at ``$5200``. The Model I has
   memory-mapped devices at ``$37e0-$37ff`` (the printer at ``$37e8`` and the disk controller), both models the
   keyboard matrix at ``$3800-$3bff`` and the video RAM at ``$3c00-$3fff``; the Model III has its printer on port

@@ -12,7 +12,7 @@ txt {
     alias print_uq = print_u64
     alias print_q = print_i64
 
-    ; generic "terminal" dimensions
+    ; generic "terminal" dimensions; the z88dk machine screens differ, use width() and height() there
     const ubyte DEFAULT_WIDTH = 80
     const ubyte DEFAULT_HEIGHT = 25
 
