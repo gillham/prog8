@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA3 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit f6866ffc in branch llvm
+Prerelease version from git commit 953e7187 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 
 Compiling program import-all-llvm16.p8
@@ -313,22 +313,22 @@ math  {
 }
 
 
-LIBRARY MODULE NAME: shared_aligned_long_arena
-----------------------------------------------
-
-arena  {
-    alloc  (long size) -> uword
-    init  (uword base_addr, long size)
-    reset  ()
-}
-
-
 LIBRARY MODULE NAME: shared_hosted_compression
 ----------------------------------------------
 
 compression  {
     decode_rle  (^^ubyte compressed, ^^ubyte target, uword maxsize) -> uword
     encode_rle  (^^ubyte data, uword size, ^^ubyte target, bool is_last_block) -> uword
+}
+
+
+LIBRARY MODULE NAME: shared_word_arena
+--------------------------------------
+
+arena  {
+    alloc  (uword size) -> uword
+    init  (uword base_addr, uword size)
+    reset  ()
 }
 
 

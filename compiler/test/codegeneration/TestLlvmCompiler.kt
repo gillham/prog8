@@ -806,12 +806,27 @@ main {
                 }
             }
         }
+
+        if (runner.profile.library == "z88dk") for ((name, program) in z88dkTextioPrograms.filterKeys(runner::runs)) {
+            test("$name: gives the expected exit code and console output with the z88dk textio in ${runner.displayName}").config(enabledOrReasonIf = runner.requires) {
+                for (optimize in listOf(false, true)) {
+                    withClue("optimize=$optimize") {
+                        val llFile = compiledLlFile(compileText(target, optimize, program.source, outputDir.resolve(dirName).createDirectories()))
+                        val (exitCode, output) = runner.buildAndRun(llFile)
+                        withClue("$output: exit code = the number of the failed check") { exitCode shouldBe program.exitCode }
+                        output shouldBe program.output
+                    }
+                }
+            }
+        }
     }
 
     test("the notRun maps and only sets of the llvm16 program runners only name existing programs") {
         for (runner in llvm16ProgramRunners) {
             withClue("the programs that the notRun map of ${runner.displayName} names") { runner.notRun.keys.filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
-            withClue("the programs that the only set of ${runner.displayName} names") { runner.only.orEmpty().filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
+            withClue("the programs that the only set of ${runner.displayName} names") {
+                runner.only.orEmpty().filter { it !in programs && it !in outputPrograms && it !in z88dkTextioPrograms } shouldBe emptyList()
+            }
         }
     }
 
@@ -820,7 +835,8 @@ main {
         val target = LlvmTarget(2, profile)
         test("the llvm16 programs build, optimized, into ${profile.outputExtension.ifEmpty { "extensionless" }} files with the ${profile.name} profile").config(enabledOrReasonIf = { enabledUnless(z88dkReason(profile)) }) {
             val dir = outputDir.resolve("${profile.name}-link").createDirectories()
-            val sources = programs + outputPrograms.mapValues { it.value.source }
+            val sources = programs + outputPrograms.mapValues { it.value.source } +
+                z88dkTextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "z88dk" }.orEmpty()
             val failed = sources.filterKeys { it !in linker.notLinked }.filter { (_, source) ->
                 val result = compileText(target, true, source, dir) ?: return@filter true
                 val llFile = compiledLlFile(result)
@@ -2245,7 +2261,10 @@ private val notRunOnTrs80gp: Map<String, String> = notRunOnZ88dk +
         "console input",
         "line input ends the program at the end of the input",
         "line input reports the end of the input with eof_exit false"
-    ).associateWith { "trs80gp's keyboard can't be fed from the standard input, so the program waits for input forever" } +
+    ).associateWith {
+        "trs80gp's keyboard input options (-i, -if, -ifr, -id, -ip) stop it from running the program file it is given, " +
+            "and a keyboard has no end of the input, which these programs need"
+    } +
     listOf(
         "command line arguments",
         "command line arguments when there are none",
@@ -2266,9 +2285,20 @@ private val notRunOnTrs80gp: Map<String, String> = notRunOnZ88dk +
             $$"the memory-mapped $0400 is in the TRS-80's ROM, so the stores to it are lost"
     )
 
+// the programs that don't run as they are on llvm16 from a .cas file in trs80gp, with the reason
+private val notRunOnTrs80gpCas: Map<String, String> = notRunOnTrs80gp +
+    listOf(
+        "diskio writing, reading lines, seeking in and deleting a text file",
+        "diskio directories, renaming and deleting",
+        "diskio directory listings of the files and subdirectories, sorted by name",
+        "fileio copying between two open files, seeking and the end of the file",
+        "diskio saving and loading memory"
+    ).associateWith { "without a DOS, z88dk's TRS-80 file routines are stubs that fail" }
+
 // a few programs for the other TRS-80 models, as a run takes about 2 seconds
 private val trs80gpSmokeTests = setOf(
     "text output",
+    "the z88dk textio routines",
     "number formatting",
     "strings library",
     "memory routines and sys.exit",
@@ -2283,7 +2313,8 @@ private val llvm16ProgramRunners = listOf(
     Llvm16ProgramRunner(tnylpoProfile, "tnylpo (CP/M)", requiresTnylpo, notRunOnTnylpo, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m3"), "trs80gp (TRS-80 Model III, LDOS)", requiresTrs80gp, notRunOnTrs80gp, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m1"), "trs80gp (TRS-80 Model I, TRSDOS)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
-    Llvm16ProgramRunner(testProfile("trs80gp-m4"), "trs80gp (TRS-80 Model 4, TRSDOS 6)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true)
+    Llvm16ProgramRunner(testProfile("trs80gp-m4"), "trs80gp (TRS-80 Model 4, TRSDOS 6)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
+    Llvm16ProgramRunner(testProfile("trs80gp-cas"), "trs80gp (TRS-80 Model III, ROM BASIC, .cas)", requiresTrs80gp, notRunOnTrs80gpCas, pythonScript = true)
 )
 
 /** A z88dk profile whose programs are only built, as nothing here runs them; [notLinked] names the programs that don't build, with the reason. */
@@ -5258,6 +5289,80 @@ main {
         sys.exit(42)
     }
 }""", "Hello from a native executable\n", exitCode = 42)
+
+/**
+ * Programs for the z88dk textio, which has getchr() and setclr(): the output is trs80gp's printer copy (see trs80gp-output.c),
+ * of a TRS-80 screen of 64 columns, and the exit status the number of the first screen read-back check that fails.
+ */
+private val z88dkTextioPrograms = mapOf(
+    "the z88dk textio routines" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.cls()
+        txt.print("HELLO")
+        txt.nl()
+        txt.chrout('A')
+        txt.spc()
+        txt.print_ub(200)
+        txt.spc()
+        txt.print_uw(54321)
+        txt.nl()
+        txt.plot(10, 5)
+        txt.print("AT")
+        txt.rvs_on()
+        txt.print("R")
+        txt.rvs_off()
+        txt.setchr(0, 8, 'X')
+        txt.setchr(txt.width() - 1, 8, 'Y')
+        txt.color(2)
+        txt.print("C")
+        txt.setclr(10, 5, 3)
+        txt.plot(0, 10)
+        txt.print("READ ")
+        txt.chrout(txt.getchr(0, 0))
+        txt.chrout(txt.getchr(4, 1))
+        txt.chrout(txt.getchr(10, 5))
+        txt.chrout(txt.getchr(12, 5))
+        txt.chrout(txt.getchr(13, 5))
+        txt.chrout(txt.getchr(0, 8))
+        txt.nl()
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        if txt.getchr(0, 0) != 'H'
+            return 1
+        if txt.getchr(4, 0) != 'O'
+            return 2
+        if txt.getchr(0, 1) != 'A'
+            return 3
+        if txt.getchr(2, 1) != '2'
+            return 4
+        if txt.getchr(10, 1) != '1'
+            return 5
+        if txt.getchr(10, 5) != 'A' or txt.getchr(11, 5) != 'T'
+            return 6
+        if txt.getchr(12, 5) != 'R'
+            return 7
+        ; setchr() put the cursor back
+        if txt.getchr(13, 5) != 'C'
+            return 8
+        if txt.getchr(0, 8) != 'X'
+            return 9
+        if txt.getchr(txt.width() - 1, 8) != 'Y'
+            return 10
+        if txt.getchr(5, 10) != 'H' or txt.getchr(10, 10) != 'X'
+            return 11
+        if txt.width() < 32 or txt.width() > 80 or txt.height() < 16 or txt.height() > 25
+            return 12
+        return 0
+    }
+}""", "{12}HELLO\nA 200 54321\n{22,37,42}AT{27,112}R{27,113}{22,40,32}X{22,37,45}{22,40,95}Y{22,37,45}{16,34}C{22,37,42}{16,35}A{16,34}" +
+        "{22,37,46}{22,42,32}READ H0ARCX\n")
+)
 
 private val outputPrograms = mapOf(
     "text output" to OutputProgram("""

@@ -410,6 +410,8 @@ Grouped per compilation target.
 * `amiga500 <_static/symboldumps/skeletons-amiga500.txt>`_
 * `amiga1200 <_static/symboldumps/skeletons-amiga1200.txt>`_
 * `qemu68k <_static/symboldumps/skeletons-qemu68k.txt>`_
+* `llvm16 <_static/symboldumps/skeletons-llvm16.txt>`_
+* `llvm16 with the z88dk textio <_static/symboldumps/skeletons-llvm16-z88dk.txt>`_ (``-triple z80-trs80-cmd``)
 * `llvm32 <_static/symboldumps/skeletons-llvm32.txt>`_
 * `llvm64 <_static/symboldumps/skeletons-llvm64.txt>`_
 

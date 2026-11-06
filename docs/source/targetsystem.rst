@@ -550,8 +550,8 @@ function with its arguments swapped. All but ``z80-trs80-cmd`` also lack ``free`
 their C library has no malloc heap. The programs
 that the compiler's tests build for ``z80-test`` also build for these profiles. The tests also run them for CP/M in
 tnylpo and, when ``TRS80GP`` names the trs80gp binary, for the TRS-80 in trs80gp (Model III with LDOS, and a few on
-the Model I and 4). They do that through test profiles in ``compiler/test/fixtures/llvm-triples``, built on
-``z80-cpm`` and ``z80-trs80-cmd``, whose support sources mirror the console output where the runner script can catch
+the Model I and 4, and as ``.cas`` files from ROM BASIC without a DOS). They do that through test profiles in
+``compiler/test/fixtures/llvm-triples``, built on ``z80-cpm``, ``z80-trs80-cmd`` and ``z80-trs80``, whose support sources mirror the console output where the runner script can catch
 it (the TRS-80 printer) and pass on the exit status (a last output line on CP/M, as tnylpo always exits with 0).
 
 **The z88dk textio.** ``z80-trs80``, ``z80-trs80-cmd`` and ``z80-zx`` set ``library = z88dk`` and
@@ -562,13 +562,30 @@ it (the TRS-80 printer) and pass on the exit status (a last output line on CP/M,
 rewrites the character it reads there in the new ink. ``color``, ``setclr``, ``setcc``, ``rvs_on`` and ``rvs_off``
 send the generic console's ink and inverse codes, which only do something where the platform has them: the ZX
 Spectrum does, the TRS-80 has neither colour nor inverse video. ``bell`` does nothing. ``z80-cpm``, ``z80-c128``
-and generated profiles keep the ANSI textio on standard output.
+and generated profiles keep the ANSI textio on standard output; a generated profile can add the two keys for a
+platform that has z88dk's generic console. Its routines are listed in
+`skeletons-llvm16-z88dk.txt <_static/symboldumps/skeletons-llvm16-z88dk.txt>`_.
+
+A program can call more of z88dk's C library through an ``extsub`` without an address. llvm-z80 calls a C function
+the way z88dk's own "smallc" convention expects: the arguments pushed from left to right as 16-bit words, the caller
+removing them, the result in L or HL. So routines such as ``gotoxy(unsigned x, unsigned y)``, ``wherex()``,
+``cvpeek(int x, int y)``, ``screensize(unsigned *w, unsigned *h)``, ``getk()`` and ``kbhit()`` can be called directly
+(declare a C ``int`` or ``unsigned`` as ``word`` or ``uword``). Routines declared ``__z88dk_fastcall`` (their single
+argument in HL, such as ``textcolor``) or ``__z88dk_callee`` (the ``*_callee`` versions, which remove their own
+arguments) can't be called this way; use the console control codes instead, or a small assembly wrapper.
+
+For machine-specific screen code, such as writing to the TRS-80's video RAM at ``$3c00``, put a ``textio.p8`` of
+your own next to the program (or in a ``-srcdirs`` directory): the compiler looks there before it looks in its
+built-in library, so that file replaces ``txt`` for the program. Keep the routine names of the built-in one, so
+the rest of the library still finds what it uses.
 
 - ``z80-trs80``: the TRS-80 Model I and III, as a cassette file. The program starts at ``$5200``. Its ``io_ranges``
   are the Model I's memory-mapped devices at ``$37e0-$37ff`` (the printer at ``$37e8`` and the disk controller),
   the keyboard matrix at ``$3800-$3bff`` and the video RAM at ``$3c00-$3fff``; the Model III has its printer on
   port ``$f8`` instead. Without a DOS the file routines are stubs that fail. Load the ``.cas`` file with ``SYSTEM``
   from cassette: enter the name (its first six letters) or its first letter, and ``/`` to start it once it is loaded.
+  The program's stack starts at the top of memory, which it reads from ROM BASIC's MEMSIZ (``$40b1``), so it fits
+  the machine's RAM size (checked with 16 and 48 KB).
 - ``z80-trs80-cmd``: a ``.cmd`` program for TRSDOS or LDOS on the Model I and III, started from the DOS prompt, which
   passes its command line. The file routines go through z88dk's TRSDOS library; ``ftell`` and ``rename`` are
   lacking, so the file position and size, loading a file into memory and renaming report a failure. ``fread``

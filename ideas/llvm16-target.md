@@ -500,11 +500,24 @@ Made by the user, 2026-11-05, after a plan review:
    - On trs80gp, checked from a screen dump on stdout (runner extension), on `cmd`, and on `.cas` (a runner autoload mode and a `.cas` test profile).
    - Link-only for ZX.
    - Opt-in through `TRS80GP`, as the other trs80gp tests.
+   Status: done 2026-11-05.
+   - "the z88dk textio routines" (`z88dkTextioPrograms` in TestLlvmCompiler.kt) uses the 14 routines and `width`/`height`, checks itself through `getchr` (the exit status is the failed check) and compares trs80gp's printer copy. No screen dump was needed. It runs on the runners whose profile has `library = z88dk` (trs80gp m3, m1, m4 and `.cas`) and is link-only on `z80-trs80`, `z80-trs80-cmd` and `z80-zx`. It is not in `outputPrograms`: `getchr` and `setclr` exist only in the z88dk textio, so it doesn't compile for llvm32/llvm64 or the ANSI llvm16 textio.
+   - `run-trs80gp.py` also takes a `.cas`, copied to `prog.cas`. The `trs80gp-cas` test profile (on `z80-trs80`, run with `-m3 -dx`) first used `-pragma-define:REGISTER_SP=0`, after the recursive and quad programs hung or failed with ROM BASIC's stack.
+     - Since then (user's decision), `z80-trs80` itself links with `-pragma-define:REGISTER_SP=-0x40B1`. The stack starts at ROM BASIC's MEMSIZ, which reads $7FFF/$FFFF on a 16/48 KB Model III and $7DF1/$FDF1 on a Model I (below trs80gp's lowercase driver). All 18 `.cas` tests pass with it.
+     - The generator drift test has a `handAdded` map for link options like this one.
+     - Not explained: a 4000-deep recursion also passed without any pragma, so the original hang wasn't simply BASIC's stack size. The exit hook and the printer copy work there. All `trs80gp-m3` programs pass on it except the file programs (no DOS); about 39 s for the `programs`, 2.3 s per output program.
+   - Console input stays excluded: any keyboard input option (`-i`, `-if`, `-ifr`, `-id`, `-ip`) stops trs80gp from running the program it is given. Typing the cassette load by hand works but takes 10-50 s, and a keyboard has no end of input, which the input tests need.
+   - Not done: the `z80-trs80` profile itself keeps ROM BASIC's stack.
 5. **Docs:**
    - The family and which profiles use it.
    - The `extsub` convention notes: smallc works; fastcall and callee don't.
    - A project's own `textio.p8` comes first.
    - `skeletons-llvm16-z88dk.txt` through docs/Makefile, and the AGENTS.md note.
+   Status: done 2026-11-05.
+   - In targetsystem.rst, after the z88dk textio paragraph: the calling-convention notes and the project-own `textio.p8` note.
+   - In libraries.rst: links to the llvm16 and llvm16-z88dk skeletons (llvm16 was missing from that list).
+   - The checked-in `skeletons-llvm16.txt` was stale (it still had the aligned long arena), so it was regenerated. The two skeletons now differ only in the z88dk `txt` additions.
+   - Sphinx is not installed, so the docs build was not checked.
 6. **Later, the `z88dk-ansi` family** for the C128:
    - The same structure with ANSI codes.
    - `z80-c128` gets `library = z88dk-ansi`, `putchar_symbol = fputc_cons` and `-pragma-define:ansicolumns=40`. The drift test must allow hand-added pragmas.

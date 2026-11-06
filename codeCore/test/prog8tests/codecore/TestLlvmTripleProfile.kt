@@ -807,6 +807,8 @@ class TestLlvmTripleProfile: FunSpec({
 
     test("the link command, output and libc_lacks of each z88dk platform profile are what the profile generator finds, plus qsort")
         .config(enabled = python != null && System.getenv("Z88DK") != null) {
+        // link options a profile adds by hand to what the generator finds
+        val handAdded = mapOf("z80-trs80" to setOf("-pragma-define:REGISTER_SP=-0x40B1"))
         for (name in embeddedZ88dk.keys) {
             val platform = if (name == "z80-c128") listOf("c128", "disk") else name.removePrefix("z80-").split("-")
             val generated = directory.resolve("generated-$name.properties")
@@ -814,7 +816,7 @@ class TestLlvmTripleProfile: FunSpec({
             val profile = LlvmTripleProfile.resolve(name)
             val found = LlvmTripleProfile.load(generated, null, noUserProfiles)
             withClue(name) {
-                profile.linkCommand shouldBe found.linkCommand
+                profile.linkCommand.orEmpty().filterNot { it in handAdded[name].orEmpty() } shouldBe found.linkCommand
                 profile.outputExtension shouldBe found.outputExtension
                 profile.libcLacks shouldBe found.libcLacks + "qsort"
             }
