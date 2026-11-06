@@ -683,15 +683,16 @@ main {
                 lines.count { it == "store volatile i8 55, ptr inttoptr (i16 1 to ptr)" } shouldBe 1
                 lines.count { it == "store volatile i8 56, ptr inttoptr (i16 1 to ptr)" } shouldBe 1
                 lines.any { it.matches(Regex("""%\S+ = load volatile i8, ptr inttoptr \(i16 1 to ptr\)""")) } shouldBe true
-                lines.count { it == "store i8 9, ptr inttoptr (i16 -16384 to ptr)" } shouldBe 1
-                lines.count { it.startsWith("store i16 1234, ptr inttoptr (i16 251 to ptr)") } shouldBe 1
+                // mos-c64 has io_ranges = *, so every constant address is volatile
+                lines.count { it == "store volatile i8 9, ptr inttoptr (i16 -16384 to ptr)" } shouldBe 1
+                lines.count { it.startsWith("store volatile i16 1234, ptr inttoptr (i16 251 to ptr)") } shouldBe 1
                 lines.count { it.matches(nullAccess) } shouldBe 0
                 lines.count { it.startsWith("@.memmapped.") && !it.startsWith("@.memmapped.ff0000 ") } shouldBe 0
                 lines.any { it.startsWith("store i16 99, ptr @.memmapped.ff0000") } shouldBe true
             }
         }
         val c64 = llLines(LlvmTarget(2, LlvmTripleProfile.resolve("mos-c64")), false, "llvm16-c64-screen")
-        c64.any { it.matches(Regex("""store i8 %\S+, ptr inttoptr \(i16 1034 to ptr\)""")) } shouldBe true
+        c64.any { it.matches(Regex("""store volatile i8 %\S+, ptr inttoptr \(i16 1034 to ptr\)""")) } shouldBe true
         c64.any { it.matches(Regex("""%\S+ = getelementptr i8, ptr inttoptr \(i16 1024 to ptr\), i16 %\S+""")) } shouldBe true
         c64 shouldContain "@main.start.head = global ptr null"
         c64.any { it.matches(Regex("""%\S+ = icmp (eq|ne) i16 %\S+, 0""")) } shouldBe true

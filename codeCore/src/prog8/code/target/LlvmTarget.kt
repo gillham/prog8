@@ -163,7 +163,9 @@ class LlvmTarget(
     /** The error message for program arguments given to a program of a profile with `program_args = false`. */
     fun programArgsRejected(): String = "the programs of llvm triple profile '${profile.name}' can't be given arguments (it has program_args = false)"
 
-    override fun isIOAddress(address: UInt): Boolean = profile.ioAllAddresses || profile.ioRanges.any { address in it }
+    // io_ranges = * only covers the machine's own addresses, not emulated ones such as the cx16 registers at $ff0000
+    override fun isIOAddress(address: UInt): Boolean =
+        (profile.ioAllAddresses && address.toULong() < (1uL shl profile.pointerBits.coerceAtMost(63))) || profile.ioRanges.any { address in it }
 
     override fun initializeMemoryAreas(compilerOptions: CompilationOptions) {
         zeropage = LlvmZeropage(compilerOptions)

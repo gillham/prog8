@@ -474,7 +474,8 @@ class TestLlvmTripleProfile: FunSpec({
         }
         LlvmTripleProfile.resolve("mos-c64").let {
             it.outputExtension shouldBe ".prg"
-            it.ioRanges shouldBe listOf(0u..1u, 0xd000u..0xdfffu)
+            it.ioRanges shouldBe emptyList()
+            it.ioAllAddresses shouldBe true
             ("fopen" in it.libcLacks) shouldBe false
         }
     }
@@ -525,7 +526,6 @@ class TestLlvmTripleProfile: FunSpec({
 
     test("the z88dk platform profiles build on z80-z88dk with their own link command, output, I/O ranges and lacking functions") {
         val base = LlvmTripleProfile.resolve("z80-test")
-        val trs80Io = listOf(0x37e0u..0x37ffu, 0x3800u..0x3bffu, 0x3c00u..0x3fffu)
         for ((name, expected) in embeddedZ88dk) {
             val profile = LlvmTripleProfile.resolve(name)
             withClue(name) {
@@ -537,7 +537,8 @@ class TestLlvmTripleProfile: FunSpec({
                 profile.runCommand shouldBe null
                 profile.outputExtension shouldBe expected.first
                 profile.programArgs shouldBe expected.second
-                profile.ioRanges shouldBe (if (name.startsWith("z80-trs80")) trs80Io else emptyList())
+                profile.ioRanges shouldBe emptyList()
+                profile.ioAllAddresses shouldBe (name != "z80-cpm")
                 // the link command names the support library through LLVM_Z80
                 if (System.getenv("LLVM_Z80") != null) {
                     val linkCommand = profile.linkCommand.shouldNotBeNull()
@@ -576,8 +577,9 @@ class TestLlvmTripleProfile: FunSpec({
         val c64 = getCompilationTargetByName("llvm16", "mos-c64") as LlvmTarget
         c64.isIOAddress(1u) shouldBe true
         c64.isIOAddress(0xd020u) shouldBe true
-        c64.isIOAddress(2u) shouldBe false
-        c64.isIOAddress(0xe000u) shouldBe false
+        c64.isIOAddress(2u) shouldBe true
+        c64.isIOAddress(0xe000u) shouldBe true
+        c64.isIOAddress(0xff0000u) shouldBe false
         for (target in listOf(LlvmTarget(4), LlvmTarget(8))) {
             withClue(target.name) {
                 target.FLOAT_MEM_SIZE shouldBe 8u

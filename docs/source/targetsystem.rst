@@ -396,7 +396,8 @@ These are the keys of a profile; an unknown key is an error:
     Only the names of C functions that Prog8 programs can call are accepted.
 ``io_ranges``
     The memory-mapped I/O addresses, as comma-separated addresses and ranges in decimal or ``$`` hexadecimal,
-    such as ``0-1,$d000-$dfff``, or ``*`` for every constant address.
+    such as ``0-1,$d000-$dfff``, or ``*`` for every constant address that the machine has (below ``$10000`` on ``llvm16``; not the
+    emulated cx16 registers).
 ``library``
     The name of a family directory of the target's embedded library, such as ``z88dk``, whose modules the compiler
     imports before the target's own; a project's own modules still come first. It is a plain name of letters, digits,
@@ -466,8 +467,10 @@ Compared with ``llvm32`` and ``llvm64``:
 is not a null pointer here. A memory-mapped variable such as ``&ubyte border = $d020`` is at its real address when it
 lies entirely below ``$10000``; others, such as the cx16 virtual registers ``cx16.r0`` to ``cx16.r15`` at ``$ff0000``,
 remain ordinary variables. An access at a constant address, or at a memory-mapped variable plus a constant offset or
-an index, is volatile when it touches an address in the profile's ``io_ranges`` (``$fff0-$ffff`` on ``mos-sim``,
-``0-1,$d000-$dfff`` on ``mos-c64``), and so is any access at address 0. Accesses through pointers that are computed at
+an index, is volatile when it touches an address in the profile's ``io_ranges`` (``$fff0-$ffff`` on ``mos-sim``;
+the machine profiles such as ``mos-c64`` and the z88dk ones have ``*``, every real constant address), and so is any
+access at address 0. Without that, clang may read such an address only once in a loop that makes no calls, and never
+see a change that an interrupt makes, such as a clock or a cursor blink flag in the system's RAM. Accesses through pointers that are computed at
 runtime are never volatile, so read and write I/O registers through constant addresses or memory-mapped variables.
 
 **What the C library lacks.** The C library of llvm-mos has no math library, no ``strtod``, no ``usleep`` and no
@@ -537,11 +540,11 @@ output file into the machine or an emulator yourself:
 =================  ===========================  ==========  ===================  ============
 Profile            ``zcc`` platform             Output      ``io_ranges``        Arguments
 =================  ===========================  ==========  ===================  ============
-``z80-trs80``      ``+trs80``                   ``.cas``    ``$37e0-$3fff``      no
-``z80-trs80-cmd``  ``+trs80 -subtype=cmd``      ``.cmd``    ``$37e0-$3fff``      yes
+``z80-trs80``      ``+trs80``                   ``.cas``    ``*``                no
+``z80-trs80-cmd``  ``+trs80 -subtype=cmd``      ``.cmd``    ``*``                yes
 ``z80-cpm``        ``+cpm``                     ``.com``    none                 yes
-``z80-zx``         ``+zx``                      ``.tap``    none                 no
-``z80-c128``       ``+c128 -subtype=disk``      none        none                 no
+``z80-zx``         ``+zx``                      ``.tap``    ``*``                no
+``z80-c128``       ``+c128 -subtype=disk``      none        ``*``                no
 =================  ===========================  ==========  ===================  ============
 
 What ``z80-test`` lists above applies to them as well, except the file notes, which are about ``z88dk-ticks``. All of
@@ -596,10 +599,10 @@ your own next to the program (or in a ``-srcdirs`` directory): the compiler look
 built-in library, so that file replaces ``txt`` for the program. Keep the routine names of the built-in one, so
 the rest of the library still finds what it uses.
 
-- ``z80-trs80``: the TRS-80 Model I and III, as a cassette file. The program starts at ``$5200``. Its ``io_ranges``
-  are the Model I's memory-mapped devices at ``$37e0-$37ff`` (the printer at ``$37e8`` and the disk controller),
-  the keyboard matrix at ``$3800-$3bff`` and the video RAM at ``$3c00-$3fff``; the Model III has its printer on
-  port ``$f8`` instead. Without a DOS the file routines are stubs that fail. Load the ``.cas`` file with ``SYSTEM``
+- ``z80-trs80``: the TRS-80 Model I and III, as a cassette file. The program starts at ``$5200``. The Model I has
+  memory-mapped devices at ``$37e0-$37ff`` (the printer at ``$37e8`` and the disk controller), both models the
+  keyboard matrix at ``$3800-$3bff`` and the video RAM at ``$3c00-$3fff``; the Model III has its printer on port
+  ``$f8`` instead. Without a DOS the file routines are stubs that fail. Load the ``.cas`` file with ``SYSTEM``
   from cassette: enter the name (its first six letters) or its first letter, and ``/`` to start it once it is loaded.
   The program's stack starts at the top of memory, which it reads from ROM BASIC's MEMSIZ (``$40b1``), so it fits
   the machine's RAM size (checked with 16 and 48 KB).
@@ -632,8 +635,7 @@ the rest of the library still finds what it uses.
   from the CCP, which turns it into upper case. tnylpo (``tnylpo prog.com``) and RunCPM run it on the host; tnylpo
   works in the current directory and gives its files lower case names on the host.
 - ``z80-zx``: the ZX Spectrum, as a tape file with a BASIC loader, for an emulator such as Fuse: ``LOAD ""`` loads
-  and starts it. The ULA is on port ``$fe``, and the screen at ``$4000`` is plain
-  RAM, so the profile has no ``io_ranges``. There are no files: the file routines fail.
+  and starts it. The ULA is on port ``$fe``; the screen at ``$4000`` is plain RAM. There are no files: the file routines fail.
 - ``z80-c128``: the Commodore 128 with its Z80. The output is a program file without an extension that loads at
   ``$5000``: put it on a disk image (for example with VICE's ``c1541``), load it with ``LOAD"NAME",8,1`` and start
   it with ``BANK 0:SYS 20480``. Its first code runs on the 8502: it puts a jump to the Z80 code at ``$FFEE`` and
@@ -641,8 +643,7 @@ the rest of the library still finds what it uses.
   loads the program under the name it was linked as. The console is z88dk's ANSI terminal on the 40 column screen
   (see the z88dk-ansi textio above), which z88dk moves to ``$2000``; back in BASIC the screen at ``$0400`` returns and the program's output is gone, so
   a program whose output should stay readable waits for a key before it ends. On the Z80 the VIC, SID and CIAs are I/O ports, so a
-  Prog8 ``@($d020)`` or a memory-mapped variable at a chip's address writes RAM, not the chip, and the profile has
-  no ``io_ranges``. There are no files: the file routines fail.
+  Prog8 ``@($d020)`` or a memory-mapped variable at a chip's address writes RAM, not the chip. There are no files: the file routines fail.
 
 The ZX Spectrum and the C128 reach their hardware only through I/O ports, which Prog8 code can't access yet.
 
