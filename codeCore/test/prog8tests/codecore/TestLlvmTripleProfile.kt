@@ -336,6 +336,27 @@ class TestLlvmTripleProfile: FunSpec({
             }
     }
 
+    test("putchar_symbol defaults to putchar and library to none, an empty value is absent, and a library is a plain directory name") {
+        LlvmTripleProfile.load(profileFile("nokeys", validProfile())).let {
+            it.putcharSymbol shouldBe "putchar"
+            it.library shouldBe null
+        }
+        LlvmTripleProfile.load(profileFile("emptykeys", validProfile("putchar_symbol =\nlibrary = "))).let {
+            it.putcharSymbol shouldBe "putchar"
+            it.library shouldBe null
+        }
+        LlvmTripleProfile.load(profileFile("setkeys", validProfile("putchar_symbol = fputc_cons\nlibrary = z88dk_x-1"))).let {
+            it.putcharSymbol shouldBe "fputc_cons"
+            it.library shouldBe "z88dk_x-1"
+        }
+        for (value in listOf("a/b", "..", "z88dk.lib", "a\\\\b", "a b"))
+            withClue(value) {
+                shouldThrow<IllegalArgumentException> {
+                    LlvmTripleProfile.load(profileFile("badlibrary", validProfile("library = $value")))
+                }.message shouldContain "the library of llvm triple profile"
+            }
+    }
+
     test("run_command and clang expand environment variables on use, keeping the {file} and {args} placeholders") {
         val profile = LlvmTripleProfile.load(profileFile("runenv", validProfile(
             $$"run_command = ${PROG8_NO_SUCH_VARIABLE:-qemu} -kernel {file} {args}\nclang = ${PROG8_NO_SUCH_VARIABLE:-/opt/x}/bin/clang")))

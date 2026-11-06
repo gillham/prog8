@@ -800,7 +800,7 @@ main {
                         val llFile = compiledLlFile(compileText(target, optimize, program.source, outputDir.resolve(dirName).createDirectories()))
                         val (exitCode, output) = runner.buildAndRun(llFile, program.input, workingDirectory, program.args.takeIf { runner.profile.programArgs }.orEmpty())
                         withClue(output) { exitCode shouldBe program.exitCode }
-                        output shouldBe program.output
+                        output shouldBe (program.z88dkConsoleOutput.takeIf { runner.profile.library == "z88dk" } ?: program.output)
                         withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
                     }
                 }
@@ -5138,8 +5138,10 @@ main {
 /**
  * A complete program that uses the llvm64 library, with the exit code and the console output that it should give
  * for the [input] and the command line [args]. It runs in an empty directory named run, which it has to leave empty.
+ * [z88dkConsoleOutput] is the output with the z88dk textio when it differs, as trs80gp's printer copy shows it (see trs80gp-output.c).
  */
-private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0, val input: String = "", val args: List<String> = emptyList())
+private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0, val input: String = "", val args: List<String> = emptyList(),
+                            val z88dkConsoleOutput: String? = null)
 
 /** Programs with extsubs that call the C library: they can't import textio, which uses the runtime's own declarations of putchar and getchar. */
 private val externalPrograms = mapOf(
@@ -5282,7 +5284,8 @@ main {
         txt.bell()
         txt.nl()
     }
-}""", "Hello from Prog8 LLVM!\nX Y\nmultiple\n\u001b[7mreverse\u001b[0m\u001b[32m\u001b[H\u001b[2;4H\u0007\n"),
+}""", "Hello from Prog8 LLVM!\nX Y\nmultiple\n\u001b[7mreverse\u001b[0m\u001b[32m\u001b[H\u001b[2;4H\u0007\n",
+        z88dkConsoleOutput = "Hello from Prog8 LLVM!\nX Y\nmultiple\n{27,112}reverse{27,113}{16,34}{22,32,32}{22,34,36}\n"),
 
     "number formatting" to OutputProgram($$"""
 %import textio

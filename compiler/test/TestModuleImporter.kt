@@ -17,11 +17,14 @@ import prog8.code.PROG8_CONTAINER_MODULES
 import prog8.code.core.IErrorReporter
 import prog8.code.source.ImportFileSystem
 import prog8.code.source.SourceCode
+import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmTripleProfile
 import prog8.code.target.VMTarget
 import prog8.compiler.ModuleImporter
 import prog8.parser.MultipleParseErrors
 import prog8.parser.Prog8Parser
 import prog8tests.helpers.*
+import java.io.File
 import kotlin.io.path.*
 
 
@@ -227,6 +230,26 @@ class TestModuleImporter: FunSpec({
             withClue("no filesystem search location may be derived from the library: origin: $searched") {
                 searched.none { it.toString().contains("library:") } shouldBe true
             }
+        }
+
+        test("an llvm profile's library family directory is searched before the target's own and the general library") {
+            val target = LlvmTarget(2, LlvmTripleProfile.resolve("mos-sim").copy(library = "fam"))
+            val importer = ModuleImporter(program, target, ErrorReporterForTests(false), emptyList(), emptyList(), Path(".").absolute(), false)
+            fun found(vararg present: String): String {
+                val resources = present.associateWith { SourceCode.Text("; $it") }
+                val source = importer.getModuleFromResource("mod.p8", "test") { resources[it] ?: throw NoSuchFileException(File(it)) }
+                return source.getOrElse { error("no module found") }.text
+            }
+            found("/prog8lib/llvm16/fam/mod.p8", "/prog8lib/llvm16/mod.p8", "/prog8lib/mod.p8") shouldBe "; /prog8lib/llvm16/fam/mod.p8"
+            found("/prog8lib/llvm16/mod.p8", "/prog8lib/mod.p8") shouldBe "; /prog8lib/llvm16/mod.p8"
+            found("/prog8lib/mod.p8") shouldBe "; /prog8lib/mod.p8"
+            importer.getModuleFromResource("textio.p8", "test").getOrElse { error("no textio") }.origin shouldBe "library:/prog8lib/llvm16/textio.p8"
+        }
+
+        test("only an llvm profile with a library adds a family directory to the library search") {
+            ModuleImporter.libraryResourcePaths("mod.p8", VMTarget()).map { it.first } shouldBe listOf("/prog8lib/virtual/mod.p8", "/prog8lib/mod.p8")
+            ModuleImporter.libraryResourcePaths("mod.p8", LlvmTarget(2, LlvmTripleProfile.resolve("mos-sim"))).map { it.first } shouldBe
+                listOf("/prog8lib/llvm16/mod.p8", "/prog8lib/mod.p8")
         }
     }
 

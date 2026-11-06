@@ -388,12 +388,19 @@ These are the keys of a profile; an unknown key is an error:
     The C library routine that reads the next console character, the way ``getchar()`` does, which is the default.
     The ``z80-test`` profile names ``fgetc_cons``, because ``getchar`` is a macro in z88dk. A profile that lists
     ``getchar`` in ``libc_lacks`` has no console input: reading a character gives 0, as at the end of the input.
+``putchar_symbol``
+    The C library routine that writes a console character, the way ``putchar()`` does, which is the default. It is
+    called as ``int f(int)``. ``libc_lacks`` still names ``putchar`` itself.
 ``libc_lacks``
     The C functions, separated by spaces, that the platform's C library doesn't have, such as ``opendir readdir closedir``.
     Only the names of C functions that Prog8 programs can call are accepted.
 ``io_ranges``
     The memory-mapped I/O addresses, as comma-separated addresses and ranges in decimal or ``$`` hexadecimal,
     such as ``0-1,$d000-$dfff``, or ``*`` for every constant address.
+``library``
+    The name of a family directory of the target's embedded library, such as ``z88dk``, whose modules the compiler
+    imports before the target's own; a project's own modules still come first. It is a plain name of letters, digits,
+    ``_`` and ``-``. Without it, only the target's own library and the general one are searched.
 ``file_extension_separator``
     A character, other than ``.``, that replaces the last ``.`` of a file name before the C library's ``fopen``,
     ``remove`` or ``rename`` gets it, for a DOS whose file names have another separator. The program's string stays as
@@ -546,6 +553,16 @@ tnylpo and, when ``TRS80GP`` names the trs80gp binary, for the TRS-80 in trs80gp
 the Model I and 4). They do that through test profiles in ``compiler/test/fixtures/llvm-triples``, built on
 ``z80-cpm`` and ``z80-trs80-cmd``, whose support sources mirror the console output where the runner script can catch
 it (the TRS-80 printer) and pass on the exit status (a last output line on CP/M, as tnylpo always exits with 0).
+
+**The z88dk textio.** ``z80-trs80``, ``z80-trs80-cmd`` and ``z80-zx`` set ``library = z88dk`` and
+``putchar_symbol = fputc_cons``: all console output goes through z88dk's generic console, and ``txt`` comes from
+``prog8lib/llvm16/z88dk/textio.p8`` instead of the ANSI one. Its routines are those of the llvm16 ``txt``, plus
+``getchr`` and ``setclr``. ``cls``, ``home``, ``plot``, ``column``, ``setchr`` (which leaves the cursor where it was),
+``width`` and ``height`` work everywhere; ``getchr`` reads the screen with z88dk's ``cvpeek``, and ``setclr``
+rewrites the character it reads there in the new ink. ``color``, ``setclr``, ``setcc``, ``rvs_on`` and ``rvs_off``
+send the generic console's ink and inverse codes, which only do something where the platform has them: the ZX
+Spectrum does, the TRS-80 has neither colour nor inverse video. ``bell`` does nothing. ``z80-cpm``, ``z80-c128``
+and generated profiles keep the ANSI textio on standard output.
 
 - ``z80-trs80``: the TRS-80 Model I and III, as a cassette file. The program starts at ``$5200``. Its ``io_ranges``
   are the Model I's memory-mapped devices at ``$37e0-$37ff`` (the printer at ``$37e8`` and the disk controller),

@@ -17,7 +17,8 @@ linked by zcc itself, then find out:
   CRT_HEAP_AMALLOC pragma: 3/4 of the free memory, set up at run time; with CRT_HEAP_ENABLE too when the
   platform's crt0 can take the top of memory from the system (TRS-80: HIGH$), as the heap otherwise ends at the stack
 What a probe can't find out is left for the user to check: io_ranges, getchar_symbol, program_args, run_command,
-and functions that link but misbehave on the platform (libc_lacks names those too, as z80-test does).
+library and putchar_symbol (z88dk's generic console), and functions that link but misbehave on the platform
+(libc_lacks names those too, as z80-test does).
 
 Needs Z88DK (the z88dk directory).
 """
@@ -284,6 +285,9 @@ def main():
         "# the memory-mapped I/O addresses, if any",
         "# io_ranges =",
         f"# getchar_symbol = {getchar_symbol}",
+        "# on a platform with z88dk's generic console: its txt module, and all console output through fputc_cons",
+        "# library = z88dk",
+        "# putchar_symbol = fputc_cons",
         "# program_args = false",
         "# run_command =",
     ]

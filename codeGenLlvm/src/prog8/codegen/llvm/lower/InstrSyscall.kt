@@ -265,7 +265,8 @@ private fun FunctionLowering.printString(site: CallSite, number: Int) {
 }
 
 // putchar() and not printf() or fputs(): those need a format string, or the platform-specific stdout symbol
-private fun FunctionLowering.putchar(): LlvmValue.Global = external("putchar", builder.mapper.cInt, listOf(builder.mapper.cInt))
+private fun FunctionLowering.putchar(): LlvmValue.Global =
+    external(builder.profile?.putcharSymbol ?: "putchar", builder.mapper.cInt, listOf(builder.mapper.cInt), cName = "putchar")
 
 /**
  * GET_C(): the next byte from stdin, read with C's getchar() or the profile's routine for it; its negative EOF becomes 0,

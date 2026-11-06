@@ -66,6 +66,22 @@ class TestLlvmSyscallLowering: FunSpec({
         text.count { it.startsWith("define internal void @.print.string(") } shouldBe 1
     }
 
+    test("syscalls 2 and 3 call the profile's putchar_symbol instead, as int f(int)") {
+        val z80 = LlvmTripleProfile.resolve("z80-test")
+        val module = TestProgram(LlvmTarget(2, z80.copy(putcharSymbol = "fputc_cons"))).apply { printCharSub(); printStringSub() }.module()
+        module.function("main.printchar").lines().any { it.matches(Regex(" +call i16 @fputc_cons\\(i16 %ch\\.\\d+\\)")) } shouldBe true
+        module.function(".print.string").lines().any { "call i16 @fputc_cons(i16 " in it } shouldBe true
+        LlvmPrinter.print(module).lines().let { text ->
+            text shouldHave "declare i16 @fputc_cons(i16)"
+            text.none { "@putchar(" in it } shouldBe true
+        }
+        val plain = TestProgram(LlvmTarget(2, z80)).apply { printCharSub() }.module()
+        plain.function("main.printchar").lines().any { "call i16 @putchar(i16 " in it } shouldBe true
+        val lacking = z80.copy(putcharSymbol = "fputc_cons", libcLacks = setOf("putchar"))
+        shouldThrow<IllegalStateException> { TestProgram(LlvmTarget(2, lacking)).apply { printCharSub() }.module() }
+            .message shouldContain "calls C function 'putchar'"
+    }
+
     test("syscall 69 reads a character with C's getchar, whose negative end of input becomes 0") {
         val module = TestProgram().apply { readCharSub() }.module()
         val lines = module.function("main.readchar").lines()

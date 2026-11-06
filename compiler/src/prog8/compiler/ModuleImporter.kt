@@ -129,7 +129,7 @@ class ModuleImporter(private val program: Program,
 
         // try internal library
         if(importedModule == null) {
-            val moduleResourceSrc = getModuleFromResource("$moduleName.p8", compTarget.name, importingModule?.name ?: "~implicit~")
+            val moduleResourceSrc = getModuleFromResource("$moduleName.p8", importingModule?.name ?: "~implicit~")
             moduleResourceSrc.onOk {
                 importedModule = importModule(it)
             }
@@ -168,18 +168,25 @@ class ModuleImporter(private val program: Program,
         importedModule.statements.addAll(0, directives)
     }
 
-    private fun getModuleFromResource(name: String, compilationTargetName: String, requestedBy: String): Result<SourceCode, NoSuchFileException> {
-        val targetPath = "/prog8lib/$compilationTargetName/$name"
-        val generalPath = "/prog8lib/$name"
-
-        val result = runCatching { ImportFileSystem.getResource(targetPath) }
-            .onOk { trace("Importing module '${name.removeSuffix(".p8")}' from resource: $targetPath (target-specific library) - imported by '$requestedBy'") }
-            .orElse {
-                runCatching { ImportFileSystem.getResource(generalPath) }
-                .onOk { trace("Importing module '${name.removeSuffix(".p8")}' from resource: $generalPath (general library) - imported by '$requestedBy'") }
+    internal fun getModuleFromResource(name: String, requestedBy: String,
+                                       getResource: (String) -> SourceCode = ImportFileSystem::getResource): Result<SourceCode, NoSuchFileException> {
+        for ((path, kind) in libraryResourcePaths(name, compTarget)) {
+            val found = runCatching { getResource(path) }
+            if (found.isOk) {
+                trace("Importing module '${name.removeSuffix(".p8")}' from resource: $path ($kind library) - imported by '$requestedBy'")
+                return found.mapError { NoSuchFileException(File(name)) }
             }
+        }
+        return Err(NoSuchFileException(File(name)))
+    }
 
-        return result.mapError { NoSuchFileException(File(name)) }
+    companion object {
+        /** The embedded library paths searched for the module file [name], in order, each with the kind of library it is. */
+        internal fun libraryResourcePaths(name: String, target: ICompilationTarget): List<Pair<String, String>> = listOfNotNull(
+            (target as? LlvmTarget)?.profile?.library?.let { "/prog8lib/${target.name}/$it/$name" to "'$it' family" },
+            "/prog8lib/${target.name}/$name" to "target-specific",
+            "/prog8lib/$name" to "general"
+        )
     }
 
     internal fun getModuleFromFile(name: String, importingModule: Module?): Pair<Result<SourceCode, NoSuchFileException>, List<Path>> {

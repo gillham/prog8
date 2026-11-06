@@ -242,8 +242,11 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
     /** Several return values are passed back in calling convention slots instead, so such a subroutine returns void. */
     fun returnType(sub: IRSubroutine): LlvmType = sub.returns.singleOrNull()?.let { mapper.map(it.base) } ?: LlvmType.Void
 
-    /** Declares a routine that isn't part of the program, such as a C library function, with the signature of its first call. */
-    fun externalFunction(name: String, returnType: LlvmType, paramTypes: List<LlvmType>, isVarArg: Boolean = false): LlvmFunction {
+    /**
+     * Declares a routine that isn't part of the program, such as a C library function, with the signature of its first call.
+     * [cName] is the C function that libc_lacks names for it, such as putchar for the profile's putchar_symbol.
+     */
+    fun externalFunction(name: String, returnType: LlvmType, paramTypes: List<LlvmType>, isVarArg: Boolean = false, cName: String = name): LlvmFunction {
         externalRoutines[name]?.let { (sub, declared) ->
             val used = LlvmType.Function(returnType, paramTypes, isVarArg)
             if (declared.type != used) {
@@ -253,8 +256,8 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
             }
             return declared
         }
-        check(!lacks(name)) {
-            "internal error: ${loweringSyscall ?: loweringSub} calls C function '$name', which the C library of llvm triple profile '${profile?.name}' lacks"
+        check(!lacks(cName)) {
+            "internal error: ${loweringSyscall ?: loweringSub} calls C function '$cName', which the C library of llvm triple profile '${profile?.name}' lacks"
         }
         val function = externalFunctions.getOrPut(name) {
             LlvmFunction(name, returnType, paramTypes.mapIndexed { index, type -> LlvmValue.Local("p$index", type) }, isExternal = true, isVarArg = isVarArg)
@@ -431,8 +434,8 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     }
 
     /** The global of a routine outside the program, such as an LLVM intrinsic, which gets declared on first use. */
-    fun external(name: String, returnType: LlvmType, paramTypes: List<LlvmType>): LlvmValue.Global =
-        LlvmValue.Global(builder.externalFunction(name, returnType, paramTypes).name)
+    fun external(name: String, returnType: LlvmType, paramTypes: List<LlvmType>, cName: String = name): LlvmValue.Global =
+        LlvmValue.Global(builder.externalFunction(name, returnType, paramTypes, cName = cName).name)
 
     /** Calls the LLVM intrinsic [name] that returns a [type] value. */
     fun intrinsic(name: String, type: LlvmType, vararg args: LlvmValue): LlvmValue =

@@ -413,7 +413,7 @@ Each step keeps llvm32/llvm64 `.ll` byte-identical and the mos-sim and z80-test 
 ### Decisions
 Made by the user, 2026-11-05:
 - **Starts after milestone 3** is finished, including the docs, the remote check and the Windows suite.
-- **A profile key names a library family:** `library = z88dk` in `z80-z88dk`, so every profile built on it inherits it, generated ones included. The compiler then looks in `prog8lib/llvm16/z88dk/` before `prog8lib/llvm16/` and `prog8lib/`. The directory is named after the family, not the profile.
+- **A profile key names a library family** (where it is set was changed later: see "More decisions"). The compiler then looks in `prog8lib/llvm16/z88dk/` before `prog8lib/llvm16/` and `prog8lib/`. The directory is named after the family, not the profile.
 - **The z88dk `textio.p8`** keeps the `txt.*` interface and uses z88dk's classic console routines (`gotoxy`, `clrscr`, `textcolor`, `fgetc_cons`, ...).
 - **Hardware-specific versions are left to the developer,** such as TRS-80 video RAM at `$3C00`. A project's own `textio.p8` already comes first, because the filesystem is searched before the built-in library. The docs should say so, maybe with an example.
 - **Maybe later:** a list value (`library = trs80 z88dk`, searched in order) for per-platform layers. Not until a platform needs one.
@@ -425,10 +425,90 @@ These are the ones the user's program uses:
 - `txt.color`, `txt.setclr`, `txt.rvs_on`, `txt.rvs_off`
 - `txt.setchr`, `txt.getchr` (screen character access by position)
 
-### To find out first
-- **Which console routines each platform supports:** `+test`, TRS-80, CP/M, ZX and C128 differ. The TRS-80 crt0 uses z88dk's generic console; the C128 uses the ANSI terminal; `+test` and CP/M have only a stream.
-- **How `setchr`/`getchr` can work:** they read and write the screen by position. z88dk's generic console may have a character read-back; otherwise these become platform-specific.
-- **Calling the C console routines from Prog8** on llvm16, in the way `putchar` and `fgetc_cons` are called.
+### Research (2026-11-05; probes in the session scratchpad `m4research/`)
+- **Calling convention:** llvm-z80's default convention on the z88dk triple matches z88dk's smallc one: arguments pushed left to right as 16-bit words, the caller cleans up, the result in L or HL. So these can be plain `extsub`s with the C widths:
+  - `gotoxy(uword x, uword y)`, `wherex()/wherey() -> word`, `cvpeek(word x, word y) -> word`
+  - `screensize(^^uword w, ^^uword h)`, `fputc_cons(ubyte c) -> word`
+  - `getk() -> word` (non-blocking, 0 = no key), `kbhit`, `fgetc_cons`
+- **Not callable:** `__z88dk_fastcall` (`textcolor`, `textbackground`, `bordercolor`, `vtrendition`: the argument goes in HL) and `__z88dk_callee` (`*_callee`). Colour and reverse go out as console control codes instead.
+- **Output must go through `fputc_cons`, not `putchar`:** on TRS-80 `cmd`, the crt0 points stdout at the DOS's `*DO` device, which bypasses the console. Through `putchar`, cls and gotoxy did nothing there.
+- **Two console dialects:**
+  - **Generic console** (TRS-80, ZX, CP/M with `--generic-console`):
+    - 12: clear screen
+    - `22, y+32, x+32`: position
+    - `16, 32+n` / `17, 32+n`: ink / paper
+    - `ESC p` / `ESC q`: inverse on / off
+  - **ANSI** (C128): `ESC[..m`, `ESC[r;cH`, and 12 clears the screen.
+  - `+test` and default CP/M are plain streams.
+- **Read-back with `cvpeek`:**
+  - Works on the TRS-80, both `cmd` and `.cas`.
+  - Works on the C128 only with `-pragma-define:ansicolumns=40`. Without it, z88dk's vpeek assumes 64 columns while the ANSI engine draws 40 (a z88dk bug). Lower case reads back as screen codes.
+  - Not available on `+test` or default CP/M: it doesn't link there.
+- **Tested:**
+  - TRS-80 `cmd` and `.cas` in trs80gp (trs80gp autoloads a `.cas`): cls, gotoxy, wherex/wherey, cvpeek, screensize (64×16).
+  - C128 in x128: cls, gotoxy, ANSI colour and reverse.
+  - ZX: not run (no emulator); from the source, ink, paper, inverse and vpeek are supported.
+- **Library lookup:**
+  - `ModuleImporter.getModuleFromResource` (`compiler/src/prog8/compiler/ModuleImporter.kt:171-184`) tries `/prog8lib/<target>/<name>` and then `/prog8lib/<name>`. The family dir goes first.
+  - The profile is known at import time (`LlvmTarget.profile`, built before parsing in `Compiler.kt:96`).
+  - `-libsearch` and `-libdump` walk `/prog8lib` recursively, so they need no change. The language server always uses the VM target, so it is unaffected.
+
+### More decisions
+Made by the user, 2026-11-05, after a plan review:
+- **Two families,** `z88dk` (generic console codes) and `z88dk-ansi` (ANSI, for the C128). `z88dk` comes first. `z88dk-ansi` follows once the TRS-80 works.
+- **`library` is opt-in per profile:**
+  - Set in `z80-trs80`, `z80-trs80-cmd` and `z80-zx` (`z88dk`), and later `z80-c128` (`z88dk-ansi`). Not set in `z80-z88dk`.
+  - So `z80-test`, `z80-cpm` and generated profiles keep the plain llvm16 textio. The generator writes a commented `# library = z88dk` hint.
+  - This replaces the earlier "in the base, with opt-outs".
+- **A `putchar_symbol` profile key, like `getchar_symbol`:** set to `fputc_cons` on the profiles that set `library`. All console output then goes through z88dk's console: `txt`, and also `sys.die` through syscalls 2/3, which call putchar today. `printf` in the directory listing stays on stdout; those platforms have no directories anyway.
+- **CP/M stays a stream** (unchanged).
+
+### Review findings (2026-11-05)
+- **Sharing code:** use the existing pattern. A shared module is a `txt` block with `%option merge, no_symbol_prefixing, ignore_unused`, imported by each family `textio.p8`, as `shared_cbm_textio_functions.p8` is by the c64, c128, cx16 and pet32 textios.
+  - Shared modules go in `prog8lib/llvm16/` (found through the fallback), not in a family dir.
+  - Unused routines and their extsubs are removed, so `cvpeek` is harmless where it doesn't link, as long as it is unused.
+  - When both blocks define the same sub, the merged block silently wins (an INFO "monkeypatched subroutine"). So a family textio must not redefine shared routines.
+- **The trs80gp test profiles** inherit from `z80-trs80-cmd`, and their output hook redirects `_putchar`. The hook change must land together with `putchar_symbol` / the family textio, or every trs80gp test loses its output.
+- **The runner:** `run-trs80gp.py` handles only DOS `.cmd` files. A `.cas` test needs an autoload mode with no DOS, and a check that the exit hook works there. A screen-dump check needs the dump printed to stdout, for example after a marker.
+- **Skeleton dumps** need new names, such as `skeletons-llvm16-z88dk.txt`. `-dumpsymbols -triple z80-trs80-cmd` works without LLVM_Z80 and Z88DK set.
+
+### Steps
+1. **The keys:**
+   - `library`: in the importer, `/prog8lib/llvm16/<library>/<name>` comes first. Empty means none.
+   - `putchar_symbol`: used by syscalls 2/3 and any other putchar call in the backend.
+   - Tests for both; llvm32/llvm64 `.ll` output unchanged.
+   - No profile sets them yet.
+   Status: done 2026-11-05. `libc_lacks putchar` still names the C function; the importer test fakes the resource lookup, no family directory was added.
+2. **The `z88dk` textio** in `prog8lib/llvm16/z88dk/`:
+   - It imports the llvm16 printing routines through a shared module (moved out of llvm16's `textio.p8`, which imports it too), and adds the generic-console routines:
+     - `cls`, `plot`: code 22, or a `gotoxy` extsub
+     - `color`, `setclr`: ink and paper codes
+     - `rvs_on`, `rvs_off`: `ESC p` / `ESC q`
+     - `setchr`: position, write, then restore the position
+     - `getchr`: `cvpeek`
+     - `width`, `height`: `screensize`
+   - The same `txt` skeleton as llvm16; what a platform can't do behaves as in llvm16.
+   - The user's 14 routines work: `chrout`, `print`, `print_ub`, `print_uw`, `spc`, `nl`, `cls`, `plot`, `color`, `setclr`, `rvs_on`, `rvs_off`, `setchr`, `getchr`.
+   Status: done 2026-11-05. The console-independent routines (printing, input, conversions, `cls`, `nl`, `spc`, `size`, `DEFAULT_WIDTH/HEIGHT`) moved to `llvm16/shared_llvm16_textio.p8`; the llvm16 skeleton is unchanged. The z88dk `txt` adds `getchr`, `setclr`, `ink_color` and the conio extsubs (`wherex`, `wherey`, `cvpeek`, `screensize`); `bell` does nothing; positions use code 22, so the printer copy of the tests shows them. Checked by hand in trs80gp (`cmd` on LDOS and `.cas` with `-dx`): all 14 routines work, `rvs` does nothing on the TRS-80.
+3. **Profiles and hooks together:**
+   - `library = z88dk` and `putchar_symbol = fputc_cons` on `z80-trs80`, `z80-trs80-cmd` and `z80-zx`.
+   - The trs80gp output hook moves to `-pragma-redirect:fputc_cons=prog8_fputc`, chaining to the original console routine (`fputc_cons_generic` on the TRS-80).
+   - The trs80gp tests must pass again in this step.
+   Status: done 2026-11-05. The hook (`-pragma-redirect:fputc_cons=_prog8_fputc`) chains to `fputc_cons_generic` and prints the generic console's control sequences to the printer as `{22,34,36}`; "text output" got a `z88dkConsoleOutput` expectation. The generator writes the two keys as commented hints. ZX not run.
+4. **Tests:**
+   - A Prog8 program for the 14 routines.
+   - On trs80gp, checked from a screen dump on stdout (runner extension), on `cmd`, and on `.cas` (a runner autoload mode and a `.cas` test profile).
+   - Link-only for ZX.
+   - Opt-in through `TRS80GP`, as the other trs80gp tests.
+5. **Docs:**
+   - The family and which profiles use it.
+   - The `extsub` convention notes: smallc works; fastcall and callee don't.
+   - A project's own `textio.p8` comes first.
+   - `skeletons-llvm16-z88dk.txt` through docs/Makefile, and the AGENTS.md note.
+6. **Later, the `z88dk-ansi` family** for the C128:
+   - The same structure with ANSI codes.
+   - `z80-c128` gets `library = z88dk-ansi`, `putchar_symbol = fputc_cons` and `-pragma-define:ansicolumns=40`. The drift test must allow hand-added pragmas.
+   - A manual x128 check.
 
 ## Later milestones
 - Floats on llvm16 (above).

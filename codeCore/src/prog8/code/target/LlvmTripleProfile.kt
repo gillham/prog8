@@ -55,6 +55,10 @@ data class LlvmTripleProfile(
     val tools: LlvmToolEnvironment = LlvmToolEnvironment(name),
     /** The C routine that reads the next console character as getchar() does, like fgetc_cons in z88dk, where getchar is a macro. */
     val getcharSymbol: String = "getchar",
+    /** The C routine that writes a console character as putchar() does, declared as `int f(int)`, like fputc_cons in z88dk. */
+    val putcharSymbol: String = "putchar",
+    /** The family directory of the target's embedded library that the importer searches before the target's own. */
+    val library: String? = null,
     /** The character that replaces the last `.` of a file name the C library gets, like `/` for TRSDOS's NAME/EXT; null keeps the name. */
     val fileExtensionSeparator: Char? = null
 ) {
@@ -156,6 +160,9 @@ data class LlvmTripleProfile(
             require(unknown.isEmpty()) { "the libc_lacks of llvm triple profile '$name' has names of C functions that Prog8 doesn't call: ${unknown.sorted().joinToString()}" }
         }
         require(ioRanges.none { it.isEmpty() }) { "the io_ranges of llvm triple profile '$name' has a range that ends before it starts" }
+        require(library == null || library.matches(Regex("[A-Za-z0-9_-]+"))) {
+            "the library of llvm triple profile '$name' must be a plain directory name of letters, digits, '_' and '-'"
+        }
         require(fileExtensionSeparator == null || (fileExtensionSeparator in ' '..'~' && fileExtensionSeparator != '.')) {
             "the file_extension_separator of llvm triple profile '$name' must be a printable ASCII character other than '.'"
         }
@@ -166,7 +173,7 @@ data class LlvmTripleProfile(
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
             "link_command", "link_args", "run_timeout_seconds", "startup_source",
             "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "file_offset_size", "getchar_symbol",
-            "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env")
+            "putchar_symbol", "library", "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env")
 
         /** A ProcessBuilder for [command] with the tool environment of [profile], or a plain one without a profile. */
         fun processBuilder(profile: LlvmTripleProfile?, command: List<String>): ProcessBuilder =
@@ -437,6 +444,8 @@ data class LlvmTripleProfile(
                 programArgs,
                 tools,
                 optional("getchar_symbol") ?: "getchar",
+                optional("putchar_symbol") ?: "putchar",
+                optional("library"),
                 fileExtensionSeparator
             )
         }
