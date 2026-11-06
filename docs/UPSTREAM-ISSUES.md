@@ -249,3 +249,9 @@ Keeping the list: add new items at the end with the next number, and remove an i
   last approach can't go into `f_open` as is: closing the command channel makes the drive close all its channels, so
   the file just opened can't be read (and a file open for writing would be closed too).
 - Branch: not fixed.
+
+**U39. A for loop over a `str` parameter with a qualified loop variable crashes the compiler**
+- Repro: `sub count(str s) { for cx16.r0L in s { ... } }`: internal error "List has more than one element" on every
+  target (`master` a4b59f6b3); a local loop variable works. The new desugaring of a loop over a pointer to bytes in
+  `CodeDesugarer` calls `names.single()` on the loop variable's name, which has two parts here.
+- Branch: fixed; a qualified loop variable is looked up instead of declared, and the index variable's name joins the parts.

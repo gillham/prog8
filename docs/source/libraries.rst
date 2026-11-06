@@ -594,22 +594,38 @@ modules. Import them the same way as any other library::
     reports the machine's TV standard. ``waitvsync()``,
     AGA colour register writes, and controller input routines. Canonical
     ``$00RRGGBB`` palette helpers ``load_colors()``/``set_color()``/
-    ``cycle_forward()`` and ``pack12()`` load the bare-metal palette AGA-aware
+    ``cycle_forward()`` and ``pack12()`` load the bare-metal palette AGA-aware,
+    and ``load_colors_ocs()`` takes raw 12-bit ``$0RGB`` words;
+    ``load_iff_cmap()`` loads an IFF/ILBM CMAP chunk (packed RGB888 triples)
+    and converts per chipset (exact 24-bit on AGA, quantised to 4 bits per
+    channel on OCS/ECS)
     (``graphics`` has the matching ``ViewPort`` loaders
-    ``load_palette()``/``set_palette_color()``). ``detect_chipset()`` returns
+    ``load_palette()``/``set_palette_color()``/``load_iff_cmap()``, which go
+    through graphics.library instead of poking the registers). ``detect_chipset()`` returns
     ``custom.CHIPSET::OCS``, ``custom.CHIPSET::ECS`` or
     ``custom.CHIPSET::AGA`` using the Denise ID and VPOSR hardware registers.
     ``joystick_axes(port)`` returns signed x/y values in -1..1.
-    ``joystick_fire(port)`` and
-    ``joystick_fire2(port)`` return the two fire-button states;
-    ``joystick_state(port)`` combines directions and fire buttons into bit flags
-    such as ``custom.JOY_UP`` and ``custom.JOY_FIRE2``. These flags can be
-    combined with bitwise OR.
+    ``joystick_fire(port)`` and ``joystick_fire2(port)`` return true when the
+    respective button is pressed. ``joystick_state(port)`` combines directions
+    and both fire buttons into bit flags such as ``custom.JOY_UP`` and
+    ``custom.JOY_FIRE2``; combine these flags with bitwise OR.
+    ``get_button_states()`` samples the input registers once each and returns a
+    ``uword`` mask with set bits for pressed buttons. Test a button with
+    bitwise AND, for example
+    ``(custom.get_button_states() & custom.BTN_JOY_FIRE) != 0``. The ``BTN_*``
+    constants identify these physical inputs:
+
+    * ``BTN_MOUSE_LEFT`` (``$0040``): connector 1 button 1, also joystick port 0 fire.
+    * ``BTN_JOY_FIRE`` (``$0080``): connector 2 button 1 (joystick port 1 fire).
+    * ``BTN_MOUSE_MIDDLE`` (``$0100``): connector 1 middle button.
+    * ``BTN_MOUSE_RIGHT`` (``$0400``): connector 1 button 2, also joystick port 0 second fire.
+    * ``BTN_JOY_FIRE2`` (``$4000``): connector 2 button 2 (joystick port 1 second fire).
+
     ``mouse_delta(port)`` returns signed, scaled x/y movement since its previous call.
     ``left_button()``, ``middle_button()`` and ``right_button()`` read the three
-    mouse buttons on connector 1. The first joystick fire input is read from CIA-A;
-    the second is on pin 9 via POTGOR.
-    Ports are zero-based: 0 is JOY0DAT / connector 1, 1 is JOY1DAT / connector 2.
+    mouse buttons on connector 1 and return true when pressed. Joystick ports are
+    zero-based: 0 is JOY0DAT / connector 1, 1 is JOY1DAT / connector 2. The first
+    fire input is read from CIA-A; the second is on pin 9 via POTGOR.
     Use the joystick routines with a digital joystick and the mouse routines with
     a mouse or trackball; these are direct hardware readers, not gameport.device calls.
     Call ``mouse_init(port, scale_divisor)`` before polling to set the sensitivity:
@@ -621,7 +637,17 @@ modules. Import them the same way as any other library::
     Poll mouse deltas once per frame because each hardware counter is 8-bit.
 
 ``blitter``
-    Blitter operations and the ``MINTERM`` logic modes.
+    Bare-metal blitter programming, no OS calls: ``copy_rect()`` and
+    ``fill_rect()``, ``masked_blit()``, ``clear_plane()``/``fill_plane()``,
+    and the line drawer (``line_init()``, ``line_draw()``, ``line_erase()``,
+    ``line_draw_fill()``, ``line_color()``, with a fast horizontal-segment
+    path). ``area_fill()`` fills all scanlines between set source bits using
+    the blitter's hardware FILL mode. ``set_blitpri()``
+    sets the blitter DMA priority, ``wait()`` busy-waits until the blitter is
+    idle. All pointers must be in CHIP RAM, width is limited to 64 words per
+    operation, and every operation waits for the blitter at entry but not for
+    its completion on return. The ``MINTERM_*`` constants select the logic
+    function.
 
 ``playfield``
     Bare-metal bitplane manager to pair with ``custom.compute_display()``:
@@ -654,6 +680,13 @@ modules. Import them the same way as any other library::
     ``aga_move()``/``aga_set()`` encapsulate the four-MOVE 24-bit AGA color
     sequence behind a single slot handle.
     Emissions beyond capacity are dropped and counted in ``overflows``.
+
+``text``
+    Bare-metal 8x8 text renderer: ``init()`` caches pitch, depth and plane
+    pointers, ``char()`` draws one glyph and ``print()`` draws a string with
+    LF handling and reverse video (bit 7 of the character byte). CPU-only, no
+    OS calls, transparent glyph background, exact foreground color including 0.
+    Limited to the embedded 8x8 font; no clipping is performed.
 
 ``sound``
     Direct Paula audio: hardware-banging 4-channel 8-bit PCM playback with no
@@ -1480,8 +1513,9 @@ large multiplications
 ~~~~~~~~~~~~~~~~~~~~~
 .. index:: pair: Libraries; large multiplications
 
-``mul32 (word w1, word w2) -> long``
-   Returns the 32 bits signed long result of w1 * w2
+``mul32 (uword a, uword b) -> long``
+   Returns the full 32-bit product of two unsigned words, represented as a Prog8 ``long``.
+   On the m68k cpus this even translates into a single multiplication instruction.
 
 ``mul16_last_upper () -> uword``
     Fetches the upper 16 bits of the previous 16*16 bit multiplication.

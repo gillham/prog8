@@ -5366,6 +5366,41 @@ main {
 )
 
 private val outputPrograms = mapOf(
+    "for loops over a str parameter, with a local and a qualified loop variable" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    sub start() {
+        count("hello, world")
+        count("")
+        ^^ubyte p = "pointer"
+        count(p)
+        qualified("abc")
+    }
+    sub count(str s) {
+        ubyte n = 0
+        ubyte sum = 0
+        ubyte c
+        for c in s {
+            n++
+            sum += c
+        }
+        txt.print_ub(n)
+        txt.spc()
+        txt.print_ub(sum)
+        txt.nl()
+    }
+    sub qualified(str s) {
+        uword sum = 0
+        for cx16.r0L in s
+            sum += cx16.r0L
+        txt.print_uw(sum)
+        txt.nl()
+    }
+}""", "12 136\n0 0\n7 1\n294\n"),
+
     "text output" to OutputProgram("""
 %import textio
 %import syslib

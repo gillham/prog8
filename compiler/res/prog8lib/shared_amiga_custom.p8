@@ -4,6 +4,12 @@
 custom {
     %option merge, no_symbol_prefixing, ignore_unused
 
+    ; custom - Amiga custom-chip register file plus bare-metal hardware
+    ; helpers: display setup (compute_display), palette loaders, chipset
+    ; detection, vblank pacing, input readers, and grab_system()/
+    ; restore_system() machine takeover. Everything works without the OS
+    ; except the takeover routines themselves (which call exec).
+
     ; OS-interaction note:
     ;   The read-only helpers below (joystick_*, mouse_*, key_pressed,
     ;   raw_keyboard_poll reads) only read hardware registers and are safe
@@ -440,6 +446,56 @@ IRQ7 = $7C
         pokew($dff180 + (index as uword)*2, pack12(rgb24))
     }
 
+    sub load_iff_cmap(^^ubyte cmap, uword count) {
+        ; Load an IFF/ILBM CMAP chunk into the palette. CMAP stores colors as
+        ; packed RGB888 triples (3 bytes each: R, G, B) - a file format, not a
+        ; hardware format - so the right conversion differs per chipset:
+        ; - AGA: 24-bit color registers, 8 bits per channel, lossless. Up to
+        ;   256 entries (8 banks of 32 selected via BPLCON3 by set_aga_color).
+        ; - OCS/ECS: 12-bit $0RGB registers, 4 bits per channel, so the low
+        ;   nibble of each channel is dropped. 32 entries max.
+        ; count is the number of colors in the chunk (chunk size / 3).
+        ; This is the hardware-banging version of graphics.load_iff_cmap(),
+        ; which writes through graphics.library for Intuition screens. Use this
+        ; one only when no OS copper list reloads the COLORxx registers (bare
+        ; metal display, or a screen whose palette you own outright).
+        if count == 0
+            return
+        if detect_chipset()==CHIPSET::AGA {
+            uword na = min(count, 256)
+            for ia in 0 to na-1 {
+                uword ba = ia*3
+                long rgba = ((cmap[ba] as long) << 16) | ((cmap[ba+1] as long) << 8) | (cmap[ba+2] as long)
+                set_aga_color(ia as ubyte, rgba)
+            }
+        } else {
+            ubyte no = min(count, 32) as ubyte
+            for io in 0 to no-1 {
+                uword bo = (io as uword)*3
+                long rgbo = ((cmap[bo] as long) << 16) | ((cmap[bo+1] as long) << 8) | (cmap[bo+2] as long)
+                set_ocs_color(io, rgbo)
+            }
+        }
+    }
+
+    sub load_colors_ocs(^^uword colors, ubyte count) {
+        ; Bare-metal load of count 12-bit $0RGB colors into COLOR00.. .
+        ; This is the raw COLORxx register format, so no conversion at all:
+        ; one write per color. On AGA the write lands in the upper 12 bits
+        ; of the 24-bit color registers, requiring BPLCON3 LOCT=0 (the
+        ; reset default; set_aga_color also leaves it that way), and the
+        ; lower 8 bits are left untouched (same as set_ocs_color). Only
+        ; the 32-entry register file; AGA palette banks (BPLCON4) for
+        ; >5-plane modes are the caller's business.
+        if count == 0
+            return
+        ubyte n = count
+        if n > 32
+            n = 32
+        for i in 0 to n-1
+            pokew($dff180 + (i as uword)*2, colors[i] & $0fff)
+    }
+
     sub load_colors(^^long rgb24, ubyte count) {
         ; Bare-metal load of count canonical colors into COLOR00.. .
         ; AGA: full 24-bit via set_aga_color. ECS: top nibbles packed into
@@ -529,6 +585,17 @@ IRQ7 = $7C
     const ubyte JOY_FIRE = %00010000
     const ubyte JOY_FIRE2 = %00100000
 
+    ; All fire/button states gathered by get_button_states() in one uword.
+    ; Pressed buttons are set bits; test and combine with & and |.
+    ; The bits mirror the raw register positions of the input lines
+    ; (CIA-A PRA bits 6/7, POTGOR bits 8/10/14), which lets the routine
+    ; return the mask with two reads and no repacking.
+    const uword BTN_MOUSE_LEFT   = $0040   ; connector 1 button 1 (also reads as joy fire)
+    const uword BTN_JOY_FIRE     = $0080   ; connector 2 button 1
+    const uword BTN_MOUSE_MIDDLE = $0100
+    const uword BTN_MOUSE_RIGHT  = $0400   ; connector 1 button 2 / second fire
+    const uword BTN_JOY_FIRE2    = $4000   ; connector 2 button 2 / second fire
+
     private uword[2] mouse_previous
     private bool[2] mouse_initialized
     private word[2] mouse_x_remainder
@@ -554,22 +621,46 @@ IRQ7 = $7C
         return x, y
     }
 
-    sub joystick_fire(ubyte port) -> bool {
+    asmsub joystick_fire(ubyte port @D0) -> bool @Pz {
         ; Fire switches are active low on CIA-A PRA bits 6 and 7.
-        when port {
-            0 -> return (CIAA_PRA & $40)==0
-            1 -> return (CIAA_PRA & $80)==0
-            else -> return false
-        }
+        ; Z flag carries the result: set = pressed, clear = released or invalid port.
+        %asm {{
+            tst.b   d0
+            beq.s   .p0
+            cmp.b   #1,d0
+            bne.s   .fail
+            move.b  custom.CIAA_PRA,d0
+            andi.b  #$80,d0      ; Z set = bit 7 low = pressed
+            rts
+.p0:
+            move.b  custom.CIAA_PRA,d0
+            andi.b  #$40,d0
+            rts
+.fail:
+            moveq   #1,d0        ; nonzero -> Z clear -> false
+            rts
+        }}
     }
 
-    sub joystick_fire2(ubyte port) -> bool {
+    asmsub joystick_fire2(ubyte port @D0) -> bool @Pz {
         ; Second fire is active low on pin 9: POTGOR bit 10 or 14.
-        when port {
-            0 -> return (POTGOR & $0400)==0
-            1 -> return (POTGOR & $4000)==0
-            else -> return false
-        }
+        ; Z flag carries the result: set = pressed, clear = released or invalid port.
+        %asm {{
+            tst.b   d0
+            beq.s   .p0
+            cmp.b   #1,d0
+            bne.s   .fail
+            move.w  custom.POTGOR,d0   ; andi.w flags ignore the upper word
+            andi.w  #$4000,d0
+            rts
+.p0:
+            move.w  custom.POTGOR,d0
+            andi.w  #$0400,d0
+            rts
+.fail:
+            moveq   #1,d0
+            rts
+        }}
     }
 
     sub joystick_state(ubyte port) -> ubyte {
@@ -678,22 +769,50 @@ IRQ7 = $7C
 
     ; ========== mouse button status ==========
 
-    sub left_button() -> bool {
-        ; Returns true if the left mouse button (port 1) is pressed.
-        ; Left button is CIA-A PRA bit 6, active low.
-        return (CIAA_PRA & %01000000) == 0
+    asmsub left_button() -> bool @Pz {
+        ; Left button is CIA-A PRA bit 6, active low. Z set = pressed.
+        %asm {{
+            move.b  custom.CIAA_PRA,d0
+            andi.b  #$40,d0
+            rts
+        }}
     }
 
-    sub right_button() -> bool {
-        ; Returns true if the right mouse button (port 1) is pressed.
-        ; Right button is POTGOR ($dff016) bit 10, active low.
-        return (POTGOR & %0000010000000000) == 0
+    asmsub right_button() -> bool @Pz {
+        ; Right button is POTGOR ($dff016) bit 10, active low. Z set = pressed.
+        %asm {{
+            move.w  custom.POTGOR,d0   ; andi.w flags ignore the upper word
+            andi.w  #$0400,d0
+            rts
+        }}
     }
 
-    sub middle_button() -> bool {
-        ; Returns true if the middle mouse button (port 1) is pressed.
-        ; Middle button is POTGOR ($dff016) bit 8, active low.
-        return (POTGOR & %0000000100000000) == 0
+    asmsub middle_button() -> bool @Pz {
+        ; Middle button is POTGOR ($dff016) bit 8, active low. Z set = pressed.
+        %asm {{
+            move.w  custom.POTGOR,d0
+            andi.w  #$0100,d0
+            rts
+        }}
+    }
+
+    asmsub get_button_states() -> uword @D0 {
+        ; Every fire/button state on both connectors in one uword mask,
+        ; sampled with one read of each register (see the BTN_* constants;
+        ; pressed = 1). The active-low input lines are inverted in place,
+        ; so the mask bits sit at their raw register positions.
+        %asm {{
+            moveq   #0,d0
+            move.b  custom.CIAA_PRA,d0    ; bits 6/7: connector 1/2 button 1, active low
+            eori.b  #$c0,d0               ; active low -> active high
+            andi.b  #$c0,d0               ; drop the other PRA lines
+            moveq   #0,d1
+            move.w  custom.POTGOR,d1      ; bits 8/10/14: middle, connector 1 fire2, connector 2 fire2, active low
+            andi.w  #$4500,d1
+            eori.w  #$4500,d1
+            or.w    d1,d0
+            rts
+        }}
     }
 
 

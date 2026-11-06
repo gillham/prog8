@@ -53,6 +53,7 @@ class IRCodeGen(
     }
 
     fun generate(): IRProgram {
+        val translateTiming = CompilationTimings.mark()
         // The pure "virtual" (VM) target doesn't need symbol prefixing because the VM
         // doesn't emit assembly and has no risk of symbol clashes.  Neither do the llvm
         // targets: LLVM IR can quote any name.  Any other target
@@ -102,9 +103,14 @@ class IRCodeGen(
         if(retainSSA)
             irProg.splitSSAchunks()
 
+        CompilationTimings.record("ir generation", translateTiming)
+
         // the optimizer also does 1 essential step regardless of optimizations: joining adjacent chunks.
         val optimizer = IRPeepholeOptimizer(irProg, retainSSA)
-        optimizer.optimize(options.optimize, errors)
+        CompilationTimings.measure("ir optimize") {
+            optimizer.optimize(options.optimize, errors)
+            irProg.validate()
+        }
 
         // Register packing: reduce distinct virtual registers by coalescing non-overlapping live ranges.
         // Subroutines at different call depths should get disjoint slot ranges to avoid caller/callee
@@ -116,8 +122,6 @@ class IRCodeGen(
         //    irProg.wasPackingApplied = true
         //    wasPackingApplied = true
         //}
-
-        irProg.validate()
 
         return irProg
     }
@@ -735,7 +739,7 @@ class IRCodeGen(
             }
             is PtIdentifier -> {
                 require(forLoop.variable.name == loopvar.scopedNameString)
-                val elementDt = irType(iterable.type.elementType())
+                val elementDt = if (iterable.type.isPointerToByte) irType(DataType.UBYTE) else irType(iterable.type.elementType())
                 val iterableLength = symbolTable.getLength(iterable.name)
                 val loopvarSymbol = forLoop.variable.name
                 val loopvarDt = irType((loopvar.astNode as IPtVariable).type)
@@ -761,7 +765,7 @@ class IRCodeGen(
                 }
 
                 when {
-                    iterable.type.isString -> {
+                    iterable.type.isString || iterable.type.isPointerToByte -> {
                         addInstr(result, IRInstructions.load(indexRegType, indexReg, 0), null)
                         val loopChunk = IRCodeChunk(loopLabel, null)
                         loopChunk += IRInstructions.loadMemory(Opcode.LOADX, elementDt, tmpReg, IRMemory.indexed(iterable.name, indexReg, options.compTarget.indexRegType))

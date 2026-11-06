@@ -4,6 +4,7 @@
 %import exec
 %import blitter
 %import math
+%import text
 
 main {
     sub start() {
@@ -60,9 +61,15 @@ main {
             ; math.cos8/sin8 return -127..127, so scale to radius
             word x2 = 160 + (cs as word * RADIUS as word) / 127
             word y2 = 128 + (sn as word * RADIUS as word) / 127
-            blitter.line_draw(160, 128, x2 as uword, y2 as uword, 40, bitplane)
+            blitter.line_draw(160, 128, x2 as uword, y2 as uword, bitplane)
         }
         blitter.wait()
+
+        ; CPU text into the white bottom quarter (color 0 clears to black)
+        text.init(40, 1, &playfield.bitmap.Planes)
+        text.print(10, 200, iso:"bare-metal text", 0)
+        text.print(15, 210, iso:"reverse: \x82\x81", 0)
+        text.print(16, 220, iso:"some byte aligned text", 0)
 
         ; Build the copper list with the copper helper (bitplane slots,
         ; display registers and the raster gradient) and start it.

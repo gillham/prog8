@@ -403,7 +403,6 @@ class VarDecl(
             }
             val dt = when {
                 param.type.isArray -> DataType.UWORD
-                param.type.isString -> DataType.pointer(BaseDataType.UBYTE)
                 else -> param.type
             }
             return builder(dt, param.position)
@@ -1175,7 +1174,7 @@ class InlineAssembly(val assembly: String, val isIR: Boolean, override val posit
 
     companion object {
         private val returnJumpRegex = Regex("""[ \t](return|returnr|returni|jump|jumpi)\b""")
-        private val rtsRegex = Regex("""[ \t](rti|rts|jmp|bra)\b""", RegexOption.IGNORE_CASE)
+        private val rtsRegex = Regex("""[ \t](rti|rts|rte|jmp|bra)\b""", RegexOption.IGNORE_CASE)
     }
 
     fun hasReturnOrRts(): Boolean =

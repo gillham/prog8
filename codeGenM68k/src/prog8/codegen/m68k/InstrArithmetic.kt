@@ -483,7 +483,7 @@ private fun AsmGen.emitMulOp(dstReg: Int, srcReg: Int?, type: IRDataType, unsign
             }
         }
 
-        else -> TODO("MUL for ${type.name}")
+        else -> TODO("MUL for ${type.name}")  // unreachable
     }
 }
 
@@ -640,7 +640,7 @@ private fun AsmGen.emitDivOp(dstReg: Int, srcReg: Int?, type: IRDataType, unsign
             }
         }
 
-        else -> TODO("DIV for ${type.name}")
+        else -> TODO("DIV for ${type.name}")  // unreachable
     }
 }
 
@@ -769,7 +769,7 @@ private fun AsmGen.emitModOp(dstReg: Int, srcReg: Int?, type: IRDataType, unsign
             }
         }
 
-        else -> TODO("MOD for ${type.name}")
+        else -> TODO("MOD for ${type.name}")  // unreachable
     }
 }
 
@@ -854,7 +854,7 @@ private fun AsmGen.emitDivModOp(dstReg: Int, remainderReg: Int, type: IRDataType
             }
         }
 
-        else -> TODO("DIVMOD for ${type.name}")
+        else -> TODO("DIVMOD for ${type.name}")  // unreachable
     }
 }
 
@@ -974,7 +974,7 @@ private fun AsmGen.translateFloatArithmetic(insn: IRInstruction) {
         Opcode.ADDIM -> emitFloatMemBinaryImmediate("fadd", insn.requireImmediateFloat(), resolveMemory(insn.requireMemory(), forFloat = true))
         Opcode.SUBIM -> emitFloatMemBinaryImmediate("fsub", insn.requireImmediateFloat(), resolveMemory(insn.requireMemory(), forFloat = true))
 
-        else -> TODO("FLOAT arithmetic: ${insn.opcode}")
+        else -> TODO("FLOAT arithmetic: ${insn.opcode}")  // unreachable
     }
 }
 
@@ -1024,7 +1024,7 @@ private fun AsmGen.tryEmitStrengthReducedMultiply(
 ): Boolean {
     if (constant < 0 && !signed)
         return false
-    val needNegate = constant < 0 && signed
+    
     val positiveConstant = if (constant < 0) -constant else constant
     if (positiveConstant <= 0)
         return false
@@ -1088,7 +1088,7 @@ private fun AsmGen.tryEmitStrengthReducedMultiply(
         emitLine("lsl.l  #${recipe.overallShift}, $d")
 
     // For negative constants, negate the final product.
-    if (needNegate)
+    if (constant < 0)
         emitLine("neg.l  $d")
 
     return true
