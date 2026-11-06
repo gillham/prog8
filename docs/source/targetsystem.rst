@@ -561,10 +561,27 @@ it (the TRS-80 printer) and pass on the exit status (a last output line on CP/M,
 ``width`` and ``height`` work everywhere; ``getchr`` reads the screen with z88dk's ``cvpeek``, and ``setclr``
 rewrites the character it reads there in the new ink. ``color``, ``setclr``, ``setcc``, ``rvs_on`` and ``rvs_off``
 send the generic console's ink and inverse codes, which only do something where the platform has them: the ZX
-Spectrum does, the TRS-80 has neither colour nor inverse video. ``bell`` does nothing. ``z80-cpm``, ``z80-c128``
+Spectrum does, the TRS-80 has neither colour nor inverse video. ``bell`` does nothing. ``z80-cpm``
 and generated profiles keep the ANSI textio on standard output; a generated profile can add the two keys for a
 platform that has z88dk's generic console. Its routines are listed in
 `skeletons-llvm16-z88dk.txt <_static/symboldumps/skeletons-llvm16-z88dk.txt>`_.
+
+**The z88dk-ansi textio.** ``z80-c128`` sets ``library = z88dk-ansi`` and ``putchar_symbol = fputc_cons``: all
+console output goes through z88dk's ANSI console, and ``txt`` comes from ``prog8lib/llvm16/z88dk-ansi/textio.p8``,
+with the same routines as the z88dk textio. ``cls``, ``color`` and ``rvs_on`` send the ANSI sequences of the llvm16
+textio, ``rvs_off`` sends ``ESC[27m`` (``ESC[0m`` would also reset the colour to white). ``color`` takes the ANSI
+colours 0-7 (black, red, green, yellow, blue, magenta, cyan, white), which the console shows as the C128 colours 0, 2,
+5, 7, 6, 4, 3 and 1. ``plot``, ``home``, ``column`` and ``setchr`` use z88dk's ``gotoxy``, ``width`` and ``height``
+its ``screensize`` (40 by 25). ``getchr`` reads the screen memory at ``$2000`` and gives back the character that was
+printed there, without its reverse video; it doesn't use ``cvpeek``, as linking that replaces the C128 font with one
+without lower case. ``setclr`` writes the colour memory at ``$1000``, so it keeps the character, the cursor and the
+colour of ``color``; ``setcc`` is ``setchr`` and ``setclr``. ``fill_screen`` and ``clear_screenchars`` fill the two
+memories directly. ``bell`` does nothing. The console puts a character code on the screen as the screen code of the
+C128's upper and lower case font, only moving the lower case letters and the codes above them down by 96: so ``@``,
+``[``, ``\``, ``]``, ``^`` and ``_`` show as graphics, and the backquote, ``{``, ``|``, ``}`` and ``~`` as ``@[£]↑``.
+The profile links with ``-pragma-define:ansicolumns=40``: without it z88dk's console is 64 columns wide, so ``width``
+gives 64 and positions past column 39 land on the next line. The routines are listed in
+`skeletons-llvm16-z88dk-ansi.txt <_static/symboldumps/skeletons-llvm16-z88dk-ansi.txt>`_.
 
 A program can call more of z88dk's C library through an ``extsub`` without an address. llvm-z80 calls a C function
 the way z88dk's own "smallc" convention expects: the arguments pushed from left to right as 16-bit words, the caller
@@ -621,8 +638,8 @@ the rest of the library still finds what it uses.
   ``$5000``: put it on a disk image (for example with VICE's ``c1541``), load it with ``LOAD"NAME",8,1`` and start
   it with ``BANK 0:SYS 20480``. Its first code runs on the 8502: it puts a jump to the Z80 code at ``$FFEE`` and
   switches to the Z80, which returns to BASIC when the program ends. zcc also writes a ``.ldr`` BASIC loader, which
-  loads the program under the name it was linked as. The console is z88dk's ANSI terminal on the 40 column screen,
-  which z88dk moves to ``$2000``; back in BASIC the screen at ``$0400`` returns and the program's output is gone, so
+  loads the program under the name it was linked as. The console is z88dk's ANSI terminal on the 40 column screen
+  (see the z88dk-ansi textio above), which z88dk moves to ``$2000``; back in BASIC the screen at ``$0400`` returns and the program's output is gone, so
   a program whose output should stay readable waits for a key before it ends. On the Z80 the VIC, SID and CIAs are I/O ports, so a
   Prog8 ``@($d020)`` or a memory-mapped variable at a chip's address writes RAM, not the chip, and the profile has
   no ``io_ranges``. There are no files: the file routines fail.

@@ -27,6 +27,7 @@ symboldumps:
 	prog8c -daemon -target amiga1200 import-all-amiga1200.p8 -dumpsymbols > source/_static/symboldumps/skeletons-amiga1200.txt
 	prog8c -daemon -target llvm16 import-all-llvm16.p8 -dumpsymbols > source/_static/symboldumps/skeletons-llvm16.txt
 	prog8c -daemon -target llvm16 -triple z80-trs80-cmd import-all-llvm16.p8 -dumpsymbols > source/_static/symboldumps/skeletons-llvm16-z88dk.txt
+	prog8c -daemon -target llvm16 -triple z80-c128 import-all-llvm16.p8 -dumpsymbols > source/_static/symboldumps/skeletons-llvm16-z88dk-ansi.txt
 	prog8c -daemon -target llvm32 import-all-llvm32.p8 -dumpsymbols > source/_static/symboldumps/skeletons-llvm32.txt
 	prog8c -daemon -target llvm64 import-all-llvm64.p8 -dumpsymbols > source/_static/symboldumps/skeletons-llvm64.txt
 

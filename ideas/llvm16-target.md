@@ -522,6 +522,19 @@ Made by the user, 2026-11-05, after a plan review:
    - The same structure with ANSI codes.
    - `z80-c128` gets `library = z88dk-ansi`, `putchar_symbol = fputc_cons` and `-pragma-define:ansicolumns=40`. The drift test must allow hand-added pragmas.
    - A manual x128 check.
+   Status: done 2026-11-05.
+   - `prog8lib/llvm16/z88dk-ansi/textio.p8`. Two more shared modules in `llvm16/`, so no routine is written twice: `shared_llvm16_ansi_textio.p8` (`clear_screen`, `rvs_on`, `color`, `bell`, moved out of the llvm16 textio) and `shared_z88dk_textio.p8` (the conio extsubs, `width`, `height`, `home`, `column`, moved out of the z88dk textio). The llvm16 and z88dk skeletons are unchanged.
+   - `color` takes the ANSI colours 0-7 (the engine maps them to C128 colours 0,2,5,7,6,4,3,1); `rvs_off` is `ESC[27m`, as `ESC[0m` also resets the colour; `plot`/`setchr` use `gotoxy`/`wherex`/`wherey`.
+   - `getchr` peeks `$2000` and turns screen codes 0-31 back into 96-127, without bit 7 (reverse). Not `cvpeek`: linking it pulls in z88dk's generic console, whose init loads a ZX font at `$3000` without lower case, so all lower case vanished from the screen.
+   - `setclr` pokes the colour memory at `$1000` instead of rewriting the character: the ANSI engine has no way to restore the start colour (light grey 15, not an ANSI colour). `setcc` is `setchr` + `setclr`; `fill_screen`/`clear_screenchars` fill `$2000`/`$1000` directly.
+   - `ansicolumns=40` is still needed: without it `screensize` gives 64 columns and `gotoxy` past column 39 wraps.
+   - Checked in x128 (screenshots): the 14 routines, `width`/`height` (40x25), `column`, `home`, `cls`, `fill_screen`, `clear_screenchars`, the 8 colours with reverse, and the getchr checks of "the z88dk textio routines". That program is link-only on `z80-c128`.
+
+**Milestone 4 status: done 2026-11-06.**
+- Full build with LLVM_MOS, LLVM_Z80, Z88DK and TRS80GP set: 3468 tests, 0 failures, 7 skipped (the usual ones).
+- Without them, with `--rerun-tasks`: 3468, 0 failures, 118 skipped.
+- Not run: the remote check and the Windows suite. llvm32/llvm64 output is unchanged.
+- Not run on real hardware: the C128 program on the d64 in the session scratchpad (`m4s6/textio-c128.d64`).
 
 ## Later milestones
 - Floats on llvm16 (above).

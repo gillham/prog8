@@ -3,6 +3,7 @@
 ; txt.print_f is not here: floats are not supported yet on llvm16.
 
 %import shared_llvm16_textio
+%import shared_llvm16_ansi_textio
 
 txt {
 %option no_symbol_prefixing, ignore_unused
@@ -15,31 +16,12 @@ sub height() -> ubyte {
     return DEFAULT_HEIGHT
 }
 
-sub  clear_screen() {
-    print("\x1b[2J\x1b[H")
-}
-
 sub home() {
     print("\x1b[H")
 }
 
-sub rvs_on() {
-    print("\x1b[7m")
-}
-
 sub rvs_off() {
     print("\x1b[0m")
-}
-
-sub color (ubyte txtcol) {
-    ; ---- set the text color, one of the 8 ANSI colors 0-7
-    print("\x1b[3")
-    chrout('0' + txtcol)
-    chrout('m')
-}
-
-sub bell() {
-    chrout(7)
 }
 
 sub column(ubyte col) {

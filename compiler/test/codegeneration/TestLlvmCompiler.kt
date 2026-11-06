@@ -836,7 +836,7 @@ main {
         test("the llvm16 programs build, optimized, into ${profile.outputExtension.ifEmpty { "extensionless" }} files with the ${profile.name} profile").config(enabledOrReasonIf = { enabledUnless(z88dkReason(profile)) }) {
             val dir = outputDir.resolve("${profile.name}-link").createDirectories()
             val sources = programs + outputPrograms.mapValues { it.value.source } +
-                z88dkTextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "z88dk" }.orEmpty()
+                z88dkTextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "z88dk" || profile.library == "z88dk-ansi" }.orEmpty()
             val failed = sources.filterKeys { it !in linker.notLinked }.filter { (_, source) ->
                 val result = compileText(target, true, source, dir) ?: return@filter true
                 val llFile = compiledLlFile(result)
