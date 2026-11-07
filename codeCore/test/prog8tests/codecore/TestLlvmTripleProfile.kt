@@ -613,8 +613,10 @@ class TestLlvmTripleProfile: FunSpec({
         profile.startupSources shouldBe listOf("mc6809-coco-console.c")
         profile.putcharSymbol shouldBe "prog8_coco_putchar"
         profile.library shouldBe "coco"
-        profile.libcLacks.containsAll(listOf("fopen", "remove", "rename", "opendir", "usleep", "strtod", "sqrtf")) shouldBe true
-        (profile.libcLacks intersect setOf("putchar", "getchar", "fclose", "fputc", "strdup", "realloc", "qsort", "exit")) shouldBe emptySet()
+        profile.libcLacks.containsAll(listOf("fopen", "remove", "rename", "opendir", "strtod", "sqrtf")) shouldBe true
+        withClue("the startup source has a usleep") {
+            (profile.libcLacks intersect setOf("putchar", "getchar", "fclose", "fputc", "strdup", "realloc", "qsort", "exit", "usleep")) shouldBe emptySet()
+        }
         if (System.getenv("LLVM_MC6809") == null)
             shouldThrow<IllegalArgumentException> { profile.clang }.message!! shouldContain "LLVM_MC6809"
         else {

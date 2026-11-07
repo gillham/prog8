@@ -783,6 +783,10 @@ Everything listed above for ``mc6809-sim`` applies, apart from these:
     what it reads, with backspace (the left arrow) removing the last character. ``txt.getkey()`` and ``txt.waitkey()``
     read the keyboard without waiting and waiting (see "Keyboard input on llvm16" above). ``DEFAULT_WIDTH`` and
     ``DEFAULT_HEIGHT`` are the generic llvm16 ones.
+- ``sys.wait()`` waits that many ticks of BASIC's 60 Hz ``TIMER`` (``$0112``), which its interrupt counts at each
+  vertical sync, halting the CPU with ``SYNC`` until each interrupt; ``sys.waitvsync()`` waits for the next one, so it
+  really waits for the vertical sync. The profile's startup source gives them a ``usleep``, which picolibc lacks.
+  While IRQs are masked (``sys.set_irqd()``) the timer stops, and both return at once.
 - there are no files: picolibc for DECB has no ``open`` or ``unlink``, and as on ``mos-sim`` the file routines
   report a failure. There is no command line, and no floats or math library routines.
 
