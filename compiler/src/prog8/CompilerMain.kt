@@ -573,6 +573,8 @@ private fun banner(presenter: Presenter) {
         presenter.printlnLine("Prerelease version from git commit ${prog8.buildversion.GIT_SHA.take(8)} in branch ${prog8.buildversion.GIT_BRANCH}")
     }
     presenter.printlnLine("This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html")
+    presenter.printlnLine("LLVM version by Claude Code and Andrew Gillham (gillham@roadsign.com)")
+    presenter.printlnLine("Report issues with this version at https://github.com/gillham/prog8/issues")
     presenter.printlnLine("")
 }
 

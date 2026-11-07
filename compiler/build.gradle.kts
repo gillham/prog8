@@ -5,6 +5,9 @@ plugins {
     id("com.peterabeles.gversion") version "1.11.0"
 }
 
+// suffix kept out of gradle.properties so upstream version bumps merge cleanly
+version = "$version-llvm"
+
 dependencies {
     implementation(project(":codeCore"))
     implementation(project(":simpleAst"))
