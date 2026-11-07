@@ -27,11 +27,11 @@ internal object LlvmToolchain {
      * link command in [profile], clang only compiles an object file that the command links, along with the profile's startup sources if it has any.
      * [extraCompileArgs] go last on the clang command, [extraLinkArgs] and then [linkLibraries] last on the command that links, so libraries
      * come after the object file, and the profile's link arguments after those; a link command can place the [linkLibraries] elsewhere with a `{libs}` word.
-     * The clang is the one of [clangFor]. Messages and any failure are reported on System.err.
+     * The clang is the one of [clangFor]. [loadAddress] takes the place of the profile's own load address. Messages and any failure are reported on System.err.
      */
     fun compileToExecutable(llFile: Path, outputFile: Path, profile: LlvmTripleProfile? = null, optLevel: String = "-O2",
                             extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList(),
-                            linkLibraries: List<String> = emptyList(), clangOption: String? = null): Boolean {
+                            linkLibraries: List<String> = emptyList(), clangOption: String? = null, loadAddress: UInt? = null): Boolean {
         val clang = clangFor(outputFile, profile, clangOption) ?: return false
         val (profileArgs, linkCommand, profileLinkArgs) = try {
             Triple(profile?.clangArgs.orEmpty(), profile?.linkCommand, profile?.linkArgs.orEmpty())
@@ -45,6 +45,7 @@ internal object LlvmToolchain {
                 failed("clang couldn't build '$outputFile' from '$llFile'")
         val objectFile = outputFile.resolveSibling("${outputFile.fileName}.o")
         var startupFiles = emptyList<Path>()
+        var linkScript: Path? = null
         try {
             if (!runTool(compileCommand + listOf("-c", llFile.toString(), "-o", objectFile.toString()), "clang", outputFile, profile))
                 return failed("clang couldn't compile '$llFile'")
@@ -53,11 +54,19 @@ internal object LlvmToolchain {
             } catch (x: IOException) {
                 return failed("Can't build '$outputFile': a startup source of the llvm triple profile couldn't be written: ${x.message}")
             }
-            val link = linkCommandFor(linkCommand, objectFile, outputFile, startupFiles, extraLinkArgs, linkLibraries, profile?.outputExtension.orEmpty())
+            val address = loadAddress ?: profile?.loadAddress
+            linkScript = try {
+                address?.let { profile?.writeLinkScript(outputFile, it) }
+            } catch (x: IOException) {
+                return failed("Can't build '$outputFile': the link script of the llvm triple profile couldn't be written: ${x.message}")
+            }
+            val link = linkCommandFor(linkCommand, objectFile, outputFile, startupFiles, extraLinkArgs, linkLibraries, profile?.outputExtension.orEmpty(),
+                address, linkScript)
             return runTool(link, link.first(), outputFile, profile) || failed("the link command couldn't build '$outputFile' from '$objectFile'")
         } finally {
             Files.deleteIfExists(objectFile)
             startupFiles.forEach { Files.deleteIfExists(it) }
+            linkScript?.let { Files.deleteIfExists(it) }
         }
     }
 
@@ -85,15 +94,19 @@ internal object LlvmToolchain {
         compileCommand + listOf(llFile.toString(), "-o", outputFile.toString()) + extraLinkArgs
 
     internal fun linkCommandFor(template: List<String>, objectFile: Path, outputFile: Path, startupFiles: List<Path>, extraLinkArgs: List<String>,
-                                linkLibraries: List<String> = emptyList(), outputExtension: String = ""): List<String> {
+                                linkLibraries: List<String> = emptyList(), outputExtension: String = "",
+                                loadAddress: UInt? = null, linkScript: Path? = null): List<String> {
         val file = outputFile.toString()
+        val address = loadAddress?.let { "0x%04x".format(it.toLong()) }
         val stem = if (outputExtension.isNotEmpty() && file.endsWith(outputExtension)) file.dropLast(outputExtension.length) else file
         val command = template.flatMap {
             when (it) {
                 LIBS -> linkLibraries
                 STARTUP -> startupFiles.map(Path::toString)
                 else -> listOf(it.replace("{object}", objectFile.toString()).replace("{file}", file).replace("{stem}", stem)
-                    .replace(STARTUP, startupFiles.joinToString(" ")))
+                    .replace(STARTUP, startupFiles.joinToString(" "))
+                    .let { word -> if (address != null) word.replace(LlvmTripleProfile.LOAD_ADDRESS, address) else word }
+                    .let { word -> if (linkScript != null) word.replace(LlvmTripleProfile.LINK_SCRIPT, linkScript.toString()) else word })
             }
         } + extraLinkArgs
         return if (LIBS in template) command else command + linkLibraries

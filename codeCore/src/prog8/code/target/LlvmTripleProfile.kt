@@ -60,7 +60,13 @@ data class LlvmTripleProfile(
     /** The family directory of the target's embedded library that the importer searches before the target's own. */
     val library: String? = null,
     /** The character that replaces the last `.` of a file name the C library gets, like `/` for TRSDOS's NAME/EXT; null keeps the name. */
-    val fileExtensionSeparator: Char? = null
+    val fileExtensionSeparator: Char? = null,
+    /** The default load address of a profile that can load a program anywhere (`%address`, `-address`), a multiple of [loadAddressAlign]. */
+    val loadAddress: UInt? = null,
+    val loadAddressAlign: UInt = 1u,
+    /** A linker script template, read from [linkScriptDirectory] or the compiler's resources, written for the link as `{link_script}`. */
+    private val linkScript: String? = null,
+    private val linkScriptDirectory: Path? = null
 ) {
     /** True when the data layout starts with `E`. */
     val isBigEndian: Boolean get() = dataLayout.startsWith("E")
@@ -132,6 +138,18 @@ data class LlvmTripleProfile(
         else LlvmTripleProfile::class.java.getResourceAsStream("$RESOURCE_DIR/$source")
             ?: throw IllegalArgumentException("the startup_source '$source' of llvm triple profile '$name' is not embedded in the compiler")
 
+    /** Writes the [linkScript] next to [outputFile] with `{load_address}` replaced by [loadAddress], and returns it; null without one. */
+    fun writeLinkScript(outputFile: Path, loadAddress: UInt): Path? {
+        val script = linkScript ?: return null
+        val template = (if (linkScriptDirectory != null) linkScriptDirectory.resolve(script).inputStream()
+            else LlvmTripleProfile::class.java.getResourceAsStream("$RESOURCE_DIR/$script")
+                ?: throw IllegalArgumentException("the link_script '$script' of llvm triple profile '$name' is not embedded in the compiler")
+            ).use { it.readBytes().decodeToString() }
+        val file = outputFile.resolveSibling("${outputFile.fileName}.${Path(script).fileName}")
+        Files.writeString(file, template.replace(LOAD_ADDRESS, "0x%04x".format(loadAddress.toLong())))
+        return file
+    }
+
     init {
         require(dataLayout.startsWith("e") || dataLayout.startsWith("E")) {
             "the data layout of llvm triple profile '$name' must start with 'e' (little-endian) or 'E' (big-endian)"
@@ -152,6 +170,19 @@ data class LlvmTripleProfile(
                 else LlvmTripleProfile::class.java.getResource("$RESOURCE_DIR/$source") != null) {
                 "the startup_source '$source' of llvm triple profile '$name' was not found"
             }
+        require(linkScript == null || linkCommandTemplate?.any { LINK_SCRIPT in it } == true) {
+            "llvm triple profile '$name' has a link_script, so it needs {link_script} in its link_command"
+        }
+        require(linkScript == null || (if (linkScriptDirectory != null) linkScriptDirectory.resolve(linkScript).isRegularFile()
+            else LlvmTripleProfile::class.java.getResource("$RESOURCE_DIR/$linkScript") != null)) {
+            "the link_script '$linkScript' of llvm triple profile '$name' was not found"
+        }
+        require(loadAddress != null || (linkScript == null && linkCommandTemplate?.none { LOAD_ADDRESS in it } != false)) {
+            "llvm triple profile '$name' uses {load_address} or a link_script, so it needs a load_address"
+        }
+        require(loadAddressAlign > 0u && (loadAddress ?: 0u) % loadAddressAlign == 0u) {
+            "the load_address of llvm triple profile '$name' must be a multiple of its load_address_align, which must be positive"
+        }
         require(linkArgsTemplate.isEmpty() || linkCommandTemplate == null) {
             "llvm triple profile '$name' has a link_command, which takes the arguments of its link_args itself"
         }
@@ -175,10 +206,13 @@ data class LlvmTripleProfile(
 
     companion object {
         const val RESOURCE_DIR = "/prog8lib/llvm-triples"
+        const val LOAD_ADDRESS = "{load_address}"
+        const val LINK_SCRIPT = "{link_script}"
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
             "link_command", "link_args", "run_timeout_seconds", "startup_source",
             "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "file_offset_size", "getchar_symbol",
-            "putchar_symbol", "library", "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env")
+            "putchar_symbol", "library", "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env",
+            "load_address", "load_address_align", "link_script")
 
         /** A ProcessBuilder for [command] with the tool environment of [profile], or a plain one without a profile. */
         fun processBuilder(profile: LlvmTripleProfile?, command: List<String>): ProcessBuilder =
@@ -451,19 +485,25 @@ data class LlvmTripleProfile(
                 optional("getchar_symbol") ?: "getchar",
                 optional("putchar_symbol") ?: "putchar",
                 optional("library"),
-                fileExtensionSeparator
+                fileExtensionSeparator,
+                optional("load_address")?.let { parseAddress(name, "load_address", it) },
+                optional("load_address_align")?.let { parseAddress(name, "load_address_align", it) } ?: 1u,
+                optional("link_script"),
+                supplier["link_script"]?.directory
             )
         }
 
+        private fun parseAddress(name: String, key: String, text: String): UInt {
+            val trimmed = text.trim()
+            return when {
+                trimmed.startsWith("$") -> trimmed.drop(1).toUIntOrNull(16)
+                trimmed.startsWith("0x") -> trimmed.drop(2).toUIntOrNull(16)
+                else -> trimmed.toUIntOrNull()
+            } ?: throw IllegalArgumentException("the $key of llvm triple profile '$name' has an invalid address '$trimmed'")
+        }
+
         private fun parseAddressRanges(name: String, ranges: String): List<UIntRange> = ranges.split(',').map { range ->
-            fun address(text: String): UInt {
-                val trimmed = text.trim()
-                return when {
-                    trimmed.startsWith("$") -> trimmed.drop(1).toUIntOrNull(16)
-                    trimmed.startsWith("0x") -> trimmed.drop(2).toUIntOrNull(16)
-                    else -> trimmed.toUIntOrNull()
-                } ?: throw IllegalArgumentException("the io_ranges of llvm triple profile '$name' has an invalid address '$trimmed'")
-            }
+            fun address(text: String): UInt = parseAddress(name, "io_ranges", text)
             val parts = range.split('-')
             when (parts.size) {
                 1 -> address(parts[0]).let { it..it }

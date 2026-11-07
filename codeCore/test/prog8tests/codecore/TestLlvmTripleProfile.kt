@@ -164,6 +164,33 @@ class TestLlvmTripleProfile: FunSpec({
         rejected("missing", validProfile("link_command = gcc {startup} {object} -o {file}\nstartup_source = boot.S missing.c")) shouldContain "'missing.c'"
     }
 
+    test("the mc6809-coco profile loads at a page that the compiler writes into its link script") {
+        val coco = LlvmTripleProfile.resolve("mc6809-coco")
+        coco.loadAddress shouldBe 0x3f00u
+        coco.loadAddressAlign shouldBe 256u
+        LlvmTarget(2, coco).PROGRAM_LOAD_ADDRESS shouldBe 0x3f00u
+        LlvmTarget(2).PROGRAM_LOAD_ADDRESS shouldBe 0u
+        val script = coco.writeLinkScript(directory.resolve("coco.bin"), 0x2500u)!!
+        script.fileName.toString() shouldBe "coco.bin.mc6809-coco.lds"
+        script.readText() shouldContain "__dp_base_addr = 0x2500;"
+        LlvmTripleProfile.resolve("mc6809-sim").writeLinkScript(directory.resolve("sim.bin"), 0x2500u) shouldBe null
+    }
+
+    test("a profile's link_script needs {link_script} in the link command and a load_address that its load_address_align divides") {
+        val scripts = directory.resolve("withscript").createDirectories()
+        scripts.resolve("link.lds").writeText("BASE = {load_address};")
+        fun load(name: String, extra: String) = LlvmTripleProfile.load(scripts.resolve("$name.properties").also { it.writeText(validProfile(extra)) })
+        val profile = load("script", "link_command = ld -T {link_script} {object} -o {file}\nlink_script = link.lds\nload_address = 0x1000\nload_address_align = $100")
+        profile.writeLinkScript(directory.resolve("script.bin"), 0x2000u)!!.readText() shouldBe "BASE = 0x2000;"
+        fun rejected(name: String, extra: String): String = shouldThrow<IllegalArgumentException> { load(name, extra) }.message!!
+        rejected("noscriptword", "link_command = ld {object} -o {file}\nlink_script = link.lds\nload_address = 0x1000") shouldContain "needs {link_script} in its link_command"
+        rejected("noaddress", "link_command = ld -T {link_script} {object} -o {file}\nlink_script = link.lds") shouldContain "needs a load_address"
+        rejected("noaddressword", "link_command = ld --base={load_address} {object} -o {file}") shouldContain "needs a load_address"
+        rejected("misaligned", "load_address = 0x1080\nload_address_align = 256") shouldContain "must be a multiple of its load_address_align"
+        rejected("badaddress", "load_address = nowhere") shouldContain "invalid address 'nowhere'"
+        rejected("missingscript", "link_command = ld -T {link_script} {object} -o {file}\nlink_script = none.lds\nload_address = 0x1000") shouldContain "'none.lds'"
+    }
+
     test("the pointer width is the p: entry of the data layout, ignoring other address spaces, and 64 bits without one") {
         LlvmTripleProfile.load(profileFile("p32", validProfile())).pointerBits shouldBe 32
         val noPointerEntry = profileFile("p64", "triple = t\ndatalayout = e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-n32:64-S128\nc_long_size = 8")
@@ -593,7 +620,7 @@ class TestLlvmTripleProfile: FunSpec({
         else {
             profile.clang shouldBe System.getenv("LLVM_MC6809") + "/bin/clang"
             profile.clangArgs shouldBe listOf("--target=mc6809-unknown-decb")
-            profile.linkCommand shouldBe listOf(System.getenv("LLVM_MC6809") + "/bin/clang", "--target=mc6809-unknown-decb", "{startup}", "{object}", "-o", "{file}")
+            profile.linkCommand shouldBe listOf(System.getenv("LLVM_MC6809") + "/bin/clang", "--target=mc6809-unknown-decb", "-T", "{link_script}", "{startup}", "{object}", "-o", "{file}")
         }
     }
 

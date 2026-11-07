@@ -239,7 +239,8 @@ Console input and newlib on semihosting work as on ARM, except that a seek that 
 as it was. The boot code passes on at most 60 arguments, and 1 KiB of command line.
 
 The operating system owns the memory of an LLVM program, so anything that places the program or its variables
-at a fixed address is an error on these targets: the ``%address``, ``%memtop`` and ``%varsaddress`` directives,
+at a fixed address is an error on these targets: the ``%address`` directive (except on a profile with a ``load_address``,
+such as ``mc6809-coco``), the ``%memtop`` and ``%varsaddress`` directives,
 ``%option romable``, ``%jmptable``, a block with an address, ``extsub`` with an address, and the ``-varsaddress``,
 ``-varsgolden`` and ``-varshigh`` options. Declare an external C routine as an ``extsub`` without an address instead.
 The ``%output``, ``%zpreserved`` and ``%zpallowed`` directives and ``%zeropage full``, ``kernalsafe`` and
@@ -356,6 +357,16 @@ These are the keys of a profile; an unknown key is an error:
     which can be a base; for a profile built into the compiler, they come with the compiler.
     A profile with it must have ``{startup}`` in its ``link_command``; without it, ``{startup}`` becomes nothing, so a
     base's link command can have it for the profiles built on it.
+``load_address``
+    The address the program loads at, as ``$3F00``, ``0x3f00`` or a decimal number, for a platform where the program can
+    load anywhere. With it, the ``%address`` directive and the ``-address`` option set the program's load address, and
+    ``{load_address}`` in the ``link_command`` becomes that address, as ``0x2500``; without it, both are errors.
+``load_address_align``
+    The number that a load address must be a multiple of, such as ``256`` for a whole page; ``1`` without it.
+``link_script``
+    A linker script template that is written next to the executable for the link, with ``{load_address}`` replaced by the
+    load address; a word ``{link_script}`` in the ``link_command`` becomes its path. It is looked up as ``startup_source`` is,
+    and a profile with it needs a ``load_address`` and ``{link_script}`` in its ``link_command``.
 ``run_command``
     The command that ``-emu`` uses to run the executable, with ``{file}`` in place of its path, for example ``wasmtime {file}``.
     Without it, the executable is run directly. The program arguments given after ``--`` go at the end of the command,
@@ -732,7 +743,15 @@ emulator such as XRoar (``xroar -machine coco3 -load-fd0 disk.dsk``, or ``-machi
 
 The ``CLEAR`` moves BASIC's strings and stack below the program; without it the program gets no memory for
 ``malloc``. The program, its data and its heap share the memory from ``$3F00`` to the top of RAM, ``$7FFF`` in BASIC on
-a 32 KB or 64 KB machine and on the CoCo 3, so about 16 KB. When the program ends it returns to BASIC, without an exit
+a 32 KB or 64 KB machine and on the CoCo 3, so about 16 KB.
+
+A larger program can load lower, at the start of any page: ``%address $2500`` in the main module, or ``-address $2500``
+on the command line, which takes the place of the directive, so that the same source can also be built for other
+targets. The direct page is the first page of the program, and ``EXEC`` starts it one page further, at ``$2600``.
+The ``CLEAR`` then gives the address just below the program, ``CLEAR 200,&H24FF``, and BASIC's program and variables
+must end below it: Disk Extended Color BASIC puts the BASIC program after its 4 graphics pages, at ``$2601``, so
+``PCLEAR 1`` first moves it down to ``$1401`` (``PRINT PEEK(25)*256+PEEK(26)`` shows where it starts).
+Loaded at ``$2500``, the program has about 23 KB. When the program ends it returns to BASIC, without an exit
 status. XRoar's ``-run`` and ``-load`` options start a ``.bin`` before BASIC has set up the machine, which doesn't work.
 
 Everything listed above for ``mc6809-sim`` applies, apart from these:

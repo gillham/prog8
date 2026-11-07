@@ -1540,7 +1540,8 @@ internal class AstChecker(private val program: Program,
         fun err(msg: String) {
             errors.err(msg, directive.position)
         }
-        if(!options.compTarget.hasFixedMemoryAddresses && directive.directive in setOf("%address", "%memtop", "%varsaddress"))
+        val profileHasLoadAddress = directive.directive == "%address" && (options.compTarget as? LlvmTarget)?.profile?.loadAddress != null
+        if(!options.compTarget.hasFixedMemoryAddresses && directive.directive in setOf("%address", "%memtop", "%varsaddress") && !profileHasLoadAddress)
             err("the ${directive.directive} directive is not available on the hosted ${options.compTarget.name} target")
         if(!options.compTarget.hasFixedMemoryAddresses) {
             val noEffect = when(directive.directive) {

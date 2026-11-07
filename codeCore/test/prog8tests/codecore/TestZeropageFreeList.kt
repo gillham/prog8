@@ -350,6 +350,9 @@ class TestZeropageFreeList: FunSpec({
             // Check for other locations that should be free
             zp.free.contains(0x0du) shouldBe true
             zp.free.contains(0x1bu) shouldBe true  // In BASICSAFE range
+            zp.free.contains(0x18u) shouldBe false
+            zp.free.contains(0x19u) shouldBe false
+            zp.free.contains(0x1au) shouldBe false
             zp.free.contains(0x92u) shouldBe false
             zp.free.contains(0xa4u) shouldBe false
             

@@ -113,6 +113,7 @@ private class CompilerCli : CliktCommand(name = "prog8c") {
     val showTimings by option("-timings", "--timings", help = "show internal compiler timings").flag()
     val varsGolden by option("-varsgolden", "--varsgolden", help = "put uninitialized variables and memory slabs in golden ram").flag()
     val varsHighBank by option("-varshigh", "--varshigh", help = "put uninitialized variables and memory slabs in high memory area").int()
+    val loadAddressStr by option("-address", "--address", help = "load the program at the given address (e.g. $2500 or 9472), in place of the %address directive")
     val varsAddressStr by option("-varsaddress", "--varsaddress", help = "put uninitialized variables and memory slabs at given address (e.g. $8000 or 32768)")
     val startVm by option("-vm", "--vm", help = "run a .p8ir IR source file in the embedded VM").flag()
     val vmTrace by option("-vmtrace", "--vmtrace", help = "trace VM execution instruction by instruction").flag()
@@ -277,6 +278,13 @@ private fun compileMain(args: Array<String>): Boolean {
         return false
     }
 
+    val loadAddress: UInt? = try {
+        loadAddressStr?.let { parseAddressArg(it) }
+    } catch(_: Exception) {
+        presenter.printErrorLine("Invalid -address value: $loadAddressStr")
+        return false
+    }
+
     if(varsGolden && varsHighBank!=null) {
         presenter.printErrorLine("Either use -varsgolden or -varshigh, not both.")
         return false
@@ -348,6 +356,7 @@ private fun compileMain(args: Array<String>): Boolean {
                     llvmLinkArgs = llvmLinkArgs,
                     llvmClang = llvmClang,
                     irComments = irComments,
+                    loadAddress = loadAddress,
                 )
                 val compilationResult = compileProgram(compilerArgs)
 
@@ -443,6 +452,7 @@ private fun compileMain(args: Array<String>): Boolean {
                 llvmLinkArgs = llvmLinkArgs,
                 llvmClang = llvmClang,
                 irComments = irComments,
+                loadAddress = loadAddress,
             )
             val response = compileViaDaemon(compilerArgs, plainText)
             if (response == null || !response.ok)
@@ -518,6 +528,7 @@ private fun compileMain(args: Array<String>): Boolean {
                     llvmLinkArgs = llvmLinkArgs,
                     llvmClang = llvmClang,
                     irComments = irComments,
+                    loadAddress = loadAddress,
                 )
                 val result = compileProgram(compilerArgs)
 
@@ -1021,7 +1032,8 @@ private fun communicateWithDaemon(channel: SocketChannel, compilerArgs: Compiler
             llvmTriple = compilerArgs.llvmTriple,
             llvmCompileArgs = compilerArgs.llvmCompileArgs,
             llvmLinkArgs = compilerArgs.llvmLinkArgs,
-            llvmClang = compilerArgs.llvmClang
+            llvmClang = compilerArgs.llvmClang,
+            loadAddress = compilerArgs.loadAddress
         )
 
         val requestJson = DaemonProtocol.encodeRequest(request)

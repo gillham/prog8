@@ -106,6 +106,12 @@ class TestLlvmToolchain: FunSpec({
             listOf("zcc", "p.o", "-o", "p.bin")
     }
 
+    test("{load_address} in the link command is the load address in hex, and {link_script} the written link script") {
+        LlvmToolchain.linkCommandFor(listOf("clang", "-T", "{link_script}", "-Wl,--base={load_address}", "{object}", "-o", "{file}"), Path.of("p.o"), Path.of("p.bin"),
+            emptyList(), emptyList(), loadAddress = 0x2500u, linkScript = Path.of("p.bin.x.lds")) shouldBe
+            listOf("clang", "-T", "p.bin.x.lds", "-Wl,--base=0x2500", "p.o", "-o", "p.bin")
+    }
+
     test("the %link libraries go after the -Xlink arguments, or in the place of a {libs} word of the link command") {
         LlvmToolchain.linkCommandFor(listOf("gcc", "{object}", "-o", "{file}"), Path.of("p.o"), Path.of("p.elf"), emptyList(), listOf("-L/a"), listOf("-lfoo", "/b/x.a")) shouldBe
             listOf("gcc", "p.o", "-o", "p.elf", "-L/a", "-lfoo", "/b/x.a")

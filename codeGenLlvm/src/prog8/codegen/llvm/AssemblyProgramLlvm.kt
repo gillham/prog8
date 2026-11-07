@@ -35,7 +35,7 @@ internal class AssemblyProgramLlvm(
         val target = options.compTarget as? LlvmTarget
         if (!LlvmToolchain.compileToExecutable(file, programFile, target?.profile,
                 extraCompileArgs = target?.extraCompileArgs.orEmpty(), extraLinkArgs = target?.extraLinkArgs.orEmpty(), linkLibraries = options.linkLibraries,
-                clangOption = target?.clangOption))
+                clangOption = target?.clangOption, loadAddress = options.loadAddress.takeIf { target?.profile?.loadAddress != null }))
             return false
         if (!options.quiet)
             println("Native executable written to '$programFile'")

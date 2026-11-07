@@ -364,6 +364,11 @@ One or more .p8 module files
     ``vreg numbering``/``frame layout``/``reg alloc`` for the m68k targets, ``asm generation``, ``asm optimize`` for the old 6502
     code generator, and ``assembling`` for the external assembler (or writing the ``.p8ir`` file on the virtual target).
 
+``-address <address>``
+    Load the program at the given address (e.g. ``$2500`` or ``9472``), in place of the ``%address`` directive of the
+    main module, so that the same source can be built for several targets or load addresses. It is accepted where
+    ``%address`` is, and on the llvm targets only with a triple profile that has a ``load_address``, such as ``mc6809-coco``.
+
 ``-varsaddress <address>``
     Put uninitialized non-zeropage variables and memory slabs (``memory()`` allocations) at the given raw address
     (e.g. ``$A000`` or ``40960``). Both segments are placed sequentially starting from this single address

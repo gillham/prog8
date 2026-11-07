@@ -894,6 +894,42 @@ main {
         withClue("the exec address $exec lies in the program") { (exec in 0x3f00 until 0x3f00 + length) shouldBe true }
     }
 
+    test($$"%address and -address load an mc6809-coco program at another page, -address in place of %address").config(enabledOrReasonIf = requiresMc6809Clang) {
+        val dir = outputDir.resolve("mc6809-coco-address").createDirectories()
+        val target = LlvmTarget(2, LlvmTripleProfile.resolve("mc6809-coco"))
+        fun loadAndExec(name: String): Pair<Int, Int> {
+            val bin = Files.readAllBytes(dir.resolve("$name.bin")).map { it.toInt() and 255 }
+            return (256 * bin[3] + bin[4]) to (256 * bin[bin.size - 2] + bin.last())
+        }
+        val withDirective = "%address $2500\n" + nativeHello.source
+        compileText(target, false, withDirective, dir, outputFile = dir.resolve("directive")).shouldNotBeNull()
+        loadAndExec("directive").first shouldBe 0x2500
+        compileText(target, false, withDirective, dir, outputFile = dir.resolve("option"), loadAddress = 0x1800u).shouldNotBeNull()
+        val (load, exec) = loadAndExec("option")
+        load shouldBe 0x1800
+        withClue("the program starts after its direct page") { exec shouldBe 0x1900 }
+        withClue("the link script is removed after the link") { Files.list(dir).use { files -> files.noneMatch { it.toString().endsWith(".lds") } } shouldBe true }
+    }
+
+    test("the load address of an llvm program can only be set on a profile with a load_address, and must be aligned") {
+        val dir = outputDir.resolve("load-address").createDirectories()
+        val coco = LlvmTarget(2, LlvmTripleProfile.resolve("mc6809-coco"))
+        compileText(coco, false, "main { sub start() { } }", dir, writeAssembly = false)!!.compilationOptions.loadAddress shouldBe 0x3f00u
+        compileText(coco, false, "%address $2500\nmain { sub start() { } }", dir, writeAssembly = false)!!.compilationOptions.loadAddress shouldBe 0x2500u
+        compileText(coco, false, "%address $2500\nmain { sub start() { } }", dir, writeAssembly = false, loadAddress = 0x1000u)!!
+            .compilationOptions.loadAddress shouldBe 0x1000u
+        fun rejected(target: LlvmTarget, source: String, loadAddress: UInt? = null): List<String> {
+            val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+            compileText(target, false, source, dir, errors = errors, writeAssembly = false, loadAddress = loadAddress) shouldBe null
+            return errors.errors.map { it.substringAfter(": ") }
+        }
+        rejected(coco, "main { sub start() { } }", 0x2510u) shouldBe listOf("the load address $2510 must be a multiple of 256 on llvm triple profile 'mc6809-coco'")
+        rejected(coco, "main { sub start() { } }", 0x12000u) shouldBe listOf("the load address $00012000 is beyond the 16-bit address space")
+        rejected(LlvmTarget(2, mc6809SimProfile), "main { sub start() { } }", 0x2000u) shouldBe
+            listOf("the llvm triple profile 'mc6809-sim' has no load_address, so the program's load address can't be set")
+        rejected(LlvmTarget(), "%address $2500\nmain { sub start() { } }") shouldBe listOf("the %address directive is not available on the hosted llvm64 target")
+    }
+
     test("-o without .ll builds a native executable with the LLVM IR next to it").config(enabledOrReasonIf = requiresNativeLlvm) {
         val dir = outputDir.resolve("named").createDirectories()
         val executable = hostExecutable(dir.resolve("hello-native"))

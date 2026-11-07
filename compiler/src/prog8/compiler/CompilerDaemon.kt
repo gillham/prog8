@@ -237,7 +237,8 @@ internal class CompilerDaemon(private val socketPath: Path, private val quiet: B
             llvmCompileArgs = llvmCompileArgs,
             llvmLinkArgs = llvmLinkArgs,
             llvmClang = llvmClang,
-            irComments = irComments
+            irComments = irComments,
+            loadAddress = loadAddress
         )
     }
 }

@@ -77,7 +77,8 @@ class CompilerArguments(val filepath: Path,
                         val llvmCompileArgs: List<String> = emptyList(),
                         val llvmLinkArgs: List<String> = emptyList(),
                         val llvmClang: String? = null,
-                        val irComments: Boolean = false)
+                        val irComments: Boolean = false,
+                        val loadAddress: UInt? = null)
 
 
 fun compileProgram(args: CompilerArguments): CompilationResult? {
@@ -219,7 +220,7 @@ fun compileProgram(args: CompilerArguments): CompilationResult? {
             }
 
             val postprocessDuration = measureTime {
-                determineProgramLoadAddress(program, compilationOptions, args.errors)
+                determineProgramLoadAddress(program, compilationOptions, args.errors, args.loadAddress)
                 args.errors.report()
                 postprocessAst(program, args.errors, compilationOptions)
                 args.errors.report()
@@ -408,9 +409,21 @@ fun compileProgram(args: CompilerArguments): CompilationResult? {
 }
 
 
-internal fun determineProgramLoadAddress(program: Program, options: CompilationOptions, errors: IErrorReporter) {
-    val specifiedAddress = program.toplevelModule.loadAddress
+/** [cliLoadAddress], the -address option, takes precedence over the %address directive. */
+internal fun determineProgramLoadAddress(program: Program, options: CompilationOptions, errors: IErrorReporter, cliLoadAddress: UInt? = null) {
+    val specifiedAddress = cliLoadAddress?.let { it to program.toplevelModule.position } ?: program.toplevelModule.loadAddress
     val loadAddress = specifiedAddress?.first ?: options.compTarget.PROGRAM_LOAD_ADDRESS
+
+    val llvmProfile = (options.compTarget as? LlvmTarget)?.profile
+    if(llvmProfile != null && specifiedAddress != null) {
+        val position = specifiedAddress.second
+        if(llvmProfile.loadAddress == null)
+            errors.err("the llvm triple profile '${llvmProfile.name}' has no load_address, so the program's load address can't be set", position)
+        else if(loadAddress % llvmProfile.loadAddressAlign != 0u)
+            errors.err("the load address ${loadAddress.toHex()} must be a multiple of ${llvmProfile.loadAddressAlign} on llvm triple profile '${llvmProfile.name}'", position)
+        else if(loadAddress > 0xffffu && options.compTarget.POINTER_MEM_SIZE == 2u)
+            errors.err("the load address ${loadAddress.toHex()} is beyond the 16-bit address space", position)
+    }
 
 
     if(options.output==OutputType.PRG && options.launcher==CbmPrgLauncherType.BASIC && options.compTarget.customLauncher.isEmpty()) {

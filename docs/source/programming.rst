@@ -257,8 +257,9 @@ Directives
 	Level: module.
 	Global setting, set the program's start memory address. It's usually fixed at ``$0801`` because the
 	default launcher type is a CBM-BASIC program. But you have to specify this address yourself when
-	you don't use a CBM-BASIC launcher.
-	Not available on the m68k targets (amiga500, amiga1200, qemu68k) - there it is an error.
+	you don't use a CBM-BASIC launcher. The ``-address`` command line option takes the place of this directive.
+	Not available on the m68k targets (amiga500, amiga1200, qemu68k) - there it is an error. On the llvm targets it
+	is only available with a triple profile that has a ``load_address``, such as ``mc6809-coco``.
 
 .. index:: pair: Directives; %varsaddress
 .. data:: %varsaddress <address>

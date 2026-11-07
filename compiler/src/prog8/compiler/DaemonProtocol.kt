@@ -37,7 +37,8 @@ internal data class DaemonRequest(
     val llvmCompileArgs: List<String> = emptyList(),
     val llvmLinkArgs: List<String> = emptyList(),
     val llvmClang: String? = null,
-    val irComments: Boolean = false
+    val irComments: Boolean = false,
+    val loadAddress: UInt? = null
 )
 
 internal data class DaemonResponse(
@@ -93,6 +94,7 @@ internal object DaemonProtocol {
         append(prop("llvmLinkArgs", req.llvmLinkArgs))
         append(propOpt("llvmClang", req.llvmClang))
         append(prop("irComments", req.irComments))
+        append(propLongOpt("loadAddress", req.loadAddress?.toLong()))
         append("null")  // placeholder, gets overwritten by trimEnd
         setLength(length - 5)
         append('}')
@@ -168,7 +170,8 @@ internal object DaemonProtocol {
             llvmCompileArgs = (map["llvmCompileArgs"] as? List<*>)?.map { it as String } ?: emptyList(),
             llvmLinkArgs = (map["llvmLinkArgs"] as? List<*>)?.map { it as String } ?: emptyList(),
             llvmClang = map["llvmClang"] as? String,
-            irComments = map["irComments"] as? Boolean ?: false
+            irComments = map["irComments"] as? Boolean ?: false,
+            loadAddress = (map["loadAddress"] as? Number)?.toLong()?.toUInt()
         )
     }
 

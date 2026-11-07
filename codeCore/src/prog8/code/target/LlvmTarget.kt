@@ -110,7 +110,7 @@ class LlvmTarget(
     override val wordArrayIndexes = true
     override val ARRAY_SIZE_LIMIT = 65535u
 
-    override val PROGRAM_LOAD_ADDRESS = 0u
+    override val PROGRAM_LOAD_ADDRESS = profile.loadAddress ?: 0u
     override val PROGRAM_MEMTOP_ADDRESS = UInt.MAX_VALUE     // hosted: the OS manages memory
 
     override val BSSHIGHRAM_START = 0u          // not actually used

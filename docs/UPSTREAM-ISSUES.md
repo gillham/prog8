@@ -289,3 +289,9 @@ Keeping the list: add new items at the end with the next number, and remove an i
   effect and gives no warning (`master` a4b59f6b3). Only the main module's directives are read (`Compiler.kt`), and
   `ModuleImporter` drops them from imported modules.
 - Branch: fixed; a warning says the directive only applies in the main module, and the docs say so.
+
+**U45. On c128, `%zeropage basicsafe` puts variables at $18-$1a, and BASIC prints garbage after the program**
+- Repro: `bugs/u45_c128_basicsafe_temppt.p8` in x128, then `print 7` at READY: " 7" is followed by garbage until `RUN`
+  or `CLR` (`master` 8bcd17674; the .asm has `p8v_w5 = 24`). $18 is BASIC 7's TEMPPT and $19/$1a its LASTPT, the
+  temporary string descriptor stack pointers, which BASIC does not reset when SYS returns.
+- Branch: fixed; `C128Zeropage` leaves $18-$1a out of the basicsafe and floatsafe lists.
