@@ -9,6 +9,7 @@ import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldStartWith
 import prog8.code.INTERNED_STRINGS_MODULENAME
 import prog8.code.core.ZeropageType
+import prog8.code.target.C128Target
 import prog8.code.target.C64Target
 import prog8.code.target.Cx16Target
 import prog8.code.target.VMTarget
@@ -375,5 +376,32 @@ main {
                 }
             }
         }
+    }
+
+    test("zpreserved and zpallowed in an imported module give a warning") {
+        val dir = outputDir.resolve("zp_directives_module")
+        dir.toFile().mkdirs()
+        dir.resolve("zpd_imported.p8").toFile().writeText($$"""
+%zpreserved $92,$a4
+%zpallowed $10,$20
+platform {
+    sub init() {
+        @($0400) = 1
+    }
+}""")
+        dir.resolve("zpd_main.p8").toFile().writeText("""
+%import zpd_imported
+%zeropage basicsafe
+main {
+    sub start() {
+        platform.init()
+    }
+}""")
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileFile(C128Target(), false, dir, "zpd_main.p8", outputDir, errors = errors, writeAssembly = false) shouldNotBe null
+        val warnings = errors.warnings.filter { "only applies in the main module" in it }
+        warnings.size shouldBe 2
+        warnings.count { "%zpreserved" in it } shouldBe 1
+        warnings.count { "%zpallowed" in it } shouldBe 1
     }
 })

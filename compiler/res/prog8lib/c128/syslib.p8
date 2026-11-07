@@ -693,8 +693,8 @@ user_vector	.word ?
         ; Soft-reset the system back to initial power-on Basic prompt.
         %asm {{
             sei
-            lda  #0
-            sta  c128.MMUCR      ; default bank 15
+            lda  #%00001110
+            sta  c128.MMUCR      ; KERNAL in, BASIC ROM out: this code may be above $3fff
             jmp  (cbm.RESET_VEC)
         }}
     }
@@ -1055,19 +1055,17 @@ p8_sys_startup {
 asmsub  init_system()  {
     ; Initializes the machine to a sane starting state.
     ; Called automatically by the loader program logic.
-    ; This means that the BASIC, KERNAL and CHARGEN ROMs are banked in,
+    ; This means that the KERNAL ROM and I/O are banked in and the BASIC ROM is out,
     ; the VIC, SID and CIA chips are reset, screen is cleared, and the default IRQ is set.
     ; Also a different color scheme is chosen to identify ourselves a little.
     ; Uppercase charset is activated.
     %asm {{
         sei
-        lda  #0
-        sta  c128.MMUCR      ; select default bank 15
+        lda  #%00001110
+        sta  c128.MMUCR      ; bank out basic rom so we have ram from $1c00-$bfff
         jsr  cbm.IOINIT
         jsr  cbm.RESTOR
         jsr  cbm.CINT
-        lda  #%00001110
-        sta  c128.MMUCR      ; bank out basic rom so we have ram from $1c00-$bfff
         lda  #6
         sta  c64.EXTCOL
         lda  #7
@@ -1098,8 +1096,8 @@ asmsub  init_system_phase2()  {
 asmsub  cleanup_at_exit() {
     ; executed when the main subroutine does rts
     %asm {{
-        lda  #0
-        sta  c128.MMUCR          ; default bank 15
+        lda  #%00001110
+        sta  c128.MMUCR          ; KERNAL in; bank 15 is selected by prog8_c128_exit, below $4000
         jsr  cbm.CLRCHN		; reset i/o channels
         jsr  enable_runstop_and_charsetswitch
         ldx  #<c128.MMUCR
@@ -1112,7 +1110,7 @@ asmsub  cleanup_at_exit() {
         lda  _exitcode
         ldx  _exitcodeX
         ldy  _exitcodeY
-        rts
+        jmp  prog8_c128_exit
 
         .section BSS
 _exitcarry  .byte ?

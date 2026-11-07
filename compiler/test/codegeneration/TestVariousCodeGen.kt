@@ -1209,4 +1209,32 @@ main {
         val compileResult = compileText(Cx16Target(), false, src, outputDir)
         compileResult shouldNotBe null
     }
+
+    test($$"c128 entry code banks the BASIC ROM out first and exits through a tail below $4000") {
+        for(sysinit in listOf("", "%option no_sysinit")) {
+            val src = $$"""
+%zeropage basicsafe
+$$sysinit
+main {
+    sub start() {
+        @($0400) = 1
+    }
+}"""
+            val result = compileText(C128Target(), false, src, outputDir, writeAssembly = true)!!
+            val lines = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".asm").readText()
+                .lines().map { it.substringBefore(';').trim() }
+            val entry = lines.indexOf("prog8_entrypoint")
+            lines[entry+1] shouldBe $$"lda  #$0e"
+            lines[entry+2] shouldBe $$"sta  $ff00"
+            val firstCall = lines.withIndex().first { it.index > entry && it.value.startsWith("jsr") }.index
+            val exitTail = lines.indexOf("prog8_c128_exit")
+            exitTail shouldBeGreaterThan firstCall
+            lines.subList(exitTail+1, exitTail+6) shouldBe listOf("pha", "lda  #0", $$"sta  $ff00", "pla", "rts")
+            val cleanup = lines.indexOfFirst { it.startsWith("cleanup_at_exit") }
+            val cleanupEnd = lines.withIndex().first { it.index > cleanup && it.value == ".pend" }.index
+            lines.subList(cleanup, cleanupEnd).any { it == "jmp  prog8_c128_exit" } shouldBe true
+            lines.subList(cleanup, cleanupEnd).count { it == "rts" } shouldBe 0
+            lines.subList(cleanup, cleanupEnd).count { it == "lda  #0" } shouldBe 0
+        }
+    }
 })

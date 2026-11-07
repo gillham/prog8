@@ -164,6 +164,9 @@ class ModuleImporter(private val program: Program,
         val moduleLevelDirectives = listOf("%output", "%launcher", "%zeropage", "%zpreserved", "%zpallowed", "%address", "%memtop", "%varsaddress")
         var directives = importedModule.statements.filterIsInstance<Directive>()
         importedModule.statements.removeAll(directives)
+        directives.filter { it.directive == "%zpreserved" || it.directive == "%zpallowed" }.forEach {
+            errors.warn("${it.directive} only applies in the main module; ignored here", it.position)
+        }
         directives = directives.filter{ it.directive !in moduleLevelDirectives }
         importedModule.statements.addAll(0, directives)
     }

@@ -350,6 +350,8 @@ class TestZeropageFreeList: FunSpec({
             // Check for other locations that should be free
             zp.free.contains(0x0du) shouldBe true
             zp.free.contains(0x1bu) shouldBe true  // In BASICSAFE range
+            zp.free.contains(0x92u) shouldBe false
+            zp.free.contains(0xa4u) shouldBe false
             
             verifyScratchLocationsReserved(zp)
         }
@@ -375,7 +377,8 @@ class TestZeropageFreeList: FunSpec({
             zp.free.contains(0x8fu) shouldBe true
 
             // Should include additional specific locations
-            zp.free.contains(0x92u) shouldBe true
+            zp.free.contains(0x92u) shouldBe false
+            zp.free.contains(0xa4u) shouldBe false
             // 0xb6u is SCRATCH_W1 for C128 - won't be free
             zp.free.contains(0x96u) shouldBe true  // Alternative location
             

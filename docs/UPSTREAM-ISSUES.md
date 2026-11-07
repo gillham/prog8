@@ -268,3 +268,24 @@ Keeping the list: add new items at the end with the next number, and remove an i
   supported on selected architecture" at `andi.l #-2,a2` in `qemu.bootinfo_ptr` (`master` a4b59f6b3); optimized
   builds and `amiga500 -noopt` assemble. The 68000's ANDI can't take an address register as its destination.
 - Branch: not fixed.
+
+**U42. On c128, a program over about 9 KB never starts, and returning to BASIC crashes**
+- Repro: `bugs/u42_c128_startup_under_basic_rom.p8` (16 KB of filler, then `txt.print("hello c128")`) in x128: nothing
+  after `RUN` (`master` a4b59f6b3); a program that returns from `main` stops with `?UNRESOLVED REFERENCE ERROR`. The
+  entry code after the BASIC line calls `init_system`, `init_system_phase2` and `cleanup_at_exit`, which lie after the
+  program code, above $4000, while the KERNAL's bank 15 still has the BASIC ROM at $4000-$bfff. `init_system`,
+  `cleanup_at_exit` and `sys.reset_system` also select bank 15 (`$ff00 = 0`) under their own code.
+- Branch: fixed; the entry code banks the BASIC ROM out first (`$ff00 = $0e`), the library routines use `$0e`, and
+  `cleanup_at_exit` returns through a tail in the entry code that selects bank 15 below $4000.
+
+**U43. On c128, `%zeropage basicsafe` and `kernalsafe` put variables at $92 and $a4, which the KERNAL changes**
+- Repro: `bugs/u43_c128_basicsafe_zp92.p8`: variables at `146` and `164` in the .asm (`master` a4b59f6b3).
+  `bugs/u43_c128_zeropage_kernal_clobbers.p8`, run in x128 with a disk holding a SEQ file `t.txt`, lists the zero page
+  bytes changed by disk I/O: $92 and $a4 are among them (the KERNAL's tape/serial bytes).
+- Branch: fixed; `C128Zeropage` leaves them out of the basicsafe, floatsafe and kernalsafe lists.
+
+**U44. `%zpreserved` and `%zpallowed` in an imported module are ignored without a word**
+- Repro: `bugs/u44_zpreserved_imported.p8` with `-srcdirs bugs`: the imported module's `%zpreserved $92,$a4` has no
+  effect and gives no warning (`master` a4b59f6b3). Only the main module's directives are read (`Compiler.kt`), and
+  `ModuleImporter` drops them from imported modules.
+- Branch: fixed; a warning says the directive only applies in the main module, and the docs say so.

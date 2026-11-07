@@ -616,6 +616,7 @@ Directives
     Level: module.
     Global setting, can occur multiple times. It allows you to designate a part of the zeropage that
     the compiler is allowed to use (if other options don't prevent usage).
+    It is only read from the main module; in an imported module it is ignored, with a warning.
 
 
 .. index:: pair: Directives; %zpreserved
@@ -624,6 +625,7 @@ Directives
     Level: module.
     Global setting, can occur multiple times. It allows you to reserve or 'block' a part of the zeropage so
     that it will not be used by the compiler.
+    It is only read from the main module; in an imported module it is ignored, with a warning.
 
 .. note::
     The compiler itself always needs a few fixed 'scratch' locations in the zeropage

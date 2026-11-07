@@ -5,6 +5,7 @@ import prog8.code.assembly.assemblerCommand6502
 import prog8.code.assembly.assemblerCommandComment
 import prog8.code.ast.*
 import prog8.code.core.*
+import prog8.code.target.C128Target
 import prog8.codegen.cpu6502.assignment.AsmAssignTarget
 import prog8.codegen.cpu6502.assignment.TargetStorageKind
 import java.time.LocalDate
@@ -108,6 +109,8 @@ internal class ProgramAndVarsGen(
             asmgen.out("* = ${options.loadAddress.toHex()}")
             asmgen.out("prog8_program_start\t; start of program label")
             asmgen.out("    jmp  p8b_main.p8s_start")
+            if(compTarget.name == C128Target.NAME)
+                c128ExitTail()
             // note: the jmp above has 2 effects:
             // 1. it prevents 64tass from stripping away all procs as unused code
             // 2. it functions as the first entrypoint of the library, required anyway, to run the variable initialization/bss clear bootstrap code.
@@ -119,6 +122,7 @@ internal class ProgramAndVarsGen(
                     asmgen.out("; ---- raw assembler program ----")
                     asmgen.out("* = ${options.loadAddress.toHex()}")
                     asmgen.out("prog8_program_start\t; start of program label")
+                    c128BankOutBasic()
                     asmgen.out("  cld")
                     asmgen.out("  tsx  ; save stackpointer for sys.exit()")
                     asmgen.out("  stx  prog8_lib.orig_stackpointer")
@@ -143,6 +147,7 @@ internal class ProgramAndVarsGen(
                             asmgen.out("  .null  $9e, format(' %d ', prog8_entrypoint), $3a, $8f, ' prog8'")
                             asmgen.out("+\t.word  0")
                             asmgen.out("prog8_entrypoint")
+                            c128BankOutBasic()
                             asmgen.out("  cld")
                             asmgen.out("  tsx  ; save stackpointer for sys.exit()")
                             asmgen.out("  stx  prog8_lib.orig_stackpointer")
@@ -156,6 +161,7 @@ internal class ProgramAndVarsGen(
                             asmgen.out("; ---- program without basic sys call ----")
                             asmgen.out("* = ${options.loadAddress.toHex()}")
                             asmgen.out("prog8_program_start\t; start of program label")
+                            c128BankOutBasic()
                             asmgen.out("  cld")
                             asmgen.out("  tsx  ; save stackpointer for sys.exit()")
                             asmgen.out("  stx  prog8_lib.orig_stackpointer")
@@ -180,7 +186,13 @@ internal class ProgramAndVarsGen(
             }
 
             if (options.zeropage !in arrayOf(ZeropageType.BASICSAFE, ZeropageType.DONTUSE)) {
-                asmgen.out("""
+                if(compTarget.name == C128Target.NAME) asmgen.out("""
+                    ; zeropage is clobbered so we need to reset the machine at exit
+                    lda  #>prog8_c128_reset-1
+                    pha
+                    lda  #<prog8_c128_reset-1
+                    pha""")
+                else asmgen.out("""
                     ; zeropage is clobbered so we need to reset the machine at exit
                     lda  #>sys.reset_system
                     pha
@@ -202,6 +214,7 @@ internal class ProgramAndVarsGen(
                 "c128" -> {
                     asmgen.out("  jsr  p8b_main.p8s_start")
                     asmgen.out("  jmp  p8_sys_startup.cleanup_at_exit")
+                    c128ExitTail()
                 }
                 else -> {
                     asmgen.out("  jsr  p8b_main.p8s_start")
@@ -209,6 +222,22 @@ internal class ProgramAndVarsGen(
                 }
             }
         }
+    }
+
+    // c128: the program may extend above $3fff, where bank 15 (the KERNAL's default) has the BASIC ROM
+    private fun c128BankOutBasic() {
+        if(compTarget.name == C128Target.NAME)
+            asmgen.out($$"  lda  #$0e |  sta  $ff00   ; bank out the BASIC ROM, before using anything above $3fff")
+    }
+
+    private fun c128ExitTail() {
+        // cleanup_at_exit jumps here: bank 15 must be selected from code below $4000
+        asmgen.out("prog8_c128_exit")
+        if(options.loadAddress < 0x4000u)
+            asmgen.out($$"  pha |  lda  #0 |  sta  $ff00   ; back to bank 15 |  pla")
+        asmgen.out("  rts")
+        if (options.output != OutputType.LIBRARY && options.zeropage !in arrayOf(ZeropageType.BASICSAFE, ZeropageType.DONTUSE))
+            asmgen.out("prog8_c128_reset\n  sei\n  jmp  (cbm.RESET_VEC)")
     }
 
     private fun memorySlabs() {
