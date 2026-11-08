@@ -75,7 +75,33 @@ internal fun AsmGen.translateBitwise(insn: IRInstruction) {
 
 // === AND ===
 
+/**
+ * The logical instructions (and/or/eor in all forms, not) can't write an address register: its value goes through d0 then.
+ * Returns true when it handled the register that way.
+ */
+private fun AsmGen.logicalOnAddressRegister(dstReg: Int, type: IRDataType, emitOp: (String) -> Unit): Boolean {
+    if (!allocatesToAddressReg(dstReg))
+        return false
+    emitLoadD0(dstReg, IRDataType.LONG)
+    emitOp(SCRATCH_D0)
+    emitStoreD0(dstReg, IRDataType.LONG)
+    if (type != IRDataType.LONG && type != IRDataType.POINTER)
+        invalidateD0CacheForSlot(dstReg)
+    return true
+}
+
+/** A register-form logical op on an address register destination: the source goes to d1, as d0 holds the destination. */
+private fun AsmGen.logicalRegistersOnAddressRegister(op: String, dstReg: Int, srcReg: Int, type: IRDataType): Boolean {
+    if (!allocatesToAddressReg(dstReg))
+        return false
+    val s = dtSuffix(type)
+    emitLine("move$s  ${operand(srcReg)}, $SCRATCH_D1")
+    return logicalOnAddressRegister(dstReg, type) { d0 -> emitLine("$op$s  $SCRATCH_D1, $d0") }
+}
+
 private fun AsmGen.andRegisters(dstReg: Int, srcReg: Int, type: IRDataType) {
+    if (logicalRegistersOnAddressRegister("and", dstReg, srcReg, type))
+        return
     val s = dtSuffix(type)
     directDataPair(dstReg, srcReg, type)?.let { (d, src) ->
         emitLine("and$s  $src, $d")
@@ -94,7 +120,8 @@ private fun AsmGen.andImmediate(dstReg: Int, value: Int, type: IRDataType) {
         IRDataType.LONG -> value
         else -> error("unsupported type for AND immediate")
     }
-    emitLine("andi$s  #$mask, ${operand(dstReg)}")
+    if (!logicalOnAddressRegister(dstReg, type) { d0 -> emitLine("andi$s  #$mask, $d0") })
+        emitLine("andi$s  #$mask, ${operand(dstReg)}")
     invalidateD0CacheForSlot(dstReg)
 }
 
@@ -112,6 +139,8 @@ private fun AsmGen.andMemory(dstReg: Int, sourceAddress: String, type: IRDataTyp
 // === OR ===
 
 private fun AsmGen.orRegisters(dstReg: Int, srcReg: Int, type: IRDataType) {
+    if (logicalRegistersOnAddressRegister("or", dstReg, srcReg, type))
+        return
     val s = dtSuffix(type)
     directDataPair(dstReg, srcReg, type)?.let { (d, src) ->
         emitLine("or$s  $src, $d")
@@ -130,7 +159,8 @@ private fun AsmGen.orImmediate(dstReg: Int, value: Int, type: IRDataType) {
         IRDataType.LONG -> value
         else -> error("unsupported type for OR immediate")
     }
-    emitLine("ori$s  #$mask, ${operand(dstReg)}")
+    if (!logicalOnAddressRegister(dstReg, type) { d0 -> emitLine("ori$s  #$mask, $d0") })
+        emitLine("ori$s  #$mask, ${operand(dstReg)}")
     invalidateD0CacheForSlot(dstReg)
 }
 
@@ -148,6 +178,8 @@ private fun AsmGen.orMemory(dstReg: Int, sourceAddress: String, type: IRDataType
 // === XOR ===
 
 private fun AsmGen.xorRegisters(dstReg: Int, srcReg: Int, type: IRDataType) {
+    if (logicalRegistersOnAddressRegister("eor", dstReg, srcReg, type))
+        return
     val s = dtSuffix(type)
     directDataPair(dstReg, srcReg, type)?.let { (d, src) ->
         emitLine("eor$s  $src, $d")
@@ -166,7 +198,8 @@ private fun AsmGen.xorImmediate(dstReg: Int, value: Int, type: IRDataType) {
         IRDataType.LONG -> value
         else -> error("unsupported type for XOR immediate")
     }
-    emitLine("eori$s  #$mask, ${operand(dstReg)}")
+    if (!logicalOnAddressRegister(dstReg, type) { d0 -> emitLine("eori$s  #$mask, $d0") })
+        emitLine("eori$s  #$mask, ${operand(dstReg)}")
     invalidateD0CacheForSlot(dstReg)
 }
 
@@ -185,7 +218,8 @@ private fun AsmGen.xorMemory(dstReg: Int, sourceAddress: String, type: IRDataTyp
 
 private fun AsmGen.invertRegister(reg: Int, type: IRDataType) {
     val s = dtSuffix(type)
-    emitLine("not$s  ${operand(reg)}")
+    if (!logicalOnAddressRegister(reg, type) { d0 -> emitLine("not$s  $d0") })
+        emitLine("not$s  ${operand(reg)}")
     invalidateD0CacheForSlot(reg)
 }
 

@@ -52,3 +52,47 @@ jobs:
         with:
           name: test-results
           path: '*/build/test-results/test/'
+
+  # A tag such as v14.0-BETA3-llvm.1 (the version that llvm-release.properties gives) makes a draft prerelease with the
+  # compiler jar, once the build and tests above have passed. Publish it on GitHub after writing its release notes.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-llvm.')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Check that the tag is the compiler version
+        run: |
+          version=$(./gradlew -q :compiler:properties --property version --console=plain | sed -n 's/^version: //p')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME doesn't match the compiler version $version (gradle.properties and llvm-release.properties)"
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          ./gradlew shadowJar --console=plain
+          cd compiler/build/libs
+          sha256sum -b *-all.jar > hash.txt
+
+      - name: Create the draft prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" compiler/build/libs/*-all.jar compiler/build/libs/hash.txt \
+            --verify-tag --draft --prerelease --title "version ${GITHUB_REF_NAME#v}" \
+            --notes "Prerelease of the llvm branch of Prog8, based on upstream ${GITHUB_REF_NAME%-llvm.*}. Report issues at https://github.com/${GITHUB_REPOSITORY}/issues"

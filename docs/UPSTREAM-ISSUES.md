@@ -250,12 +250,6 @@ Keeping the list: add new items at the end with the next number, and remove an i
   the file just opened can't be read (and a file open for writing would be closed too).
 - Branch: not fixed.
 
-**U39. A for loop over a `str` parameter with a qualified loop variable crashes the compiler**
-- Repro: `sub count(str s) { for cx16.r0L in s { ... } }`: internal error "List has more than one element" on every
-  target (`master` a4b59f6b3); a local loop variable works. The new desugaring of a loop over a pointer to bytes in
-  `CodeDesugarer` calls `names.single()` on the loop variable's name, which has two parts here.
-- Branch: fixed; a qualified loop variable is looked up instead of declared, and the index variable's name joins the parts.
-
 **U40. `@(&w)` reads the low byte of a word variable on the big-endian m68k targets**
 - Repro: `uword w = $1234`, then `print_ub(@(&w))` and `print_ub(@(&w+1))`: prints `52 18` on qemu68k instead of
   `18 52` (`master` a4b59f6b3). `CodeDesugarer.after(DirectMemoryRead)` rewrites `@(&w)` to `lsb(w)` and `@(&w+1)` to
@@ -266,8 +260,12 @@ Keeping the list: add new items at the end with the next number, and remove an i
 **U41. With `-noopt`, no qemu68k program assembles**
 - Repro: a program with an empty `main`, built with `-target qemu68k -noopt`: vasm stops with "instruction not
   supported on selected architecture" at `andi.l #-2,a2` in `qemu.bootinfo_ptr` (`master` a4b59f6b3); optimized
-  builds and `amiga500 -noopt` assemble. The 68000's ANDI can't take an address register as its destination.
-- Branch: not fixed.
+  builds and `amiga500 -noopt` assemble. qemu68k is a 68020 target (vasm gets `-m68020`), but no 680x0 has an
+  ANDI to an address register: its destination must be a data register or memory, so vasm's message is misleading.
+  The unoptimized code rounds the address up to even (`(x + 1) & -2`) in an address register; the AND has to
+  go through a data register. Still fails on `master` 2cac14654.
+- Branch: fixed; the m68k code generator does `and`, `or`, `eor` and `not` on a value in an address register in d0
+  (`move.l a2,d0 / andi.l #-2,d0 / movea.l d0,a2`).
 
 **U42. On c128, a program over about 9 KB never starts, and returning to BASIC crashes**
 - Repro: `bugs/u42_c128_startup_under_basic_rom.p8` (16 KB of filler, then `txt.print("hello c128")`) in x128: nothing

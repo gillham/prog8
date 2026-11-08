@@ -41,7 +41,7 @@ private fun FunctionLowering.directCall(ins: IRInstruction) {
     }
     require(site.results.size <= 1) { "${sub.label} calls $name with several results, which isn't supported yet" }
     val callee = builder.subroutine(name)
-    val values = (if (callee != null) argumentsInParameterOrder(callee, site) else site.arguments).map { readWide(it.source) }
+    val values = (if (callee != null) argumentsInParameterOrder(callee, site) else site.arguments).map { argument(it) }
     val signature = when {
         callee != null -> LlvmType.Function(builder.returnType(callee), builder.parameterTypes(callee))
         else -> builder.asmSubroutine(name)?.let { builder.declaration(it).type }

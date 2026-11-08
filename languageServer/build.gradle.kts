@@ -4,8 +4,10 @@ plugins {
     id("com.peterabeles.gversion") version "1.11.0"
 }
 
-// suffix kept out of gradle.properties so upstream version bumps merge cleanly
-version = "$version-llvm"
+// suffix and release counter kept out of gradle.properties so upstream version bumps merge cleanly
+val llvmRelease = rootProject.file("llvm-release.properties").readLines()
+    .single { it.startsWith("llvmRelease=") }.substringAfter('=').trim()
+version = "$version-llvm.$llvmRelease"
 
 val debugPort = 8000
 val debugArgs = "-agentlib:jdwp=transport=dt_socket,server=y,address=8000,suspend=n,quiet=y"

@@ -697,7 +697,9 @@ modules. Import them the same way as any other library::
     single zero word; after the sample ends Paula loops on that word, so the
     channel falls silent. ``is_playing`` and ``stream_ready`` poll the audio
     interrupt request flag to notice the end, so no interrupt handler is
-    installed.
+    installed. ``set_freqvol()`` takes a sample rate in hertz and converts it
+    to the Paula playback period using the machine's PAL or NTSC chip clock
+    (the other ``set_period()`` variant takes the raw period value directly).
 
 ``ptplayer``
     ProTracker module (MOD) player: load and play Amiga ProTracker modules via
@@ -1956,7 +1958,10 @@ sorting
 Various sorting routines (gnome sort and shell sort variants) for byte, word and string arrays.
 **NOTE:** all word and str arrays have to be @nosplit! Words and pointers need to be consecutive in memory for now.
 **NOTE:** sorting is done in ascending order.
-Read the :source:`sorting source code <compiler/res/prog8lib/sorting.p8>`
+On the m68k targets (amiga500, amiga1200, qemu68k) the ``sorting`` module provides word (``uw``) and long (``ul``) variants
+(gnome sort and shell sort, including the ``by_uw``/``by_ul`` key-value forms); there are no byte variants there.
+Read the :source:`sorting source code <compiler/res/prog8lib/sorting.p8>` (6502 targets)
+or the :source:`m68k sorting source code <compiler/res/prog8lib/shared_m68k_sorting.p8>` (m68k targets)
 to see what's in there.   Also check out the :source:`sortingbench <examples/cx16/sortingbench.p8>` example.
 
 
@@ -2479,7 +2484,8 @@ wavfile
         long data_size
 
 .. note::
-    the sample rate in hertz can be converted to a vera rate value via::
+    For the cx16 target, the sample rate in hertz can be converted to a vera
+    rate value via::
 
         vera_rate = (wavfile.sample_rate as long * 65536 / 25000000) as ubyte + 1
         vera_rate_hz = (vera_rate as uword * 25000000 / 65536) as uword
@@ -2489,3 +2495,27 @@ wavfile
         const float vera_freq_factor = 25e6 / 65536.0
         vera_rate = (wavfile.sample_rate as float / vera_freq_factor) + 1.0 as ubyte
         vera_rate_hz = (vera_rate as float) * vera_freq_factor as uword
+
+.. note::
+    For the amiga targets, the sample rate converts to a Paula period;
+    ``sound.set_freqvol(channel, sample_rate, volume)`` does this conversion
+    automatically using the machine's PAL or NTSC chip clock. Rates above
+    about 28.8 kHz (the Paula DMA ceiling) should be resampled beforehand.
+    8-bit wav samples are unsigned (silence = $80) while Paula plays signed
+    bytes, so flip the sign bit (``xori #$80`` per byte) before playback.
+    Two helpers in the module do this for you: ``convert_8bit_mono(buf, len)``
+    for mono (in place) and ``convert_8bit_stereo(src, dst_left,
+    dst_right, nframes)`` for stereo (splits the interleaved L/R stream
+    into two buffers, sign-flipping both). Stereo wavs need the latter;
+    mono wavs need only the former. For 16-bit stereo wavs (already signed
+    little-endian), ``convert_16bit_stereo(src, dst_left, dst_right,
+    nframes)`` splits them into two native big-endian word buffers (the
+    byte swap is done in the same pass), and ``convert_16bit_mono(buf,
+    nwords)`` converts 16-bit samples between little-endian (WAV on
+    disk) and native big-endian m68k order in place.
+    All sample data must live in CHIP RAM, sample lengths are passed as
+    words to Paula (pad an odd-length sample with one byte), and a stereo
+    (interleaved) wav must be de-interleaved into left and right buffers
+    played by two voices in lockstep. The sample data must also start with
+    a single zero word so looping one-shots end in silence - see the
+    ``sound`` module description above.

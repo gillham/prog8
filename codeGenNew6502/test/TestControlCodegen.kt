@@ -102,6 +102,54 @@ class TestControlCodegen : FunSpec({
         lines.indexOfFirst { it == "jsr  main.testsub" } shouldBeGreaterThan -1
     }
 
+    test("immediate call arguments load directly into A/X/Y hardware slots") {
+        val site = CallSite(
+            CallTarget.Direct(codeLabel("main.testsub")),
+            listOf(
+                Calls.argument(ImmediateOperand.Integer(42, IRDataType.BYTE), CallLocation.HardwareRegister(CallingConventionSlot(0))),
+                Calls.argument(ImmediateOperand.Integer(7, IRDataType.BYTE), CallLocation.HardwareRegister(CallingConventionSlot(1))),
+                Calls.argument(ImmediateOperand.Integer(99, IRDataType.BYTE), CallLocation.HardwareRegister(CallingConventionSlot(2)))
+            )
+        )
+        val lines = generateAsm(
+            listOf(IRInstructions.call(site)),
+            listOf(regularSub("main.testsub")),
+            "call-immediate-slots"
+        )
+        lines.any { it == "lda  #42" } shouldBe true
+        lines.any { it == "ldx  #7" } shouldBe true
+        lines.any { it == "ldy  #99" } shouldBe true
+        lines.none { it == "lda  p8_regfile+0" } shouldBe true
+    }
+
+    test("symbol-offset immediate call arguments preserve offset in A/X/Y slots") {
+        val site = CallSite(
+            CallTarget.Direct(codeLabel("main.testsub")),
+            listOf(
+                Calls.argument(
+                    ImmediateOperand.SymbolAddress("main.items", 4, IRDataType.POINTER),
+                    CallLocation.HardwareRegister(CallingConventionSlot(0))
+                ),
+                Calls.argument(
+                    ImmediateOperand.SymbolAddress("main.items", 8, IRDataType.POINTER),
+                    CallLocation.HardwareRegister(CallingConventionSlot(1))
+                ),
+                Calls.argument(
+                    ImmediateOperand.SymbolAddress("main.items", 12, IRDataType.POINTER),
+                    CallLocation.HardwareRegister(CallingConventionSlot(2))
+                )
+            )
+        )
+        val lines = generateAsm(
+            listOf(IRInstructions.call(site)),
+            listOf(regularSub("main.testsub")),
+            "call-sym-offset-axy"
+        )
+        lines.any { it == "lda  #<main.items+4" } shouldBe true
+        lines.any { it == "ldx  #<main.items+8" } shouldBe true
+        lines.any { it == "ldy  #<main.items+12" } shouldBe true
+    }
+
     test("single call result in a hardware slot is stored back into the virtual register") {
         val site = CallSite(
             CallTarget.Direct(codeLabel("main.testsub")),

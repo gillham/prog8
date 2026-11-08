@@ -17,6 +17,7 @@ import prog8.intermediate.CallSite
 import prog8.intermediate.CallTarget
 import prog8.intermediate.IMSyscall
 import prog8.intermediate.IRInstruction
+import prog8.intermediate.RegisterCallSource
 import prog8.intermediate.RegisterOperand
 import prog8.intermediate.requireCallSite
 
@@ -152,7 +153,9 @@ private fun FunctionLowering.lowerSyscall(site: CallSite, number: Int) {
 
 private fun FunctionLowering.arguments(site: CallSite, number: Int, count: Int): List<RegisterOperand> {
     require(site.arguments.size == count) { "syscall $number in ${sub.label} needs $count arguments, not ${site.arguments.size}" }
-    return site.arguments.map { it.source }
+    return site.arguments.map {
+        requireNotNull((it.source as? RegisterCallSource)?.register) { "syscall $number in ${sub.label} has an immediate argument" }
+    }
 }
 
 private fun FunctionLowering.result(site: CallSite, value: LlvmValue) {

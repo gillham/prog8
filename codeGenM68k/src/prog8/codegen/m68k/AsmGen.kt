@@ -277,6 +277,15 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         }
     }
 
+    // Load a value from an arbitrary address and zero-extend it into d0.
+    // Clears d0 first so the upper bits are zero; this is shorter and faster
+    // than loading and then masking on the 68000.
+    fun emitLoadD0ZeroExtendedFromAddress(address: String, srcType: IRDataType) {
+        emitLine("moveq  #0, $SCRATCH_D0")
+        invalidateD0Cache()
+        emitLine("move${dtSuffix(srcType)}  $address, $SCRATCH_D0")
+    }
+
     // Store d0 to an arbitrary address. If the address is a register-file slot,
     // update the cache; otherwise clear it.
     fun emitStoreD0ToAddress(address: String, type: IRDataType) {
@@ -358,6 +367,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
     // true while emitting a subroutine that has a frame (local area and/or incoming argument
     // area); the return translation emits `unlk a5` before each rts when this is set.
     internal var frameActive = false
+    internal var framePointerOmitted = false
 
     // the code chunks of the subroutine currently being emitted, to tell a jump that stays
     // inside it apart from one that leaves it
@@ -697,6 +707,19 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             emitLine("$op.s  $source, $dest")
     }
 
+    // Longword source form for address-register destinations: add.l/sub.l accept any
+    // Dn/An/memory source, so a full-width source needs no d0 bounce.
+    internal fun directAddrArithSource(srcReg: Int, type: IRDataType): String? {
+        if (type != IRDataType.LONG && type != IRDataType.POINTER) return null
+        val srcType = regType(srcReg)
+        if (srcType != IRDataType.LONG && srcType != IRDataType.POINTER) return null
+        return operand(srcReg)
+    }
+
+    // True when the vreg is resident in one of the address registers.
+    internal fun allocatesToAddressReg(reg: Int): Boolean =
+        regAllocation[VirtualRegister.int(reg)]?.startsWith("a") == true
+
     // Source form: only the source must be resident, for reg->mem ops
     // (add.w d3,(a0)) and d0-free moves. Same fallback rule as the pair form.
     internal fun directDataSrc(srcReg: Int, type: IRDataType): String? {
@@ -770,9 +793,10 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         val resolved = when (base) {
             // combine slot offset and reference displacement into a single a5-relative displacement
             is AddressBase.FrameSlot -> {
-                val total = base.offset + displacement
+                val adjustedOffset = if (framePointerOmitted) base.offset - 4 else base.offset
+                val total = adjustedOffset + displacement
                 if (total !in -32768..32767) error("frame displacement $total out of 16-bit range")
-                return "$total(a5)"
+                return if (framePointerOmitted) "$total(sp)" else "$total(a5)"
             }
             is AddressBase.Symbol -> resolveSymbolRef(base.name)
             is AddressBase.Absolute -> base.address.value.toHex()
@@ -977,7 +1001,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             if (options.optimize) {
                 CompilationTimings.measure("asm optimize") {
                     val asmLines = output.toString().lines().toMutableList()
-                    optimizeAssembly(asmLines)
+                    optimizeAssembly(asmLines, program.options.compTarget.cpu)
                     asmFile.toFile().writeText(asmLines.joinToString("\n") + "\n")
                 }
             } else {
@@ -1112,7 +1136,8 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         val entrypointNames = setOf("p8b_main.p8s_start", "main.start")
         if(sub.label in entrypointNames)
             emitLine("bsr  run_global_inits")
-        frameActive = sub.hasFrame
+        frameActive = sub.hasFrame && !sub.framePointerOmitted
+        framePointerOmitted = sub.framePointerOmitted
         frameVregSlots = sub.frameVregSlots
         currentSubCalleeSaved = calleeSavedBySub[sub] ?: emptySet()
         // Swap in this sub's allocation and type maps: vreg numbers (and the d0 cache) may be reused across subs.
@@ -1129,10 +1154,12 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         }
         invalidateD0Cache()
         currentSubChunks = mutableSetOf<IRCodeChunkBase>().also { set -> sub.forEachChunk { set.add(it) } }
-        if (sub.hasFrame) {
+        if (sub.hasFrame && !sub.framePointerOmitted) {
             emitRaw("; stack frame: ${sub.frameSize} bytes of locals, ${sub.incomingSize} bytes of arguments")
             emitLine(if (sub.frameSize > 0) "link  a5,#-${sub.frameSize}" else "link  a5,#0")
             reportFrameSize(sub)
+        } else if (sub.framePointerOmitted) {
+            emitRaw("; stack frame: frame pointer omitted; incoming args addressed relative to SP")
         }
         emitCalleeSave()
         val livenessInstructions = sub.chunks.filterIsInstance<IRCodeChunk>().flatMap { it.instructions }
@@ -1167,6 +1194,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         emitRaw("; End of subroutine: $subLabel")
         emitRaw("")
         frameActive = false
+        framePointerOmitted = false
         frameVregSlots = emptyMap()
         currentSubChunks = emptySet()
         currentSubCalleeSaved = emptySet()
@@ -1316,10 +1344,12 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             val clobbersLoopCounter = preserveLoopCounter && mayClobberLoopCounter(insn)
             if (clobbersLoopCounter)
                 emitLine("move.w  d7,-(sp)", "save loop counter around call")
+            val nextInsn = if (index + 1 < chunk.instructions.size) chunk.instructions[index + 1] else null
             translateInstruction(
                 insn,
                 callOptimizations[index],
-                index in deadLoadIndices
+                index in deadLoadIndices,
+                nextInsn
             )
             previousInsn = insn
             if (clobbersLoopCounter)
@@ -1416,7 +1446,8 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         val loads = mutableMapOf<VirtualRegister, IRInstruction>()
         // Find the most recent LOAD immediate defining each call argument, allowing gaps but no intervening write.
         for (arg in callSite.arguments) {
-            val register = arg.source.register
+            if (arg.source !is RegisterCallSource) continue
+            val register = arg.registerSource.register
             // Immediate forwarding applies to spilled operands only; register-resident args go through call marshalling.
             if (register in regAllocation) continue
             // search backwards for the defining LOAD immediate
@@ -1424,7 +1455,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                 val insn = instructions[idx]
                 // If this instruction writes to the same register, it's the defining write
                 if (insn.exclusiveDestination() == register) {
-                    if (insn.forwardableImmediateFor(register, arg.source.type) != null)
+                    if (insn.forwardableImmediateFor(register, arg.registerSource.type) != null)
                         loads[register] = insn
                     break // found the defining write, whether immediate or not
                 }
@@ -1444,7 +1475,8 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
     private fun translateInstruction(
         insn: IRInstruction,
         forwardedImmediateCall: ImmediateCallOptimization? = null,
-        suppressRegfileStore: Boolean = false
+        suppressRegfileStore: Boolean = false,
+        nextInstruction: IRInstruction? = null
     ) {
         // No IR echo for zero-clear stores: prologue clear runs would drown in "; storezm" noise.
         // IR echo comments are opt-in via -ircomments (off by default); source-line comments are unaffected.
@@ -1462,7 +1494,7 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             Opcode.STOREM, Opcode.STOREX, Opcode.STOREZM, Opcode.STOREZI, Opcode.STOREIM, Opcode.STOREZX, Opcode.STOREHR, Opcode.STOREI,
             Opcode.LOADHFACZERO, Opcode.LOADHFACONE,
             Opcode.STOREHFACZERO, Opcode.STOREHFACONE ->
-                translateLoadStore(insn, suppressRegfileStore)
+                translateLoadStore(insn, suppressRegfileStore, nextInstruction)
 
             Opcode.INC, Opcode.INCM, Opcode.DEC, Opcode.DECM,
             Opcode.NEG, Opcode.NEGM,

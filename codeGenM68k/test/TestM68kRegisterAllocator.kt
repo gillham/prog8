@@ -84,6 +84,41 @@ class TestM68kRegisterAllocator : FunSpec({
         listOf("a2", "a3", "a4").contains(alloc[VirtualRegister.int(1)]) shouldBe true
     }
 
+    test("argument source vregs avoid other argument target-slot registers") {
+        // The backend emits hardware-slot argument moves sequentially; a move into one
+        // argument's target slot must not overwrite another argument's source register
+        // before it is read. The allocator should keep source vregs out of all other
+        // argument target slots.
+        val options = CompilationOptions.builder(Qemu68kTarget())
+            .output(OutputType.RAW).zeropage(ZeropageType.FLOATSAFE)
+            .compilerVersion("test").memtopAddress(0xffffu).optimize(true).build()
+        val program = IRProgram("test", IRSymbolTable(), options, DummyStringEncoder)
+        val chunk = IRCodeChunk(null, null)
+        chunk.instructions.add(IRInstructions.load(IRDataType.WORD, 1, 100))
+        chunk.instructions.add(IRInstructions.load(IRDataType.WORD, 2, 200))
+        val callSite = CallSite(
+            CallTarget.Direct(CodeReference.Label("test.other", 0)),
+            arguments = listOf(
+                Calls.argument(1, IRDataType.WORD, CallLocation.HardwareRegister(CallingConventionSlot(13))), // D3
+                Calls.argument(2, IRDataType.WORD, CallLocation.HardwareRegister(CallingConventionSlot(12)))  // D2
+            )
+        )
+        chunk.instructions.add(IRInstruction(Opcode.CALL, null, callSite = callSite))
+        val sub = IRSubroutine("test.start", emptyList(), emptyList(), Position.DUMMY)
+        sub.chunks.add(chunk)
+        val other = IRSubroutine("test.other", emptyList(), emptyList(), Position.DUMMY)
+        other.chunks.add(IRCodeChunk(null, null))
+        val block = IRBlock("test", false, IRBlock.Options(), Position.DUMMY)
+        block.children.add(sub)
+        block.children.add(other)
+        program.blocks.add(block)
+
+        val alloc = M68kRegisterAllocator(program).allocate().mapBySub[sub] ?: emptyMap()
+        // Spilled is fine; if allocated, it must not be in the conflicting target slot.
+        alloc[VirtualRegister.int(1)]?.let { it shouldNotBe "d3" }  // target of arg0
+        alloc[VirtualRegister.int(2)]?.let { it shouldNotBe "d2" }  // target of arg1
+    }
+
     test("value live across a CALL is never allocated to a caller-saved register") {
         val options = CompilationOptions.builder(Qemu68kTarget())
             .output(OutputType.RAW).zeropage(ZeropageType.FLOATSAFE)
@@ -221,6 +256,43 @@ class TestM68kRegisterAllocator : FunSpec({
         calleeColored shouldBe setOf("d2", "d3", "d4", "d5", "d6")
         (liveReg in calleeColored) shouldBe true
         result.calleeSavedBySub[callee] shouldBe setOf(liveReg)
+    }
+
+    test("callee preserves caller-live registers used for outgoing asmsub arguments") {
+        val options = CompilationOptions.builder(Qemu68kTarget())
+            .output(OutputType.RAW).zeropage(ZeropageType.FLOATSAFE)
+            .compilerVersion("test").memtopAddress(0xffffu).optimize(true).build()
+        val program = IRProgram("test", IRSymbolTable(), options, DummyStringEncoder)
+        val callerChunk = IRCodeChunk(null, null)
+        callerChunk.instructions.add(IRInstructions.load(IRDataType.WORD, 1, 5))
+        callerChunk.instructions.add(IRInstructions.call(Opcode.CALL, CallSite(CallTarget.Direct(CodeReference.Label("test.callee", 0)))))
+        callerChunk.instructions.add(IRInstructions.storeMemory(Opcode.STOREM, IRDataType.WORD, 1, IRMemory.direct("p8b_test.p8v_out")))
+        val caller = IRSubroutine("test.start", emptyList(), emptyList(), Position.DUMMY)
+        caller.chunks.add(callerChunk)
+
+        val calleeChunk = IRCodeChunk(null, null)
+        calleeChunk.instructions.add(IRInstructions.load(IRDataType.WORD, 2, 42))
+        calleeChunk.instructions.add(IRInstructions.call(Opcode.CALL, CallSite(
+            CallTarget.Direct(CodeReference.Label("test.leaf", 0)),
+            arguments = listOf(Calls.argument(2, IRDataType.WORD, CallLocation.HardwareRegister(CallingConventionSlot(12))))
+        )))
+        val callee = IRSubroutine("test.callee", emptyList(), emptyList(), Position.DUMMY)
+        callee.chunks.add(calleeChunk)
+
+        val block = IRBlock("test", false, IRBlock.Options(), Position.DUMMY)
+        block.children.add(caller)
+        block.children.add(callee)
+        block.children.add(IRAsmSubroutine(
+            "test.leaf", null, emptySet(), true,
+            listOf(IRAsmSubroutine.IRAsmParam(RegisterOrStatusflag(RegisterOrPair.D2, null), DataType.WORD)),
+            emptyList(), IRInlineAsmChunk("test.leaf", "rts", false, null), Position.DUMMY
+        ))
+        program.blocks.add(block)
+
+        val result = M68kRegisterAllocator(program).allocate()
+        val liveReg = result.mapBySub[caller]!![VirtualRegister.int(1)]!!
+        liveReg shouldBe "d2"
+        result.calleeSavedBySub[callee]?.contains(liveReg) shouldBe true
     }
 
     test("callee with its address taken keeps all its colored registers") {

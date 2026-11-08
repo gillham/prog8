@@ -5,8 +5,10 @@ plugins {
     id("com.peterabeles.gversion") version "1.11.0"
 }
 
-// suffix kept out of gradle.properties so upstream version bumps merge cleanly
-version = "$version-llvm"
+// suffix and release counter kept out of gradle.properties so upstream version bumps merge cleanly
+val llvmRelease = rootProject.file("llvm-release.properties").readLines()
+    .single { it.startsWith("llvmRelease=") }.substringAfter('=').trim()
+version = "$version-llvm.$llvmRelease"
 
 dependencies {
     implementation(project(":codeCore"))

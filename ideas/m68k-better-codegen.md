@@ -282,7 +282,7 @@ significantly reduces the expected benefit of 4.1-4.5:
 
 ## Tier 3 - Instruction selection at lowering (days-weeks)
 
-### 3.1 Use 68020 scaled indexing directly [DONE]
+### 3.1 Use 68020 scaled indexing directly [DONE PARTLY]
 - **Where**: `InstrLoadStore.kt` / `resolveMemory()`.
 - On 68020, emit `move.l (base,didx.l*scale),d0` instead of manual mul + add.
 - Gate on `cpu.is68020`.
@@ -300,6 +300,18 @@ significantly reduces the expected benefit of 4.1-4.5:
 - **Measured**: zero corpus occurrences of the staged-float shape (no
   `(0,a0,d0.l)` anywhere in textelite/maze), so binaries byte-identical;
   coverage is fixture tests (020 scaled + 000 manual) instead.
+- **2026-11-06 scope correction - pointer-indexed access is NOT covered.** The
+  scaled-indexing path only triggers on IR `MemoryReference.Indexed` reads
+  (named arrays). Pointer-indexed arrays (`values[pos]` where `values` is a
+  `^^uword`/`^^long`) go through `ExpressionGen.translatePointerIndexing`
+  (`codeGenIntermediate/ExpressionGen.kt`), which folds the element scale
+  into the index **in-register at IR level** (`loadmz` + `lsl.l` +
+  `addr.l` + `LOADI Indirect[reg]`), because `MemoryReference.Indexed`
+  requires a static `AddressBase` and cannot base on a register-held pointer.
+  By the time the backend sees it there is no index/scale left to fold into
+  `(aN,dN.w*2)`, so 68020 targets produce the same manual scale dance as the
+  68000. This affects every pointer-indexed loop on all m68k targets (the
+  shared sorting lib, list/graph traversal, gfx loops). See 5.3 for the fix.
 
 ### 3.2 Cheaper zero-extension [DONE]
 - `move.b x,d0; and.l #$ff,d0` -> `moveq #0,d0; move.b x,d0` (or `move.b` +
@@ -417,6 +429,53 @@ significantly reduces the expected benefit of 4.1-4.5:
   negative power of two (simpleAst)" already exercises the rewrite; positive
   powers and the `0`/`1` identities are covered by the same code path in
   `optimizeAlgebraicIdentities`.
+
+### 3.7 Constant call arguments load straight into the hardware register slot [DONE]
+- **Where**: IR `CallArgument` (`intermediate/IRCalls.kt`, `IRTextCodec.kt`),
+  argument selection in `codeGenIntermediate/ExpressionGen.kt`, lowering in
+  `codeGenM68k/InstrControl.kt` and `codeGenNew6502/InstrControl.kt`.
+- A constant integer, float, or address-of-global argument passed to a call in
+  a CPU register slot is now a call-argument immediate (`#42.w@s0`,
+  `#main.items@s18`) instead of a virtual register that had to be materialized
+  and then moved into the slot. The vreg disappears entirely, so the backend
+  emits the constant into the slot register directly (`moveq #42,d0`,
+  `movea.l #main.items,a2`).
+- **Measured** (`examples/amiga/wavc.p8`, amiga500): `.text` 16428 -> 16268
+  bytes; `movea.l #...,a2` 84 -> 3; `movea.l a2,a0` 85 -> 1.
+- **Limits**: an immediate argument needs an explicit hardware-register call
+  location; stack and frame-slot arguments still take a register. Locals and
+  parameters are never folded to symbol immediates because their frame address
+  is not known at that point.
+- **Other targets**: new6502 passes immediates directly for slots s0-s2
+  (A/X/Y); the virtual target is unaffected (no hardware-register slots).
+
+### 3.8 Move scheduler for hardware-register call arguments [STILL TODO - correctness hardening]
+- **Where**: `codeGenM68k/InstrControl.kt`, `translateCall`.
+- **Problem**: when two call arguments both pass in data-register slots but
+  their source vregs are allocated to each other's target registers, the naive
+  sequential move sequence can clobber one value before it reaches its slot.
+  Example: arg0 wants `d2` but its source vreg lives in `d3`; arg1 wants `d3`
+  but its source vreg lives in `d2`. Emitting `move.l d3,d2` then
+  `move.l d2,d3` destroys arg1's original value.
+- **Current fix**: the register allocator (`RegisterAllocator.kt`,
+  `fixedBoundaryEffects`) forbids an argument source vreg from occupying any
+  other argument's hardware target slot, and `translateCall` already hoists
+  address-slot arguments before data-slot arguments. Together these prevent
+  the reachable cases today.
+- **Better fix**: replace the ad-hoc sequencing in `translateCall` with a small
+  move scheduler. Treat each hardware-slot move as a node; an edge exists when
+  one move's destination register is another move's source register.
+  Topologically sort the moves and emit them in dependency order. Cycles
+  (e.g. the d2<->d3 swap above) are broken by moving one source to a scratch
+  register first; `d0`/`d1` are usable scratch because argument sources are
+  never allocated there.
+- **Benefit**: makes `translateCall` correct independent of allocation choices,
+  removing the need for the allocator constraint that currently papers over the
+  issue. Also opens the door to scheduling larger immediate forms or stack
+  pushes more cheaply.
+- **Effort**: small-medium.
+- **Note**: more invasive than the allocator constraint, so it is recorded here
+  as future work rather than implemented now.
 
 ## Tier 4 - Register allocation & spilling (weeks)
 
@@ -714,7 +773,271 @@ all.
 - Tighten `UnusedCodeRemover` / `VregRenumber` for m68k-specific spill patterns.
 - **Effort**: medium.
 
+### 5.3 Pointer-indexed array access: keep index + scale in the IR memory reference
+- **Problem**: pointer-indexed element access (`values[pos]` on `^^uword`,
+  the shape the shared sorting lib and most generic-code loops use) is IR that
+  pre-folds the element scale into a long index register:
+  ```ir
+  loadmz.w r80.l,[frame:-2]   ; r80 = zero-ext(pos)
+  lsl.l     r80.l             ; scale-by-N folded in-register
+  loadr.p   r81.p,r123.p      ; r81 = values
+  addr.l    r80.l,r81.l       ; r81 += r80
+  loadi.w   r82.w,[r81.p]     ; r82 = [r81]
+  ```
+  The backend then materializes the whole thing as ~9 instructions per access
+  (zero-extend, double, two stagings, pointer stage + D0 bounce + add); on
+  68020 it cannot use hardware scaling because the index/scale is gone. Per
+  element read is 9 instructions today.
+- **Fix**: teach the IR about a register-held pointer base with a scaled index,
+  e.g. extend `MemoryReference.Indexed` to allow a `pointer`-vreg base (a new
+  `AddressBase.Register(vreg)` variant) or add an indexed variant of
+  `MemoryReference.Indirect`. Then:
+  1. `ExpressionGen.translatePointerIndexing` and the deref-chain path emit
+     `LOADI/STOREI [rPtr + rIdx.w * eltSize]` and let `multiplyByConst`/`lsl`
+     disappear from the IR (do NOT pre-scale; keep scale in the memref just
+     like the named-array `LOADX` path does).
+  2. `resolveMemory()` lowers that shape directly. Caveat first: the
+     `(rPtr, rIdx.w*scale)` word-index form sign-extends the 16-bit index, so
+     an unsigned index (a `uword`/`ubyte` subscript is the normal case) at
+     32768 or above would index backwards. It is only sound when the index is
+     provably below 32768 (a byte index, or a bound the IR can state). Use a
+     `.l` index for the general case: it still needs the `moveq #0` /
+     `move.w` zero-extension (the `.l` form reads all 32 bits), so 68020 gets
+     3 instructions per access that way, not 2. 68000: zero-extend index +
+     manual scale + `add.l` (4-5 instructions). Either way the two
+     now-redundant stagings disappear because the scaled effective address
+     needs no An home.
+  3. Scope/gate: the IR change touched `intermediate` is shared - so
+     `IRTextCodec` encode/decode, the register-use accounting
+     (`IRInstructions.addUsedRegistersCounts`), `mapRegisters`/renumber and the
+     VirtualMachine interpreter must all handle the new shape. 6502 codegen
+     does not consume IR so it is unaffected.
+- **Benefit**: fewer instructions per pointer-indexed access: 9 -> 3 on 68020
+  with a `.l` index (9 -> 2 only where a small unsigned index can be proven),
+  ~1.7x on 68000 (9 -> 5); helps every m68k program using
+  pointer-indexed loops, not just the sorting lib.
+- **Effort**: large (IR representation + codec + VM + backend lowering).
+- **Verification**: sort-lib bench on fixed arrays (sorted + random), plus
+  `-dumpsymbols`-style corpus `.text` measurement over the examples; the
+  `(aN,dN.w*2)` and `(aN,dN.l*scale)` encodings are 68020-gated and must be
+  vasm-verified like 3.1 (5.3c already ships the `.l` form for this reason).
 
+### 5.3b [DONE 2026-11-06] Backend peephole cleanup of the existing dance (option B)
+- Two new passes in `AsmOptimizer.kt`, both running before the window passes:
+  - `optimizeStagedAddCollapse`: `move.l aX,dY` / `move.l dY,d0` / `add.l d0,aN`
+    -> `add.l aX,aN` (the pointer stage + D0-bounce trio), when the staged data
+    registers are provably dead after the add and the trio carries no labels.
+  - `optimizeRedundantStagedMove`: drop the first of two consecutive
+    `movea.l dK,aN` stagings when the An is fully rewritten between them and
+    never read (the dead stage in the index-doubling idiom).
+- **Verified**: `gnomesort_uw` inner element read is now 6 instructions
+  (was 9); full sorting test program `.text` 5029 -> 4813 bytes on qemu68k;
+  all m68k example programs still assemble; qemu-system-m68k functional run
+  of the m68k sorting example produces correct sorted output; full gradle
+  build + `:codeGenM68k:test` pass.
+- These shrink the 5.3 gap's 9-instruction baseline to 6; 5.3 remains the
+  structural fix (and removes the remaining staging/`add.l` pairs on 68020).
+
+### 5.3c [DONE 2026-11-06] Indexed-lea fold of the surviving sequence
+- The 5.3b cleanup left a uniform tail per pointer-indexed access:
+  `moveq #0,dN` / `move.w S,dN` / `add.l dN,dN` (or `lsl.l #2`) /
+  `movea.l dN,aT` / `add.l aP,aT`. New pass `optimizeIndexedPointerLea`
+  (registered with the target CPU; `optimizeAssembly` now takes `cpu`,
+  default M68000) folds the last two (or three) instructions into one
+  indexed lea:
+  - 68020+: `lea (aP,dN.l*scale),aT` and the scale instruction is removed
+    (hardware scaling, full `.l` index so the zero-extended word index
+    cannot be sign-extended - the unsafe form would be `.w`).
+  - 68000: scale instruction stays, stage+add become `lea (aP,dN.l),aT`
+    (byte-neutral: 4B vs 4B, one instruction fewer).
+  - Staged-base variants fold too: base staged through a data register
+    (`move.l aP,dK; add.l dK,aT`) folds straight to the lea when dK is
+    provably dead; base reloaded from memory (`move.l 10(a5),dK`) becomes
+    `movea.l 10(a5),aT` + lea.
+  - Flag safety: the removed `add.l` set flags, so the fold requires the
+    next instruction to set flags itself (the element load/store `move`
+    always does).
+- Companion changes in the same session:
+  - `InstrArithmetic` `ADDR`: address-register destinations now take a
+    LONG/POINTER source directly (`add.l a2,a3`) instead of bouncing
+    through d0 (`move.l a2,d2` / `move.l d2,d0` / `add.l d0,a3`).
+  - `optimizeStagedAddPair`: two-instruction variant of 5.3b's trio
+    collapse (`move.l <Dn/An>,dY` + `add.l dY,aN` -> `add.l <src>,aN`,
+    staged reg provably dead).
+  - `optimizeLoadIntoCompare`: `move.S X,dK` + `cmp.S dK,dM` ->
+    `cmp.S X,dM` (and `cmpi` form) when dK is provably dead. Note: fires
+    rarely in the sorting lib because the dominant shape there is
+    load/cmp/branch and deadness stops at the control transfer.
+  - Shared `provenDeadAfter` helper factored out of the three passes
+    (bounded same-block scan: redefinition-before-read, else alive).
+- **Verified**: sorting test `.text` on qemu68k 4813 -> 4669 bytes
+  (5029 before this work started); per-access sequence down to 3
+  instructions on 68020 (`moveq`/`move.w`/`lea (a2,d0.l*2),a3`) and 4 on
+  68000. amiga500 `.text` 4770 bytes; vasm assembles both; qemu68k
+  functional run sorts correctly; full `gradle build` green.
+- Remaining in this shape: `movea.l d0,a3` / `move.l a2,d3` / `add.l d3,a3`
+  where the staged d3 dies at the following conditional branch (handled by the
+  bounded two-successor deadness scan in A.1), repeated `-2(a5)`/`8(a5)`
+  reloads of `pos`/`num_elements` (IR-level liveness/allocator work, 5.2; see
+  A.6), and the double `loadr.w` of the same value (r122/r77) in
+  `shellsort_uw` (IR copy propagation; see A.6). 5.3 itself remains the
+  structural fix that removes the `moveq`/`move.w` pair too.
+
+
+
+## Assembly codegen improvements
+
+Open asm-level findings from the 2026-11-07 inspection of the amiga500 sorting
+benchmark (`examples/test.p8`, `.text` 4770 B; qemu68k 4669 B) after 5.3c.
+All are `AsmOptimizer.kt` work unless noted. A.2 and A.4 are implemented;
+Only A.6 remains (allocator work). A.1-A.5 are done. Together A.1-A.5 were worth roughly 80 B and
+40-45 instructions there.
+
+After A.2 + A.4: amiga500 `.text` 4770 -> 4722, qemu68k 4669 -> 4621 (-48 B
+each). The passes remove 56 B of instructions; the difference is the
+layout-dependent `align 2` (4-byte) and `align 4` (16-byte) padding moving
+with the code. Verified with vasm (amiga500) and a qemu68k run of the sorting
+test.
+
+### A.1 Branch-aware deadness in `provenDeadAfter` [DONE]
+- The helper bails on any control transfer, but the dominant sort-loop shape is
+  `load / cmp / b<cond>` where the loaded register is dead on *both*
+  successors. Extending the scan to follow a conditional branch's two
+  successors (label index, recursive under the existing step bound,
+  conservative on unknown) unlocks, in the sorting test alone:
+  - 10x `move.w 8(a5),d3` / `cmp.w d3,d2` / `bhs` -> `cmp.w 8(a5),d2`
+    (and the `move.w (a3),d3` / `cmp.w d3,d2` / `bhs` variant). ~30 B,
+    10 instructions. The one shape `optimizeLoadIntoCompare` was measured not
+    to fire on.
+  - 8x the staged-base lea fold `optimizeIndexedPointerLea` cannot currently
+    prove: `movea.l d0,a3` / `move.l a2,d3` / `add.l d3,a3` ->
+    `lea (a2,d0.l),a3` (2 B and 2 instructions per site), including the
+    `move.l 10(a5),d6` reload variant -> `movea.l 10(a5),a2` + lea (byte-
+    neutral on 68000, 1 instruction). All 8 also lose the scale instruction on
+    68020. ~10 instructions total.
+  - 3 of A.3's 4 sites.
+- This supersedes the old "all need cross-block proof, not more peepholes"
+  conclusion for the staged-add-at-branch case: the proof is local, just
+  two-sided. The repeated frame-slot reloads and the double `loadr.w` from that
+  same paragraph really do need 5.2 / allocator work (see A.6).
+- **Safety**: unchanged rules - redefinition before read on every path,
+  `rts`/`unlk` end a path as dead, anything unparseable goes alive; recursion
+  is bounded by the same step cap.
+- **Effort**: small. Also unlocks more of `optimizeStagedAddPair` and
+  `optimizeLoadIntoCompare` in other programs with the same loop shape.
+
+- DONE: `provenDeadAfter` now follows conditional branches (dead only if dead on
+  both successors) and unconditional `bra` (follows target); `rts`/`rtr`/`rte`
+  end a path as dead. Label stripping lets branch targets be scanned. Measured
+  on the sorting benchmark: amiga500 `.text` 4722 -> 4690, qemu68k 4621 -> 4589
+  (-32 B each), matching the predicted ~30 B (10 move.w->cmp.w folds) plus
+  cascades. Sorting test still prints all eight lists correctly.
+
+### A.2 Dead zero-extend writeback [DONE]
+- 11x in the sorting test:
+  ```
+  moveq  #0,d0
+  move.b  -1(a5),d0
+  move.w  d0,d2        ; dead: the consumer reads d0 through the d0 cache
+  add.w   d0,d0
+  ```
+  `emitStoreD0` always writes the value back to the vreg's home register, even
+  when the next instruction consumes it via the d0 cache (the vreg is live; it
+  is the home-register copy that is dead). Dropping the third instruction saves
+  1 instruction / 2 B per site. 10 of the 11 are dead; the live one is in
+  `print_l` and belongs to A.3. All 11 are followed by an instruction that sets
+  flags.
+- DONE: `optimizeDeadZeroExtendWriteback` matches `moveq #0,d0` /
+  `move.b|w S,d0` / `move.b|w|l d0,dK`, requires the next instruction to define
+  N/Z/V/C itself, and proves dK dead with a scan that may cross labels and
+  calls (`registerUnreadBeforeRedefinition`). The 7 main-loop sites sit on the
+  other side of a `bsr` before dK is redefined, which the plain single-block
+  scan (`provenDeadAfter`) refuses; the 3 shellsort sites fold with either scan.
+  Measured: 10 sites, 20 B of instructions.
+- Not to be confused with: 2.8's rejected `moveq`-drop (the `moveq` stays
+  here), 5.1 (d0 cache validity - this elides the writeback instead), or the
+  reverted 4.7.1 frame-slot pass (nothing is tracked across slots).
+- **Where**: `AsmOptimizer.kt`. Skipping the writeback in `emitStoreD0` would
+  need liveness plumbed into the lowering, so the asm pass is the cheaper route.
+- **Effort**: small.
+
+### A.3 Source staging before a store [DONE]
+- 4x:
+  ```
+  move.l d0,d2 / move.l d2,p8b_txt.p8v_fmt_value_l -> move.l d0,p8b_txt.p8v_fmt_value_l
+  move.w d4,d5 / move.w d5,-4(a5)                  -> move.w d4,-4(a5)
+  ```
+  2.7 (`optimizeConstOperateFold`) folds the constant-first-line variant only;
+  2.6 is the opposite direction (store then reload). 1 of the 4 folds with the
+  current scan, the other 3 need A.1.
+- **Effort**: small (same pass family as A.2).
+
+- DONE: `optimizeSourceStagingBeforeStore` collapses `move.<size> S,dK` /
+  `move.<size> dK,D` into `move.<size> S,D` when dK is dead after the store,
+  restricted to register sources and non-register destinations (memory/symbol/
+  stack). Measured on amiga1200 examples: 29 programs 207077 -> 206785 B
+  (-292 B).
+
+### A.4 `pea` for stack pointer arguments [DONE]
+- 9x in `main`'s call setup: `move.l #p8v_vals,d2` ... `move.l d2,-(sp)`
+  -> `pea p8v_vals`. The assembler encodes the `pea` PC-relative (4 B), so a
+  site drops from 8 B to 4 B, one instruction fewer.
+- DONE: `optimizePeaForStackArgs` folds only when a symbol is pushed within
+  three instructions, no other instruction in between mentions the staged
+  register, an intervening instruction defines all flags the removed move set,
+  and the staged register is not read before its next definition. The `pea` is
+  emitted at the push position (not where the value was materialized), so the
+  argument push order is unchanged. Measured: all 9 sites, 36 B of instructions.
+- 3.7 deliberately covers hardware-register slots only and leaves stack args as
+  registers; this is that leftover. `pea` never appeared in generated code
+  before this pass.
+- **Effort**: small.
+
+### A.5 Branch-to-branch chain retargeting [DONE, runtime only]
+- 6x, all in the gnomesort tail: `bra p8_label_gen_23` where that block is
+  itself `bra p8_label_gen_21`, which is `bra <whileloop>` - 2 extra branch
+  executions per inner-loop iteration. Retarget each `bra` to the terminal
+  target.
+- Saves no bytes: the intermediate labels are also reached by fall-through, so
+  they cannot be dropped. 3.4 (DONE) covers conditional-over-bra, `bsr`+`rts`
+  and PC-relative `jmp`, not this shape.
+- **Effort**: small (follow a `bra` target to a block whose first instruction is
+  another `bra`; bounded).
+
+- DONE: `optimizeBranchToBranchChain` retargets a `bra` whose target block
+  begins with another `bra` to the terminal target. No bytes saved (intermediate
+  labels stay reachable by fall-through); removes 2 branch hops per inner-loop
+  iteration in gnomesort. Sorting test still prints all lists correctly.
+
+### A.6 Frame-slot traffic and the base-pointer clobber [STILL TODO - high complexity, allocator/codegen work]
+- The six sorting routines contain 112 frame-slot loads and 15 stores; the hot
+  ones are `-2(a5)`/`-4(a5)`/`-6(a5)` (loop position), `8(a5)`
+  (`num_elements`) and the pointer arguments (`10(a5)`/`14(a5)`), reloaded per
+  statement and per loop test. Only 5 are provably redundant under a
+  conservative scan, because the temporary holding them is clobbered by the
+  next statement. Value residency across statements is 5.2/4.3 work, not a
+  peephole.
+- Concrete cause of the remaining base reload in the shellsort inner loop: the
+  element address is computed *into a2*, clobbering the base pointer a2
+  already holds, so the base is reloaded (`move.l 10(a5),d6`) before every
+  access. An address-register assignment that keeps the base in one An and
+  puts the target in another removes the reload (and the surviving
+  `movea`/`lea` fold pair with it). A.1 only makes the folded shape cheaper; it
+  does not remove the reload.
+- Also recorded in 5.3c: the double `loadr.w` (`move.w d3,d2` /
+  `move.w d3,d4` for the same vreg value, 3x) needs copy coalescing in the
+  allocator, i.e. letting the two vregs share one register while their live
+  ranges overlap and the value is untouched.
+
+
+**Status: STILL TODO.** This is not a peephole pass. It requires changes to the m68k
+code generator's register allocation and address computation: keep a base pointer
+in one address register while computing element addresses into another, plus
+value residency across statements (Tier 4.3 coloring heuristic / 5.2). Effort is
+  days-to-weeks and risks regressions across all m68k programs. The vbcc sorting
+  comparison (902 B vs 1580 B) suggests this is a substantial gap; the earlier
+  maze-core comparison must be rerun because A.1 had miscompiled `opposite()`.
+  This gap cannot be closed by AsmOptimizer passes alone.
 
 ## Measurement
 

@@ -1,10 +1,12 @@
 package prog8.codegen.m68k
 
+import prog8.code.core.CpuType
+
 // M68k assembly-level peephole optimizer over a MutableList<String> of assembly lines: only
 // lines a peephole matches are modified or removed (comments stay intact), and all passes
 // re-run until a full pass makes no changes. Add a pass by registering it in optimizeAssembly().
 
-internal fun optimizeAssembly(lines: MutableList<String>) {
+internal fun optimizeAssembly(lines: MutableList<String>, cpu: CpuType = CpuType.M68000) {
     val pretrimmed = lines.map { it.trimStart() }.toMutableList()
 
     while (true) {
@@ -32,10 +34,62 @@ internal fun optimizeAssembly(lines: MutableList<String>) {
         by2 = runPass(optimizeRedundantMovePair(by2), 2, by2)
         by2 = runPass(optimizeStoreReloadToRegCopy(by2), 2, by2)
         by2 = runPass(optimizeRedundantExt(by2), 2, by2)
-        val a6Mods = optimizeByteZeroExtendSafe(lines, pretrimmed)
-        if (a6Mods.isNotEmpty()) {
-            applyModifications(a6Mods, lines, pretrimmed)
+        // pointer-indexed staging cleanups: collapse the pointer-stage/D0-bounce/add trio into
+        // one add.l, and drop the first of two consecutive identical An stagings. Applied before
+        // the window-based passes so branch removals can then join straight-line runs.
+        val collapseMods = optimizeStagedAddCollapse(lines, pretrimmed)
+        if (collapseMods.isNotEmpty()) {
+            applyModifications(collapseMods, lines, pretrimmed)
             modified = true
+            by2 = getLinesBy(pretrimmed, lines, 2)
+        }
+        val stagedMoveMods = optimizeRedundantStagedMove(pretrimmed)
+        if (stagedMoveMods.isNotEmpty()) {
+            applyModifications(stagedMoveMods, lines, pretrimmed)
+            modified = true
+            by2 = getLinesBy(pretrimmed, lines, 2)
+        }
+        val stagedPairMods = optimizeStagedAddPair(lines, pretrimmed)
+        if (stagedPairMods.isNotEmpty()) {
+            applyModifications(stagedPairMods, lines, pretrimmed)
+            modified = true
+            by2 = getLinesBy(pretrimmed, lines, 2)
+        }
+        val loadCmpMods = optimizeLoadIntoCompare(lines, pretrimmed)
+        if (loadCmpMods.isNotEmpty()) {
+            applyModifications(loadCmpMods, lines, pretrimmed)
+            modified = true
+            by2 = getLinesBy(pretrimmed, lines, 2)
+        }
+        val deadWritebackMods = optimizeDeadZeroExtendWriteback(pretrimmed)
+        if (deadWritebackMods.isNotEmpty()) {
+            applyModifications(deadWritebackMods, lines, pretrimmed)
+            modified = true
+            by2 = getLinesBy(pretrimmed, lines, 2)
+        }
+        val peaMods = optimizePeaForStackArgs(lines, pretrimmed)
+        if (peaMods.isNotEmpty()) {
+            applyModifications(peaMods, lines, pretrimmed)
+            modified = true
+            by2 = getLinesBy(pretrimmed, lines, 2)
+        }
+        val branchChainMods = optimizeBranchToBranchChain(lines, pretrimmed)
+        if (branchChainMods.isNotEmpty()) {
+            applyModifications(branchChainMods, lines, pretrimmed)
+            modified = true
+            by2 = getLinesBy(pretrimmed, lines, 2)
+        }
+        val stagedStoreMods = optimizeSourceStagingBeforeStore(lines, pretrimmed)
+        if (stagedStoreMods.isNotEmpty()) {
+            applyModifications(stagedStoreMods, lines, pretrimmed)
+            modified = true
+            by2 = getLinesBy(pretrimmed, lines, 2)
+        }
+        val indexedLeaMods = optimizeIndexedPointerLea(lines, pretrimmed, cpu)
+        if (indexedLeaMods.isNotEmpty()) {
+            applyModifications(indexedLeaMods, lines, pretrimmed)
+            modified = true
+            by2 = getLinesBy(pretrimmed, lines, 2)
         }
         // single-line immediate-form rewrites: provably safe, no context needed.
         // plus single-line true no-ops (movea/exg with identical operands)
@@ -94,13 +148,8 @@ internal fun optimizeAssembly(lines: MutableList<String>) {
  * to the same array reloads the base several times over.
  */
 private fun optimizeRedundantLea(allPretrimmed: List<String>): List<Modification> {
-    // Control transfers end the tracked value (a call clobbers a0); cc branches are excluded, their label resets it.
-    val controlTransfers = setOf(
-        "bra", "bsr", "jmp", "jsr", "rts", "rtr", "rte", "trap",
-        "dbcc", "dbcs", "dbhi", "dbhs", "dblo", "dbls", "dbne", "dbnz", "dbeq", "dbz",
-        "dbmi", "dbpl", "dbge", "dblt", "dbgt", "dble", "dbvc", "dbvs", "dbtst", "dbset",
-        "dbclr", "dbchg", "dbf", "dbra"
-    )
+    // Control transfers end the tracked value (a call clobbers a0); conditional branches
+    // are included via dbcc and the unconditional set, their label resets it.
     // A lea whose destination is a0, and the value it leaves there.
     fun leaBase(instr: String): String? {
         if (!instr.startsWith("lea ") && !instr.startsWith("lea\t"))
@@ -126,7 +175,7 @@ private fun optimizeRedundantLea(allPretrimmed: List<String>): List<Modification
             continue
         }
         val mnemonic = instr.substringBefore(' ').substringBefore('\t').lowercase()
-        if (mnemonic in controlTransfers) {
+        if (mnemonic in controlTransfersNoConditionals) {
             a0Base = null
             continue
         }
@@ -409,14 +458,7 @@ private fun optimizeAddressArithmetic(lines: List<String>, allPretrimmed: List<S
  * before a full write or block boundary in the same basic block.
  */
 private fun optimizeMoveqWordForm(lines: MutableList<String>, allPretrimmed: List<String>): List<Modification> {
-    val controlTransfers = setOf(
-        "bra", "bsr", "jmp", "jsr", "rts", "rtr", "rte", "trap",
-        "bcc", "bcs", "beq", "bne", "bmi", "bpl", "bvc", "bvs",
-        "bhi", "bls", "bhs", "blo", "bgt", "ble", "bge", "blt",
-        "dbcc", "dbcs", "dbhi", "dbhs", "dblo", "dbls", "dbne", "dbnz", "dbeq", "dbz",
-        "dbmi", "dbpl", "dbge", "dblt", "dbgt", "dble", "dbvc", "dbvs", "dbtst", "dbset",
-        "dbclr", "dbchg", "dbf", "dbra"
-    )
+    // all control transfers incl. conditional branches end the scan block here
 
     // Filter to non-blank, non-comment lines
     val filtered = allPretrimmed.withIndex()
@@ -527,14 +569,7 @@ private fun constFoldMnemonic(op: String, size: Char, dst: String): String? {
  * immediate form cannot target `An`, unlike the register form).
  */
 private fun optimizeConstOperateFold(lines: List<String>, allPretrimmed: List<String>): List<Modification> {
-    val controlTransfers = setOf(
-        "bra", "bsr", "jmp", "jsr", "rts", "rtr", "rte", "trap",
-        "bcc", "bcs", "beq", "bne", "bmi", "bpl", "bvc", "bvs",
-        "bhi", "bls", "bhs", "blo", "bgt", "ble", "bge", "blt",
-        "dbcc", "dbcs", "dbhi", "dbhs", "dblo", "dbls", "dbne", "dbnz", "dbeq", "dbz",
-        "dbmi", "dbpl", "dbge", "dblt", "dbgt", "dble", "dbvc", "dbvs", "dbtst", "dbset",
-        "dbclr", "dbchg", "dbf", "dbra"
-    )
+    // all control transfers incl. conditional branches end the scan block here
     val filtered = allPretrimmed.withIndex()
         .filter { it.value.isNotBlank() && !it.value.trimStart().startsWith(';') }
         .map { IndexedValue(it.index, it.value.trimStart()) }
@@ -760,28 +795,6 @@ private fun optimizeStoreReloadToRegCopy(linesBy: List<List<TrimmedLine>>): List
 
 private enum class FlagDecision { Overwritten, Continue, Unsafe }
 
-/** Instruction mnemonics that unconditionally write the N flag (and Z/C), so the earlier state is gone. */
-private val nFlagOverwriters = setOf(
-    "moveq", "clr", "tst", "cmp", "cmpa", "cmpi", "cmpm",
-    "add", "sub", "addi", "subi", "addq", "subq", "addx", "subx",
-    "and", "andi", "or", "ori", "eor", "eori",
-    "asl", "asr", "lsl", "lsr", "rol", "ror", "roxl", "roxr",
-    "neg", "negx", "not", "ext", "swap", "tas",
-    "mulu", "muls", "mulsl", "divu", "divs", "divsl", "chk"
-)
-
-/** Instruction mnemonics that leave the N flag untouched and do not read it: the fall-through
- *  path still sees the rewritten flags (which for Z/C are identical to before, and FPU ops only
- *  touch FPSR), so scanning may continue past them. */
-private val nFlagOpaque = setOf(
-    "lea", "movea", "adda", "suba", "exg", "link", "unlk", "nop", "movem",
-    "btst", "bset", "bclr", "bchg", "st", "sf",
-    "scc", "scs", "seq", "sne", "svc", "svs", "shi", "sls", "shs", "slo",
-    "fmove", "fadd", "fsub", "fmul", "fdiv", "ftst", "fcmp",
-    "fsqrt", "fabs", "fneg", "fintrz", "fgetexp", "fgetman",
-    "dc", "ds", "dcb", "even", "cnop", "align", "org", "section", "xdef", "xref", "public", "global", "offset"
-)
-
 /**
  * How the A6 rewrite interacts with one instruction on the fall-through path: Continue keeps
  * scanning, Overwritten means N has been replaced so the rewrite becomes safe, Unsafe makes the
@@ -808,78 +821,102 @@ private fun String.zeroExtendFlagDecision(): FlagDecision {
                 else -> FlagDecision.Overwritten
             }
         }
+        // ADDA/SUBA forms leave CCR untouched: treat like other flag-preserving ops.
+        base in setOf("add", "sub", "addq", "subq") -> {
+            val ops = splitOperands(operands)
+            if (ops.size == 2 && ops[1].trim().lowercase().isAddressReg()) FlagDecision.Continue
+            else if (base in nFlagOverwriters) FlagDecision.Overwritten
+            else FlagDecision.Unsafe
+        }
         base in nFlagOverwriters -> FlagDecision.Overwritten
         base in nFlagOpaque -> FlagDecision.Continue
         else -> FlagDecision.Unsafe
     }
 }
 
-private fun optimizeByteZeroExtendSafe(lines: List<String>, allPretrimmed: List<String>): List<Modification> {
-    //  move.b  M,dN  /  and.l  #$ff,dN  ->  moveq  #0,dN  /  move.b  M,dN
-    //  Safety: M must not use dN as an address/index register, and must be a plain operand token.
-    //  Flag safety: the rewrite changes the N flag for byte values >= 128 (move.b reflects the
-    //  byte's sign bit, and.l #$ff always leaves N=0). Scan forward along the fall-through path:
-    //  only rewrite when a flag setter replaces N before an N-sensitive reader can see it.
-    val filtered = allPretrimmed.withIndex()
-        .filter { it.value.isNotBlank() && !it.value.trimStart().startsWith(';') }
-        .map { IndexedValue(it.index, it.value.trimStart()) }
-        .toList()
-
-    val mods = mutableListOf<Modification>()
-
-    for (i in filtered.indices) {
-        val line = filtered[i].value
-        val lower = line.lowercase()
-        if (!lower.startsWith("move.b")) continue
-        val operands = line.instructionOperands() ?: continue
-        val parts = operands.split(',', limit = 2)
-        if (parts.size != 2) continue
-        val src1 = parts[0].trim()
-        val dst1 = parts[1].trim()
-        if (!dst1.isDataReg()) continue
-        val reg = dst1.lowercase()
-
-        // Next line must be the masking and.l/andi.l
-        if (i + 1 >= filtered.size) continue
-        val nextLine = filtered[i + 1].value
-        val nextLower = nextLine.lowercase()
-        if (!nextLower.startsWith("and.l") && !nextLower.startsWith("andi.l")) continue
-        val andOps = nextLine.instructionOperands() ?: continue
-        val andParts = andOps.split(',', limit = 2)
-        if (andParts.size != 2) continue
-        if (andParts[1].trim().lowercase() != reg) continue
-        val imm = andParts[0].trim().lowercase()
-        if (imm !in setOf("#\$ff", "#\$00ff", "#\$000000ff", "#0xff", "#0x00ff", "#0x000000ff")) continue
-
-        // M must be a clean operand token that does not reference dN
-        if (src1.any { it.isWhitespace() }) continue
-        if (src1.contains(reg, ignoreCase = true)) continue
-
-        // Flag safety: scan the fall-through path after the rewritten pair.
-        var flagSafe = true
-        scan@ for (j in i + 2 until filtered.size) {
-            when (filtered[j].value.zeroExtendFlagDecision()) {
-                FlagDecision.Overwritten -> break@scan
-                FlagDecision.Unsafe -> {
-                    flagSafe = false
-                    break@scan
-                }
-                FlagDecision.Continue -> {}
-            }
-        }
-        if (!flagSafe) continue
-
-        val originalLine0 = lines.getOrNull(filtered[i].index) ?: allPretrimmed[filtered[i].index]
-        val originalIndent0 = originalLine0.takeWhile { it.isWhitespace() }
-        val originalLine1 = lines.getOrNull(filtered[i + 1].index) ?: allPretrimmed[filtered[i + 1].index]
-        val originalIndent1 = originalLine1.takeWhile { it.isWhitespace() }
-
-        mods.add(Modification(filtered[i].index, false, originalIndent0 + "moveq  #0,$reg"))
-        mods.add(Modification(filtered[i + 1].index, false, originalIndent1 + "move.b  $src1,$reg"))
+/**
+ * True when the instruction defines N, Z, V and C from its own result without reading them.
+ * `move` is checked separately because writing an address register does not touch the flags.
+ * `add`/`sub`/`addq`/`subq` are checked separately because their ADDA/SUBA forms
+ * (address-register destination) leave the CCR untouched, while their data-register forms
+ * overwrite all flags.
+ */
+private fun String.overwritesAllFlags(): Boolean {
+    val instr = substringBefore(';').trim().instructionPart().trim()
+    if (instr.isEmpty()) return false
+    val base = instr.mnemonic()
+    if (base == "move") {
+        val ops = instr.operandsList() ?: return false
+        if (ops.size != 2) return false
+        return !ops[1].lowercase().isAddressReg()
     }
-
-    return mods
+    if (base in setOf("add", "sub", "addq", "subq")) {
+        val ops = instr.operandsList() ?: return false
+        if (ops.size == 2 && ops[1].trim().lowercase().isAddressReg()) return false
+        return true
+    }
+    return base in allFlagOverwriters
 }
+
+/**
+ * True for Scc-style flag readers (sne, seq, smi, ...). `st`/`sf` do not read flags.
+ */
+private fun String.isFlagReadingScc(): Boolean {
+    val base = mnemonic()
+    if (!base.startsWith("s") || base.length < 2) return false
+    if (base in setOf("st", "sf")) return false
+    return base in setOf(
+        "scc", "scs", "seq", "sne", "svc", "svs", "shi", "sls", "shs", "slo",
+        "spl", "smi", "sge", "slt", "sgt", "sle"
+    )
+}
+
+/**
+ * Instructions that preserve the full CCR and do not read it: safe to skip when
+ * proving that removed flag writes are dead. Excludes Scc (reads flags) and
+ * bit ops (partially define flags).
+ */
+private fun String.isFlagPreservingOpaque(): Boolean {
+    val base = mnemonic()
+    if (base in setOf("lea", "movea", "adda", "suba", "exg", "link", "unlk", "nop", "movem")) return true
+    if (base.startsWith("f")) return base in setOf(
+        "fmove", "fadd", "fsub", "fmul", "fdiv", "ftst", "fcmp",
+        "fsqrt", "fabs", "fneg", "fintrz", "fgetexp", "fgetman"
+    )
+    if (base == "move") {
+        val ops = operandsList() ?: return false
+        if (ops.size != 2) return false
+        return ops[1].trim().lowercase().isAddressReg()
+    }
+    if (base == "pea") return true
+    return false
+}
+
+/**
+ * True when every fall-through path from filtered position [pos] overwrites N/Z/V/C
+ * (or returns/calls, which clobber them) before any flag reader. Labels and unknown
+ * transfers are conservative (not dead). Used when removing flag-setting moves whose
+ * replacement (ADDA/PEA) leaves the CCR untouched.
+ */
+private fun flagsDeadAfter(filt: List<IndexedValue<String>>, pos: Int): Boolean {
+    var cur = pos
+    var steps = 0
+    while (cur < filt.size && steps < 32) {
+        val line = filt[cur].value
+        if (hasLabel(line)) return false
+        val base = line.mnemonic()
+        if (base in conditionBranches || base in dbccBranches) return false
+        if (line.isFlagReadingScc()) return false
+        if (base in setOf("rts", "rtr", "rte")) return true
+        if (base in setOf("bsr", "jsr")) return true
+        if (base == "bra" || base == "jmp" || base == "trap" || base == "trapv" || base == "chk" || base == "illegal") return false
+        if (line.overwritesAllFlags()) return true
+        if (line.isFlagPreservingOpaque()) { cur++; steps++; continue }
+        return false
+    }
+    return false
+}
+
 
 /**
  * Rewrite `cmp.<size> #0,dN` and `cmpi.<size> #0,dN` to `tst.<size> dN`.
@@ -979,22 +1016,22 @@ private fun applyModifications(modifications: List<Modification>, lines: Mutable
 // === helpers ===
 
 /** Strips a leading label (e.g. "mylabel:  move.l ..." -> "move.l ..."); inline comments never participate. */
-private fun String.instructionPart(): String {
+internal fun String.instructionPart(): String {
     val idx = substringBefore(';').indexOf(':')
     return if (idx >= 0) substring(idx + 1).trimStart() else this
 }
 
-private fun hasLabel(line: String): Boolean =
+internal fun hasLabel(line: String): Boolean =
     line.substringBefore(';').trimStart().let { it.length > 1 && ':' in it }
 
 /** Returns just the "label:" part of a line, or "" if there is no label. */
-private fun keepLabel(line: String): String {
+internal fun keepLabel(line: String): String {
     val idx = line.substringBefore(';').indexOf(':')
     return if (idx >= 0) line.substring(0, idx + 1) else ""
 }
 
 /** Operand part of an instruction line (separated by spaces or tabs, comments stripped), or null. */
-private fun String.instructionOperands(): String? {
+internal fun String.instructionOperands(): String? {
     val trimmed = this.trimStart()
     val cut = trimmed.indexOfFirst { it.isWhitespace() }
     if (cut < 0) return null
@@ -1307,7 +1344,736 @@ private fun optimizeLslOneToDouble(lines: List<String>, allPretrimmed: List<Stri
  * `move.w X,dN` + `ext.l dN` and `ext.w dN` + `ext.l dN` are intentionally
  * not folded: existing tests/codegen rely on `ext.l` being emitted explicitly.
  */
+
+/** The space-separated operand tokens of an instruction, or null. */
+private fun String.operandsList(): List<String>? {
+    val ops = instructionOperands() ?: return null
+    return splitOperands(ops).map { it.trim() }
+}
+
+/** Any appearance of the register name as a token inside the operand text, including inside
+ *  addressing modes and register lists, but not as a fragment of a symbol name (`p8v_d2`). */
+private fun String.regTokensMention(reg: String): Boolean {
+    val text = instructionPart().lowercase()
+    var idx = text.indexOf(reg)
+    while (idx >= 0) {
+        val before = if (idx > 0) text[idx - 1] else ' '
+        val end = idx + reg.length
+        val after = if (end < text.length) text[end] else ' '
+        if (!isRegisterNameChar(before) && !isRegisterNameChar(after)) return true
+        idx = text.indexOf(reg, idx + 1)
+    }
+    return false
+}
+
+private fun isRegisterNameChar(c: Char): Boolean =
+    c.isLetterOrDigit() || c == '_' || c == '$' || c == '@'
+
+/**
+ * Removes the redundant first An staging of the pointer-indexed access sequence:
+ *
+ *     movea.l  d0,a3        <- first staging
+ *     add.l    d0,d0        <- d0 recomputed in between, a3 untouched
+ *     movea.l  d0,a3        <- second staging fully overwrites a3 before it is ever read
+ *
+ * The first staging is dead when a3 is fully rewritten before any read; the scan stops at
+ * labels and control transfers, where an outside jump could enter with register expectations
+ * we cannot see.
+ */
+private fun optimizeRedundantStagedMove(allPretrimmed: List<String>): List<Modification> {
+    val mods = mutableListOf<Modification>()
+    val filt = allPretrimmed.withIndex()
+        .filter { it.value.isNotBlank() && !it.value.startsWith(';') }
+        .map { IndexedValue(it.index, it.value.trimStart()) }
+
+    for ((pos, entry) in filt.withIndex()) {
+        val stage = entry.value
+        if (stage.instructionName() != "movea.l") continue
+        val ops = stage.operandsList() ?: continue
+        if (ops.size != 2) continue
+        val src = ops[0].lowercase()
+        val dst = ops[1].lowercase()
+        if (!src.isDataReg() || !dst.isAddressReg()) continue
+
+        // scan forward: the An value may only be rewritten (fully, without reading it)
+        var cur = pos + 1
+        var steps = 0
+        var terminated = false
+        while (cur < filt.size && steps < 16) {
+            val line = filt[cur].value
+            if (hasLabel(line) || line.isControlTransfer()) break
+            val lineOps = line.operandsList()
+            val overwrite = (line.instructionName() == "movea.l" || line.instructionName() == "move.l" || line.instructionName() == "lea") &&
+                lineOps != null && lineOps.size == 2 &&
+                lineOps[1].equals(dst, ignoreCase = true) &&
+                !lineOps[0].lowercase().contains(dst)
+            if (overwrite) {
+                terminated = true
+                break
+            }
+            if (line.regTokensMention(dst)) break            // any other read or partial write: abort
+            cur++
+            steps++
+        }
+        if (terminated)
+            mods.add(Modification(entry.index, true, null))
+    }
+    return mods
+}
+
+/**
+ * Pointer-arithmetic staging collapse. The lowering of (pointer + index) through a data
+ * register stage goes
+ *
+ *     move.l  aX,dY        ; pointer stage (dY dies right after)
+ *     move.l  dY,d0        ; then D0 bounce for the add
+ *     add.l   d0,aN        ; final effective address
+ *
+ * which is three instructions where one plain `add.l aX,aN` computes the same effective
+ * address with identical flags. Replaces the trio with that single add when neither staged
+ * data register is read afterwards before it is redefined, and the three lines carry no labels.
+ */
+private fun optimizeStagedAddCollapse(lines: List<String>, allPretrimmed: List<String>): List<Modification> {
+    val mods = mutableListOf<Modification>()
+    val filt = allPretrimmed.withIndex()
+        .filter { it.value.isNotBlank() && !it.value.startsWith(';') }
+        .map { IndexedValue(it.index, it.value.trimStart()) }
+
+    for (i in 0 until filt.size - 2) {
+        val l1 = filt[i].value
+        val l2 = filt[i + 1].value
+        val l3 = filt[i + 2].value
+        if (hasLabel(l1) || hasLabel(l2) || hasLabel(l3)) continue
+        if (l1.instructionName() != "move.l" || l2.instructionName() != "move.l") continue
+        val o1 = l1.operandsList() ?: continue
+        val o2 = l2.operandsList() ?: continue
+        val o3 = l3.operandsList() ?: continue
+        if (o1.size != 2 || o2.size != 2 || o3.size != 2) continue
+        val (src1, dst1) = o1[0].lowercase() to o1[1].lowercase()
+        val (src2, dst2) = o2[0].lowercase() to o2[1].lowercase()
+        if (!src1.isAddressReg() || !dst1.isDataReg()) continue
+        if (src2 != dst1 || !src2.isDataReg() || !dst2.isDataReg()) continue
+        if (l3.instructionName() != "add.l") continue
+        if (o3[0].lowercase() != dst2 || !o3[1].isAddressReg()) continue
+        val dstAddr = o3[1].lowercase()
+
+        // the staged data registers must be dead after the add: scan until both are redefined;
+        // any intervening read invalidates the rewrite. A redefinition is any instruction whose
+        // destination operand is the register itself (move/moveq/lea/...); anything else touching
+        // the register (register-to-register sources, read-modify-writes, indexed addressing)
+        // counts as a read.
+        var needY = true
+        var needZ = true
+        var cursor = i + 3
+        var steps = 0
+        var safe = true
+        while ((needY || needZ) && cursor < filt.size && steps < 24) {
+            val line = filt[cursor].value
+            if (hasLabel(line) || line.isControlTransfer()) { safe = false; break }
+            val lops = line.operandsList()
+            if (lops != null && lops.isNotEmpty()) {
+                val dstTok = lops.last().lowercase()
+                val srcTok = lops.dropLast(1).joinToString(",").lowercase()
+                fun redefined(reg: String): Boolean = dstTok == reg && !srcTok.contains(reg)
+                fun readOf(reg: String): Boolean = line.regTokensMention(reg) && !redefined(reg)
+                if ((needY && readOf(dst1)) || (needZ && readOf(dst2))) {
+                    safe = false
+                    break
+                }
+                if (needY && redefined(dst1)) needY = false
+                if (needZ && redefined(dst2)) needZ = false
+            }
+            cursor++
+            steps++
+        }
+        if (!safe || needY || needZ) continue
+        // the two removed moves set N/Z; the ADDA replacement sets no flags.
+        if (!flagsDeadAfter(filt, i + 3)) continue
+
+        val indent = lines[filt[i + 2].index].takeWhile { it == ' ' }.ifEmpty { "        " }
+        mods.add(Modification(filt[i].index, true, null))
+        mods.add(Modification(filt[i + 1].index, true, null))
+        mods.add(Modification(filt[i + 2].index, false, indent + "add.l  ${src1},${dstAddr}"))
+    }
+    return mods
+}
+
+/**
+ * True when [reg] is provably not read after filtered position [pos]: either it is fully
+ * overwritten without reading its old value before any read, or every path exits first.
+ * Conservative: unknown writes, operand-less instructions, or a bounded scan that runs out mean alive.
+ */
+private fun provenDeadAfter(filt: List<IndexedValue<String>>, pos: Int, reg: String): Boolean =
+    provenDeadAfter(filt, pos, reg, buildLabelMap(filt), 0, mutableSetOf())
+
+private fun buildLabelMap(filt: List<IndexedValue<String>>): Map<String, Int> {
+    val map = linkedMapOf<String, Int>()
+    for (i in filt.indices) {
+        val line = filt[i].value
+        if (hasLabel(line)) {
+            val labelPart = line.substringBefore(';').trimStart()
+            val colon = labelPart.indexOf(':')
+            if (colon >= 0) {
+                val name = labelPart.substring(0, colon).trim()
+                if (name.isNotEmpty() && name !in map) map[name] = i
+            }
+        }
+    }
+    return map
+}
+
+/**
+ * Branch-aware variant: a conditional branch is dead for [reg] only when [reg] is dead on
+ * both of its successors. Unconditional transfers end the path (rts/rtr/rte count as dead;
+ * bsr/jsr/jmp/trap stay conservative). Labels are stripped so a branch target's instruction
+ * can be scanned. Bounded by steps and depth to avoid infinite loops.
+ */
+private fun provenDeadAfter(
+    filt: List<IndexedValue<String>>,
+    pos: Int,
+    reg: String,
+    labelMap: Map<String, Int>,
+    depth: Int,
+    visited: MutableSet<Int>
+): Boolean {
+    if (depth > 6) return false
+    var cur = pos
+    var steps = 0
+    while (cur < filt.size && steps < 24) {
+        if (!visited.add(cur + depth * 100000)) return false
+        val line = filt[cur].value
+        val instr = line.instructionPart().trim()
+        if (instr.isEmpty()) { cur++; steps++; continue }
+        val base = line.mnemonic()
+        if (base in conditionBranches) {
+            val ops = line.operandsList()
+            val targetName = ops?.lastOrNull()?.trim()
+            val targetIdx = if (targetName != null) labelMap[targetName] else null
+            if (targetIdx == null) return false
+            // fall-through successor
+            if (!provenDeadAfter(filt, cur + 1, reg, labelMap, depth + 1, visited)) return false
+            // branch target successor
+            if (!provenDeadAfter(filt, targetIdx, reg, labelMap, depth + 1, visited)) return false
+            return true
+        }
+        if (base == "bra") {
+            val ops = line.operandsList()
+            val targetName = ops?.lastOrNull()?.trim()
+            val targetIdx = if (targetName != null) labelMap[targetName] else null
+            if (targetIdx == null) return false
+            cur = targetIdx
+            steps++
+            continue
+        }
+        if (base in setOf("rts", "rtr", "rte")) return true
+        if (line.isControlTransfer()) return false
+        if (line.fullyDefinesDataRegister(reg)) return true
+        if (line.regTokensMention(reg)) return false
+        cur++
+        steps++
+    }
+    return false
+}
+
+private fun String.fullyDefinesDataRegister(reg: String): Boolean {
+    val ops = operandsList() ?: return false
+    return when (instructionName()) {
+        "move.l" -> ops.size == 2 && ops[1].lowercase() == reg && !ops[0].regTokensMention(reg)
+        "moveq" -> ops.size == 2 && ops[1].lowercase() == reg
+        "clr.l" -> ops.size == 1 && ops[0].lowercase() == reg
+        else -> false
+    }
+}
+
+private fun String.writesDataRegisterWithoutReading(reg: String): Boolean {
+    // Only full-long writes kill a staged long value. Partial byte/word writes
+    // leave the upper bytes live, so they must not count as redefinitions.
+    val ops = operandsList() ?: return false
+    return when (instructionName()) {
+        "move.l" ->
+            ops.size == 2 && ops[1].lowercase() == reg && !ops[0].regTokensMention(reg)
+        "moveq" -> ops.size == 2 && ops[1].lowercase() == reg
+        "clr.l" -> ops.size == 1 && ops[0].lowercase() == reg
+        else -> false
+    }
+}
+
+private fun String.partiallyWritesDataRegisterWithoutReading(reg: String): Boolean {
+    val ops = operandsList() ?: return false
+    return when (instructionName()) {
+        "move.b", "move.w" ->
+            ops.size == 2 && ops[1].lowercase() == reg && !ops[0].regTokensMention(reg)
+        "clr.b", "clr.w" -> ops.size == 1 && ops[0].lowercase() == reg
+        else -> false
+    }
+}
+
+/**
+ * True when [reg] is redefined before any read on the fall-through path from filtered position
+ * [pos]. Unlike [provenDeadAfter] this may cross labels and calls: a callee cannot read the
+ * caller's register as an argument, and the caller's own read is what this scan looks for.
+ * Partial byte/word writes without reading the old value are neither kills nor reads:
+ * they are skipped, since only a later full read of the whole long would observe them.
+ */
+private fun registerUnreadBeforeRedefinition(filt: List<IndexedValue<String>>, pos: Int, reg: String): Boolean {
+    var cur = pos
+    var steps = 0
+    while (cur < filt.size && steps < 32) {
+        val line = filt[cur].value
+        val base = line.mnemonic()
+        if (base == "rts" || base == "rtr" || base == "rte") return true
+        if (line.isControlTransfer() && base != "bsr" && base != "jsr") return false
+        val lops = line.operandsList()
+        if (!lops.isNullOrEmpty()) {
+            if (line.writesDataRegisterWithoutReading(reg)) return true
+            if (line.partiallyWritesDataRegisterWithoutReading(reg)) { cur++; steps++; continue }
+            if (line.regTokensMention(reg)) return false
+        }
+        cur++
+        steps++
+    }
+    return false
+}
+
+/**
+ * Retargets a `bra` whose target block begins with another `bra` to the terminal
+ * target, removing intermediate branch hops in branch-to-branch chains. No bytes
+ * are saved (intermediate labels stay reachable by fall-through); this is a
+ * runtime-only win.
+ */
+private fun optimizeBranchToBranchChain(lines: List<String>, allPretrimmed: List<String>): List<Modification> {
+    val mods = mutableListOf<Modification>()
+    val filt = allPretrimmed.withIndex()
+        .filter { it.value.isNotBlank() && !it.value.startsWith(';') }
+        .map { IndexedValue(it.index, it.value.trimStart()) }
+    val labelMap = buildLabelMap(filt)
+
+    for (pos in filt.indices) {
+        val line = filt[pos].value
+        if (line.mnemonic() != "bra") continue
+        val ops = line.operandsList() ?: continue
+        if (ops.size != 1) continue
+        val original = ops[0].trim()
+        var target = original
+        val visited = mutableSetOf<String>()
+        var changed = false
+        while (target !in visited) {
+            visited.add(target)
+            var idx = labelMap[target] ?: break
+            while (idx < filt.size && filt[idx].value.instructionPart().trim().isEmpty()) idx++
+            if (idx >= filt.size) break
+            val firstInstr = filt[idx].value.instructionPart().trim()
+            if (firstInstr.mnemonic() != "bra") break
+            val nextOps = firstInstr.operandsList() ?: break
+            if (nextOps.size != 1) break
+            val next = nextOps[0].trim()
+            if (next == target) break
+            target = next
+            changed = true
+        }
+        if (changed && target != original) {
+            val originalLine = lines[filt[pos].index]
+            val indent = originalLine.takeWhile { it == ' ' }
+            val label = keepLabel(line)
+            val labelPrefix = if (label.isNotEmpty()) "$label  " else ""
+            val comment = originalLine.substringAfter(';', "").let { if (it.isEmpty()) "" else ";$it" }
+            val commentSuffix = if (comment.isEmpty()) "" else "  $comment"
+            mods.add(Modification(filt[pos].index, false, "$indent$labelPrefix" + "bra  $target$commentSuffix"))
+        }
+    }
+    return mods
+}
+
+/**
+ * Collapses a staged source before a store:
+ *
+ *     move.<size> S,dK
+ *     move.<size> dK,D   ->   move.<size> S,D
+ *
+ * when the intermediate register dK is dead after the store. Covers both the
+ * symbol destination (`move.l d0,p8b_txt.p8v_fmt_value_l`) and the frame slot
+ * destination (`move.w d4,-4(a5)`).
+ */
+private fun optimizeSourceStagingBeforeStore(lines: List<String>, allPretrimmed: List<String>): List<Modification> {
+    val mods = mutableListOf<Modification>()
+    val filt = allPretrimmed.withIndex()
+        .filter { it.value.isNotBlank() && !it.value.startsWith(';') }
+        .map { IndexedValue(it.index, it.value.trimStart()) }
+
+    for (pos in 0 until filt.size - 1) {
+        val l1 = filt[pos].value
+        val l2 = filt[pos + 1].value
+        if (hasLabel(l2)) continue
+        if (!l1.isMove() || !l2.isMove()) continue
+        val size1 = l1.moveSize()
+        val size2 = l2.moveSize()
+        if (size1 != size2) continue
+        val size = size1
+        if (size !in setOf('b', 'w', 'l')) continue
+        val o1 = l1.operandsList() ?: continue
+        val o2 = l2.operandsList() ?: continue
+        if (o1.size != 2 || o2.size != 2) continue
+        val src = o1[0]
+        val staged = o1[1].lowercase()
+        if (!staged.isDataReg()) continue
+        // A.3 stages a value already in a (data/address) register into a temp before storing
+        if (!(src.lowercase().isDataReg() || src.lowercase().isAddressReg())) continue
+        if (o2[0].lowercase() != staged) continue
+        val dst = o2[1]
+        // A.3 only targets stores to memory/symbols/stack slots, not register-to-register moves
+        if (dst.lowercase().isDataReg() || dst.lowercase().isAddressReg()) continue
+        if (dst.lowercase().contains(staged)) continue
+        if (src.lowercase().contains(staged)) continue
+        // the staged register must be dead after the store
+        if (!provenDeadAfter(filt, pos + 2, staged)) continue
+
+        val indent = lines[filt[pos].index].takeWhile { it == ' ' }.ifEmpty { "        " }
+        val label = keepLabel(l1)
+        val labelPrefix = if (label.isNotEmpty()) "$label  " else ""
+        mods.add(Modification(filt[pos].index, false, "$indent$labelPrefix" + "move.$size  $src,$dst"))
+        mods.add(Modification(filt[pos + 1].index, true, null))
+    }
+    return mods
+}
+
+/**
+ * Drops the home-register writeback after a zero-extended byte/word load when the following
+ * consumer reads the value through d0 and the home register is dead, with the very next
+ * instruction defining all flags itself:
+ *
+ *     moveq  #0,d0
+ *     move.b S,d0
+ *     move.w d0,dK        <- removed
+ *     add.w  d0,d0        ; reads d0 directly and defines N/Z/V/C
+ */
+private fun optimizeDeadZeroExtendWriteback(allPretrimmed: List<String>): List<Modification> {
+    val mods = mutableListOf<Modification>()
+    val filt = allPretrimmed.withIndex()
+        .filter { it.value.isNotBlank() && !it.value.startsWith(';') }
+        .map { IndexedValue(it.index, it.value.trimStart()) }
+
+    for (pos in 0 until filt.size - 3) {
+        val l1 = filt[pos].value
+        val l2 = filt[pos + 1].value
+        val l3 = filt[pos + 2].value
+        if (hasLabel(l1) || hasLabel(l2) || hasLabel(l3)) continue
+        if (l1.instructionName() != "moveq") continue
+        val o1 = l1.operandsList() ?: continue
+        if (o1.size != 2 || o1[0] != "#0" || o1[1].lowercase() != "d0") continue
+        if (l2.instructionName() != "move.b" && l2.instructionName() != "move.w") continue
+        val o2 = l2.operandsList() ?: continue
+        if (o2.size != 2 || o2[1].lowercase() != "d0" || o2[0].lowercase().contains("d0")) continue
+        if (!l3.isMove()) continue
+        val o3 = l3.operandsList() ?: continue
+        if (o3.size != 2 || o3[0].lowercase() != "d0") continue
+        val home = o3[1].lowercase()
+        if (!home.isDataReg() || home == "d0") continue
+        if (!filt[pos + 3].value.overwritesAllFlags()) continue
+        if (!registerUnreadBeforeRedefinition(filt, pos + 3, home)) continue
+        mods.add(Modification(filt[pos + 2].index, true, null))
+    }
+    return mods
+}
+
+/**
+ * Replaces a constant address staged into a data register and then pushed with `pea`, keeping
+ * the push at its original position so the argument order is unchanged:
+ *
+ *     move.l #sym,dK          ; removed
+ *     move.l dK,-(sp)     ->  pea sym
+ *
+ * The staged register must be dead after the push, and an intervening instruction must have
+ * overwritten the flags the removed move set.
+ */
+private fun optimizePeaForStackArgs(lines: List<String>, allPretrimmed: List<String>): List<Modification> {
+    val mods = mutableListOf<Modification>()
+    val filt = allPretrimmed.withIndex()
+        .filter { it.value.isNotBlank() && !it.value.startsWith(';') }
+        .map { IndexedValue(it.index, it.value.trimStart()) }
+    val symbolImmediate = Regex("""^#[A-Za-z_.][A-Za-z0-9_.$@]*$""")
+
+    for (pos in 0 until filt.size - 1) {
+        val l1 = filt[pos].value
+        if (hasLabel(l1)) continue
+        if (l1.instructionName() != "move.l") continue
+        val o1 = l1.operandsList() ?: continue
+        if (o1.size != 2 || !symbolImmediate.matches(o1[0].trim())) continue
+        val staged = o1[1].lowercase()
+        if (!staged.isDataReg()) continue
+
+        var push = -1
+        var flagsOverwritten = false
+        for (k in 1..3) {
+            val idx = pos + k
+            if (idx >= filt.size) break
+            val line = filt[idx].value
+            val ops = line.instructionPart().operandsList()
+            if (line.instructionName() == "move.l" && ops != null && ops.size == 2 &&
+                ops[0].lowercase() == staged && ops[1].replace(" ", "") == "-(sp)") {
+                push = idx
+                break
+            }
+            if (hasLabel(line) || line.isControlTransfer()) break
+            if (line.regTokensMention(staged)) break
+            if (line.overwritesAllFlags()) flagsOverwritten = true
+        }
+        if (push < 0 || !flagsOverwritten) continue
+        if (!registerUnreadBeforeRedefinition(filt, push + 1, staged)) continue
+        // the push itself (move.l) sets N/Z while pea leaves CCR untouched.
+        if (!flagsDeadAfter(filt, push + 1)) continue
+
+        val original = lines[filt[push].index]
+        val indent = original.takeWhile { it == ' ' }.ifEmpty { "        " }
+        val label = keepLabel(original)
+        val labelPrefix = if (label.isNotEmpty()) "$label  " else ""
+        val comment = original.substringAfter(';', "").let { if (it.isEmpty()) "" else ";$it" }
+        val commentSuffix = if (comment.isEmpty()) "" else "  $comment"
+        val address = o1[0].trim().removePrefix("#")
+        mods.add(Modification(filt[pos].index, true, null))
+        mods.add(Modification(filt[push].index, false, "${indent}${labelPrefix}pea $address$commentSuffix"))
+    }
+    return mods
+}
+
+/**
+ * Two-instruction form of the pointer-stage add collapse:
+ *
+ *     move.l  <src>,dY      ; pointer/offset staged into a data register
+ *     add.l   dY,aN         ->  add.l  <src>,aN
+ *
+ * `add.l` takes a Dn/An source directly, so the staged copy is dead weight whenever dY
+ * is dead after the add. Unlike the three-instruction form (which stages through the d0
+ * scratch bounce) only one register's liveness has to be proven, so this also folds when
+ * a conditional branch follows immediately - the usual case in pointer-indexed loops.
+ */
+private fun optimizeStagedAddPair(lines: List<String>, allPretrimmed: List<String>): List<Modification> {
+    val mods = mutableListOf<Modification>()
+    val filt = allPretrimmed.withIndex()
+        .filter { it.value.isNotBlank() && !it.value.startsWith(';') }
+        .map { IndexedValue(it.index, it.value.trimStart()) }
+
+    for (pos in 0 until filt.size - 1) {
+        val l1 = filt[pos].value
+        val l2 = filt[pos + 1].value
+        if (hasLabel(l2)) continue
+        val o1 = l1.operandsList() ?: continue
+        val o2 = l2.operandsList() ?: continue
+        if (o1.size != 2 || o2.size != 2) continue
+        val src = o1[0].lowercase()
+        val staged = o1[1].lowercase()
+        val stagedOk = when (l1.instructionName()) {
+            "move.l" -> staged.isDataReg()
+            "movea.l" -> staged.isAddressReg()
+            else -> false
+        }
+        if (!stagedOk) continue
+        if (!src.isAddressReg() && !src.isDataReg()) continue
+        if (src.contains(staged)) continue
+        if (l2.instructionName() != "add.l") continue
+        if (o2[0].lowercase() != staged || !o2[1].isAddressReg()) continue
+        // self-add changes meaning: movea.l d0,a1 + add.l a1,a1 is a1=2*d0,
+        // while add.l d0,a1 is a1=old_a1+d0.
+        if (o2[1].lowercase() == staged) continue
+
+        // the staged register must be dead after the add
+        if (!provenDeadAfter(filt, pos + 2, staged)) continue
+        // the removed move set N/Z; the ADDA replacement sets no flags.
+        if (l1.instructionName() == "move.l" && !flagsDeadAfter(filt, pos + 2)) continue
+
+        val indent = lines[filt[pos].index].takeWhile { it == ' ' }.ifEmpty { "        " }
+        val label = keepLabel(l1)
+        val labelPrefix = if (label.isNotEmpty()) "$label  " else ""
+        mods.add(Modification(filt[pos].index, false, "$indent$labelPrefix" + "add.l  $src,${o2[1].lowercase()}"))
+        mods.add(Modification(filt[pos + 1].index, true, null))
+    }
+    return mods
+}
+
+/**
+ * Folds a value load into the compare that is its only consumer:
+ *
+ *     move.<size> S,dK          move.<size> S,dK
+ *     cmp.<size>  dK,dM   ->    cmp.<size>  S,dM
+ *
+ *     move.<size> S,dK          move.<size> S,dK
+ *     cmpi.<size> #N,dK   ->    cmpi.<size> #N,S
+ *
+ * Both final forms set exactly the flags the pair set (the load's flag write was already
+ * overwritten by the compare), and dK must be dead after the compare.
+ */
+private fun optimizeLoadIntoCompare(lines: List<String>, allPretrimmed: List<String>): List<Modification> {
+    val mods = mutableListOf<Modification>()
+    val filt = allPretrimmed.withIndex()
+        .filter { it.value.isNotBlank() && !it.value.startsWith(';') }
+        .map { IndexedValue(it.index, it.value.trimStart()) }
+
+    for (pos in 0 until filt.size - 1) {
+        val l1 = filt[pos].value
+        val l2 = filt[pos + 1].value
+        if (hasLabel(l2)) continue
+        if (!l1.isMove()) continue
+        val size = l1.moveSize()
+        if (size !in setOf('b', 'w', 'l')) continue
+        val o1 = l1.operandsList() ?: continue
+        if (o1.size != 2) continue
+        val src = o1[0]
+        val loaded = o1[1].lowercase()
+        if (!loaded.isDataReg() || src.lowercase().contains(loaded)) continue
+        val cmpName = "cmp.$size"
+        val cmpiName = "cmpi.$size"
+        val o2 = l2.operandsList() ?: continue
+        if (o2.size != 2) continue
+
+        val replacement: String = when {
+            l2.instructionName() == cmpName -> {
+                // cmp.<size> dK,dM  ->  cmp.<size> S,dM   (flags = dM - S either way)
+                if (o2[0].lowercase() != loaded || !o2[1].isDataReg()) null
+                else "cmp.$size  $src,${o2[1]}"
+            }
+            l2.instructionName() == cmpiName -> {
+                // cmpi.<size> #N,dK  ->  cmpi.<size> #N,S
+                if (o2[1].lowercase() != loaded || !src.isDataReg() && !src.contains('(')) null
+                else "cmpi.$size  ${o2[0]},$src"
+            }
+            else -> null
+        } ?: continue
+
+        // the loaded register must be dead after the compare
+        if (!provenDeadAfter(filt, pos + 2, loaded)) continue
+
+        val indent = lines[filt[pos].index].takeWhile { it == ' ' }.ifEmpty { "        " }
+        val label = keepLabel(l1)
+        val labelPrefix = if (label.isNotEmpty()) "$label  " else ""
+        mods.add(Modification(filt[pos].index, false, "$indent$labelPrefix$replacement"))
+        mods.add(Modification(filt[pos + 1].index, true, null))
+    }
+    return mods
+}
+
+/**
+ * Collapses the pointer-indexed element-address sequence
+ *
+ *     moveq   #0,dN            ; zero-extend word index to long
+ *     move.w  S,dN
+ *     add.l   dN,dN            ; (or lsl.l #1/#2) scale by element size 2 or 4
+ *     movea.l dN,aT
+ *     add.l   aP,aT            ; aP = base pointer, already in an address register
+ *
+ * into a single indexed lea. On 68020+ the scale folds into the index too:
+ *
+ *     lea  (aP,dN.l*scale),aT
+ *
+ * and on plain 68000 the scale instruction stays but the stage/add pair folds:
+ *
+ *     lea  (aP,dN.l),aT
+ *
+ * The .l index form is what makes this safe: the word index is properly zero-extended,
+ * so the full 32-bit index reaches the lea with no sign-extension surprises.
+ * A staged variant where the base pointer is first copied (through a data register or
+ * reloaded from memory) is folded likewise, provided the staged register dies at the add.
+ * The removed `add.l` set flags; the fold requires the very next instruction to set flags
+ * itself, so no consumer can observe them.
+ */
+private fun optimizeIndexedPointerLea(lines: List<String>, allPretrimmed: List<String>, cpu: CpuType): List<Modification> {
+    val mods = mutableListOf<Modification>()
+    val filt = allPretrimmed.withIndex()
+        .filter { it.value.isNotBlank() && !it.value.startsWith(';') }
+        .map { IndexedValue(it.index, it.value.trimStart()) }
+    val scaled = cpu >= CpuType.M68020
+
+    fun flagMaskAfter(pos: Int): Boolean {
+        // the line right after the removed add must set flags itself (a move to non-An)
+        if (pos >= filt.size) return false
+        val line = filt[pos].value
+        if (hasLabel(line) || !line.isMove()) return false
+        val ops = line.operandsList() ?: return false
+        return !ops.last().lowercase().isAddressReg()
+    }
+
+    var pos = 0
+    while (pos + 4 < filt.size) {
+        val l1 = filt[pos].value
+        val l2 = filt[pos + 1].value
+        val l3 = filt[pos + 2].value
+        val l4 = filt[pos + 3].value
+        val l5 = filt[pos + 4].value
+        if (hasLabel(l2) || hasLabel(l3) || hasLabel(l4) || hasLabel(l5)) { pos++; continue }
+        if (l1.instructionName() != "moveq") { pos++; continue }
+        val o1 = l1.operandsList() ?: run { pos++; continue }
+        if (o1.size != 2 || o1[0] != "#0" || !o1[1].lowercase().isDataReg()) { pos++; continue }
+        val idxReg = o1[1].lowercase()
+        if (!l2.isMove() || l2.moveSize() != 'w') { pos++; continue }
+        val o2 = l2.operandsList() ?: run { pos++; continue }
+        if (o2.size != 2 || o2[1].lowercase() != idxReg || o2[0].lowercase().contains(idxReg)) { pos++; continue }
+        val scale = when {
+            l3.instructionName() == "add.l" && l3.operandsList()?.let { it.size == 2 && it[0].lowercase() == idxReg && it[1].lowercase() == idxReg } == true -> 2
+            l3.instructionName() == "lsl.l" && l3.operandsList()?.let { it.size == 2 && it[0] == "#1" && it[1].lowercase() == idxReg } == true -> 2
+            l3.instructionName() == "lsl.l" && l3.operandsList()?.let { it.size == 2 && it[0] == "#2" && it[1].lowercase() == idxReg } == true -> 4
+            else -> 0
+        }
+        if (scale == 0) { pos++; continue }
+        if (l4.instructionName() != "movea.l") { pos++; continue }
+        val o4 = l4.operandsList() ?: run { pos++; continue }
+        if (o4.size != 2 || o4[0].lowercase() != idxReg || !o4[1].lowercase().isAddressReg()) { pos++; continue }
+        val addrT = o4[1].lowercase()
+
+        fun leaLine(base: String): String =
+            if (scaled) "lea  ($base,$idxReg.l*$scale),$addrT" else "lea  ($base,$idxReg.l),$addrT"
+
+        val indent = lines[filt[pos].index].takeWhile { it == ' ' }.ifEmpty { "        " }
+
+        // direct form: add.l aP,aT
+        if (l5.instructionName() == "add.l") {
+            val o5 = l5.operandsList()
+            if (o5 != null && o5.size == 2 && o5[0].lowercase().isAddressReg() && o5[1].lowercase() == addrT && o5[0].lowercase() != addrT && flagMaskAfter(pos + 5)) {
+                // removing the scale changes idxReg from scaled to unscaled for later readers.
+                if (scaled && !provenDeadAfter(filt, pos + 5, idxReg)) { pos++; continue }
+                mods.add(Modification(filt[pos + 3].index, true, null))   // movea
+                mods.add(Modification(filt[pos + 4].index, false, indent + leaLine(o5[0].lowercase())))
+                if (scaled) mods.add(Modification(filt[pos + 2].index, true, null))   // scale
+                pos += 5
+                continue
+            }
+        }
+
+        // staged form: move.l M,dK + add.l dK,aT, dK dead afterwards
+        if (pos + 5 < filt.size && l5.instructionName() == "move.l") {
+            val l6 = filt[pos + 5].value
+            val o5 = l5.operandsList()
+            val o6 = l6.operandsList()
+            if (!hasLabel(l6) && o5 != null && o6 != null && o5.size == 2 && o6.size == 2 &&
+                l6.instructionName() == "add.l" && o6[1].lowercase() == addrT) {
+                val base = o5[0].lowercase()
+                val staged = o5[1].lowercase()
+                if (staged.isDataReg() && staged != idxReg && o6[0].lowercase() == staged &&
+                    !base.contains(staged) && !base.contains(idxReg) && !base.contains(addrT) &&
+                    provenDeadAfter(filt, pos + 6, staged) && flagMaskAfter(pos + 6) &&
+                    (!scaled || provenDeadAfter(filt, pos + 6, idxReg))) {
+                    if (base.isAddressReg()) {
+                        // base was staged through a data register: lea straight off the address register
+                        mods.add(Modification(filt[pos + 3].index, true, null))   // movea
+                        mods.add(Modification(filt[pos + 4].index, true, null))   // move.l aP,dK
+                        mods.add(Modification(filt[pos + 5].index, false, indent + leaLine(base)))
+                        if (scaled) mods.add(Modification(filt[pos + 2].index, true, null))
+                    } else {
+                        // base reloaded from memory: load it into aT, then index off aT
+                        mods.add(Modification(filt[pos + 3].index, true, null))   // movea
+                        mods.add(Modification(filt[pos + 4].index, false, indent + "movea.l  ${o5[0]},$addrT"))
+                        mods.add(Modification(filt[pos + 5].index, false, indent + leaLine(addrT)))
+                        if (scaled) mods.add(Modification(filt[pos + 2].index, true, null))
+                    }
+                    pos += 6
+                    continue
+                }
+            }
+        }
+        pos++
+    }
+    return mods
+}
+
 private fun optimizeRedundantExt(linesBy: List<List<TrimmedLine>>): List<Modification> {
+    //  ext.w dN / ext.w dN  and  ext.l dN / ext.l dN  ->  drop the second duplicate extension
     val mods = mutableListOf<Modification>()
     for (lines in linesBy) {
         val first = lines[0].instruction

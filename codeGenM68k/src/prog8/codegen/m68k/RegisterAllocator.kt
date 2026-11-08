@@ -349,8 +349,9 @@ class M68kRegisterAllocator(val program: IRProgram) {
                 for (arg in cs.arguments) {
                     val slot = (arg.location as? CallLocation.HardwareRegister)?.slot ?: continue
                     if (slot.value !in 18..24) continue
-                    if (arg.source.type != IRDataType.POINTER) continue
-                    val reg = arg.source.register
+                    if (arg.source !is RegisterCallSource) continue
+                    if (arg.registerSource.type != IRDataType.POINTER) continue
+                    val reg = arg.registerSource.register
                     if (accessCounts[reg] != 2) continue
                     hints[reg] = AllocationHint.PREFER_ADDRESS
                 }
@@ -403,6 +404,7 @@ class M68kRegisterAllocator(val program: IRProgram) {
         // Instruction-level interference: chunk-granular liveness misses conflicts, a coarser clique forbids valid coalescing.
         val forbiddenByVreg = mutableMapOf<VirtualRegister, MutableSet<String>>()
         val subCallEffects = mutableMapOf<Int, CallSiteRegisterEffects>()
+        val callModifiedPool = mutableSetOf<String>()
         // Ordinary-call targets -> vregs this caller keeps live across the call (mapped to physical regs later).
         val liveAcrossByTarget = mutableMapOf<String, MutableList<Set<VirtualRegister>>>()
         // Ordinals count every instruction carrying a callSite, in flattened chunk order.
@@ -474,8 +476,25 @@ class M68kRegisterAllocator(val program: IRProgram) {
                         val clobberedPool = if (unknownCallee) allocatablePool
                             else (effects.reads + effects.defined + effects.destroys).intersect(allocatablePool)
                         if (clobberedPool.isNotEmpty()) {
+                            callModifiedPool.addAll(clobberedPool)
                             for (v in live - defs) {
                                 forbiddenByVreg.getOrPut(v) { mutableSetOf() }.addAll(clobberedPool)
+                            }
+                        }
+                        // The backend emits hardware-slot argument moves sequentially; a move into
+                        // one argument's target slot must not overwrite another argument's source
+                        // register before that source has been read. Forbid every argument source
+                        // vreg from occupying any other argument's target slot (its own slot is
+                        // harmless: the emitted move is a no-op and the value is already there).
+                        val argTargetPool = effects.reads.intersect(allocatablePool)
+                        if (argTargetPool.isNotEmpty()) {
+                            for (arg in cs.arguments) {
+                                val src = (arg.source as? RegisterCallSource)?.register?.register ?: continue
+                                val ownSlot = (arg.location as? CallLocation.HardwareRegister)?.slot
+                                val ownTarget = ownSlot?.let { M68kRegisterConvention.fixedRegister(it) }
+                                val forbidden = argTargetPool.filterNot { it.equals(ownTarget, ignoreCase = true) }.toSet()
+                                if (forbidden.isNotEmpty())
+                                    forbiddenByVreg.getOrPut(src) { mutableSetOf() }.addAll(forbidden)
                             }
                         }
                     }
@@ -502,7 +521,8 @@ class M68kRegisterAllocator(val program: IRProgram) {
         }
 
         for ((v, p) in color) mapBySub.getOrPut(sub) { mutableMapOf() }[v] = p
-        calleeSavedBySub[sub] = color.values.toSet()
+        // Fixed-register calls can modify pool registers not holding this sub's vregs.
+        calleeSavedBySub[sub] = color.values.toSet() + callModifiedPool
         // The caller's demand is what it actually placed in registers across each call; spilled values need nothing.
         for ((targetLabel, liveSets) in liveAcrossByTarget) {
             val demanded = demandedByCallee.getOrPut(targetLabel) { mutableSetOf() }
@@ -544,12 +564,13 @@ class M68kRegisterAllocator(val program: IRProgram) {
                 if (call.opcode != Opcode.CALL || callSite.arguments.isEmpty() ||
                     callSite.arguments.any { it.location !is CallLocation.HardwareRegister }) continue
                 for (arg in callSite.arguments) {
-                    val reg = arg.source.register
+                    if (arg.source !is RegisterCallSource) continue
+                    val reg = arg.registerSource.register
                     if (accesses[reg] != 2) continue
                     val definition = (callIndex - 1 downTo 0).firstNotNullOfOrNull { idx ->
                         instructions[idx].takeIf { it.exclusiveDestination() == reg }
                     } ?: continue
-                    if (definition.forwardableImmediateFor(reg, arg.source.type) != null) forwarded.add(reg)
+                    if (definition.forwardableImmediateFor(reg, arg.registerSource.type) != null) forwarded.add(reg)
                 }
             }
         }

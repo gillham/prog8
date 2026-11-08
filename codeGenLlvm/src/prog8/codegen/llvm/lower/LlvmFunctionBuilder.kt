@@ -452,7 +452,15 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
     }
 
     /** The immediate operand of [ins] as a value of [type]. */
-    fun immediate(ins: IRInstruction, type: LlvmType): LlvmValue = when (val immediate = ins.requireImmediate()) {
+    fun immediate(ins: IRInstruction, type: LlvmType): LlvmValue = immediate(ins.requireImmediate(), type)
+
+    /** The value of a call argument, from its register or its immediate. */
+    fun argument(argument: CallArgument): LlvmValue = when (val source = argument.source) {
+        is RegisterCallSource -> readWide(source.register)
+        is ImmediateCallSource -> immediate(source.immediate, typeOf(source.type))
+    }
+
+    fun immediate(immediate: ImmediateOperand, type: LlvmType): LlvmValue = when (immediate) {
         is ImmediateOperand.Integer -> integerConstant(immediate.value.toLong(), type)
         is ImmediateOperand.QuadValue -> integerConstant(immediate.value, type)
         is ImmediateOperand.FloatValue -> floatConstant(immediate.value)
