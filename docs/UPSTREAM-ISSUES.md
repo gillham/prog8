@@ -300,24 +300,27 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Repro: `bugs/u46_inline_mod_zero_bool_cast.p8`: `check(col(0), 0)` with `col` returning `idx % 32` (or `idx & 31`)
   and `check` comparing its parameter; the error is reported on `return idx % 32` (`master` 8bcd17674, v12.3.4 too).
   Compiles with `-noopt`, and with a non-zero or runtime argument.
-- Branch: not fixed.
+- Branch: fixed; `ExpressionSimplifier` rewrites `x & 0` to a 0 of the expression's integer type (it gave the
+  boolean `false`, which only the inlined `0 & 31` reached before constant folding).
 
 **U47. `flag = not flag` in another block gives "undefined symbol: flag"**
 - Repro: `bugs/u47_not_toggle_other_block.p8`: `other.toggle()` does `flag = not flag` on a block variable of
   `other`, called from `main` (`master` 8bcd17674). Compiles with `-noopt` and prints `true`; also fine with both in
   `main`, or with an if/else instead of `not`. Probably the inliner copying the body into `main` without qualifying
   `flag`, as in U48.
-- Branch: not fixed.
+- Branch: fixed; the Inliner fully scopes every name in an inlined one-line assignment, on both sides (it only did
+  the side that made the body inlineable).
 
 **U48. A one-line sub doing `@(cells + index()) = s`, called from another block, gives "undefined symbol: index"**
 - Repro: `bugs/u48_inline_call_other_block.p8` (`master` 8bcd17674). Compiles with `-noopt` and prints `7`; also
   fine with the offset in a local variable first. The inliner copies the body into `main.start` with `index`
   unqualified.
-- Branch: not fixed.
+- Branch: fixed, as U47.
 
 **U49. On pet32, `txt.setchr`, `getchr` and `plot` use 80 column rows after a 40 character line**
 - Repro: `bugs/u49_pet32_setchr_linked_line.p8` in `xpet -model 4032`: the second `*` lands on row 20 instead of 10,
   and the result line is misplaced (`master` 8bcd17674, same library code). They double the row index again when
   bit 6 of `$D5` is set, to detect an 80 column PET, but `$D5` is the editor's current logical line length: 79 on a
   40 column PET while the cursor is on a linked line, as after printing exactly 40 characters.
-- Branch: not fixed.
+- Branch: fixed; the row index finds the screen width once and keeps it: 40 columns when the 1 KB of video RAM
+  shows again at $8400, or when `$D5` is 39; else 80. `txt.width()` uses the same. Checked in xpet 4032 and 8032.

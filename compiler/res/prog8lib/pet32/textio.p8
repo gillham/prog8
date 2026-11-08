@@ -175,11 +175,8 @@ asmsub  setchr  (ubyte col @X, ubyte row @Y, ubyte character @A) clobbers(A, Y) 
 	%asm {{
 		pha
 		tya
-		asl  a
-		bit  $d5
-		bvc  +
-		asl  a
-+		tay
+		jsr  _row_index
+		tay
 		lda  _screenrows,y
 		sta  P8ZP_SCRATCH_W1
 		lda  _screenrows+1,y
@@ -191,6 +188,44 @@ asmsub  setchr  (ubyte col @X, ubyte row @Y, ubyte character @A) clobbers(A, Y) 
 		rts
 
 _screenrows	.word  cbm.Screen + range(0, 2000, 40)
+
+; A = row -> A = the offset of that row in _screenrows: row*2, or row*4 on an 80 column PET. Keeps X and Y.
+; $d5 alone can't tell: it is the current logical line length, 79 on a 40 column PET too while the line is linked.
+_row_index	asl  a
+_row_index_known
+		bit  _columns80
+		bvs  _detect_columns
+		bpl  +
+		asl  a
++		rts
+_detect_columns
+		; 40 column PETs have 1 KB of video RAM, which shows up again at $8400; else $d5 is 39 on a 40 column screen
+		pha
+		txa
+		pha
+		ldx  cbm.Screen
+		lda  #$55
+		sta  cbm.Screen
+		cmp  cbm.Screen+$400
+		bne  _not_mirrored
+		lda  #$aa
+		sta  cbm.Screen
+		cmp  cbm.Screen+$400
+		beq  _40columns
+_not_mirrored	lda  $d5
+		cmp  #40
+		bcc  _40columns
+		lda  #$80
+		bne  +
+_40columns	lda  #0
++		sta  _columns80
+		stx  cbm.Screen
+		pla
+		tax
+		pla
+		jmp  _row_index_known
+
+_columns80	.byte  $ff		; $ff not known yet, $80 80 columns, 0 40 columns
         ; !notreached!
 	}}
 }
@@ -200,11 +235,8 @@ asmsub  getchr  (ubyte col @A, ubyte row @Y) clobbers(Y) -> ubyte @ A {
 	%asm  {{
 		pha
 		tya
-		asl  a
-		bit  $d5
-		bvc  +
-		asl  a
-+		tay
+		jsr  setchr._row_index
+		tay
 		lda  setchr._screenrows,y
 		sta  P8ZP_SCRATCH_W1
 		lda  setchr._screenrows+1,y
@@ -238,11 +270,8 @@ asmsub  plot  (ubyte col @ Y, ubyte row @ X) {
 	%asm  {{
 		stx $d8
 		txa
-		asl a
-		bit $d5
-		bvc +
-		asl a
-+		tax
+		jsr setchr._row_index
+		tax
 		lda setchr._screenrows,x
 		sta $c4
 		lda setchr._screenrows+1,x
@@ -255,9 +284,13 @@ asmsub  plot  (ubyte col @ Y, ubyte row @ X) {
 asmsub width() clobbers(X,Y) -> ubyte @A {
     ; -- returns the text screen width (number of columns)
     %asm {{
-        lda  $d5
-        clc
-        adc  #1
+        lda  #1
+        jsr  setchr._row_index
+        cmp  #4
+        beq  +
+        lda  #40
+        rts
++       lda  #80
         rts
     }}
 }

@@ -371,8 +371,8 @@ class TestCompilerOnExamplesPET32: FunSpec({
 
     val onlyPET32 = cartesianProduct(
         listOf(
-            ExampleSizes("boingball", pet32SizeOptimized=1490, pet32SizeUnoptimized=1546),
-            ExampleSizes("petswirl", pet32SizeOptimized=1077, pet32SizeUnoptimized=2391),
+            ExampleSizes("boingball", pet32SizeOptimized=1545, pet32SizeUnoptimized=1601),
+            ExampleSizes("petswirl", pet32SizeOptimized=1135, pet32SizeUnoptimized=2449),
             ExampleSizes("music", pet32SizeOptimized=876, pet32SizeUnoptimized=925),
         ),
         listOf(false, true)

@@ -1324,4 +1324,53 @@ main {
             vm.memory.getSW(allocations["main.start.d"]!!) shouldBe (-3).toShort()
         }
     }
+    test("inlined subs from another block keep their names resolvable, and x & 0 stays an integer") {
+        // U46: inlining col(0) gives 0 & 31, which was simplified to the boolean false
+        // U47, U48: an inlined one-line assignment kept unqualified names of its own block
+        val source = $$"""
+            main {
+                ubyte @shared colres
+                bool @shared same
+                sub start() {
+                    colres = col(0)
+                    check(col(0), 0)
+                    other.toggle()
+                    other.put_slot(7)
+                }
+                sub col(ubyte idx) -> ubyte {
+                    return idx % 32
+                }
+                sub check(ubyte got, ubyte want) {
+                    if got == want
+                        same = true
+                }
+            }
+            other {
+                bool @shared flag = false
+                uword cells = $4000
+                sub toggle() {
+                    flag = not flag
+                }
+                sub index() -> uword {
+                    return 5
+                }
+                sub put_slot(ubyte s) {
+                    @(cells + index()) = s
+                }
+            }
+        """.trimIndent()
+        val result = compileText(VMTarget(), true, source, outputDir)!!
+        val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        val irContent = irFile.readText()
+        val irProgram = IRFileReader().read(irContent)
+        irProgram.st.stripAllPrefixes()
+        val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+
+        VmRunner().runAndTestProgram(irContent) { vm ->
+            vm.memory.getUB(allocations["main.colres"]!!) shouldBe 0u
+            vm.memory.getUB(allocations["main.same"]!!) shouldBe 1u
+            vm.memory.getUB(allocations["other.flag"]!!) shouldBe 1u
+            vm.memory.getUB(0x4005u) shouldBe 7u
+        }
+    }
 })

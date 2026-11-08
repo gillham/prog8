@@ -470,7 +470,13 @@ class ExpressionSimplifier(private val program: Program, private val errors: IEr
         }
 
         // simplify when a term is constant and directly determines the outcome
-        val constFalse = NumericLiteral.fromBoolean(false, expr.position)
+        // x & 0 is a zero of the expression's own integer type, not the boolean false
+        val exprDt = expr.inferType(program)
+        val andZero = when {
+            exprDt.isInteger -> NumericLiteral(exprDt.getOrUndef().base, 0.0, expr.position)
+            exprDt.isBool -> NumericLiteral.fromBoolean(false, expr.position)
+            else -> null
+        }
         val newExpr2 = when (expr.operator) {
             "|" -> {
                 when {
@@ -500,8 +506,8 @@ class ExpressionSimplifier(private val program: Program, private val errors: IEr
             }
             "&" -> {
                 when {
-                    leftVal?.number==0.0  -> constFalse
-                    rightVal?.number==0.0 -> constFalse
+                    leftVal?.number==0.0  -> andZero
+                    rightVal?.number==0.0 -> andZero
                     leftIDt.isBytes && rightIDt.isBytes && rightVal?.number==255.0 -> expr.left
                     leftIDt.isWords && rightIDt.isWords && rightVal?.number==65535.0 -> expr.left
                     leftIDt.isLong && rightIDt.isLong && rightVal?.number==-1.0 -> expr.left

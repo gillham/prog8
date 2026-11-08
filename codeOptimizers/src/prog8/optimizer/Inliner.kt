@@ -112,38 +112,21 @@ class Inliner(private val program: Program, private val options: CompilationOpti
                 // crash (literal argument has no identifier to assign to) or change semantics
                 // (assigning to the caller's variable instead of the local parameter copy).
                 val targetName = stmt.target.identifier?.nameInSource?.lastOrNull()
-                return !(targetName != null && subroutine.parameters.any { it.name == targetName }) && if (stmt.value.isSimple) {
-                    val targetInline =
-                        if (stmt.target.identifier != null) {
-                            makeFullyScoped(stmt.target.identifier!!)
-                            true
-                        } else if (stmt.target.memoryAddress?.addressExpression is NumericLiteral || stmt.target.memoryAddress?.addressExpression is IdentifierReference) {
-                            if (stmt.target.memoryAddress?.addressExpression is IdentifierReference)
-                                makeFullyScoped(stmt.target.memoryAddress?.addressExpression as IdentifierReference)
-                            true
-                        } else
-                            false
-                    val valueInline =
-                        if (stmt.value is IdentifierReference) {
-                            makeFullyScoped(stmt.value as IdentifierReference)
-                            true
-                        } else if ((stmt.value as? DirectMemoryRead)?.addressExpression is NumericLiteral || (stmt.value as? DirectMemoryRead)?.addressExpression is IdentifierReference) {
-                            if ((stmt.value as? DirectMemoryRead)?.addressExpression is IdentifierReference)
-                                makeFullyScoped((stmt.value as? DirectMemoryRead)?.addressExpression as IdentifierReference)
-                            true
-                        } else
-                            false
+                val inlineable = !(targetName != null && subroutine.parameters.any { it.name == targetName }) && if (stmt.value.isSimple) {
+                    val targetInline = stmt.target.identifier != null ||
+                            stmt.target.memoryAddress?.addressExpression is NumericLiteral || stmt.target.memoryAddress?.addressExpression is IdentifierReference
+                    val valueInline = stmt.value is IdentifierReference ||
+                            (stmt.value as? DirectMemoryRead)?.addressExpression is NumericLiteral || (stmt.value as? DirectMemoryRead)?.addressExpression is IdentifierReference
                     targetInline || valueInline
                 } else if (stmt.target.identifier != null && stmt.isAugmentable) {
                     val binExpr = stmt.value as BinaryExpression
-                    if (binExpr.operator in "+-" && binExpr.right.constValue(program)?.number == 1.0) {
-                        makeFullyScoped(stmt.target.identifier!!)
-                        makeFullyScoped(binExpr.left as IdentifierReference)
-                        true
-                    } else
-                        false
+                    binExpr.operator in "+-" && binExpr.right.constValue(program)?.number == 1.0
                 } else
                     false
+                // the body moves to the caller's scope: every name in it, on either side, must be fully scoped
+                if (inlineable)
+                    makeAllFullyScoped(stmt)
+                return inlineable
             }
 
             fun isBodyInlineable(stmt: FunctionCallStatement): Boolean {
@@ -195,6 +178,16 @@ class Inliner(private val program: Program, private val options: CompilationOpti
                 }
             }
             super.visit(subroutine)
+        }
+
+        private fun makeAllFullyScoped(stmt: Statement) {
+            val walker = object : AstWalker() {
+                override fun after(identifier: IdentifierReference, parent: Node): Iterable<AstModification> {
+                    makeFullyScoped(identifier)
+                    return noModifications
+                }
+            }
+            stmt.accept(walker, stmt.parent)
         }
 
         private fun makeFullyScoped(identifier: IdentifierReference) {
