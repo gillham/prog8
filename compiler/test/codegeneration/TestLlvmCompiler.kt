@@ -2390,6 +2390,14 @@ private val notRunOnTrs80gpCas: Map<String, String> = notRunOnTrs80gp +
         "diskio saving and loading memory"
     ).associateWith { "without a DOS, z88dk's TRS-80 file routines are stubs that fail" }
 
+// the programs that don't run as they are on llvm16 under TRSDOS 1.3 in trs80gp, with the reason
+private val notRunOnTrs80gpTrsdos: Map<String, String> = notRunOnTrs80gp +
+    listOf(
+        "diskio writing, reading lines, seeking in and deleting a text file",
+        "fileio copying between two open files, seeking and the end of the file",
+        "diskio saving and loading memory"
+    ).associateWith { "z88dk's TRS-80 file routines hang under TRSDOS 1.3, so the z80-trs80-m3-trsdos profile has no files" }
+
 // a few programs for the other TRS-80 models, as a run takes about 2 seconds
 private val trs80gpSmokeTests = setOf(
     "text output",
@@ -2408,6 +2416,7 @@ private val llvm16ProgramRunners = listOf(
     Llvm16ProgramRunner(mc6809SimProfile, "usim09batch", requiresMc6809Sim, notRunOn6809),
     Llvm16ProgramRunner(tnylpoProfile, "tnylpo (CP/M)", requiresTnylpo, notRunOnTnylpo, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m3"), "trs80gp (TRS-80 Model III, LDOS)", requiresTrs80gp, notRunOnTrs80gp, pythonScript = true),
+    Llvm16ProgramRunner(testProfile("trs80gp-m3-trsdos"), "trs80gp (TRS-80 Model III, TRSDOS 1.3)", requiresTrs80gp, notRunOnTrs80gpTrsdos, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m1"), "trs80gp (TRS-80 Model I, TRSDOS)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m4"), "trs80gp (TRS-80 Model 4, TRSDOS 6)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-cas"), "trs80gp (TRS-80 Model III, ROM BASIC, .cas)", requiresTrs80gp, notRunOnTrs80gpCas, pythonScript = true)
@@ -2434,6 +2443,7 @@ private val notLinkedOnCoco: Map<String, String> =
 private val linkOnlyProfiles = listOf(
     LinkOnlyProfile("z80-trs80", notLinkedOnZ88dk),
     LinkOnlyProfile("z80-trs80-cmd", notLinkedOnZ88dk),
+    LinkOnlyProfile("z80-trs80-m3-trsdos", notLinkedOnZ88dk),
     LinkOnlyProfile("z80-cpm", notLinkedOnZ88dk),
     LinkOnlyProfile("z80-zx", notLinkedOnZ88dk),
     LinkOnlyProfile("z80-c128", notLinkedOnZ88dk),

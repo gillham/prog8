@@ -828,13 +828,34 @@ class TestLlvmTripleProfile: FunSpec({
         LlvmTripleProfile.load(profile, null, noUserProfiles).writeStartupSources(directory.resolve("own.cmd")).first().readText() shouldBe "; own keyboard"
     }
 
+    test("z80-trs80-m3-trsdos is z80-trs80-cmd with the stack at the top of memory, the heap below it, and no files") {
+        val cmd = LlvmTripleProfile.resolve("z80-trs80-cmd")
+        val trsdos = LlvmTripleProfile.resolve("z80-trs80-m3-trsdos")
+        trsdos.outputExtension shouldBe ".cmd"
+        trsdos.programArgs shouldBe true
+        trsdos.library shouldBe cmd.library
+        trsdos.fileExtensionSeparator shouldBe '/'
+        trsdos.startupSources shouldBe cmd.startupSources
+        trsdos.libcLacks shouldBe cmd.libcLacks + setOf("fopen", "remove")
+        // the link command names the support library through LLVM_Z80
+        if (System.getenv("LLVM_Z80") != null) {
+            val linkCommand = trsdos.linkCommand.orEmpty()
+            ("-pragma-define:REGISTER_SP=-0x4411" in linkCommand) shouldBe true
+            ("-pragma-define:CRT_HEAP_ENABLE=1" in linkCommand) shouldBe false
+            linkCommand.filterNot { it == "-pragma-define:REGISTER_SP=-0x4411" } shouldBe
+                cmd.linkCommand.orEmpty().filterNot { it == "-pragma-define:CRT_HEAP_ENABLE=1" }
+        }
+    }
+
     test("the TRS-80 profiles give ENTER as 13 through their own getk and fgetc_cons") {
-        for (name in listOf("z80-trs80", "z80-trs80-cmd")) {
+        for (name in listOf("z80-trs80", "z80-trs80-cmd", "z80-trs80-m3-trsdos")) {
             val profile = LlvmTripleProfile.resolve(name)
             withClue(name) {
                 profile.startupSources shouldBe listOf("z80-trs80-keyboard.asm")
-                ("-pragma-redirect:getk=_prog8_trs80_getk" in profile.linkCommand.orEmpty()) shouldBe true
-                ("-pragma-redirect:fgetc_cons=_prog8_trs80_fgetc_cons" in profile.linkCommand.orEmpty()) shouldBe true
+                if (System.getenv("LLVM_Z80") != null) {
+                    ("-pragma-redirect:getk=_prog8_trs80_getk" in profile.linkCommand.orEmpty()) shouldBe true
+                    ("-pragma-redirect:fgetc_cons=_prog8_trs80_fgetc_cons" in profile.linkCommand.orEmpty()) shouldBe true
+                }
             }
         }
     }

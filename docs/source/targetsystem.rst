@@ -267,7 +267,7 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
    ``arm64-apple-macosx``, ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``,
    ``riscv64-unknown-linux-gnu``, ``riscv32-unknown-linux-gnu``, ``armv7-unknown-linux-gnueabihf``, ``x86_64-pc-windows-msvc``,
    ``x86_64-w64-windows-gnu``, and for ``llvm16`` ``mos-sim``, ``mos-c64``, ``z80-test``, ``z80-trs80``, ``z80-trs80-cmd``,
-   ``z80-cpm``, ``z80-zx``, ``z80-c128``, ``mc6809-sim`` and ``mc6809-coco`` (``z80-z88dk`` is only a base, see ``base`` below)
+   ``z80-trs80-m3-trsdos``, ``z80-cpm``, ``z80-zx``, ``z80-c128``, ``mc6809-sim`` and ``mc6809-coco`` (``z80-z88dk`` is only a base, see ``base`` below)
 4. any other triple that clang knows, such as ``aarch64-linux-musl`` or ``i686-unknown-linux-gnu``: the compiler asks
    clang for its normalized name, data layout and C ``long`` size, and builds with ``--target=<name>``.
    Run, link and startup settings need a profile file.
@@ -553,24 +553,25 @@ misbehave on the platform, which belong in ``libc_lacks`` too.
 machine with z88dk's classic C library. They have no ``run_command``, so build the program with ``-o`` and load the
 output file into the machine or an emulator yourself:
 
-=================  ===========================  ==========  ===================  ============
-Profile            ``zcc`` platform             Output      ``io_ranges``        Arguments
-=================  ===========================  ==========  ===================  ============
-``z80-trs80``      ``+trs80``                   ``.cas``    ``*``                no
-``z80-trs80-cmd``  ``+trs80 -subtype=cmd``      ``.cmd``    ``*``                yes
-``z80-cpm``        ``+cpm``                     ``.com``    none                 yes
-``z80-zx``         ``+zx``                      ``.tap``    ``*``                no
-``z80-c128``       ``+c128 -subtype=disk``      none        ``*``                no
-=================  ===========================  ==========  ===================  ============
+=======================  ===========================  ==========  ===================  ============
+Profile                  ``zcc`` platform             Output      ``io_ranges``        Arguments
+=======================  ===========================  ==========  ===================  ============
+``z80-trs80``            ``+trs80``                   ``.cas``    ``*``                no
+``z80-trs80-cmd``        ``+trs80 -subtype=cmd``      ``.cmd``    ``*``                yes
+``z80-trs80-m3-trsdos``  ``+trs80 -subtype=cmd``      ``.cmd``    ``*``                yes
+``z80-cpm``              ``+cpm``                     ``.com``    none                 yes
+``z80-zx``               ``+zx``                      ``.tap``    ``*``                no
+``z80-c128``             ``+c128 -subtype=disk``      none        ``*``                no
+=======================  ===========================  ==========  ===================  ============
 
 What ``z80-test`` lists above applies to them as well, except the file notes, which are about ``z88dk-ticks``. All of
 them lack the math, directory, ``usleep`` and ``strtod`` functions, and ``qsort`` because z88dk's calls the comparison
-function with its arguments swapped. All but ``z80-trs80-cmd`` also lack ``free``, ``realloc`` and ``strdup``, as
+function with its arguments swapped. All but ``z80-trs80-cmd`` and ``z80-trs80-m3-trsdos`` also lack ``free``, ``realloc`` and ``strdup``, as
 their C library has no malloc heap. The programs
 that the compiler's tests build for ``z80-test`` also build for these profiles. The tests also run them for CP/M in
-tnylpo and, when ``TRS80GP`` names the trs80gp binary, for the TRS-80 in trs80gp (Model III with LDOS, and a few on
+tnylpo and, when ``TRS80GP`` names the trs80gp binary, for the TRS-80 in trs80gp (Model III with LDOS and with TRSDOS 1.3, and a few on
 the Model I and 4, and as ``.cas`` files from ROM BASIC without a DOS). They do that through test profiles in
-``compiler/test/fixtures/llvm-triples``, built on ``z80-cpm``, ``z80-trs80-cmd`` and ``z80-trs80``, whose support sources mirror the console output where the runner script can catch
+``compiler/test/fixtures/llvm-triples``, built on ``z80-cpm``, ``z80-trs80-cmd``, ``z80-trs80-m3-trsdos`` and ``z80-trs80``, whose support sources mirror the console output where the runner script can catch
 it (the TRS-80 printer) and pass on the exit status (a last output line on CP/M, as tnylpo always exits with 0).
 
 **The z88dk textio.** ``z80-trs80``, ``z80-trs80-cmd`` and ``z80-zx`` set ``library = z88dk`` and
@@ -676,10 +677,13 @@ Other control codes, and the characters past the maximum length, are ignored. Th
 
   TRSDOS 1.3, the default DOS on the Model III, starts a program with its stack at ``$4089``, in the system's
   variables. z88dk's startup code puts 64 bytes on it for ``atexit``, which moves the stack down onto those
-  variables, and the program hangs before ``main``. Adding ``-pragma-define:REGISTER_SP=-0x4411`` to the
-  link command (the stack at HIGH$, which the Model III keeps at ``$4411``; drop ``CRT_HEAP_ENABLE`` then, so the
-  heap ends below the stack) makes programs run on TRSDOS 1.3, but only on the Model III; files still don't work
-  there (``fopen`` hangs with the FCB in the heap).
+  variables, and the program hangs before ``main``. Use ``z80-trs80-m3-trsdos`` there (below).
+- ``z80-trs80-m3-trsdos``: ``z80-trs80-cmd`` for the Model III with TRSDOS 1.3. The link command puts the stack at
+  HIGH$, which the Model III keeps at ``$4411`` (``-pragma-define:REGISTER_SP=-0x4411``), so it fits the machine's
+  RAM size and what the DOS keeps in high memory, and the malloc heap ends below the stack (no ``CRT_HEAP_ENABLE``).
+  z88dk's file routines hang under TRSDOS 1.3, even then, so the profile lacks ``fopen`` and ``remove`` and the
+  file routines report a failure. Programs also run on the Model III with LDOS (with no files), but not on the
+  Model I, whose HIGH$ is at ``$4049``. In trs80gp, ``trs80gp -m3 prog.cmd`` boots TRSDOS 1.3 and runs it.
 
   z88dk's TRS-80 support is for the Model I and III memory map; it doesn't support the Model 4's own mode. Under
   TRSDOS 6 on a Model 4, a program loads and exits, but its console output doesn't reach the screen, and the file
