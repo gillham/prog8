@@ -42,6 +42,8 @@ data class LlvmTripleProfile(
     /** The C routines that seek and tell the file position, whose offset has [fileOffsetSize] bytes, like _fseeki64 on Windows. */
     val fseekSymbol: String = "fseek",
     val ftellSymbol: String = "ftell",
+    /** The C routine that reads a block from a file, when the C library's own one doesn't do what fread() does. */
+    val freadSymbol: String = "fread",
     val fileOffsetSize: Int = cLongSize,
     val cIntSize: Int = 4,
     private val clangTemplate: String? = null,
@@ -66,7 +68,10 @@ data class LlvmTripleProfile(
     val loadAddressAlign: UInt = 1u,
     /** A linker script template, read from [linkScriptDirectory] or the compiler's resources, written for the link as `{link_script}`. */
     private val linkScript: String? = null,
-    private val linkScriptDirectory: Path? = null
+    private val linkScriptDirectory: Path? = null,
+    /** Support sources like [startupSources], but only built along when the program opens files (calls fopen). */
+    val fileSources: List<String> = emptyList(),
+    private val fileSourceDirectory: Path? = null
 ) {
     /** True when the data layout starts with `E`. */
     val isBigEndian: Boolean get() = dataLayout.startsWith("E")
@@ -115,15 +120,18 @@ data class LlvmTripleProfile(
     fun processBuilder(command: List<String>): ProcessBuilder = tools.processBuilder(command)
 
     /**
-     * Writes the [startupSources] files that the link command builds along as `{startup}` next to [outputFile], and returns them.
-     * They are read from the profile's directory, or else from the compiler's resources.
+     * Writes the [startupSources] files that the link command builds along as `{startup}` next to [outputFile], and the
+     * [fileSources] too when [withFileSources], and returns them. They are read from the profile's directory, or else from the compiler's resources.
      */
-    fun writeStartupSources(outputFile: Path): List<Path> {
+    fun writeStartupSources(outputFile: Path, withFileSources: Boolean = false): List<Path> {
         val written = mutableListOf<Path>()
+        val sources = startupSources.map { it to directory } + (if (withFileSources) fileSources.map { it to fileSourceDirectory } else emptyList())
         try {
-            for (source in startupSources) {
+            for ((source, sourceDirectory) in sources) {
                 val file = outputFile.resolveSibling("${outputFile.fileName}.${Path(source).fileName}")
-                startupSourceStream(source).use { Files.copy(it, file, StandardCopyOption.REPLACE_EXISTING) }
+                (openSupportFile(sourceDirectory, source)
+                    ?: throw IllegalArgumentException("the support source '$source' of llvm triple profile '$name' was not found")
+                ).use { Files.copy(it, file, StandardCopyOption.REPLACE_EXISTING) }
                 written.add(file)
             }
         } catch (x: Exception) {
@@ -132,10 +140,6 @@ data class LlvmTripleProfile(
         }
         return written
     }
-
-    private fun startupSourceStream(source: String): InputStream =
-        openSupportFile(directory, source)
-            ?: throw IllegalArgumentException("the startup_source '$source' of llvm triple profile '$name' was not found")
 
     /** A file next to a profile file, or else one built into the compiler, so a profile file can name the built-in ones. */
     private fun openSupportFile(directory: Path?, file: String): InputStream? =
@@ -171,9 +175,16 @@ data class LlvmTripleProfile(
         require(startupSources.isEmpty() || linkCommandTemplate?.any { "{startup}" in it } == true) {
             "llvm triple profile '$name' has a startup_source, so it needs {startup} in its link_command"
         }
+        require(fileSources.isEmpty() || linkCommandTemplate?.any { "{startup}" in it } == true) {
+            "llvm triple profile '$name' has a file_source, so it needs {startup} in its link_command"
+        }
         for (source in startupSources)
             require(supportFileExists(directory, source)) {
                 "the startup_source '$source' of llvm triple profile '$name' was not found"
+            }
+        for (source in fileSources)
+            require(supportFileExists(fileSourceDirectory, source)) {
+                "the file_source '$source' of llvm triple profile '$name' was not found"
             }
         require(linkScript == null || linkCommandTemplate?.any { LINK_SCRIPT in it } == true) {
             "llvm triple profile '$name' has a link_script, so it needs {link_script} in its link_command"
@@ -213,8 +224,8 @@ data class LlvmTripleProfile(
         const val LOAD_ADDRESS = "{load_address}"
         const val LINK_SCRIPT = "{link_script}"
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
-            "link_command", "link_args", "run_timeout_seconds", "startup_source",
-            "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "file_offset_size", "getchar_symbol",
+            "link_command", "link_args", "run_timeout_seconds", "startup_source", "file_source",
+            "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "fread_symbol", "file_offset_size", "getchar_symbol",
             "putchar_symbol", "library", "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env",
             "load_address", "load_address_align", "link_script")
 
@@ -478,6 +489,7 @@ data class LlvmTripleProfile(
                 optional("readdir_symbol") ?: "readdir",
                 optional("fseek_symbol") ?: "fseek",
                 optional("ftell_symbol") ?: "ftell",
+                optional("fread_symbol") ?: "fread",
                 fileOffsetSize,
                 cIntSize,
                 clang,
@@ -493,7 +505,9 @@ data class LlvmTripleProfile(
                 optional("load_address")?.let { parseAddress(name, "load_address", it) },
                 optional("load_address_align")?.let { parseAddress(name, "load_address_align", it) } ?: 1u,
                 optional("link_script"),
-                supplier["link_script"]?.directory
+                supplier["link_script"]?.directory,
+                words("file_source").orEmpty(),
+                supplier["file_source"]?.directory
             )
         }
 

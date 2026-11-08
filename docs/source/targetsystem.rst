@@ -351,6 +351,10 @@ These are the keys of a profile; an unknown key is an error:
     Arguments at the end of the clang command that links the executable, after the libraries of the program's ``%link``
     directives, such as ``-lm``: the Linux profiles link glibc's math library this way. A profile with a ``link_command``
     can't have them; it puts them in that command instead. Environment variables work as in ``clang_args``.
+``file_source``
+    Source files like those of ``startup_source``, built along with the program only when it opens files (calls
+    ``fopen()``), such as the ``ftell``, ``fseek`` and ``fread`` of the TRS-80 profiles, which would otherwise make every
+    program larger by the C library's file code that they call.
 ``startup_source``
     Source files separated by spaces, such as boot code in assembly, that the link command builds along with the program;
     a word ``{startup}`` becomes their paths. They are looked up next to the profile file that has the ``startup_source``,
@@ -397,6 +401,10 @@ These are the keys of a profile; an unknown key is an error:
     The C library routines that the file routines seek and tell the position in a file with, and the size in bytes of
     their offset. The defaults are ``fseek()`` and ``ftell()``, whose offset is a C ``long``. The Windows profiles name
     ``_fseeki64`` and ``_ftelli64`` with 8 bytes, because a C ``long`` has only 32 bits there.
+``fread_symbol``
+    The C routine that reads a block from a file, ``fread()`` by default, for a C library whose own one doesn't do what
+    ``fread()`` does: the TRS-80 profiles name ``prog8_trs80_fread`` from their support source, which sets the end of
+    the file that z88dk's ``fread()`` never sets.
 ``getchar_symbol``
     The C library routine that reads the next console character, the way ``getchar()`` does, which is the default.
     The ``z80-test`` profile names ``fgetc_cons``, because ``getchar`` is a macro in z88dk. A profile that lists
@@ -661,9 +669,15 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   The program's stack starts at the top of memory, which it reads from ROM BASIC's MEMSIZ (``$40b1``), so it fits
   the machine's RAM size (checked with 16 and 48 KB).
 - ``z80-trs80-cmd``: a ``.cmd`` program for TRSDOS or LDOS on the Model I and III, started from the DOS prompt, which
-  passes its command line. The file routines go through z88dk's TRSDOS library; ``ftell`` and ``rename`` are
-  lacking, so the file position and size, loading a file into memory and renaming report a failure. ``fread``
-  doesn't set the end-of-file flag, so a loop that reads until ``fileio.eof()`` never ends. A DOS file name is
+  passes its command line. The file routines go through z88dk's TRSDOS library. Its ``ftell`` doesn't link, its
+  ``fread`` never sets the end of the file, and its ``fseek`` only moves forward with ``SEEK_CUR`` and ignores the
+  offset with ``SEEK_END``, so the profile's ``file_source`` (``z80-trs80-files.c``) has an ``ftell``, ``fseek`` and
+  ``fread`` of its own (``ftell_symbol``, ``fseek_symbol``, ``fread_symbol``), and an ``fsync`` that succeeds, as
+  z88dk's always fails, which made ``fflush`` fail. Its ``ftell`` reads the position from
+  the DOS's file control block, but only for a file being read: TRSDOS 2.3 and LDOS keep the position of a file
+  being written differently, so ``f_tell`` and ``fileio.tell`` give -1 (unknown) for one. A seek past the end of a
+  file being read fails. Seeking reads the file from its start to the position, so it is slow in a large file.
+  ``rename`` is lacking, so renaming reports a failure. A DOS file name is
   ``NAME/EXT``, where a ``.`` would start the file's password, so the profile's ``file_extension_separator`` turns
   the last ``.`` of a file name into ``/``: ``memory.prg`` becomes ``MEMORY/PRG`` for the DOS. The DOS's limits of
   8 characters for the name and 3 for the extension still apply. The link command gives the malloc heap the memory from the end of the program to

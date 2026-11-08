@@ -658,8 +658,14 @@ class TestLlvmTripleProfile: FunSpec({
                 (profile.libcLacks intersect setOf("putchar", "fopen", "fgetc", "strcmp", "snprintf", "exit")) shouldBe emptySet()
             }
         }
-        LlvmTripleProfile.resolve("z80-trs80-cmd").libcLacks.containsAll(listOf("ftell", "rename")) shouldBe true
-        (LlvmTripleProfile.resolve("z80-trs80-cmd").libcLacks intersect setOf("free", "realloc", "strdup")) shouldBe emptySet()
+        val cmd = LlvmTripleProfile.resolve("z80-trs80-cmd")
+        ("rename" in cmd.libcLacks) shouldBe true
+        (cmd.libcLacks intersect setOf("free", "realloc", "strdup", "ftell")) shouldBe emptySet()
+        // the ftell that z88dk's TRS-80 library lacks, and an fseek and fread that work, come from a file source
+        cmd.fileSources shouldBe listOf("z80-trs80-files.c")
+        cmd.ftellSymbol shouldBe "prog8_trs80_ftell"
+        cmd.fseekSymbol shouldBe "prog8_trs80_fseek"
+        cmd.freadSymbol shouldBe "prog8_trs80_fread"
     }
 
     test("the llvm16 target has 2-byte pointers, 4-byte floats and real addresses, and defaults to the mos-sim profile") {
@@ -847,6 +853,27 @@ class TestLlvmTripleProfile: FunSpec({
         }
     }
 
+    test("file_source files are only written with withFileSources, and need {startup} in the link command and to exist") {
+        val dir = directory.resolve("filesources").createDirectories()
+        dir.resolve("boot.S").writeText("; boot")
+        dir.resolve("files.c").writeText("/* files */")
+        val profile = LlvmTripleProfile.load(dir.resolve("p.properties").also {
+            it.writeText(validProfile("link_command = gcc {startup} {object} -o {file}\nstartup_source = boot.S\nfile_source = files.c"))
+        })
+        profile.fileSources shouldBe listOf("files.c")
+        profile.writeStartupSources(directory.resolve("nofiles.elf")).map { it.readText() } shouldBe listOf("; boot")
+        profile.writeStartupSources(directory.resolve("files.elf"), withFileSources = true).map { it.readText() } shouldBe listOf("; boot", "/* files */")
+        shouldThrow<IllegalArgumentException> {
+            LlvmTripleProfile.load(dir.resolve("nostartup.properties").also { it.writeText(validProfile("link_command = gcc {object} -o {file}\nfile_source = files.c")) })
+        }.message!! shouldContain "has a file_source, so it needs {startup}"
+        shouldThrow<IllegalArgumentException> {
+            LlvmTripleProfile.load(dir.resolve("missing.properties").also { it.writeText(validProfile("link_command = gcc {startup} {object} -o {file}\nfile_source = gone.c")) })
+        }.message!! shouldContain "the file_source 'gone.c'"
+        // a profile file can name the built-in one
+        val based = LlvmTripleProfile.load(dir.resolve("based.properties").also { it.writeText("base = z80-trs80-cmd\nrun_command = run {file}") }, null, noUserProfiles)
+        based.writeStartupSources(directory.resolve("based.cmd"), withFileSources = true).last().readText() shouldContain "prog8_trs80_ftell"
+    }
+
     test("the TRS-80 profiles give ENTER as 13 through their own getk and fgetc_cons") {
         for (name in listOf("z80-trs80", "z80-trs80-cmd", "z80-trs80-m3-trsdos")) {
             val profile = LlvmTripleProfile.resolve(name)
@@ -978,7 +1005,8 @@ class TestLlvmTripleProfile: FunSpec({
             withClue(name) {
                 profile.linkCommand.orEmpty().filterNot { it in handAdded[name].orEmpty() } shouldBe found.linkCommand
                 profile.outputExtension shouldBe found.outputExtension
-                profile.libcLacks shouldBe found.libcLacks + "qsort"
+                // z80-trs80-cmd has an ftell of its own in a file source
+                profile.libcLacks shouldBe found.libcLacks + "qsort" - (if (profile.fileSources.isNotEmpty()) setOf("ftell") else emptySet())
             }
         }
     }

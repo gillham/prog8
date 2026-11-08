@@ -50,7 +50,7 @@ internal object LlvmToolchain {
             if (!runTool(compileCommand + listOf("-c", llFile.toString(), "-o", objectFile.toString()), "clang", outputFile, profile))
                 return failed("clang couldn't compile '$llFile'")
             startupFiles = try {
-                profile?.writeStartupSources(outputFile).orEmpty()
+                profile?.writeStartupSources(outputFile, withFileSources = profile.fileSources.isNotEmpty() && opensFiles(llFile)).orEmpty()
             } catch (x: IOException) {
                 return failed("Can't build '$outputFile': a startup source of the llvm triple profile couldn't be written: ${x.message}")
             }
@@ -114,6 +114,9 @@ internal object LlvmToolchain {
 
     private const val LIBS = "{libs}"
     private const val STARTUP = "{startup}"
+
+    /** True when the program in [llFile] calls fopen(), so the profile's file sources have to be linked. */
+    private fun opensFiles(llFile: Path): Boolean = Files.readString(llFile).contains("@fopen(")
 
     private fun failed(message: String): Boolean {
         System.err.println(message)
