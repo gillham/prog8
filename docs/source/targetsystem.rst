@@ -401,10 +401,11 @@ These are the keys of a profile; an unknown key is an error:
     The C library routines that the file routines seek and tell the position in a file with, and the size in bytes of
     their offset. The defaults are ``fseek()`` and ``ftell()``, whose offset is a C ``long``. The Windows profiles name
     ``_fseeki64`` and ``_ftelli64`` with 8 bytes, because a C ``long`` has only 32 bits there.
-``fread_symbol``
-    The C routine that reads a block from a file, ``fread()`` by default, for a C library whose own one doesn't do what
-    ``fread()`` does: the TRS-80 profiles name ``prog8_trs80_fread`` from their support source, which sets the end of
-    the file that z88dk's ``fread()`` never sets.
+``c_symbols``
+    Other names for C functions that Prog8 calls, as ``name=symbol`` pairs separated by spaces, such as replacements in
+    a support source for routines that the C library lacks or gets wrong: the TRS-80 profiles have
+    ``fopen=prog8_trs80_fopen fread=prog8_trs80_fread fwrite=prog8_trs80_fwrite fputc=prog8_trs80_fputc``. Functions with
+    a key of their own (``fseek``, ``ftell``, ``opendir``, ``readdir``, ``getchar``, ``putchar``) can't be named.
 ``getchar_symbol``
     The C library routine that reads the next console character, the way ``getchar()`` does, which is the default.
     The ``z80-test`` profile names ``fgetc_cons``, because ``getchar`` is a macro in z88dk. A profile that lists
@@ -672,11 +673,14 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   passes its command line. The file routines go through z88dk's TRSDOS library. Its ``ftell`` doesn't link, its
   ``fread`` never sets the end of the file, and its ``fseek`` only moves forward with ``SEEK_CUR`` and ignores the
   offset with ``SEEK_END``, so the profile's ``file_source`` (``z80-trs80-files.c``) has an ``ftell``, ``fseek`` and
-  ``fread`` of its own (``ftell_symbol``, ``fseek_symbol``, ``fread_symbol``), and an ``fsync`` that succeeds, as
-  z88dk's always fails, which made ``fflush`` fail. Its ``ftell`` reads the position from
-  the DOS's file control block, but only for a file being read: TRSDOS 2.3 and LDOS keep the position of a file
-  being written differently, so ``f_tell`` and ``fileio.tell`` give -1 (unknown) for one. A seek past the end of a
-  file being read fails. Seeking reads the file from its start to the position, so it is slow in a large file.
+  ``fread`` of its own (``ftell_symbol``, ``fseek_symbol``, ``c_symbols``), and an ``fsync`` that succeeds, as
+  z88dk's always fails, which made ``fflush`` fail. Its ``ftell`` reads the position of a file being read from the
+  DOS's file control block. TRSDOS 2.3 and LDOS keep the position of a file being written differently there, so the
+  source's ``fopen``, ``fwrite`` and ``fputc`` count the bytes written instead, in three bytes of the ``FILE`` that
+  z88dk doesn't use; for a file open for both ``ftell`` gives -1. A seek past the end of a file being read fails, and
+  a file being written only seeks to where it is. Seeking reads the file from its start to the position, so it is
+  slow in a large file. Appending (mode ``"a"``) works under LDOS, but under TRSDOS 2.3 on the Model I z88dk's
+  library writes garbage after the old end of the file.
   ``rename`` is lacking, so renaming reports a failure. A DOS file name is
   ``NAME/EXT``, where a ``.`` would start the file's password, so the profile's ``file_extension_separator`` turns
   the last ``.`` of a file name into ``/``: ``memory.prg`` becomes ``MEMORY/PRG`` for the DOS. The DOS's limits of

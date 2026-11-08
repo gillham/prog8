@@ -665,7 +665,10 @@ class TestLlvmTripleProfile: FunSpec({
         cmd.fileSources shouldBe listOf("z80-trs80-files.c")
         cmd.ftellSymbol shouldBe "prog8_trs80_ftell"
         cmd.fseekSymbol shouldBe "prog8_trs80_fseek"
-        cmd.freadSymbol shouldBe "prog8_trs80_fread"
+        cmd.cSymbol("fread") shouldBe "prog8_trs80_fread"
+        cmd.cSymbol("fopen") shouldBe "prog8_trs80_fopen"
+        cmd.cSymbol("ftell") shouldBe "prog8_trs80_ftell"
+        cmd.cSymbol("fclose") shouldBe "fclose"
     }
 
     test("the llvm16 target has 2-byte pointers, 4-byte floats and real addresses, and defaults to the mos-sim profile") {
@@ -851,6 +854,18 @@ class TestLlvmTripleProfile: FunSpec({
             linkCommand.filterNot { it == "-pragma-define:REGISTER_SP=-0x4411" } shouldBe
                 cmd.linkCommand.orEmpty().filterNot { it == "-pragma-define:CRT_HEAP_ENABLE=1" }
         }
+    }
+
+    test("c_symbols renames C functions, only those that Prog8 calls and that have no symbol key of their own") {
+        val profile = LlvmTripleProfile.load(profileFile("csymbols", validProfile("c_symbols = fopen=my_fopen  fread=my_fread")))
+        profile.cSymbols shouldBe mapOf("fopen" to "my_fopen", "fread" to "my_fread")
+        profile.cSymbol("fopen") shouldBe "my_fopen"
+        profile.cSymbol("fwrite") shouldBe "fwrite"
+        fun rejected(name: String, properties: String): String =
+            shouldThrow<IllegalArgumentException> { LlvmTripleProfile.load(profileFile(name, properties)) }.message!!
+        rejected("csymbolsunknown", validProfile("c_symbols = memcpy=my_memcpy")) shouldContain "names of C functions that Prog8 doesn't call: memcpy"
+        rejected("csymbolsown", validProfile("c_symbols = ftell=my_ftell")) shouldContain "can't rename ftell: use ftell_symbol"
+        rejected("csymbolspair", validProfile("c_symbols = fopen")) shouldContain "must be name=symbol pairs: 'fopen'"
     }
 
     test("file_source files are only written with withFileSources, and need {startup} in the link command and to exist") {

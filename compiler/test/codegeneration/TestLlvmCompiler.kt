@@ -2370,8 +2370,6 @@ private val notRunOnTrs80gp: Map<String, String> = notRunOnZ88dk +
         "diskio directory listings of the files and subdirectories, sorted by name"
     ).associateWith { "TRSDOS and LDOS have no directories" } +
     mapOf(
-        "fileio copying between two open files, seeking and the end of the file" to
-            "fileio.tell of a file being written gives -1 on the TRS-80, as TRSDOS 2.3 and LDOS keep its position differently",
         "pointers to memory-mapped variables use the same storage as the variables" to
             $$"the memory-mapped $0400 is in the TRS-80's ROM, so the stores to it are lost"
     )

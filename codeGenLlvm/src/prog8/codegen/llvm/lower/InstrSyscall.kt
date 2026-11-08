@@ -831,12 +831,7 @@ private fun LlvmFunctionBuilder.libc(routine: Libc): LlvmValue.Global {
 }
 
 private fun LlvmFunctionBuilder.cLibrary(routine: Libc): LlvmValue.Global {
-    val name = when (routine) {
-        Libc.FSEEK -> profile?.fseekSymbol
-        Libc.FTELL -> profile?.ftellSymbol
-        Libc.FREAD -> profile?.freadSymbol
-        else -> null
-    } ?: routine.name.lowercase()
+    val name = profile?.cSymbol(routine.name.lowercase()) ?: routine.name.lowercase()
     return LlvmValue.Global(externalFunction(name, cType(routine.returnType), routine.parameterTypes.map { cType(it) }).name)
 }
 

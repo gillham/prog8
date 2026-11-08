@@ -42,8 +42,8 @@ data class LlvmTripleProfile(
     /** The C routines that seek and tell the file position, whose offset has [fileOffsetSize] bytes, like _fseeki64 on Windows. */
     val fseekSymbol: String = "fseek",
     val ftellSymbol: String = "ftell",
-    /** The C routine that reads a block from a file, when the C library's own one doesn't do what fread() does. */
-    val freadSymbol: String = "fread",
+    /** Other C functions of [C_FUNCTIONS] by another name, such as replacements in a support source for broken ones. */
+    val cSymbols: Map<String, String> = emptyMap(),
     val fileOffsetSize: Int = cLongSize,
     val cIntSize: Int = 4,
     private val clangTemplate: String? = null,
@@ -73,6 +73,13 @@ data class LlvmTripleProfile(
     val fileSources: List<String> = emptyList(),
     private val fileSourceDirectory: Path? = null
 ) {
+    /** The symbol that the C function of [C_FUNCTIONS] named [function] is called by, which the profile can change. */
+    fun cSymbol(function: String): String = when (function) {
+        "fseek" -> fseekSymbol
+        "ftell" -> ftellSymbol
+        else -> cSymbols[function] ?: function
+    }
+
     /** True when the data layout starts with `E`. */
     val isBigEndian: Boolean get() = dataLayout.startsWith("E")
 
@@ -210,6 +217,14 @@ data class LlvmTripleProfile(
         (libcLacks - C_FUNCTIONS).let { unknown ->
             require(unknown.isEmpty()) { "the libc_lacks of llvm triple profile '$name' has names of C functions that Prog8 doesn't call: ${unknown.sorted().joinToString()}" }
         }
+        (cSymbols.keys - C_FUNCTIONS).let { unknown ->
+            require(unknown.isEmpty()) { "the c_symbols of llvm triple profile '$name' has names of C functions that Prog8 doesn't call: ${unknown.sorted().joinToString()}" }
+        }
+        (cSymbols.keys intersect OWN_SYMBOL_KEYS.keys).let { named ->
+            require(named.isEmpty()) {
+                "the c_symbols of llvm triple profile '$name' can't rename ${named.sorted().joinToString()}: use ${named.sorted().joinToString { OWN_SYMBOL_KEYS.getValue(it) }}"
+            }
+        }
         require(ioRanges.none { it.isEmpty() }) { "the io_ranges of llvm triple profile '$name' has a range that ends before it starts" }
         require(library == null || library.matches(Regex("[A-Za-z0-9_-]+"))) {
             "the library of llvm triple profile '$name' must be a plain directory name of letters, digits, '_' and '-'"
@@ -225,7 +240,7 @@ data class LlvmTripleProfile(
         const val LINK_SCRIPT = "{link_script}"
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
             "link_command", "link_args", "run_timeout_seconds", "startup_source", "file_source",
-            "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "fread_symbol", "file_offset_size", "getchar_symbol",
+            "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "c_symbols", "file_offset_size", "getchar_symbol",
             "putchar_symbol", "library", "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env",
             "load_address", "load_address_align", "link_script")
 
@@ -234,6 +249,10 @@ data class LlvmTripleProfile(
             profile?.processBuilder(command) ?: ProcessBuilder(command)
 
         /** The C library functions that the llvm code generator can call, which libc_lacks can name. */
+        /** The C functions that have a profile key of their own for their symbol. */
+        private val OWN_SYMBOL_KEYS = mapOf("fseek" to "fseek_symbol", "ftell" to "ftell_symbol", "opendir" to "opendir_symbol",
+            "readdir" to "readdir_symbol", "getchar" to "getchar_symbol", "putchar" to "putchar_symbol")
+
         val C_FUNCTIONS: Set<String> = buildSet {
             addAll(listOf("fopen", "fclose", "fgetc", "fputc", "fread", "fwrite", "fseek", "ftell", "ferror", "feof", "fflush", "remove", "rename",
                 "getcwd", "mkdir", "chdir", "rmdir", "opendir", "readdir", "closedir", "strcmp", "strdup", "realloc", "free", "qsort",
@@ -489,7 +508,11 @@ data class LlvmTripleProfile(
                 optional("readdir_symbol") ?: "readdir",
                 optional("fseek_symbol") ?: "fseek",
                 optional("ftell_symbol") ?: "ftell",
-                optional("fread_symbol") ?: "fread",
+                words("c_symbols").orEmpty().associate { pair ->
+                    val (function, symbol) = pair.split('=', limit = 2).takeIf { it.size == 2 && it.all(String::isNotEmpty) }
+                        ?: throw IllegalArgumentException("the c_symbols of llvm triple profile '$name' must be name=symbol pairs: '$pair'")
+                    function to symbol
+                },
                 fileOffsetSize,
                 cIntSize,
                 clang,

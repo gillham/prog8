@@ -1,29 +1,77 @@
 /*
- * The file position routines of the TRS-80 profiles, which z88dk's TRS-80 library lacks or gets wrong:
- * - ftell (the profile's ftell_symbol), from the DOS's file control block. Only for a file open for reading: TRSDOS 2.3
- *   and LDOS keep the position of a file being written differently, so for one of those it gives -1.
+ * The file routines of the TRS-80 profiles that z88dk's TRS-80 library lacks or gets wrong:
+ * - ftell (the profile's ftell_symbol). For a file being read, from the DOS's file control block; for one being
+ *   written, a byte count of our own, kept by the fopen, fwrite and fputc here (c_symbols), as TRSDOS 2.3 and LDOS
+ *   keep that position differently in the FCB. -1 for a file open for both.
  * - fseek (fseek_symbol), as z88dk's lseek, which reads its way to the position, only moves forward with SEEK_CUR and
- *   ignores the offset of SEEK_END. A seek past the end of a file being read fails, as lseek stops at the end.
- * - fread (fread_symbol), as z88dk's never sets the end of file.
+ *   ignores the offset of SEEK_END. A seek past the end of a file being read fails, as lseek stops at the end; a file
+ *   being written only seeks to where it is.
+ * - fread (c_symbols), as z88dk's never sets the end of file.
  * - fsync, which fflush calls: z88dk's always fails, while byte I/O through the DOS has nothing to flush at this level.
  */
 #include <stdio.h>
 #include <fcntl.h>
 #include <trsdos.h>
 
-long prog8_trs80_ftell(FILE *fp)
-{
-    struct TRSDOS_FCB *fcb;
-    long position;
+#define READING(fp) (((fp)->flags & (_IOREAD | _IOWRITE | _IOSYSTEM)) == _IOREAD)
+#define WRITING(fp) (((fp)->flags & (_IOREAD | _IOWRITE | _IOSYSTEM)) == _IOWRITE)
 
-    if ((fp->flags & (_IOREAD | _IOWRITE | _IOSYSTEM)) != _IOREAD)
-        return -1L;
-    fcb = &((struct TRSDOS_FILE *)fp->desc.fd)->fcb;
-    position = (long)fcb->NRN * 256 + fcb->offset;
+/* the position in a file being read */
+static long read_position(FILE *fp)
+{
+    struct TRSDOS_FCB *fcb = &((struct TRSDOS_FILE *)fp->desc.fd)->fcb;
+    long position = (long)fcb->NRN * 256 + fcb->offset;
     /* bit 5 of the FCB flags is clear while a sector is in the buffer: the record number is then the next one */
     if (!(fcb->flags & 0x20))
         position -= 256;
     return position;
+}
+
+/* the position in a file being written, in the three bytes at the end of the FILE that z88dk doesn't use */
+static long written(FILE *fp)
+{
+    return (long)fp->reserved | ((long)fp->reserved1 << 8) | ((long)fp->reserved2 << 16);
+}
+
+static void set_written(FILE *fp, long position)
+{
+    fp->reserved = position;
+    fp->reserved1 = position >> 8;
+    fp->reserved2 = position >> 16;
+}
+
+long prog8_trs80_ftell(FILE *fp)
+{
+    if (READING(fp))
+        return read_position(fp);
+    if (WRITING(fp))
+        return written(fp);
+    return -1L;
+}
+
+FILE *prog8_trs80_fopen(char *name, char *mode)
+{
+    FILE *fp = fopen(name, mode);
+    /* z88dk's open reads its way to the end of a file opened for appending */
+    if (fp != NULL && WRITING(fp))
+        set_written(fp, *mode == 'a' ? read_position(fp) : 0L);
+    return fp;
+}
+
+size_t prog8_trs80_fwrite(void *ptr, size_t size, size_t nmemb, FILE *fp)
+{
+    size_t count = fwrite(ptr, size, nmemb, fp);
+    if (WRITING(fp))
+        set_written(fp, written(fp) + (long)count * size);
+    return count;
+}
+
+int prog8_trs80_fputc(int c, FILE *fp)
+{
+    int result = fputc(c, fp);
+    if (result != EOF && WRITING(fp))
+        set_written(fp, written(fp) + 1);
+    return result;
 }
 
 int prog8_trs80_fseek(FILE *fp, long offset, int whence)
@@ -37,21 +85,22 @@ int prog8_trs80_fseek(FILE *fp, long offset, int whence)
         if (target < 0)
             return -1;
         target += offset;
-    } else if (whence == SEEK_END) {
+    } else if (whence == SEEK_END && READING(fp)) {
         if (fseek(fp, 0L, SEEK_END) != 0)
             return -1;
-        target = prog8_trs80_ftell(fp);
-        if (target < 0)
-            return -1;
-        target += offset;
+        target = read_position(fp) + offset;
+    } else if (whence == SEEK_END && WRITING(fp)) {
+        target = written(fp) + offset;
     } else {
         return -1;
     }
     if (target < 0)
         return -1;
+    if (WRITING(fp))
+        return target == written(fp) ? 0 : -1;
     if (fseek(fp, target, SEEK_SET) != 0)
         return -1;
-    if ((fp->flags & _IOREAD) && prog8_trs80_ftell(fp) != target)
+    if (READING(fp) && read_position(fp) != target)
         return -1;
     return 0;
 }
