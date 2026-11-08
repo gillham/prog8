@@ -127,3 +127,41 @@ tasks.compileKotlin {
 tasks.compileJava {
     dependsOn(tasks.createVersionFile)
 }
+
+// Copies the shadow distribution to ~/.local (or the directory of -PlocalPrefix=...) as prog8c-llvm, so that compiler
+// stays usable while the build rebuilds. "gradle build installLocal" only installs a compiler whose tests passed.
+val installLocal by tasks.registering {
+    dependsOn(tasks.installShadowDist)
+    mustRunAfter(tasks.build, tasks.test)
+    doLast {
+        val prefix = File((findProperty("localPrefix") as String?) ?: "${System.getProperty("user.home")}/.local")
+        val dist = layout.buildDirectory.dir("install/prog8c-shadow").get().asFile
+        val lib = File(prefix, "lib").apply { mkdirs() }
+        val bin = File(prefix, "bin").apply { mkdirs() }
+        // the new copy goes in under another name first and replaces the old one by renames, so a running compiler keeps working
+        val installed = File(lib, "prog8c-llvm")
+        val staging = File(lib, "prog8c-llvm.new").apply { deleteRecursively() }
+        val previous = File(lib, "prog8c-llvm.old").apply { deleteRecursively() }
+        dist.copyRecursively(staging)
+        staging.resolve("bin").listFiles()!!.forEach { it.setExecutable(true) }
+        if (installed.exists())
+            check(installed.renameTo(previous)) { "can't move $installed aside" }
+        check(staging.renameTo(installed)) { "can't rename $staging to $installed" }
+        previous.deleteRecursively()
+        // a versioned copy of the jar, like those of the released versions
+        val jar = installed.resolve("lib").listFiles()!!.single { it.name.endsWith("-all.jar") }
+        val versioned = File(lib, jar.name)
+        val versionedStaging = File(lib, jar.name + ".new")
+        jar.copyTo(versionedStaging, overwrite = true)
+        check(versionedStaging.renameTo(versioned) || (versioned.delete() && versionedStaging.renameTo(versioned)))
+        val windows = System.getProperty("os.name").startsWith("Windows")
+        val launcher = File(bin, if (windows) "prog8c-llvm.bat" else "prog8c-llvm")
+        if (windows)
+            launcher.writeText("@\"${installed.resolve("bin/prog8c.bat")}\" %*\r\n")
+        else {
+            launcher.writeText($$"#!/bin/sh\nexec \"$${installed.resolve("bin/prog8c")}\" \"$@\"\n")
+            launcher.setExecutable(true)
+        }
+        println("installed $launcher, running ${installed.resolve("bin")}, and ${versioned.name} in $lib")
+    }
+}
