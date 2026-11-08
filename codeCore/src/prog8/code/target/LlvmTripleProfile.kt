@@ -116,7 +116,7 @@ data class LlvmTripleProfile(
 
     /**
      * Writes the [startupSources] files that the link command builds along as `{startup}` next to [outputFile], and returns them.
-     * They are read from the profile's directory, or from the compiler's resources for an embedded profile.
+     * They are read from the profile's directory, or else from the compiler's resources.
      */
     fun writeStartupSources(outputFile: Path): List<Path> {
         val written = mutableListOf<Path>()
@@ -134,16 +134,22 @@ data class LlvmTripleProfile(
     }
 
     private fun startupSourceStream(source: String): InputStream =
-        if (directory != null) directory.resolve(source).inputStream()
-        else LlvmTripleProfile::class.java.getResourceAsStream("$RESOURCE_DIR/$source")
-            ?: throw IllegalArgumentException("the startup_source '$source' of llvm triple profile '$name' is not embedded in the compiler")
+        openSupportFile(directory, source)
+            ?: throw IllegalArgumentException("the startup_source '$source' of llvm triple profile '$name' was not found")
+
+    /** A file next to a profile file, or else one built into the compiler, so a profile file can name the built-in ones. */
+    private fun openSupportFile(directory: Path?, file: String): InputStream? =
+        directory?.resolve(file)?.takeIf { it.isRegularFile() }?.inputStream()
+            ?: LlvmTripleProfile::class.java.getResourceAsStream("$RESOURCE_DIR/$file")
+
+    private fun supportFileExists(directory: Path?, file: String): Boolean =
+        directory?.resolve(file)?.isRegularFile() == true || LlvmTripleProfile::class.java.getResource("$RESOURCE_DIR/$file") != null
 
     /** Writes the [linkScript] next to [outputFile] with `{load_address}` replaced by [loadAddress], and returns it; null without one. */
     fun writeLinkScript(outputFile: Path, loadAddress: UInt): Path? {
         val script = linkScript ?: return null
-        val template = (if (linkScriptDirectory != null) linkScriptDirectory.resolve(script).inputStream()
-            else LlvmTripleProfile::class.java.getResourceAsStream("$RESOURCE_DIR/$script")
-                ?: throw IllegalArgumentException("the link_script '$script' of llvm triple profile '$name' is not embedded in the compiler")
+        val template = (openSupportFile(linkScriptDirectory, script)
+            ?: throw IllegalArgumentException("the link_script '$script' of llvm triple profile '$name' was not found")
             ).use { it.readBytes().decodeToString() }
         val file = outputFile.resolveSibling("${outputFile.fileName}.${Path(script).fileName}")
         Files.writeString(file, template.replace(LOAD_ADDRESS, "0x%04x".format(loadAddress.toLong())))
@@ -166,15 +172,13 @@ data class LlvmTripleProfile(
             "llvm triple profile '$name' has a startup_source, so it needs {startup} in its link_command"
         }
         for (source in startupSources)
-            require(if (directory != null) directory.resolve(source).isRegularFile()
-                else LlvmTripleProfile::class.java.getResource("$RESOURCE_DIR/$source") != null) {
+            require(supportFileExists(directory, source)) {
                 "the startup_source '$source' of llvm triple profile '$name' was not found"
             }
         require(linkScript == null || linkCommandTemplate?.any { LINK_SCRIPT in it } == true) {
             "llvm triple profile '$name' has a link_script, so it needs {link_script} in its link_command"
         }
-        require(linkScript == null || (if (linkScriptDirectory != null) linkScriptDirectory.resolve(linkScript).isRegularFile()
-            else LlvmTripleProfile::class.java.getResource("$RESOURCE_DIR/$linkScript") != null)) {
+        require(linkScript == null || supportFileExists(linkScriptDirectory, linkScript)) {
             "the link_script '$linkScript' of llvm triple profile '$name' was not found"
         }
         require(loadAddress != null || (linkScript == null && linkCommandTemplate?.none { LOAD_ADDRESS in it } != false)) {

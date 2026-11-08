@@ -17,7 +17,6 @@ import prog8.code.target.CompilationTargets
 import prog8.code.target.getCompilationTargetByName
 import java.io.File
 import java.nio.file.Path
-import java.nio.file.NoSuchFileException
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteExisting
 import kotlin.io.path.exists
@@ -154,7 +153,7 @@ class TestLlvmTripleProfile: FunSpec({
             listOf("; boot code", "/* console code */")
         val loaded = LlvmTripleProfile.load(profileFile)
         sources.resolve("console.c").deleteExisting()
-        shouldThrow<NoSuchFileException> { loaded.writeStartupSources(directory.resolve("failed-startup.elf")) }
+        shouldThrow<IllegalArgumentException> { loaded.writeStartupSources(directory.resolve("failed-startup.elf")) }.message!! shouldContain "'console.c' of llvm triple profile"
         withClue("the startup source written before the failing one is removed") { directory.resolve("failed-startup.elf.boot.S").exists() shouldBe false }
 
         fun rejected(name: String, properties: String): String =
@@ -814,6 +813,32 @@ class TestLlvmTripleProfile: FunSpec({
         LlvmTripleProfile.load(own, null, noUserProfiles).writeStartupSources(directory.resolve("own.elf")).single().readText() shouldBe "; own boot code"
     }
 
+    test("a profile file can name a built-in startup_source, which a file next to it replaces") {
+        val dir = directory.resolve("builtinstartup").createDirectories()
+        val profile = dir.resolve("p.properties").also {
+            it.writeText("base = z80-trs80-cmd\nstartup_source = z80-trs80-keyboard.asm extra.asm")
+        }
+        dir.resolve("extra.asm").writeText("; extra")
+        val written = LlvmTripleProfile.load(profile, null, noUserProfiles).writeStartupSources(directory.resolve("builtin.cmd"))
+        written.map { it.readText() }.let { (keyboard, extra) ->
+            keyboard shouldContain "_prog8_trs80_getk"
+            extra shouldBe "; extra"
+        }
+        dir.resolve("z80-trs80-keyboard.asm").writeText("; own keyboard")
+        LlvmTripleProfile.load(profile, null, noUserProfiles).writeStartupSources(directory.resolve("own.cmd")).first().readText() shouldBe "; own keyboard"
+    }
+
+    test("the TRS-80 profiles give ENTER as 13 through their own getk and fgetc_cons") {
+        for (name in listOf("z80-trs80", "z80-trs80-cmd")) {
+            val profile = LlvmTripleProfile.resolve(name)
+            withClue(name) {
+                profile.startupSources shouldBe listOf("z80-trs80-keyboard.asm")
+                ("-pragma-redirect:getk=_prog8_trs80_getk" in profile.linkCommand.orEmpty()) shouldBe true
+                ("-pragma-redirect:fgetc_cons=_prog8_trs80_fgetc_cons" in profile.linkCommand.orEmpty()) shouldBe true
+            }
+        }
+    }
+
     test("{startup} may be in a link command without a startup_source") {
         val profile = LlvmTripleProfile.load(profileFile("emptystartup", validProfile("link_command = zcc {startup} {object} -o x{startup}y {file}")))
         profile.startupSources shouldBe emptyList()
@@ -920,7 +945,9 @@ class TestLlvmTripleProfile: FunSpec({
     test("the link command, output and libc_lacks of each z88dk platform profile are what the profile generator finds, plus qsort")
         .config(enabled = python != null && System.getenv("Z88DK") != null) {
         // link options a profile adds by hand to what the generator finds
-        val handAdded = mapOf("z80-trs80" to setOf("-pragma-define:REGISTER_SP=-0x40B1"), "z80-c128" to setOf("-pragma-define:ansicolumns=40"))
+        val trs80Keys = setOf("-pragma-redirect:getk=_prog8_trs80_getk", "-pragma-redirect:fgetc_cons=_prog8_trs80_fgetc_cons")
+        val handAdded = mapOf("z80-trs80" to setOf("-pragma-define:REGISTER_SP=-0x40B1") + trs80Keys, "z80-trs80-cmd" to trs80Keys,
+            "z80-c128" to setOf("-pragma-define:ansicolumns=40"))
         for (name in embeddedZ88dk.keys) {
             val platform = if (name == "z80-c128") listOf("c128", "disk") else name.removePrefix("z80-").split("-")
             val generated = directory.resolve("generated-$name.properties")

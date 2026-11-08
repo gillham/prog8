@@ -354,7 +354,8 @@ These are the keys of a profile; an unknown key is an error:
 ``startup_source``
     Source files separated by spaces, such as boot code in assembly, that the link command builds along with the program;
     a word ``{startup}`` becomes their paths. They are looked up next to the profile file that has the ``startup_source``,
-    which can be a base; for a profile built into the compiler, they come with the compiler.
+    which can be a base, and else among those that come with the compiler, so a profile file can name a built-in one,
+    such as ``z80-trs80-keyboard.asm``.
     A profile with it must have ``{startup}`` in its ``link_command``; without it, ``{startup}`` becomes nothing, so a
     base's link command can have it for the profiles built on it.
 ``load_address``
@@ -636,7 +637,10 @@ none, without waiting, and ``txt.waitkey()``, which waits for a key and gives it
   a new key press; on the ZX Spectrum it takes the ROM's last key (``LAST-K``) and clears it; on the C128 it scans the
   keyboard matrix and gives the key that is held down, again on each call while it is held, as ``in_Inkey()`` does
   (``in_Inkey()`` gives the key held down now, ``getk()`` on the other platforms the next key press). Enter is the
-  platform's code, 13 on the TRS-80 and the C128, unless z88dk's ``STANDARDESCAPECHARS`` is on.
+  platform's code, 13 on the TRS-80 and the C128, unless z88dk's ``STANDARDESCAPECHARS`` is on. z88dk's TRS-80 library
+  is built with it, which turns Enter into 10, the code of the down arrow, so the TRS-80 profiles link their own
+  ``getk`` and ``fgetc_cons`` from the startup source ``z80-trs80-keyboard.asm`` (``-pragma-redirect`` in the link
+  command): they give the ROM's codes, Enter 13, down 10, up 91, left 8, right 9 and CLEAR 31, also to ``txt.chrin()``.
 - the coco textio (``mc6809-coco``): ``getkey`` calls Color BASIC's ``POLCAT`` (picolibc's ``char __decb_getc(void)``,
   through the wrapper ``int prog8_coco_getkey(void)`` in the profile's startup source), which reports each key press
   once, and ``waitkey`` calls it until it gives a key. Enter is 13 there, while ``txt.chrin()`` (picolibc's ``getchar``,
