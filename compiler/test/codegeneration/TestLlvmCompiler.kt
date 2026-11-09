@@ -2259,7 +2259,8 @@ private val notRunOnMos: Map<String, String> =
         "diskio directories, renaming and deleting",
         "diskio directory listings of the files and subdirectories, sorted by name",
         "fileio copying between two open files, seeking and the end of the file",
-        "diskio saving and loading memory"
+        "diskio saving and loading memory",
+        "fileio appending to a file"
     ).associateWith { "mos-sim has no file system" } +
     mapOf(
         "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the mos-sim C library lacks",
@@ -2280,7 +2281,8 @@ private val notRunOn6809: Map<String, String> =
         "diskio directories, renaming and deleting",
         "diskio directory listings of the files and subdirectories, sorted by name",
         "fileio copying between two open files, seeking and the end of the file",
-        "diskio saving and loading memory"
+        "diskio saving and loading memory",
+        "fileio appending to a file"
     ).associateWith { "picolibc's semihost build for usim09batch has no file system: fopen links but returns NULL" } +
     mapOf(
         "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which picolibc lacks without its float library",
@@ -2302,7 +2304,8 @@ private val notRunOnZ80: Map<String, String> =
     ).associateWith { "z88dk +test has no directories, and z88dk-ticks can't rename or delete files" } +
     listOf(
         "diskio writing, reading lines, seeking in and deleting a text file",
-        "diskio saving and loading memory"
+        "diskio saving and loading memory",
+        "fileio appending to a file"
     ).associateWith { "the ftell of z88dk-ticks always gives -1, so the file position and size are unknown, and it can't delete a file" } +
     mapOf(
         "fileio copying between two open files, seeking and the end of the file" to
@@ -2334,7 +2337,8 @@ private val notRunOnTnylpo: Map<String, String> = notRunOnZ88dk +
     } +
     listOf(
         "diskio writing, reading lines, seeking in and deleting a text file",
-        "diskio saving and loading memory"
+        "diskio saving and loading memory",
+        "fileio appending to a file"
     ).associateWith { "a CP/M file is a whole number of 128-byte records, so its size is rounded up and a read goes on past the written end" } +
     listOf(
         "diskio directories, renaming and deleting",
@@ -2382,7 +2386,8 @@ private val notRunOnTrs80gpCas: Map<String, String> = notRunOnTrs80gp +
         "diskio directories, renaming and deleting",
         "diskio directory listings of the files and subdirectories, sorted by name",
         "fileio copying between two open files, seeking and the end of the file",
-        "diskio saving and loading memory"
+        "diskio saving and loading memory",
+        "fileio appending to a file"
     ).associateWith { "without a DOS, z88dk's TRS-80 file routines are stubs that fail" }
 
 // the programs that don't run as they are on llvm16 under TRSDOS 1.3 in trs80gp, with the reason
@@ -2390,7 +2395,8 @@ private val notRunOnTrs80gpTrsdos: Map<String, String> = notRunOnTrs80gp +
     listOf(
         "diskio writing, reading lines, seeking in and deleting a text file",
         "fileio copying between two open files, seeking and the end of the file",
-        "diskio saving and loading memory"
+        "diskio saving and loading memory",
+        "fileio appending to a file"
     ).associateWith { "z88dk's TRS-80 file routines hang under TRSDOS 1.3, so the z80-trs80-m3-trsdos profile has no files" }
 
 // a few programs for the other TRS-80 models, as a run takes about 2 seconds
@@ -6791,6 +6797,61 @@ main {
         diskio.delete("memory.bin")
     }
 }""", "true true\ntrue 0\ntrue 0\ntrue true true 0\n1792 0\ntrue true\n"),
+
+    "fileio appending to a file" to OutputProgram("""
+%import textio
+%import fileio
+%import diskio
+%zeropage basicsafe
+
+main {
+    ubyte[300] data
+    ubyte[700] back
+
+    sub start() {
+        uword i
+        for i in 0 to len(data)-1
+            data[i] = lsb(i * 7 + msb(i))
+        pointer f = fileio.open("append.bin", "wb")
+        txt.print_uw(fileio.write(f, &data, len(data)))
+        txt.spc()
+        txt.print_bool(fileio.close(f))
+        txt.nl()
+        ; the second part crosses sector and record boundaries
+        f = fileio.open("append.bin", "ab")
+        txt.print_uw(fileio.write(f, &data, len(data)))
+        txt.spc()
+        txt.print_i64(fileio.tell(f))
+        txt.spc()
+        txt.print_bool(fileio.close(f))
+        txt.nl()
+        f = fileio.open("append.bin", "rb")
+        txt.print_uw(fileio.read(f, &back, len(back)))
+        txt.spc()
+        txt.print_bool(fileio.eof(f))
+        txt.spc()
+        txt.print_b(sys.memcmp(&data, &back, len(data)))
+        txt.spc()
+        txt.print_b(sys.memcmp(&data, &back + len(data), len(data)))
+        txt.spc()
+        txt.print_bool(fileio.close(f))
+        txt.nl()
+
+        ; appending to a file that doesn't exist creates it
+        f = fileio.open("fresh.bin", "ab")
+        txt.print_uw(fileio.write(f, "fresh", 5))
+        txt.spc()
+        txt.print_bool(fileio.close(f))
+        txt.spc()
+        f = fileio.open("fresh.bin", "rb")
+        txt.print_uw(fileio.read(f, &back, len(back)))
+        txt.spc()
+        txt.print_bool(fileio.close(f))
+        txt.nl()
+        diskio.delete("append.bin")
+        diskio.delete("fresh.bin")
+    }
+}""", "300 true\n300 600 true\n600 true 0 0 true\n5 true 5 true\n"),
 
     "strings library" to OutputProgram("""
 %import textio

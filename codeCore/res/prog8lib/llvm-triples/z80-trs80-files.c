@@ -7,6 +7,7 @@
  *   ignores the offset of SEEK_END. A seek past the end of a file being read fails, as lseek stops at the end; a file
  *   being written only seeks to where it is.
  * - fread (c_symbols), as z88dk's never sets the end of file.
+ * - appending (fopen with mode "a"), as z88dk's writes garbage after the old end of the file under TRSDOS 2.3.
  * - fsync, which fflush calls: z88dk's always fails, while byte I/O through the DOS has nothing to flush at this level.
  */
 #include <stdio.h>
@@ -51,10 +52,21 @@ long prog8_trs80_ftell(FILE *fp)
 
 FILE *prog8_trs80_fopen(char *name, char *mode)
 {
-    FILE *fp = fopen(name, mode);
-    /* z88dk's open reads its way to the end of a file opened for appending */
+    FILE *fp;
+    /* z88dk's append reads to the end and writes from there, which writes garbage under TRSDOS 2.3: open the file
+       for reading instead, read to the end for its size, let the DOS position to the end, and make it a file being written */
+    if (*mode == 'a' && (fp = fopen(name, "r")) != NULL) {
+        long size;
+        fseek(fp, 0L, SEEK_END);
+        size = read_position(fp);
+        trsdos(DOS_POS_EOF, 0, (char *)&((struct TRSDOS_FILE *)fp->desc.fd)->fcb);
+        fp->flags = (fp->flags & ~_IOREAD) | _IOWRITE;
+        set_written(fp, size);
+        return fp;
+    }
+    fp = fopen(name, mode);
     if (fp != NULL && WRITING(fp))
-        set_written(fp, *mode == 'a' ? read_position(fp) : 0L);
+        set_written(fp, 0L);
     return fp;
 }
 

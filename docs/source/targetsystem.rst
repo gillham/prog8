@@ -715,8 +715,9 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   source's ``fopen``, ``fwrite`` and ``fputc`` count the bytes written instead, in three bytes of the ``FILE`` that
   z88dk doesn't use; for a file open for both ``ftell`` gives -1. A seek past the end of a file being read fails, and
   a file being written only seeks to where it is. Seeking reads the file from its start to the position, so it is
-  slow in a large file. Appending (mode ``"a"``) works under LDOS, but under TRSDOS 2.3 on the Model I z88dk's
-  library writes garbage after the old end of the file.
+  slow in a large file. z88dk's appending (mode ``"a"``) reads to the end of the file and writes from there, which
+  under TRSDOS 2.3 on the Model I writes garbage after the old end, so the source's ``fopen`` opens an existing file
+  for reading, reads it to the end for its size, lets the DOS position to the end, and then writes there.
   ``rename`` is lacking, so renaming reports a failure. A DOS file name is
   ``NAME/EXT``, where a ``.`` would start the file's password, so the profile's ``file_extension_separator`` turns
   the last ``.`` of a file name into ``/``: ``memory.prg`` becomes ``MEMORY/PRG`` for the DOS. The DOS's limits of
