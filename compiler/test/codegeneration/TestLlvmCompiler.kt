@@ -2419,17 +2419,6 @@ private val notRunOnTrs80gpTrsdos: Map<String, String> = notRunOnTrs80gp +
             "creating the file hangs: the floppy controller stays busy while the DOS loads an overlay, and the DOS aborts to its prompt (not understood yet)"
     )
 
-// the programs that don't run as they are on llvm16 on the TRS-80 Model 4 in trs80gp, with the reason
-private val notRunOnTrs80gpM4: Map<String, String> = notRunOnTrs80gp +
-    listOf(
-        "diskio writing, reading lines, seeking in and deleting a text file",
-        "fileio copying between two open files, seeking and the end of the file",
-        "diskio saving and loading memory",
-        "fileio appending to a file",
-        "diskio renaming and deleting files",
-        "diskio status of the last disk operation"
-    ).associateWith { "z80-trs80-m4 has no files yet: z88dk's file routines are stubs there" }
-
 // a few programs for the other TRS-80 models, as a run takes about 2 seconds
 private val trs80gpSmokeTests = setOf(
     "text output",
@@ -2451,8 +2440,8 @@ private val llvm16ProgramRunners = listOf(
     Llvm16ProgramRunner(testProfile("trs80gp-m3"), "trs80gp (TRS-80 Model III, LDOS)", requiresTrs80gp, notRunOnTrs80gp, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m3-trsdos"), "trs80gp (TRS-80 Model III, TRSDOS 1.3)", requiresTrs80gp, notRunOnTrs80gpTrsdos, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m1"), "trs80gp (TRS-80 Model I, TRSDOS)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
-    Llvm16ProgramRunner(testProfile("trs80gp-m4"), "trs80gp (TRS-80 Model 4, LS-DOS 6.3)", requiresTrs80gp, notRunOnTrs80gpM4, pythonScript = true),
-    Llvm16ProgramRunner(testProfile("trs80gp-m4-trsdos"), "trs80gp (TRS-80 Model 4, TRSDOS 6)", requiresTrs80gp, notRunOnTrs80gpM4, only = trs80gpSmokeTests, pythonScript = true),
+    Llvm16ProgramRunner(testProfile("trs80gp-m4"), "trs80gp (TRS-80 Model 4, TRSDOS 6)", requiresTrs80gp, notRunOnTrs80gp, pythonScript = true),
+    Llvm16ProgramRunner(testProfile("trs80gp-m4-lsdos"), "trs80gp (TRS-80 Model 4, LS-DOS 6.3)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-cas"), "trs80gp (TRS-80 Model III, ROM BASIC, .cas)", requiresTrs80gp, notRunOnTrs80gpCas, pythonScript = true)
 )
 

@@ -762,8 +762,19 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   empty, as z88dk's TRS-80 startup code doesn't set it. ``library = trs80m4`` gives ``txt`` the trs80m4 textio
   (``prog8lib/llvm16/trs80m4/textio.p8``): ``plot``, ``getchr`` and ``setchr`` through ``@VDCTL``, reverse video
   through the display codes 16 and 17 (``getchr`` gives a reversed character with bit 7 set), ``bell`` through
-  ``@SOUND``, 80 columns and 24 rows, and no colors. There are no files yet: z88dk's file routines are stubs that fail. In trs80gp,
-  ``trs80gp -m4 -ld prog.cmd`` boots LS-DOS 6.3 and runs it, and ``trs80gp -m4 prog.cmd`` TRSDOS 6.
+  ``@SOUND``, 80 columns and 24 rows, and no colors. Files go through the DOS too: z88dk's file routines are stubs
+  there (``-lndos``), and the profile's ``file_source`` (``z80-trs80-m4-files.c``) has ``open``, ``close``, ``read``,
+  ``write``, ``readbyte``, ``writebyte``, ``lseek``, ``fdtell``, ``remove`` and ``rename`` in their place, and an
+  ``fread`` (``c_symbols``) that sets the end of the file, which z88dk's never does, with byte I/O
+  through ``@GET`` and ``@PUT`` on the DOS's file control block and its sector buffer. The position and the size come
+  from that control block, so ``fileio.tell`` and ``seek`` work for files being written too; a seek moves to the
+  record (``@POSN``) and reads its way to the byte, and can't go past the end of the file. Mode ``"w"`` removes an
+  existing file and creates it anew, as the DOS can't shorten one; ``"a"`` positions to the end (``@PEOF``).
+  ``diskio.rename`` is the DOS's ``@RENAM``, which fails when the new name exists. A new file without a drive spec goes
+  to the first drive, which must have room: the DOS doesn't try the next one. There are no directories, so
+  ``mkdir``, ``chdir``, ``rmdir`` and ``diskio.directory`` fail. In trs80gp,
+  ``trs80gp -m4 prog.cmd`` boots TRSDOS 6 and runs it, and ``trs80gp -m4 -ld prog.cmd`` LS-DOS 6.3, whose boot disk
+  has too little free space there for more than a small file.
 - ``z80-cpm``: a ``.com`` program for CP/M 2.2 and later, with file I/O through the BDOS. The command line comes
   from the CCP, which turns it into upper case. tnylpo (``tnylpo prog.com``) and RunCPM run it on the host; tnylpo
   works in the current directory and gives its files lower case names on the host.
