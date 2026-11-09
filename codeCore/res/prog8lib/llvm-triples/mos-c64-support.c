@@ -5,6 +5,7 @@
  *   usleep returns at once.
  * - prog8_c64_waitvsync (the profile's waitvsync_symbol), for sys.waitvsync: waits until the raster wraps around to
  *   line 0, as the c64 target's sys.waitvsync does.
+ * - prog8_c64_plot, the KERNAL's PLOT for txt.plot, which the SDK has no routine for.
  */
 #define JIFFY_LOW (*(volatile unsigned char *)0xA2)
 #define SCROLY (*(volatile unsigned char *)0xD011)
@@ -32,4 +33,10 @@ void prog8_c64_waitvsync(void)
         ;
     while (SCROLY & 0x80)
         ;
+}
+
+void prog8_c64_plot(unsigned char col, unsigned char row)
+{
+    /* PLOT ($FFF0) with the carry clear moves the cursor to row X, column Y */
+    __asm__ volatile ("clc\n\tjsr 65520" : : "x"(row), "y"(col) : "a", "p", "memory");
 }

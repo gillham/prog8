@@ -484,7 +484,26 @@ fails without it, but writing the ``.ll`` file works. ``sys.target`` is 252. The
   of the KERNAL's jiffy clock (``$A0-$A2``), which the interrupt advances 60 times a second on PAL and NTSC machines;
   with interrupts masked the clock stops, and it returns at once. ``sys.waitvsync()`` waits until the raster wraps
   around to line 0, as on the ``c64`` target (the profile's ``waitvsync_symbol``, ``prog8_c64_waitvsync`` in the same
-  source). Its textio family ``c64`` reads the keyboard with the KERNAL's ``GETIN``.
+  source).
+  Its textio family ``c64`` (``prog8lib/llvm16/c64/textio.p8``) uses the 40x25 text screen at ``$0400``, with the lower
+  case character set that the SDK switches on:
+
+  - output goes through the SDK's ``putchar``, which turns ASCII into PETSCII for the KERNAL's ``CHROUT``, so
+    ``print`` shows upper and lower case letters as they are; 128-255 go to ``CHROUT`` unchanged. ``{``, ``|``, ``}``
+    and ``~`` show as the C64's graphics characters in their place. The control routines send ``CHROUT``'s own codes
+    directly: ``cls`` 147, ``home`` 19, ``rvs_on`` and ``rvs_off`` 18 and 146.
+  - ``plot`` and ``column`` move the cursor with the KERNAL's ``PLOT`` (``prog8_c64_plot`` in the support source);
+    ``color`` sets the text color (``$0286``, 0-15). ``width()`` and ``height()`` give 40 and 25.
+  - ``setchr`` and ``getchr`` use screen memory (``txt.SCREEN``), ``setclr`` color memory (``txt.COLORS``, ``$D800``).
+    ``setchr`` puts ASCII 32-127 there as ``print`` shows them (``txt.screencode()`` converts), and 0-31 and 128-255
+    as screen codes as they are (128-255 are reverse video). ``getchr`` gives the ASCII character back for screen
+    codes 0-95, and the screen code itself for the others; 255 off the screen.
+  - ``fill_screen`` fills screen and color memory and sets the text color; ``bell`` does nothing.
+  - input: ``getkey`` and ``waitkey`` read the keyboard through ``GETIN`` (below); ``txt.chrin()`` and
+    ``txt.input_line()`` read through ``CHRIN``, a whole line with the screen editor, which shows what is typed.
+
+  Files go through the SDK's C library to the KERNAL. Its ``fseek`` needs an ``lseek`` that the C64 library doesn't
+  have, so the profile lacks it: seeking, the file size and ``diskio.load`` report a failure. Its textio family ``c64`` reads the keyboard with the KERNAL's ``GETIN``.
 
 Compared with ``llvm32`` and ``llvm64``:
 
@@ -651,11 +670,11 @@ none, without waiting, and ``txt.waitkey()``, which waits for a key and gives it
   ``waitkey`` is ``txt.chrin()``, the next character of stdin, so it gives 0 at the end of the input. There is no
   keyboard polling: the C libraries of these profiles can't read stdin without waiting, so ``getkey`` always gives 0.
   ``txt.input_line()`` doesn't echo what it reads: a terminal shows what is typed itself.
-- the c64 and cpm textios (``mos-c64``, ``z80-cpm``) are that stream textio with key routines of their own. On
-  ``mos-c64`` ``getkey`` is the KERNAL's ``GETIN`` (the SDK's ``cbm_k_getin()``), which gives the next key typed (PETSCII)
-  or 0, and ``waitkey`` calls it until it gives a key; ``txt.chrin()`` and ``txt.input_line()`` still read through
-  ``CHRIN``, a whole line with the screen editor. On ``z80-cpm`` ``getkey`` is BDOS function 6 with ``$FF`` (in the
-  profile's startup source ``z80-cpm-keyboard.asm``), which gives the next key typed or 0, and ``waitkey`` is
+- the c64 textio (``mos-c64``): ``getkey`` is the KERNAL's ``GETIN`` (the SDK's ``cbm_k_getin()``), which gives the next
+  key typed (PETSCII) or 0, and ``waitkey`` calls it until it gives a key; ``txt.chrin()`` and ``txt.input_line()`` read
+  through ``CHRIN``, a whole line with the screen editor.
+- the cpm textio (``z80-cpm``) is that stream textio with key routines of its own: ``getkey`` is BDOS function 6 with
+  ``$FF`` (in the profile's startup source ``z80-cpm-keyboard.asm``), which gives the next key typed or 0, and ``waitkey`` is
   ``txt.chrin()``, z88dk's ``fgetc_cons()``, the same BDOS call until it gives a key; at the end of the input tnylpo
   gives ``^Z`` forever (26). z88dk's own ``getk()`` isn't used: it reads keys until none is left and gives the last.
 - the z88dk and z88dk-ansi textios (``z80-trs80``, ``z80-trs80-cmd``, ``z80-zx``, ``z80-c128``): ``getkey`` is z88dk's

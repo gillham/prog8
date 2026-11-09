@@ -851,7 +851,8 @@ main {
             val dir = outputDir.resolve("${profile.name}-link").createDirectories()
             val sources = programs + outputPrograms.mapValues { it.value.source } +
                 z88dkTextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "z88dk" || profile.library == "z88dk-ansi" }.orEmpty() +
-                cocoTextioPrograms.takeIf { profile.library == "coco" }.orEmpty() + keyboardPrograms
+                cocoTextioPrograms.takeIf { profile.library == "coco" }.orEmpty() +
+                c64TextioPrograms.takeIf { profile.library == "c64" }.orEmpty() + keyboardPrograms
             val failed = sources.filterKeys { it !in linker.notLinked }.filter { (_, source) ->
                 val result = compileText(target, true, source, dir) ?: return@filter true
                 val llFile = compiledLlFile(result)
@@ -2429,6 +2430,15 @@ private val notLinkedOnZ88dk: Map<String, String> =
     programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
     mapOf("math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the z88dk C libraries lack")
 
+private val notLinkedOnMos: Map<String, String> =
+    programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
+    programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
+    mapOf("math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the llvm-mos SDK lacks") +
+    listOf(
+        "diskio writing, reading lines, seeking in and deleting a text file",
+        "fileio copying between two open files, seeking and the end of the file"
+    ).associateWith { "too large for the C64: the program overflows the RAM below the BASIC ROM by about 20 KB" }
+
 private val notLinkedOnCoco: Map<String, String> =
     programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
     programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
@@ -2441,6 +2451,7 @@ private val linkOnlyProfiles = listOf(
     LinkOnlyProfile("z80-cpm", notLinkedOnZ88dk),
     LinkOnlyProfile("z80-zx", notLinkedOnZ88dk),
     LinkOnlyProfile("z80-c128", notLinkedOnZ88dk),
+    LinkOnlyProfile("mos-c64", notLinkedOnMos) { profile -> noProfileToolsReason(profile, mapOf("LLVM_MOS" to "the llvm-mos SDK directory"), false) },
     LinkOnlyProfile("mc6809-coco", notLinkedOnCoco) { profile -> noProfileToolsReason(profile, mapOf("LLVM_MC6809" to "the llvm-mc6809 directory"), false) }
 )
 
@@ -5486,6 +5497,40 @@ main {
  * Programs for the coco textio, which has getchr(), setclr() and inverse_mode: the exit status is the number of the first
  * screen read-back check that fails, and they are only linked (they were checked by hand in XRoar).
  */
+// the c64 textio, only built here: x64sc, which runs mos-c64 programs, opens a window
+private val c64TextioPrograms = mapOf(
+    "the c64 textio routines" to """
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.fill_screen('.', 11)
+        txt.clear_screen()
+        txt.color(1)
+        txt.print("Hello, C64!")
+        txt.nl()
+        txt.rvs_on()
+        txt.print("reverse")
+        txt.rvs_off()
+        txt.plot(10, 5)
+        txt.column(30)
+        txt.setcc(0, 10, 'X', 2)
+        txt.setclr(1, 10, 5)
+        txt.print_ub(txt.getchr(0, 10))
+        txt.print_ub(txt.width())
+        txt.print_ub(txt.height())
+        txt.home()
+        txt.bell()
+        sys.set_irqd()
+        sys.wait(1)
+        sys.clear_irqd()
+        sys.waitvsync()
+        void txt.getkey()
+    }
+}"""
+)
+
 private val cocoTextioPrograms = mapOf(
     "the coco textio routines" to """
 %import textio

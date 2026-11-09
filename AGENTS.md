@@ -35,7 +35,7 @@
 - Prog8 source files are a "module" that can contain one or more "blocks". They can also import other modules, from internal library files or from source files on the filesystem.
 - The prog8 compiler is written mostly in Kotlin, those files have the .kt extension.
 - The standard library is mostly written in Prog8 and assembly code, and can be found in the "compiler" module, in the 'res/prog8lib' directory.
-- **Library Reference**: For a quick overview of all available modules, routines, and their signatures, **consult the skeleton files (symboldumps)** in `docs/source/_static/symboldumps/`. They are named `skeletons-<target>.txt`; `skeletons-llvm16-z88dk.txt` is llvm16 with the z88dk textio of the z80 machine profiles, `skeletons-llvm16-z88dk-ansi.txt` with the z88dk-ansi textio of the C128, and `skeletons-llvm16-coco.txt` with the coco textio of the Color Computer.
+- **Library Reference**: For a quick overview of all available modules, routines, and their signatures, **consult the skeleton files (symboldumps)** in `docs/source/_static/symboldumps/`. They are named `skeletons-<target>.txt`; `skeletons-llvm16-z88dk.txt` is llvm16 with the z88dk textio of the z80 machine profiles, `skeletons-llvm16-z88dk-ansi.txt` with the z88dk-ansi textio of the C128, `skeletons-llvm16-coco.txt` with the coco textio of the Color Computer, and `skeletons-llvm16-c64.txt` with the c64 textio of the `mos-c64` profile.
 - Kotlin version 2.4 is used for the compiler implementation.
 - Java 17 is used as Java runtime version.
 - ANTLR4 version 4.13 is used for the parser implementation.
