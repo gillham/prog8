@@ -90,7 +90,10 @@ private fun FunctionLowering.lowerSyscall(site: CallSite, number: Int) {
         VM_WAIT -> waitJiffies(site, number)
         VM_WAITVSYNC -> {
             arguments(site, number, 0)
-            if (!builder.lacks("usleep"))
+            val waitvsync = builder.profile?.waitvsyncSymbol
+            if (waitvsync != null)
+                emit(LlvmInstruction.Call(null, external(waitvsync, LlvmType.Void, emptyList()), emptyList(), LlvmType.Void))
+            else if (!builder.lacks("usleep"))
                 emit(LlvmInstruction.Call(null, builder.helperFunction(".sys.wait") { builder.waitHelper() }, listOf(LlvmValue.IntConstant(1, LlvmType.I16)), LlvmType.Void))
         }
         VM_ATAN -> angle(site, number)
@@ -235,8 +238,8 @@ private fun FunctionLowering.mul16LastUpper(site: CallSite, number: Int) {
 }
 
 /**
- * WAIT(jiffies word) sleeps for that many 1/60 seconds; WAITVSYNC() sleeps for one, as there is no vertical blank to wait for.
- * Without usleep() in the C library, both return at once.
+ * WAIT(jiffies word) sleeps for that many 1/60 seconds; WAITVSYNC() calls the profile's waitvsync_symbol, or else sleeps
+ * for one, as there is no vertical blank to wait for. Without usleep() in the C library, they return at once.
  */
 private fun FunctionLowering.waitJiffies(site: CallSite, number: Int) {
     val (jiffies) = arguments(site, number, 1)

@@ -401,6 +401,10 @@ These are the keys of a profile; an unknown key is an error:
     The C library routines that the file routines seek and tell the position in a file with, and the size in bytes of
     their offset. The defaults are ``fseek()`` and ``ftell()``, whose offset is a C ``long``. The Windows profiles name
     ``_fseeki64`` and ``_ftelli64`` with 8 bytes, because a C ``long`` has only 32 bits there.
+``waitvsync_symbol``
+    A C routine ``void f(void)`` that ``sys.waitvsync()`` calls, such as a wait for the raster's vertical blank in a
+    support source. Without it, ``sys.waitvsync()`` waits one 60th of a second with ``usleep()``, or returns at once
+    when the C library lacks that.
 ``c_symbols``
     Other names for C functions that Prog8 calls, as ``name=symbol`` pairs separated by spaces, such as replacements in
     a support source for routines that the C library lacks or gets wrong: the TRS-80 profiles have
@@ -477,13 +481,17 @@ fails without it, but writing the ``.ll`` file works. ``sys.target`` is 252. The
   prints the program's output and gives back its exit status.
 - ``mos-c64``: builds a Commodore 64 ``.prg`` file, which ``-emu`` starts in the VICE emulator ``x64sc``, in a window.
   Its startup source ``mos-c64-support.c`` has the ``usleep`` that the SDK lacks: ``sys.wait()`` waits that many ticks
-  of the KERNAL's jiffy clock (``$A0-$A2``), which the interrupt advances 60 times a second on PAL and NTSC machines,
-  and ``sys.waitvsync()`` waits for one tick (not for the raster's vertical blank). With interrupts masked the clock
-  stops, and both return at once. Its textio family ``c64`` reads the keyboard with the KERNAL's ``GETIN``.
+  of the KERNAL's jiffy clock (``$A0-$A2``), which the interrupt advances 60 times a second on PAL and NTSC machines;
+  with interrupts masked the clock stops, and it returns at once. ``sys.waitvsync()`` waits until the raster wraps
+  around to line 0, as on the ``c64`` target (the profile's ``waitvsync_symbol``, ``prog8_c64_waitvsync`` in the same
+  source). Its textio family ``c64`` reads the keyboard with the KERNAL's ``GETIN``.
 
 Compared with ``llvm32`` and ``llvm64``:
 
 - pointers have 2 bytes, as on the 6502 targets, a C ``int`` has 2 bytes and a C ``long`` 4.
+- ``sys.set_irqd()`` and ``sys.clear_irqd()`` mask and unmask the CPU's interrupts, with ``sei`` and ``cli`` on the
+  6502, ``di`` and ``ei`` on the Z80, and ``orcc #$50`` and ``andcc #$AF`` (IRQ and FIRQ) on the 6809, as inline
+  assembly in the LLVM IR. On ``llvm32`` and ``llvm64`` they do nothing.
 - floats are not supported yet: a float variable, value or ``%import floats`` is an error.
 - the programs get no command line arguments (``program_args = false``): ``sys.argc()`` is 0, ``sys.argv()`` is an
   empty string, and giving arguments after ``--`` is an error.
@@ -821,8 +829,7 @@ Everything listed above for ``mc6809-sim`` applies, apart from these:
 - ``sys.wait()`` waits that many ticks of BASIC's 60 Hz ``TIMER`` (``$0112``), which its interrupt counts at each
   vertical sync, halting the CPU with ``SYNC`` until each interrupt; ``sys.waitvsync()`` waits for the next one, so it
   really waits for the vertical sync. The profile's startup source gives them a ``usleep``, which picolibc lacks.
-  While IRQs are masked (by machine code: ``sys.set_irqd()`` does nothing on the llvm targets yet) the timer stops,
-  and both return at once.
+  While IRQs are masked (``sys.set_irqd()``) the timer stops, and both return at once.
 - there are no files: picolibc for DECB has no ``open`` or ``unlink``, and as on ``mos-sim`` the file routines
   report a failure. There is no command line, and no floats or math library routines.
 

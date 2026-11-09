@@ -1,9 +1,13 @@
 /*
- * The mos-c64 profile's usleep, for sys.wait and sys.waitvsync, which the llvm-mos SDK lacks. It counts ticks of the
- * KERNAL's jiffy clock ($A0-$A2), which the interrupt advances 60 times a second on PAL and NTSC machines alike; with
- * interrupts masked the clock stops, and usleep returns at once.
+ * The mos-c64 profile's support routines:
+ * - usleep, for sys.wait, which the llvm-mos SDK lacks. It counts ticks of the KERNAL's jiffy clock ($A0-$A2), which the
+ *   interrupt advances 60 times a second on PAL and NTSC machines alike; with interrupts masked the clock stops, and
+ *   usleep returns at once.
+ * - prog8_c64_waitvsync (the profile's waitvsync_symbol), for sys.waitvsync: waits until the raster wraps around to
+ *   line 0, as the c64 target's sys.waitvsync does.
  */
 #define JIFFY_LOW (*(volatile unsigned char *)0xA2)
+#define SCROLY (*(volatile unsigned char *)0xD011)
 
 int usleep(unsigned long microseconds)
 {
@@ -19,4 +23,13 @@ int usleep(unsigned long microseconds)
             ;
     }
     return 0;
+}
+
+void prog8_c64_waitvsync(void)
+{
+    /* bit 7 of SCROLY is bit 8 of the raster line: wait until it is set, then until it is clear again */
+    while (!(SCROLY & 0x80))
+        ;
+    while (SCROLY & 0x80)
+        ;
 }

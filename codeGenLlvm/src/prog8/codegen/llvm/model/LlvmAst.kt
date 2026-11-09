@@ -259,6 +259,13 @@ internal sealed interface LlvmInstruction {
         override val isTerminator: Boolean get() = true
     }
 
+    /** Machine instructions without operands, as `call void asm sideeffect`: LLVM keeps them, and memory accesses on their side. */
+    data class InlineAsm(val code: String) : LlvmInstruction {
+        init {
+            require(code.none { it == '"' || it == '\\' || it == '$' || it == '\n' }) { "inline assembly '$code' needs escaping" }
+        }
+    }
+
     data object Unreachable : LlvmInstruction {
         override val isTerminator: Boolean get() = true
     }

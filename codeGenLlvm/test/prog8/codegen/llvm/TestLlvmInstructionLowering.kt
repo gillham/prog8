@@ -8,6 +8,7 @@ import io.kotest.matchers.string.shouldContain
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
 import prog8.code.target.LlvmTarget
+import prog8.code.target.LlvmTripleProfile
 import prog8.intermediate.IMSyscall
 import prog8.intermediate.IRStSymbolicReference
 import prog8.intermediate.IRVariableInitializer
@@ -17,6 +18,25 @@ import prog8tests.helpers.hostLlvmTarget
 class TestLlvmInstructionLowering: FunSpec({
 
     val focused = TestProgram().apply { focusedSubs() }.module()
+
+    test("SEI and CLI mask and unmask the interrupts with the instructions of the profile's CPU, and do nothing on a hosted target") {
+        val code = """
+            _main.irqs:
+            sei
+            cli
+            return
+            """
+        val expected = mapOf("mos-c64" to ("sei" to "cli"), "z80-trs80-cmd" to ("di" to "ei"), "mc6809-coco" to ("orcc #80" to "andcc #175"))
+        for ((name, instructions) in expected) {
+            val lines = TestProgram(LlvmTarget(2, LlvmTripleProfile.resolve(name))).apply { sub("main.irqs", code = code) }.module().function("main.irqs").lines()
+            withClue(name) {
+                lines shouldHave "  call void asm sideeffect \"${instructions.first}\", \"~{memory}\"()"
+                lines shouldHave "  call void asm sideeffect \"${instructions.second}\", \"~{memory}\"()"
+            }
+        }
+        val hosted = TestProgram().apply { sub("main.irqs", code = code) }.module().function("main.irqs").lines()
+        hosted.none { "asm" in it } shouldBe true
+    }
 
     test("LONG registers hold whole 64-bit addresses, and 32-bit longs sign extended") {
         val lines = focused.function("main.address").lines()

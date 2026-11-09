@@ -44,6 +44,8 @@ data class LlvmTripleProfile(
     val ftellSymbol: String = "ftell",
     /** Other C functions of [C_FUNCTIONS] by another name, such as replacements in a support source for broken ones. */
     val cSymbols: Map<String, String> = emptyMap(),
+    /** A C routine `void f(void)` that sys.waitvsync() calls, such as a raster wait; without it, it waits one 60th of a second. */
+    val waitvsyncSymbol: String? = null,
     val fileOffsetSize: Int = cLongSize,
     val cIntSize: Int = 4,
     private val clangTemplate: String? = null,
@@ -210,6 +212,7 @@ data class LlvmTripleProfile(
         }
         require(runTimeoutSeconds == null || runTimeoutSeconds > 0) { "the run_timeout_seconds of llvm triple profile '$name' must be a positive number" }
         require(cMainSymbol.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "the c_main_symbol of llvm triple profile '$name' must be a C identifier" }
+        require(waitvsyncSymbol == null || waitvsyncSymbol.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "the waitvsync_symbol of llvm triple profile '$name' must be a C identifier" }
         require(direntNameOffset == null || direntNameOffset >= 0) { "the dirent_name_offset of llvm triple profile '$name' must not be negative" }
         require(fileOffsetSize == 4 || fileOffsetSize == 8) { "the llvm triple profile '$name' has file_offset_size $fileOffsetSize, it must be 4 or 8" }
         require(cIntSize == 2 || cIntSize == 4) { "the llvm triple profile '$name' has c_int_size $cIntSize, it must be 2 or 4" }
@@ -240,7 +243,7 @@ data class LlvmTripleProfile(
         const val LINK_SCRIPT = "{link_script}"
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
             "link_command", "link_args", "run_timeout_seconds", "startup_source", "file_source",
-            "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "c_symbols", "file_offset_size", "getchar_symbol",
+            "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "c_symbols", "waitvsync_symbol", "file_offset_size", "getchar_symbol",
             "putchar_symbol", "library", "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env",
             "load_address", "load_address_align", "link_script")
 
@@ -513,6 +516,7 @@ data class LlvmTripleProfile(
                         ?: throw IllegalArgumentException("the c_symbols of llvm triple profile '$name' must be name=symbol pairs: '$pair'")
                     function to symbol
                 },
+                optional("waitvsync_symbol"),
                 fileOffsetSize,
                 cIntSize,
                 clang,

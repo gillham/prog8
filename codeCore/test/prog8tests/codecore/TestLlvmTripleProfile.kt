@@ -523,6 +523,7 @@ class TestLlvmTripleProfile: FunSpec({
             ("usleep" in it.libcLacks) shouldBe false
             it.startupSources shouldBe listOf("mos-c64-support.c")
             it.library shouldBe "c64"
+            it.waitvsyncSymbol shouldBe "prog8_c64_waitvsync"
         }
     }
 
@@ -871,6 +872,7 @@ class TestLlvmTripleProfile: FunSpec({
         rejected("csymbolsunknown", validProfile("c_symbols = memcpy=my_memcpy")) shouldContain "names of C functions that Prog8 doesn't call: memcpy"
         rejected("csymbolsown", validProfile("c_symbols = ftell=my_ftell")) shouldContain "can't rename ftell: use ftell_symbol"
         rejected("csymbolspair", validProfile("c_symbols = fopen")) shouldContain "must be name=symbol pairs: 'fopen'"
+        rejected("waitvsync", validProfile("waitvsync_symbol = wait-vsync")) shouldContain "the waitvsync_symbol of llvm triple profile"
     }
 
     test("file_source files are only written with withFileSources, and need {startup} in the link command and to exist") {

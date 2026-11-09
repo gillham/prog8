@@ -612,6 +612,17 @@ class TestLlvmSyscallLowering: FunSpec({
         text.none { ".sys.curdir.buf" in it } shouldBe true
     }
 
+    test("WAITVSYNC calls the profile's waitvsync_symbol, or else waits one tick through the wait helper") {
+        val mosC64 = LlvmTripleProfile.resolve("mos-c64")
+        mosC64.waitvsyncSymbol shouldBe "prog8_c64_waitvsync"
+        val raster = TestProgram(LlvmTarget(2, mosC64)).apply { waitSub() }.module().function("main.wait").lines()
+        raster.any { it.trim() == "call void @prog8_c64_waitvsync()" } shouldBe true
+        raster.count { "@.sys.wait(" in it } shouldBe 1
+        val ticks = TestProgram(LlvmTarget(2, mosC64.copy(waitvsyncSymbol = null))).apply { waitSub() }.module().function("main.wait").lines()
+        ticks.none { "waitvsync" in it } shouldBe true
+        ticks.count { "@.sys.wait(" in it } shouldBe 2
+    }
+
     test("with a file_extension_separator, fopen, remove and rename get the file names with their last '.' replaced, through internal wrappers") {
         val mosC64 = LlvmTripleProfile.resolve("mos-c64")
         val plain = TestProgram(LlvmTarget(2, mosC64)).apply { allFileSyscallsSub(); allHandleSyscallsSub() }.module()

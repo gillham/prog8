@@ -50,8 +50,8 @@ internal fun FunctionLowering.lowerControl(ins: IRInstruction) {
         Opcode.BITTST -> bitTest(ins)
         Opcode.SEC -> setFlag(Flag.CARRY, LlvmValue.IntConstant(1, LlvmType.I1))
         Opcode.CLC -> setFlag(Flag.CARRY, LlvmValue.IntConstant(0, LlvmType.I1))
-        // a hosted program has no interrupt disable flag
-        Opcode.CLI, Opcode.SEI -> {}
+        Opcode.SEI -> interruptsInstruction(disable = true)?.let { emit(LlvmInstruction.InlineAsm(it)) }
+        Opcode.CLI -> interruptsInstruction(disable = false)?.let { emit(LlvmInstruction.InlineAsm(it)) }
         Opcode.FCOMP -> floatCompare(ins)
         Opcode.BREAKPOINT -> emit(LlvmInstruction.Call(null, external("llvm.debugtrap", LlvmType.Void, emptyList()), emptyList(), LlvmType.Void))
         else -> throw IllegalArgumentException("${ins.opcode} is no control flow instruction")
@@ -127,4 +127,19 @@ private fun FunctionLowering.minusZeroPlus(negative: LlvmValue, positive: LlvmVa
     val minus = derive("sign", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, negative, LlvmType.I8) }
     val plus = derive("sign", LlvmType.I8) { LlvmInstruction.Cast(CastOperator.ZEXT, it, positive, LlvmType.I8) }
     return derive("sign", LlvmType.I8) { LlvmInstruction.BinaryOp(BinaryOperator.SUB, it, plus, minus) }
+}
+
+/**
+ * The instruction that masks (or unmasks) the interrupts of the CPU of the profile's triple, for SEI and CLI: on the
+ * 6502, the Z80 and the 6809 (IRQ and FIRQ, in decimal as `$` is special in inline assembly); null for a hosted
+ * program, which has no interrupt flag.
+ */
+private fun FunctionLowering.interruptsInstruction(disable: Boolean): String? {
+    val triple = builder.profile?.triple ?: return null
+    return when {
+        triple == "mos" || triple.startsWith("mos-") -> if (disable) "sei" else "cli"
+        triple.startsWith("z80") -> if (disable) "di" else "ei"
+        triple.startsWith("mc6809") -> if (disable) "orcc #80" else "andcc #175"
+        else -> null
+    }
 }

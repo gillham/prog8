@@ -101,6 +101,7 @@ internal object LlvmPrinter {
         is LlvmInstruction.Br -> "br label ${localName(insn.targetBlock)}"
         is LlvmInstruction.CondBr -> "br ${typed(insn.condition)}, label ${localName(insn.trueBlock)}, label ${localName(insn.falseBlock)}"
         is LlvmInstruction.Ret -> insn.value?.let { "ret ${typed(it)}" } ?: "ret void"
+        is LlvmInstruction.InlineAsm -> "call void asm sideeffect \"${insn.code}\", \"~{memory}\"()"
         LlvmInstruction.Unreachable -> "unreachable"
     }
 
