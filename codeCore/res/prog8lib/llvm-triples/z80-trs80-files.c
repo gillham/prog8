@@ -3,8 +3,9 @@
  * - ftell (the profile's ftell_symbol). For a file being read, from the DOS's file control block; for one being
  *   written, a byte count of our own, kept by the fopen, fwrite and fputc here (c_symbols), as TRSDOS 2.3 and LDOS
  *   keep that position differently in the FCB. -1 for a file open for both.
- * - fseek (fseek_symbol), as z88dk's lseek, which reads its way to the position, only moves forward with SEEK_CUR and
- *   ignores the offset of SEEK_END. A seek past the end of a file being read fails, as lseek stops at the end; a file
+ * - fseek (fseek_symbol), as z88dk's lseek, which reads its way to the position, only moves forward with SEEK_CUR,
+ *   ignores the offset of SEEK_END, and rewinds by closing and opening the file again, which fails under TRSDOS 1.3.
+ *   This one rewinds through the DOS and reads its way forward. A seek past the end of a file being read fails; a file
  *   being written only seeks to where it is.
  * - fread (c_symbols), as z88dk's never sets the end of file.
  * - appending (fopen with mode "a"), as z88dk's writes garbage after the old end of the file under TRSDOS 2.3.
@@ -27,9 +28,12 @@ static long read_position(FILE *fp)
 {
     struct TRSDOS_FCB *fcb = &((struct TRSDOS_FILE *)fp->desc.fd)->fcb;
     long position = (long)fcb->NRN * 256 + fcb->offset;
-    /* bit 5 of the FCB flags is clear while a sector is in the buffer: the record number is then the next one */
+#ifndef PROG8_TRS80_TRSDOS13
+    /* bit 5 of the FCB flags is clear while a sector is in the buffer: the record number is then the next one, except
+       under TRSDOS 1.3, where it is the one in the buffer */
     if (!(fcb->flags & 0x20))
         position -= 256;
+#endif
     return position;
 }
 
@@ -91,6 +95,23 @@ int prog8_trs80_fputc(int c, FILE *fp)
     return result;
 }
 
+/* moves a file being read to target by reading its way there, from the start if target is behind */
+static int seek_read(FILE *fp, long target)
+{
+    struct TRSDOS_FCB *fcb = &((struct TRSDOS_FILE *)fp->desc.fd)->fcb;
+    long position = read_position(fp);
+
+    if (target < position) {
+        if (trsdos_tst(DOS_REWIND, 0, (char *)fcb))
+            return -1;
+        position = 0;
+    }
+    while (position < target && trsdos_get(fcb) != -1)
+        position++;
+    fp->flags &= ~_IOEOF;
+    return position == target ? 0 : -1;
+}
+
 int prog8_trs80_fseek(FILE *fp, long offset, int whence)
 {
     long target;
@@ -103,8 +124,8 @@ int prog8_trs80_fseek(FILE *fp, long offset, int whence)
             return -1;
         target += offset;
     } else if (whence == SEEK_END && READING(fp)) {
-        if (fseek(fp, 0L, SEEK_END) != 0)
-            return -1;
+        while (trsdos_get(&((struct TRSDOS_FILE *)fp->desc.fd)->fcb) != -1)
+            ;
         target = read_position(fp) + offset;
     } else if (whence == SEEK_END && WRITING(fp)) {
         target = written(fp) + offset;
@@ -115,11 +136,9 @@ int prog8_trs80_fseek(FILE *fp, long offset, int whence)
         return -1;
     if (WRITING(fp))
         return target == written(fp) ? 0 : -1;
-    if (fseek(fp, target, SEEK_SET) != 0)
-        return -1;
-    if (READING(fp) && read_position(fp) != target)
-        return -1;
-    return 0;
+    if (!READING(fp))
+        return fseek(fp, target, SEEK_SET) != 0 ? -1 : 0;
+    return seek_read(fp, target);
 }
 
 size_t prog8_trs80_fread(void *ptr, size_t size, size_t nmemb, FILE *fp)

@@ -844,7 +844,7 @@ class TestLlvmTripleProfile: FunSpec({
         LlvmTripleProfile.load(profile, null, noUserProfiles).writeStartupSources(directory.resolve("own.cmd")).first().readText() shouldBe "; own keyboard"
     }
 
-    test("z80-trs80-m3-trsdos is z80-trs80-cmd with the stack at the top of memory, the heap below it, and no files") {
+    test("z80-trs80-m3-trsdos is z80-trs80-cmd with the stack at the top of memory, the heap below it, and TRSDOS 1.3 file positions") {
         val cmd = LlvmTripleProfile.resolve("z80-trs80-cmd")
         val trsdos = LlvmTripleProfile.resolve("z80-trs80-m3-trsdos")
         trsdos.outputExtension shouldBe ".cmd"
@@ -852,13 +852,15 @@ class TestLlvmTripleProfile: FunSpec({
         trsdos.library shouldBe cmd.library
         trsdos.fileExtensionSeparator shouldBe '/'
         trsdos.startupSources shouldBe cmd.startupSources
-        trsdos.libcLacks shouldBe cmd.libcLacks + setOf("fopen", "remove", "rename")
+        trsdos.libcLacks shouldBe cmd.libcLacks
+        trsdos.fileSources shouldBe cmd.fileSources
         // the link command names the support library through LLVM_Z80
         if (System.getenv("LLVM_Z80") != null) {
             val linkCommand = trsdos.linkCommand.orEmpty()
             ("-pragma-define:REGISTER_SP=-0x4411" in linkCommand) shouldBe true
+            ("-DPROG8_TRS80_TRSDOS13" in linkCommand) shouldBe true
             ("-pragma-define:CRT_HEAP_ENABLE=1" in linkCommand) shouldBe false
-            linkCommand.filterNot { it == "-pragma-define:REGISTER_SP=-0x4411" } shouldBe
+            linkCommand.filterNot { it == "-pragma-define:REGISTER_SP=-0x4411" || it == "-DPROG8_TRS80_TRSDOS13" } shouldBe
                 cmd.linkCommand.orEmpty().filterNot { it == "-pragma-define:CRT_HEAP_ENABLE=1" }
         }
     }

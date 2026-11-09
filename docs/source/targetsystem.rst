@@ -714,8 +714,8 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   DOS's file control block. TRSDOS 2.3 and LDOS keep the position of a file being written differently there, so the
   source's ``fopen``, ``fwrite`` and ``fputc`` count the bytes written instead, in three bytes of the ``FILE`` that
   z88dk doesn't use; for a file open for both ``ftell`` gives -1. A seek past the end of a file being read fails, and
-  a file being written only seeks to where it is. Seeking reads the file from its start to the position, so it is
-  slow in a large file. z88dk's appending (mode ``"a"``) reads to the end of the file and writes from there, which
+  a file being written only seeks to where it is. Seeking forward reads the file to the position, and seeking back
+  rewinds it through the DOS and reads it from its start, so it is slow in a large file. z88dk's appending (mode ``"a"``) reads to the end of the file and writes from there, which
   under TRSDOS 2.3 on the Model I writes garbage after the old end, so the source's ``fopen`` opens an existing file
   for reading, reads it to the end for its size, lets the DOS position to the end, and then writes there.
   z88dk's ``remove`` opens the file without a sector buffer to delete it, which fails under TRSDOS 2.3, so the source
@@ -739,9 +739,11 @@ Other control codes, and the characters past the maximum length, are ignored. Th
 - ``z80-trs80-m3-trsdos``: ``z80-trs80-cmd`` for the Model III with TRSDOS 1.3. The link command puts the stack at
   HIGH$, which the Model III keeps at ``$4411`` (``-pragma-define:REGISTER_SP=-0x4411``), so it fits the machine's
   RAM size and what the DOS keeps in high memory, and the malloc heap ends below the stack (no ``CRT_HEAP_ENABLE``).
-  z88dk's file routines hang under TRSDOS 1.3, even then, so the profile lacks ``fopen`` and ``remove`` and the
-  file routines report a failure. Programs also run on the Model III with LDOS (with no files), but not on the
-  Model I, whose HIGH$ is at ``$4049``. In trs80gp, ``trs80gp -m3 prog.cmd`` boots TRSDOS 1.3 and runs it.
+  Files work as with ``z80-trs80-cmd``, but TRSDOS 1.3 keeps a different record number in the file control block,
+  which ``-DPROG8_TRS80_TRSDOS13`` in the link command makes the file source follow. Programs also run on the Model
+  III with LDOS, where ``fileio.tell`` and ``fileio.seek`` of a file being read are then wrong, but not on the
+  Model I, whose HIGH$ is at ``$4049``. In trs80gp, some programs hang when they create or open a file under
+  TRSDOS 1.3, as the DOS aborts to its prompt while loading an overlay; the cause is not known yet. In trs80gp, ``trs80gp -m3 prog.cmd`` boots TRSDOS 1.3 and runs it.
 
   z88dk's TRS-80 support is for the Model I and III memory map; it doesn't support the Model 4's own mode. Under
   TRSDOS 6 on a Model 4, a program loads and exits, but its console output doesn't reach the screen, and the file

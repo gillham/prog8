@@ -2398,13 +2398,10 @@ private val notRunOnTrs80gpCas: Map<String, String> = notRunOnTrs80gp +
 
 // the programs that don't run as they are on llvm16 under TRSDOS 1.3 in trs80gp, with the reason
 private val notRunOnTrs80gpTrsdos: Map<String, String> = notRunOnTrs80gp +
-    listOf(
-        "diskio writing, reading lines, seeking in and deleting a text file",
-        "fileio copying between two open files, seeking and the end of the file",
-        "diskio saving and loading memory",
-        "fileio appending to a file",
-        "diskio renaming and deleting files"
-    ).associateWith { "z88dk's TRS-80 file routines hang under TRSDOS 1.3, so the z80-trs80-m3-trsdos profile has no files" }
+    mapOf(
+        "diskio saving and loading memory" to
+            "creating the file hangs: the floppy controller stays busy while the DOS loads an overlay, and the DOS aborts to its prompt (not understood yet)"
+    )
 
 // a few programs for the other TRS-80 models, as a run takes about 2 seconds
 private val trs80gpSmokeTests = setOf(
