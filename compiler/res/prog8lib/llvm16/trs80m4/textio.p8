@@ -18,6 +18,7 @@ txt {
     extsub prog8_trs80m4_where() -> uword
     extsub prog8_trs80m4_getchr(word col, word row) -> word
     extsub prog8_trs80m4_setchr(word col, word row, word char)
+    extsub prog8_trs80m4_bell()
 
 sub getkey() -> ubyte {
     ; ---- the key pressed, or 0 when there is none, without waiting (@KBD)
@@ -70,7 +71,8 @@ sub color (ubyte txtcol) {
 }
 
 sub bell() {
-    ; no bell either
+    ; ---- a short beep (@SOUND)
+    prog8_trs80m4_bell()
 }
 
 sub setchr (ubyte col, ubyte row, ubyte char) {

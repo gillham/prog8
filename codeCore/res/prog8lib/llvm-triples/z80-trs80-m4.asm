@@ -21,6 +21,14 @@ prog8_trs80m4_stack:
     ld sp,hl
     push de
 
+    ; the exit status goes to the DOS through @EXIT, once the rest of the exit code has run (such as closing the files,
+    ; which the library links after this): the end of crt0_exit returns to prog8_trs80m4_exit instead. HL is the status.
+    SECTION code_crt_exit
+    ld (prog8_trs80m4_status),hl
+    pop de
+    ld de,prog8_trs80m4_exit
+    push de
+
     SECTION code_user
     PUBLIC _prog8_trs80m4_fputc
     PUBLIC _prog8_trs80m4_getk
@@ -29,6 +37,13 @@ prog8_trs80m4_stack:
     PUBLIC _prog8_trs80m4_where
     PUBLIC _prog8_trs80m4_getchr
     PUBLIC _prog8_trs80m4_setchr
+    PUBLIC _prog8_trs80m4_bell
+    PUBLIC _prog8_trs80m4_pause
+
+prog8_trs80m4_exit:
+    ld hl,(prog8_trs80m4_status)
+    ld a,22                 ; @EXIT, with the status in HL
+    rst $28
 
 ; int fputc_cons(int c): the character through @DSP, which knows 8, 10, 13, 16/17 (reverse video on/off) and 28-31;
 ; 12, which clears the screen on z88dk's consoles, becomes home (28) and erase to the end of the screen (31)
@@ -123,3 +138,25 @@ prog8_trs80m4_position:
     ld l,(hl)               ; col
     ld h,e
     ret
+
+; void prog8_trs80m4_bell(void): a short beep (@SOUND, B = the duration in bits 3-7 and the tone in bits 0-2)
+_prog8_trs80m4_bell:
+    ld b,$23
+    ld a,104                ; @SOUND
+    rst $28
+    ret
+
+; void prog8_trs80m4_pause(int count): waits count times about 17 microseconds (@PAUSE); count is not 0
+_prog8_trs80m4_pause:
+    ld hl,2
+    add hl,sp
+    ld c,(hl)
+    inc hl
+    ld b,(hl)
+    ld a,16                 ; @PAUSE
+    rst $28
+    ret
+
+    SECTION bss_user
+prog8_trs80m4_status:
+    defs 2

@@ -753,10 +753,16 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   library (``-subtype=disk``), at ``$3000``, and its startup source ``z80-trs80-m4.asm`` uses the DOS's supervisor
   calls (``RST 28H``): the stack moves to HIGH$, but below ``$f400``, as the display and keyboard routines page the
   screen and keyboard into ``$f400``-``$ffff`` while they run; console output goes through ``@DSP``, and ``getk`` and
-  ``fgetc_cons`` through ``@KBD`` and ``@KEY``. ``library = trs80m4`` gives ``txt`` the trs80m4 textio
+  ``fgetc_cons`` through ``@KBD`` and ``@KEY``; the program ends through ``@EXIT`` with its exit status in HL, after the
+  rest of z88dk's exit code (which would close the files). Its other startup source ``z80-trs80-m4-wait.c`` has the
+  ``usleep`` for ``sys.wait()`` and ``sys.waitvsync()``: ``@PAUSE``, whose count takes about 17 microseconds (measured
+  on trs80gp's Model 4). The command line is what follows the program's name, so a drive spec after the name comes
+  first: ``PROG:1 A B`` gives ``sys.argc()`` 4, with ``argv(1)`` the drive (``1``), then ``A`` and ``B``, which a
+  program can use to find its files on the drive it ran from; ``PROG A B`` gives 3. ``argv(0)``, the program name, is
+  empty, as z88dk's TRS-80 startup code doesn't set it. ``library = trs80m4`` gives ``txt`` the trs80m4 textio
   (``prog8lib/llvm16/trs80m4/textio.p8``): ``plot``, ``getchr`` and ``setchr`` through ``@VDCTL``, reverse video
-  through the display codes 16 and 17 (``getchr`` gives a reversed character with bit 7 set), 80 columns and 24 rows,
-  and no colors. There are no files yet: z88dk's file routines are stubs that fail. In trs80gp,
+  through the display codes 16 and 17 (``getchr`` gives a reversed character with bit 7 set), ``bell`` through
+  ``@SOUND``, 80 columns and 24 rows, and no colors. There are no files yet: z88dk's file routines are stubs that fail. In trs80gp,
   ``trs80gp -m4 -ld prog.cmd`` boots LS-DOS 6.3 and runs it, and ``trs80gp -m4 prog.cmd`` TRSDOS 6.
 - ``z80-cpm``: a ``.com`` program for CP/M 2.2 and later, with file I/O through the BDOS. The command line comes
   from the CCP, which turns it into upper case. tnylpo (``tnylpo prog.com``) and RunCPM run it on the host; tnylpo
