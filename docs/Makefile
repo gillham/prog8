@@ -30,6 +30,7 @@ symboldumps:
 	prog8c -target llvm16 -triple z80-c128 import-all-llvm16.p8 -dumpsymbols > source/_static/symboldumps/skeletons-llvm16-z88dk-ansi.txt
 	prog8c -target llvm16 -triple mc6809-coco import-all-llvm16.p8 -dumpsymbols > source/_static/symboldumps/skeletons-llvm16-coco.txt
 	prog8c -target llvm16 -triple mos-c64 import-all-llvm16.p8 -dumpsymbols > source/_static/symboldumps/skeletons-llvm16-c64.txt
+	prog8c -target llvm16 -triple z80-trs80-m4 import-all-llvm16.p8 -dumpsymbols > source/_static/symboldumps/skeletons-llvm16-trs80m4.txt
 	prog8c -target llvm32 import-all-llvm32.p8 -dumpsymbols > source/_static/symboldumps/skeletons-llvm32.txt
 	prog8c -target llvm64 import-all-llvm64.p8 -dumpsymbols > source/_static/symboldumps/skeletons-llvm64.txt
 

@@ -415,6 +415,7 @@ Grouped per compilation target.
 * `llvm16 with the z88dk-ansi textio <_static/symboldumps/skeletons-llvm16-z88dk-ansi.txt>`_ (``-triple z80-c128``)
 * `llvm16 with the coco textio <_static/symboldumps/skeletons-llvm16-coco.txt>`_ (``-triple mc6809-coco``)
 * `llvm16 with the c64 textio <_static/symboldumps/skeletons-llvm16-c64.txt>`_ (``-triple mos-c64``)
+* `llvm16 with the trs80m4 textio <_static/symboldumps/skeletons-llvm16-trs80m4.txt>`_ (``-triple z80-trs80-m4``)
 * `llvm32 <_static/symboldumps/skeletons-llvm32.txt>`_
 * `llvm64 <_static/symboldumps/skeletons-llvm64.txt>`_
 

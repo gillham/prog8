@@ -5,11 +5,17 @@
  * The printer gets the text, and each generic console control sequence (12, 4 n, 16 n, 17 n, 20 n, 22 y x, ESC x, ESC Y
  * y x, ESC b/c/s/r n) as its codes in decimal between braces, such as {22,34,36}: the tests then see the cursor and
  * color changes too, without a screen dump.
+ * With -DPROG8_CONSOLE=name (the Model 4), name is the console routine instead, and every control code but 9, 10 and 13
+ * is printed as {code}, as the Model 4's take no parameters.
  */
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef PROG8_CONSOLE
+extern int PROG8_CONSOLE(int c) __smallc;
+#else
 extern int fputc_cons_generic(int c);
+#endif
 
 static unsigned char extensions;
 
@@ -51,6 +57,14 @@ static unsigned char escape;
 static void mirror(int c)
 {
     c &= 255;
+#ifdef PROG8_CONSOLE
+    if (c < 32 && c != 9 && c != 10 && c != 13) {
+        lprint('{');
+        lprint_number(c);
+        lprint('}');
+        return;
+    }
+#endif
     if (parameters) {
         lprint(',');
         lprint_number(c);
@@ -80,5 +94,9 @@ int prog8_fputc(int c)
 {
     if (prog8_trs80gp())
         mirror(c);
+#ifdef PROG8_CONSOLE
+    return PROG8_CONSOLE(c);
+#else
     return fputc_cons_generic(c);
+#endif
 }

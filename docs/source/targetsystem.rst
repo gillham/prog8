@@ -267,7 +267,7 @@ A triple profile is a "properties" file. ``-triple <name|file>`` looks for it in
    ``arm64-apple-macosx``, ``x86_64-apple-macosx``, ``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``,
    ``riscv64-unknown-linux-gnu``, ``riscv32-unknown-linux-gnu``, ``armv7-unknown-linux-gnueabihf``, ``x86_64-pc-windows-msvc``,
    ``x86_64-w64-windows-gnu``, and for ``llvm16`` ``mos-sim``, ``mos-c64``, ``z80-test``, ``z80-trs80``, ``z80-trs80-cmd``,
-   ``z80-trs80-m3-trsdos``, ``z80-cpm``, ``z80-zx``, ``z80-c128``, ``mc6809-sim`` and ``mc6809-coco`` (``z80-z88dk`` is only a base, see ``base`` below)
+   ``z80-trs80-m3-trsdos``, ``z80-trs80-m4``, ``z80-cpm``, ``z80-zx``, ``z80-c128``, ``mc6809-sim`` and ``mc6809-coco`` (``z80-z88dk`` is only a base, see ``base`` below)
 4. any other triple that clang knows, such as ``aarch64-linux-musl`` or ``i686-unknown-linux-gnu``: the compiler asks
    clang for its normalized name, data layout and C ``long`` size, and builds with ``--target=<name>``.
    Run, link and startup settings need a profile file.
@@ -687,12 +687,14 @@ none, without waiting, and ``txt.waitkey()``, which waits for a key and gives it
   is built with it, which turns Enter into 10, the code of the down arrow, so the TRS-80 profiles link their own
   ``getk`` and ``fgetc_cons`` from the startup source ``z80-trs80-keyboard.asm`` (``-pragma-redirect`` in the link
   command): they give the ROM's codes, Enter 13, down 10, up 91, left 8, right 9 and CLEAR 31, also to ``txt.chrin()``.
+- the trs80m4 textio (``z80-trs80-m4``): ``getkey`` is ``@KBD``, which gives the key typed or 0, and ``waitkey`` is
+  ``txt.chrin()``, ``@KEY``, which waits for a key. Enter is 13.
 - the coco textio (``mc6809-coco``): ``getkey`` calls Color BASIC's ``POLCAT`` (picolibc's ``char __decb_getc(void)``,
   through the wrapper ``int prog8_coco_getkey(void)`` in the profile's startup source), which reports each key press
   once, and ``waitkey`` calls it until it gives a key. Enter is 13 there, while ``txt.chrin()`` (picolibc's ``getchar``,
   which polls ``POLCAT`` too) gives it as 10. Both read the same keyboard, so a key goes to whichever reads first.
 
-On the machine profiles (the z88dk, z88dk-ansi and coco textios) the key routines don't echo, so ``txt.input_line()``
+On the machine profiles (the z88dk, z88dk-ansi, trs80m4 and coco textios) the key routines don't echo, so ``txt.input_line()``
 (and ``input_chars``, ``readln`` and ``prompt``, which use it) echoes each character it stores through ``txt.chrout()``,
 and a new line at Enter, as BASIC does. Backspace (8, the CoCo's and the TRS-80's left arrow; 12 and 127 are taken as
 it too, the delete key of the ZX Spectrum and the C128) removes the last character from the screen and the buffer.
@@ -745,9 +747,17 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   Model I, whose HIGH$ is at ``$4049``. In trs80gp, some programs hang when they create or open a file under
   TRSDOS 1.3, as the DOS aborts to its prompt while loading an overlay; the cause is not known yet. In trs80gp, ``trs80gp -m3 prog.cmd`` boots TRSDOS 1.3 and runs it.
 
-  z88dk's TRS-80 support is for the Model I and III memory map; it doesn't support the Model 4's own mode. Under
-  TRSDOS 6 on a Model 4, a program loads and exits, but its console output doesn't reach the screen, and the file
-  routines hang, as TRSDOS 6 has none of the Model I/III DOS entry points that z88dk's library calls.
+- ``z80-trs80-m4``: a ``.cmd`` program for the TRS-80 Model 4 in its own mode, with TRSDOS 6 or LS-DOS 6, on its 80x24
+  screen. z88dk has no Model 4 target (its TRS-80 support is for the Model I and III memory map, and its file routines
+  call Model I/III DOS entry points that TRSDOS 6 doesn't have), so the profile links for ``+trs80`` without the TRSDOS
+  library (``-subtype=disk``), at ``$3000``, and its startup source ``z80-trs80-m4.asm`` uses the DOS's supervisor
+  calls (``RST 28H``): the stack moves to HIGH$, but below ``$f400``, as the display and keyboard routines page the
+  screen and keyboard into ``$f400``-``$ffff`` while they run; console output goes through ``@DSP``, and ``getk`` and
+  ``fgetc_cons`` through ``@KBD`` and ``@KEY``. ``library = trs80m4`` gives ``txt`` the trs80m4 textio
+  (``prog8lib/llvm16/trs80m4/textio.p8``): ``plot``, ``getchr`` and ``setchr`` through ``@VDCTL``, reverse video
+  through the display codes 16 and 17 (``getchr`` gives a reversed character with bit 7 set), 80 columns and 24 rows,
+  and no colors. There are no files yet: z88dk's file routines are stubs that fail. In trs80gp,
+  ``trs80gp -m4 -ld prog.cmd`` boots LS-DOS 6.3 and runs it, and ``trs80gp -m4 prog.cmd`` TRSDOS 6.
 - ``z80-cpm``: a ``.com`` program for CP/M 2.2 and later, with file I/O through the BDOS. The command line comes
   from the CCP, which turns it into upper case. tnylpo (``tnylpo prog.com``) and RunCPM run it on the host; tnylpo
   works in the current directory and gives its files lower case names on the host.

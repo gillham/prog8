@@ -801,7 +801,11 @@ main {
                         val llFile = compiledLlFile(compileText(target, optimize, program.source, outputDir.resolve(dirName).createDirectories()))
                         val (exitCode, output) = runner.buildAndRun(llFile, program.input, workingDirectory, program.args.takeIf { runner.profile.programArgs }.orEmpty())
                         withClue(output) { exitCode shouldBe program.exitCode }
-                        output shouldBe (program.z88dkConsoleOutput.takeIf { runner.profile.library == "z88dk" } ?: program.output)
+                        output shouldBe (when (runner.profile.library) {
+                            "z88dk" -> program.z88dkConsoleOutput
+                            "trs80m4" -> program.trs80m4ConsoleOutput
+                            else -> null
+                        } ?: program.output)
                         withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
                     }
                 }
@@ -821,8 +825,13 @@ main {
             }
         }
 
-        if (runner.profile.library == "z88dk") for ((name, program) in z88dkTextioPrograms.filterKeys(runner::runs)) {
-            test("$name: gives the expected exit code and console output with the z88dk textio in ${runner.displayName}").config(enabledOrReasonIf = runner.requires) {
+        val textioPrograms = when (runner.profile.library) {
+            "z88dk" -> z88dkTextioPrograms
+            "trs80m4" -> trs80m4TextioPrograms
+            else -> emptyMap()
+        }
+        for ((name, program) in textioPrograms.filterKeys(runner::runs)) {
+            test("$name: gives the expected exit code and console output with the ${runner.profile.library} textio in ${runner.displayName}").config(enabledOrReasonIf = runner.requires) {
                 for (optimize in listOf(false, true)) {
                     withClue("optimize=$optimize") {
                         val llFile = compiledLlFile(compileText(target, optimize, program.source, outputDir.resolve(dirName).createDirectories()))
@@ -839,7 +848,7 @@ main {
         for (runner in llvm16ProgramRunners) {
             withClue("the programs that the notRun map of ${runner.displayName} names") { runner.notRun.keys.filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
             withClue("the programs that the only set of ${runner.displayName} names") {
-                runner.only.orEmpty().filter { it !in programs && it !in outputPrograms && it !in z88dkTextioPrograms } shouldBe emptyList()
+                runner.only.orEmpty().filter { it !in programs && it !in outputPrograms && it !in z88dkTextioPrograms && it !in trs80m4TextioPrograms } shouldBe emptyList()
             }
         }
     }
@@ -852,7 +861,8 @@ main {
             val sources = programs + outputPrograms.mapValues { it.value.source } +
                 z88dkTextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "z88dk" || profile.library == "z88dk-ansi" }.orEmpty() +
                 cocoTextioPrograms.takeIf { profile.library == "coco" }.orEmpty() +
-                c64TextioPrograms.takeIf { profile.library == "c64" }.orEmpty() + keyboardPrograms
+                c64TextioPrograms.takeIf { profile.library == "c64" }.orEmpty() +
+                trs80m4TextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "trs80m4" }.orEmpty() + keyboardPrograms
             val failed = sources.filterKeys { it !in linker.notLinked }.filter { (_, source) ->
                 val result = compileText(target, true, source, dir) ?: return@filter true
                 val llFile = compiledLlFile(result)
@@ -2409,10 +2419,22 @@ private val notRunOnTrs80gpTrsdos: Map<String, String> = notRunOnTrs80gp +
             "creating the file hangs: the floppy controller stays busy while the DOS loads an overlay, and the DOS aborts to its prompt (not understood yet)"
     )
 
+// the programs that don't run as they are on llvm16 on the TRS-80 Model 4 in trs80gp, with the reason
+private val notRunOnTrs80gpM4: Map<String, String> = notRunOnTrs80gp +
+    listOf(
+        "diskio writing, reading lines, seeking in and deleting a text file",
+        "fileio copying between two open files, seeking and the end of the file",
+        "diskio saving and loading memory",
+        "fileio appending to a file",
+        "diskio renaming and deleting files",
+        "diskio status of the last disk operation"
+    ).associateWith { "z80-trs80-m4 has no files yet: z88dk's file routines are stubs there" }
+
 // a few programs for the other TRS-80 models, as a run takes about 2 seconds
 private val trs80gpSmokeTests = setOf(
     "text output",
     "the z88dk textio routines",
+    "the trs80m4 textio routines",
     "number formatting",
     "strings library",
     "memory routines and sys.exit",
@@ -2429,7 +2451,8 @@ private val llvm16ProgramRunners = listOf(
     Llvm16ProgramRunner(testProfile("trs80gp-m3"), "trs80gp (TRS-80 Model III, LDOS)", requiresTrs80gp, notRunOnTrs80gp, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m3-trsdos"), "trs80gp (TRS-80 Model III, TRSDOS 1.3)", requiresTrs80gp, notRunOnTrs80gpTrsdos, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m1"), "trs80gp (TRS-80 Model I, TRSDOS)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
-    Llvm16ProgramRunner(testProfile("trs80gp-m4"), "trs80gp (TRS-80 Model 4, TRSDOS 6)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
+    Llvm16ProgramRunner(testProfile("trs80gp-m4"), "trs80gp (TRS-80 Model 4, LS-DOS 6.3)", requiresTrs80gp, notRunOnTrs80gpM4, pythonScript = true),
+    Llvm16ProgramRunner(testProfile("trs80gp-m4-trsdos"), "trs80gp (TRS-80 Model 4, TRSDOS 6)", requiresTrs80gp, notRunOnTrs80gpM4, only = trs80gpSmokeTests, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-cas"), "trs80gp (TRS-80 Model III, ROM BASIC, .cas)", requiresTrs80gp, notRunOnTrs80gpCas, pythonScript = true)
 )
 
@@ -2464,6 +2487,7 @@ private val linkOnlyProfiles = listOf(
     LinkOnlyProfile("z80-trs80", notLinkedOnZ88dk),
     LinkOnlyProfile("z80-trs80-cmd", notLinkedOnZ88dk),
     LinkOnlyProfile("z80-trs80-m3-trsdos", notLinkedOnZ88dk),
+    LinkOnlyProfile("z80-trs80-m4", notLinkedOnZ88dk),
     LinkOnlyProfile("z80-cpm", notLinkedOnZ88dk),
     LinkOnlyProfile("z80-zx", notLinkedOnZ88dk),
     LinkOnlyProfile("z80-c128", notLinkedOnZ88dk),
@@ -5314,10 +5338,11 @@ main {
 /**
  * A complete program that uses the llvm64 library, with the exit code and the console output that it should give
  * for the [input] and the command line [args]. It runs in an empty directory named run, which it has to leave empty.
- * [z88dkConsoleOutput] is the output with the z88dk textio when it differs, as trs80gp's printer copy shows it (see trs80gp-output.c).
+ * [z88dkConsoleOutput] is the output with the z88dk textio when it differs, as trs80gp's printer copy shows it (see trs80gp-output.c),
+ * and [trs80m4ConsoleOutput] the one with the trs80m4 textio.
  */
 private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0, val input: String = "", val args: List<String> = emptyList(),
-                            val z88dkConsoleOutput: String? = null)
+                            val z88dkConsoleOutput: String? = null, val trs80m4ConsoleOutput: String? = null)
 
 /** Programs with extsubs that call the C library: they can't import textio, which uses the runtime's own declarations of putchar and getchar. */
 private val externalPrograms = mapOf(
@@ -5507,6 +5532,64 @@ main {
     }
 }""", "{12}HELLO\nA 200 54321\n{22,37,42}AT{27,112}R{27,113}{22,40,32}X{22,37,45}{22,40,95}Y{22,37,45}{16,34}C{22,37,42}{16,35}A{16,34}" +
         "{22,37,46}{22,42,32}READ H0ARCX\n")
+)
+
+/**
+ * Programs for the trs80m4 textio of the Model 4: the expected output is the console output that trs80gp's printer copy
+ * shows (plot() and setchr() go to the screen directly, so they aren't in it), and the exit status the number of the
+ * first screen read-back check that fails.
+ */
+private val trs80m4TextioPrograms = mapOf(
+    "the trs80m4 textio routines" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.cls()
+        txt.print("HELLO")
+        txt.nl()
+        txt.chrout('A')
+        txt.spc()
+        txt.print_ub(200)
+        txt.nl()
+        txt.plot(10, 5)
+        txt.print("AT")
+        txt.rvs_on()
+        txt.print("R")
+        txt.rvs_off()
+        txt.print("N")
+        txt.setchr(0, 8, 'X')
+        txt.setchr(txt.width() - 1, 23, 'Y')
+        txt.plot(0, 10)
+        txt.column(4)
+        txt.print("COL")
+        txt.nl()
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        if txt.getchr(0, 0) != 'H' or txt.getchr(4, 0) != 'O'
+            return 1
+        if txt.getchr(0, 1) != 'A' or txt.getchr(2, 1) != '2'
+            return 2
+        if txt.getchr(10, 5) != 'A' or txt.getchr(11, 5) != 'T'
+            return 3
+        ; reverse video sets bit 7
+        if txt.getchr(12, 5) != ('R' | $80) or txt.getchr(13, 5) != 'N'
+            return 4
+        if txt.getchr(0, 8) != 'X' or txt.getchr(79, 23) != 'Y'
+            return 5
+        if txt.getchr(4, 10) != 'C' or txt.getchr(0, 10) != ' '
+            return 6
+        if txt.width() != 80 or txt.height() != 24 or txt.getchr(80, 0) != 255
+            return 7
+        ; no key is waiting
+        if txt.getkey() != 0
+            return 8
+        return 0
+    }
+}""", "{12}HELLO\nA 200\nAT{16}R{17}NCOL\n")
 )
 
 /**
@@ -5744,7 +5827,8 @@ main {
         txt.nl()
     }
 }""", "Hello from Prog8 LLVM!\nX Y\nmultiple\n\u001b[7mreverse\u001b[0m\u001b[32m\u001b[H\u001b[2;4H\u0007\n",
-        z88dkConsoleOutput = "Hello from Prog8 LLVM!\nX Y\nmultiple\n{27,112}reverse{27,113}{16,34}{22,32,32}{22,34,36}\n"),
+        z88dkConsoleOutput = "Hello from Prog8 LLVM!\nX Y\nmultiple\n{27,112}reverse{27,113}{16,34}{22,32,32}{22,34,36}\n",
+        trs80m4ConsoleOutput = "Hello from Prog8 LLVM!\nX Y\nmultiple\n{16}reverse{17}{28}\n"),
 
     "number formatting" to OutputProgram($$"""
 %import textio
