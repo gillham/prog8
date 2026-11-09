@@ -2218,13 +2218,15 @@ private val notRunOnArm = setOf(
     "diskio directories, renaming and deleting",
     "diskio directory listings of the files and subdirectories, sorted by name",
     "diskio writing, reading lines, seeking in and deleting a text file",
-    "fileio copying between two open files, seeking and the end of the file"
+    "fileio copying between two open files, seeking and the end of the file",
+    "diskio renaming and deleting files"
 ) + programsWithLp64Extsubs
 
 // the same on bare metal RISC-V, except that its newlib keeps the position in a file when a seek fails
 private val notRunOnRiscv = setOf(
     "diskio directories, renaming and deleting",
-    "diskio directory listings of the files and subdirectories, sorted by name"
+    "diskio directory listings of the files and subdirectories, sorted by name",
+    "diskio renaming and deleting files"
 ) + programsWithLp64Extsubs
 
 private val programsWithWideAddresses =
@@ -2260,7 +2262,8 @@ private val notRunOnMos: Map<String, String> =
         "diskio directory listings of the files and subdirectories, sorted by name",
         "fileio copying between two open files, seeking and the end of the file",
         "diskio saving and loading memory",
-        "fileio appending to a file"
+        "fileio appending to a file",
+        "diskio renaming and deleting files"
     ).associateWith { "mos-sim has no file system" } +
     mapOf(
         "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the mos-sim C library lacks",
@@ -2282,7 +2285,8 @@ private val notRunOn6809: Map<String, String> =
         "diskio directory listings of the files and subdirectories, sorted by name",
         "fileio copying between two open files, seeking and the end of the file",
         "diskio saving and loading memory",
-        "fileio appending to a file"
+        "fileio appending to a file",
+        "diskio renaming and deleting files"
     ).associateWith { "picolibc's semihost build for usim09batch has no file system: fopen links but returns NULL" } +
     mapOf(
         "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which picolibc lacks without its float library",
@@ -2300,7 +2304,8 @@ private val notRunOnZ80: Map<String, String> =
     ).associateWith { "z88dk-ticks passes no command line, not even the program name: argc is 0" } +
     listOf(
         "diskio directories, renaming and deleting",
-        "diskio directory listings of the files and subdirectories, sorted by name"
+        "diskio directory listings of the files and subdirectories, sorted by name",
+        "diskio renaming and deleting files"
     ).associateWith { "z88dk +test has no directories, and z88dk-ticks can't rename or delete files" } +
     listOf(
         "diskio writing, reading lines, seeking in and deleting a text file",
@@ -2387,7 +2392,8 @@ private val notRunOnTrs80gpCas: Map<String, String> = notRunOnTrs80gp +
         "diskio directory listings of the files and subdirectories, sorted by name",
         "fileio copying between two open files, seeking and the end of the file",
         "diskio saving and loading memory",
-        "fileio appending to a file"
+        "fileio appending to a file",
+        "diskio renaming and deleting files"
     ).associateWith { "without a DOS, z88dk's TRS-80 file routines are stubs that fail" }
 
 // the programs that don't run as they are on llvm16 under TRSDOS 1.3 in trs80gp, with the reason
@@ -2396,7 +2402,8 @@ private val notRunOnTrs80gpTrsdos: Map<String, String> = notRunOnTrs80gp +
         "diskio writing, reading lines, seeking in and deleting a text file",
         "fileio copying between two open files, seeking and the end of the file",
         "diskio saving and loading memory",
-        "fileio appending to a file"
+        "fileio appending to a file",
+        "diskio renaming and deleting files"
     ).associateWith { "z88dk's TRS-80 file routines hang under TRSDOS 1.3, so the z80-trs80-m3-trsdos profile has no files" }
 
 // a few programs for the other TRS-80 models, as a run takes about 2 seconds
@@ -6852,6 +6859,45 @@ main {
         diskio.delete("fresh.bin")
     }
 }""", "300 true\n300 600 true\n600 true 0 0 true\n5 true 5 true\n"),
+
+    "diskio renaming and deleting files" to OutputProgram("""
+%import textio
+%import fileio
+%import diskio
+%zeropage basicsafe
+
+main {
+    ubyte[600] data
+    ubyte[600] back
+
+    sub start() {
+        uword i
+        for i in 0 to len(data)-1
+            data[i] = lsb(i * 7 + msb(i))
+        pointer f = fileio.open("old.bin", "wb")
+        void fileio.write(f, &data, len(data))
+        void fileio.close(f)
+        diskio.rename("old.bin", "new.bin")
+        txt.print_bool(diskio.exists("old.bin"))
+        txt.spc()
+        txt.print_bool(diskio.exists("new.bin"))
+        txt.spc()
+        f = fileio.open("new.bin", "rb")
+        txt.print_uw(fileio.read(f, &back, len(back)))
+        txt.spc()
+        txt.print_b(sys.memcmp(&data, &back, len(data)))
+        txt.spc()
+        txt.print_bool(fileio.close(f))
+        txt.nl()
+        diskio.rename("missing.bin", "gone.bin")
+        txt.print_bool(diskio.exists("gone.bin"))
+        txt.nl()
+        diskio.delete("new.bin")
+        diskio.delete("missing.bin")
+        txt.print_bool(diskio.exists("new.bin"))
+        txt.nl()
+    }
+}""", "false true 600 0 true\nfalse\nfalse\n"),
 
     "strings library" to OutputProgram("""
 %import textio

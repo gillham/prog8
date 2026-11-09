@@ -665,14 +665,15 @@ class TestLlvmTripleProfile: FunSpec({
             }
         }
         val cmd = LlvmTripleProfile.resolve("z80-trs80-cmd")
-        ("rename" in cmd.libcLacks) shouldBe true
-        (cmd.libcLacks intersect setOf("free", "realloc", "strdup", "ftell")) shouldBe emptySet()
-        // the ftell that z88dk's TRS-80 library lacks, and an fseek and fread that work, come from a file source
+        (cmd.libcLacks intersect setOf("free", "realloc", "strdup", "ftell", "rename")) shouldBe emptySet()
+        // the ftell and rename that z88dk's TRS-80 library lacks, and an fseek, fread and remove that work, come from a file source
         cmd.fileSources shouldBe listOf("z80-trs80-files.c")
         cmd.ftellSymbol shouldBe "prog8_trs80_ftell"
         cmd.fseekSymbol shouldBe "prog8_trs80_fseek"
         cmd.cSymbol("fread") shouldBe "prog8_trs80_fread"
         cmd.cSymbol("fopen") shouldBe "prog8_trs80_fopen"
+        cmd.cSymbol("rename") shouldBe "prog8_trs80_rename"
+        cmd.cSymbol("remove") shouldBe "prog8_trs80_remove"
         cmd.cSymbol("ftell") shouldBe "prog8_trs80_ftell"
         cmd.cSymbol("fclose") shouldBe "fclose"
     }
@@ -851,7 +852,7 @@ class TestLlvmTripleProfile: FunSpec({
         trsdos.library shouldBe cmd.library
         trsdos.fileExtensionSeparator shouldBe '/'
         trsdos.startupSources shouldBe cmd.startupSources
-        trsdos.libcLacks shouldBe cmd.libcLacks + setOf("fopen", "remove")
+        trsdos.libcLacks shouldBe cmd.libcLacks + setOf("fopen", "remove", "rename")
         // the link command names the support library through LLVM_Z80
         if (System.getenv("LLVM_Z80") != null) {
             val linkCommand = trsdos.linkCommand.orEmpty()
@@ -1027,8 +1028,8 @@ class TestLlvmTripleProfile: FunSpec({
             withClue(name) {
                 profile.linkCommand.orEmpty().filterNot { it in handAdded[name].orEmpty() } shouldBe found.linkCommand
                 profile.outputExtension shouldBe found.outputExtension
-                // z80-trs80-cmd has an ftell of its own in a file source
-                profile.libcLacks shouldBe found.libcLacks + "qsort" - (if (profile.fileSources.isNotEmpty()) setOf("ftell") else emptySet())
+                // z80-trs80-cmd has an ftell and a rename of its own in a file source
+                profile.libcLacks shouldBe found.libcLacks + "qsort" - (if (profile.fileSources.isNotEmpty()) setOf("ftell", "rename") else emptySet())
             }
         }
     }

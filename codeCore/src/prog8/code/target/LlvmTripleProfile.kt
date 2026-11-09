@@ -71,7 +71,7 @@ data class LlvmTripleProfile(
     /** A linker script template, read from [linkScriptDirectory] or the compiler's resources, written for the link as `{link_script}`. */
     private val linkScript: String? = null,
     private val linkScriptDirectory: Path? = null,
-    /** Support sources like [startupSources], but only built along when the program opens files (calls fopen). */
+    /** Support sources like [startupSources], but only built along when the program uses files (calls fopen, rename or remove). */
     val fileSources: List<String> = emptyList(),
     private val fileSourceDirectory: Path? = null
 ) {

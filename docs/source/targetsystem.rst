@@ -352,8 +352,8 @@ These are the keys of a profile; an unknown key is an error:
     directives, such as ``-lm``: the Linux profiles link glibc's math library this way. A profile with a ``link_command``
     can't have them; it puts them in that command instead. Environment variables work as in ``clang_args``.
 ``file_source``
-    Source files like those of ``startup_source``, built along with the program only when it opens files (calls
-    ``fopen()``), such as the ``ftell``, ``fseek`` and ``fread`` of the TRS-80 profiles, which would otherwise make every
+    Source files like those of ``startup_source``, built along with the program only when it uses files (calls
+    ``fopen()``, ``rename()`` or ``remove()``), such as the ``ftell``, ``fseek`` and ``fread`` of the TRS-80 profiles, which would otherwise make every
     program larger by the C library's file code that they call.
 ``startup_source``
     Source files separated by spaces, such as boot code in assembly, that the link command builds along with the program;
@@ -718,7 +718,10 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   slow in a large file. z88dk's appending (mode ``"a"``) reads to the end of the file and writes from there, which
   under TRSDOS 2.3 on the Model I writes garbage after the old end, so the source's ``fopen`` opens an existing file
   for reading, reads it to the end for its size, lets the DOS position to the end, and then writes there.
-  ``rename`` is lacking, so renaming reports a failure. A DOS file name is
+  z88dk's ``remove`` opens the file without a sector buffer to delete it, which fails under TRSDOS 2.3, so the source
+  has a ``remove`` of its own. z88dk has no ``rename``, and no DOS call renames a file, so the source's ``rename``
+  copies the file to the new name and deletes the old one: it needs room on the disk for the copy, the new file
+  gets no password and the date of the rename, and renaming fails when the new name exists. A DOS file name is
   ``NAME/EXT``, where a ``.`` would start the file's password, so the profile's ``file_extension_separator`` turns
   the last ``.`` of a file name into ``/``: ``memory.prg`` becomes ``MEMORY/PRG`` for the DOS. The DOS's limits of
   8 characters for the name and 3 for the extension still apply. The link command gives the malloc heap the memory from the end of the program to

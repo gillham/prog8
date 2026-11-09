@@ -8,10 +8,15 @@
  *   being written only seeks to where it is.
  * - fread (c_symbols), as z88dk's never sets the end of file.
  * - appending (fopen with mode "a"), as z88dk's writes garbage after the old end of the file under TRSDOS 2.3.
+ * - remove (c_symbols), as z88dk's opens the file without a sector buffer to kill it, which fails under TRSDOS 2.3.
+ * - rename (c_symbols), which z88dk lacks and no DOS call does: it copies the file to the new name and deletes the old
+ *   one, so it needs room for the copy, and the copy gets the date of the rename and no password. It fails when the
+ *   new name exists.
  * - fsync, which fflush calls: z88dk's always fails, while byte I/O through the DOS has nothing to flush at this level.
  */
 #include <stdio.h>
 #include <fcntl.h>
+#include <string.h>
 #include <trsdos.h>
 
 #define READING(fp) (((fp)->flags & (_IOREAD | _IOWRITE | _IOSYSTEM)) == _IOREAD)
@@ -128,6 +133,50 @@ size_t prog8_trs80_fread(void *ptr, size_t size, size_t nmemb, FILE *fp)
     if (count < length)
         fp->flags |= _IOEOF;
     return count / size;
+}
+
+/* the FCB and buffer of remove, whose buffer rename copies through before it removes */
+static struct TRSDOS_FILE scratch;
+
+int prog8_trs80_remove(char *name)
+{
+    if (initdcb(name, &scratch.fcb))
+        return -1;
+    if (trsdos_tst(DOS_OPEN_EX, scratch.buffer, (char *)&scratch.fcb))
+        return -1;
+    return trsdos_tst(DOS_KILL, 0, (char *)&scratch.fcb) ? -1 : 0;
+}
+
+int prog8_trs80_rename(char *oldname, char *newname)
+{
+    FILE *in, *out;
+    int count, failed = 0;
+
+    if ((in = fopen(oldname, "r")) == NULL)
+        return -1;
+    if ((out = fopen(newname, "r")) != NULL) {
+        fclose(out);
+        fclose(in);
+        return -1;
+    }
+    if ((out = fopen(newname, "w")) == NULL) {
+        fclose(in);
+        return -1;
+    }
+    while ((count = read(in->desc.fd, scratch.buffer, sizeof(scratch.buffer))) > 0) {
+        if (write(out->desc.fd, scratch.buffer, count) != count) {
+            failed = 1;
+            break;
+        }
+    }
+    fclose(in);
+    if (fclose(out) != 0)
+        failed = 1;
+    if (failed) {
+        prog8_trs80_remove(newname);
+        return -1;
+    }
+    return prog8_trs80_remove(oldname);
 }
 
 static void fsync_wrapper(void) __naked
