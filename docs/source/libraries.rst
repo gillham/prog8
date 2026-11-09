@@ -1069,6 +1069,12 @@ directory sorted by name, a line each: ``<size><tab><name>`` for a file and ``di
 They return false when the directory can't be read, and always on the bare metal triples, whose C library has
 no directory routines.
 
+On llvm16, llvm32 and llvm64, ``status()`` and ``status_code()`` give the result of the last disk operation
+(``f_open``, ``f_open_w``, ``save``, ``save_raw``, ``load``, ``load_raw``, ``delete``, ``rename``, ``mkdir``, ``rmdir``
+or ``chdir``): ``"00,ok"`` and 0 when it succeeded, else ``"01,error"`` and 1. So a program can check a ``rename`` or
+``delete``, which return nothing, the same way as on the Commodore targets, but the code is not the drive's CBM-DOS
+error number: the C library gives no portable one.
+
 .. note::
     Opening a file using f_read() or f_read_w() doesn't set the default i/o channels to that file.
     In fact, after calling routines in diskio, it resets the input and output channels to their

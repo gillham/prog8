@@ -2219,14 +2219,16 @@ private val notRunOnArm = setOf(
     "diskio directory listings of the files and subdirectories, sorted by name",
     "diskio writing, reading lines, seeking in and deleting a text file",
     "fileio copying between two open files, seeking and the end of the file",
-    "diskio renaming and deleting files"
+    "diskio renaming and deleting files",
+    "diskio status of the last disk operation"
 ) + programsWithLp64Extsubs
 
 // the same on bare metal RISC-V, except that its newlib keeps the position in a file when a seek fails
 private val notRunOnRiscv = setOf(
     "diskio directories, renaming and deleting",
     "diskio directory listings of the files and subdirectories, sorted by name",
-    "diskio renaming and deleting files"
+    "diskio renaming and deleting files",
+    "diskio status of the last disk operation"
 ) + programsWithLp64Extsubs
 
 private val programsWithWideAddresses =
@@ -2263,7 +2265,8 @@ private val notRunOnMos: Map<String, String> =
         "fileio copying between two open files, seeking and the end of the file",
         "diskio saving and loading memory",
         "fileio appending to a file",
-        "diskio renaming and deleting files"
+        "diskio renaming and deleting files",
+        "diskio status of the last disk operation"
     ).associateWith { "mos-sim has no file system" } +
     mapOf(
         "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the mos-sim C library lacks",
@@ -2286,7 +2289,8 @@ private val notRunOn6809: Map<String, String> =
         "fileio copying between two open files, seeking and the end of the file",
         "diskio saving and loading memory",
         "fileio appending to a file",
-        "diskio renaming and deleting files"
+        "diskio renaming and deleting files",
+        "diskio status of the last disk operation"
     ).associateWith { "picolibc's semihost build for usim09batch has no file system: fopen links but returns NULL" } +
     mapOf(
         "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which picolibc lacks without its float library",
@@ -2305,7 +2309,8 @@ private val notRunOnZ80: Map<String, String> =
     listOf(
         "diskio directories, renaming and deleting",
         "diskio directory listings of the files and subdirectories, sorted by name",
-        "diskio renaming and deleting files"
+        "diskio renaming and deleting files",
+        "diskio status of the last disk operation"
     ).associateWith { "z88dk +test has no directories, and z88dk-ticks can't rename or delete files" } +
     listOf(
         "diskio writing, reading lines, seeking in and deleting a text file",
@@ -2393,7 +2398,8 @@ private val notRunOnTrs80gpCas: Map<String, String> = notRunOnTrs80gp +
         "fileio copying between two open files, seeking and the end of the file",
         "diskio saving and loading memory",
         "fileio appending to a file",
-        "diskio renaming and deleting files"
+        "diskio renaming and deleting files",
+        "diskio status of the last disk operation"
     ).associateWith { "without a DOS, z88dk's TRS-80 file routines are stubs that fail" }
 
 // the programs that don't run as they are on llvm16 under TRSDOS 1.3 in trs80gp, with the reason
@@ -6895,6 +6901,48 @@ main {
         txt.nl()
     }
 }""", "false true 600 0 true\nfalse\nfalse\n"),
+
+    "diskio status of the last disk operation" to OutputProgram("""
+%import textio
+%import diskio
+%zeropage basicsafe
+
+main {
+    ubyte[10] data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    sub start() {
+        txt.print_ub(diskio.status_code())
+        txt.spc()
+        diskio.delete("missing.bin")
+        txt.print_ub(diskio.status_code())
+        txt.spc()
+        txt.print(diskio.status())
+        txt.nl()
+        void diskio.save("status.bin", &data, len(data))
+        txt.print_ub(diskio.status_code())
+        txt.spc()
+        diskio.rename("status.bin", "status2.bin")
+        txt.print_ub(diskio.status_code())
+        txt.spc()
+        diskio.rename("missing.bin", "gone.bin")
+        txt.print_ub(diskio.status_code())
+        txt.spc()
+        void diskio.load("missing.bin", &data)
+        txt.print_ub(diskio.status_code())
+        txt.spc()
+        void diskio.load("status2.bin", &data)
+        txt.print_ub(diskio.status_code())
+        txt.spc()
+        txt.print(diskio.status())
+        txt.nl()
+        void diskio.f_open("missing.bin")
+        txt.print_ub(diskio.status_code())
+        txt.spc()
+        diskio.delete("status2.bin")
+        txt.print_ub(diskio.status_code())
+        txt.nl()
+    }
+}""", "0 1 01,error\n0 0 1 1 0 00,ok\n1 0\n"),
 
     "strings library" to OutputProgram("""
 %import textio

@@ -12,6 +12,8 @@
 diskio {
     %option no_symbol_prefixing, ignore_unused
 
+    bool internal_ok = true     ; whether the last disk operation succeeded, for status() and status_code()
+
     sub directory() -> bool {
         ; -- Prints the files and subdirectories of the current directory to the screen. Returns success.
         return internal_list(0)
@@ -50,6 +52,7 @@ diskio {
         %ir {{
             loadm.p r99200.p,[diskio.f_open.filenameptr]
             syscall 52 (r99200.p): r99100.b
+            storem.b r99100.b,[diskio.internal_ok]
             returnr.b r99100.b
         }}
     }
@@ -161,6 +164,7 @@ diskio {
         %ir {{
             loadm.p r99200.p,[diskio.f_open_w.filenameptr]
             syscall 53 (r99200.p): r99100.b
+            storem.b r99100.b,[diskio.internal_ok]
             returnr.b r99100.b
         }}
     }
@@ -192,7 +196,8 @@ diskio {
         ; -- change current directory.
         %ir {{
             loadm.p r99200.p,[diskio.chdir.path]
-            syscall 50 (r99200.p)
+            syscall 50 (r99200.p): r99100.b
+            storem.b r99100.b,[diskio.internal_ok]
         }}
     }
 
@@ -200,7 +205,8 @@ diskio {
         ; -- make a new subdirectory.
         %ir {{
             loadm.p r99200.p,[diskio.mkdir.name]
-            syscall 49 (r99200.p)
+            syscall 49 (r99200.p): r99100.b
+            storem.b r99100.b,[diskio.internal_ok]
         }}
     }
 
@@ -208,7 +214,8 @@ diskio {
         ; -- remove a subdirectory.
         %ir {{
             loadm.p r99200.p,[diskio.rmdir.name]
-            syscall 51 (r99200.p)
+            syscall 51 (r99200.p): r99100.b
+            storem.b r99100.b,[diskio.internal_ok]
         }}
     }
 
@@ -222,13 +229,19 @@ diskio {
     }
 
     sub status() -> str {
-        ; -- retrieve the disk drive's current status message
-        return "unknown"
+        ; -- the status of the last disk operation: "00,ok" when it succeeded, else "01,error".
+        ;    The disk operations are f_open, f_open_w, save, save_raw, load, load_raw, delete, rename, mkdir, rmdir and chdir.
+        if internal_ok
+            return "00,ok"
+        return "01,error"
     }
 
     sub status_code() -> ubyte {
-        ; -- return status code instead of whole CBM-DOS status string. (in this case always 255, which means 'unable to return sensible value')
-        return 255
+        ; -- the status code of the last disk operation: 0 when it succeeded, else 1. (The C library gives no portable
+        ;    error number, so it isn't the drive's CBM-DOS error code that the other targets give.)
+        if internal_ok
+            return 0
+        return 1
     }
 
 
@@ -241,6 +254,7 @@ diskio {
             loadm.p r99201.p,[diskio.save.start_address]
             loadm.p r99202.p,[diskio.save.savesize]
             syscall 42 (r99100.b, r99200.p, r99201.p, r99202.p): r99101.b
+            storem.b r99101.b,[diskio.internal_ok]
             returnr.b r99101.b
         }}
     }
@@ -253,6 +267,7 @@ diskio {
             loadm.p r99201.p,[diskio.save_raw.start_address]
             loadm.p r99202.p,[diskio.save_raw.savesize]
             syscall 42 (r99100.b, r99200.p, r99201.p, r99202.p): r99101.b
+            storem.b r99101.b,[diskio.internal_ok]
             returnr.b r99101.b
         }}
     }
@@ -261,31 +276,38 @@ diskio {
     ; The address can't be 0: a hosted program can't load to the address in the header.
     ; Returns the end load address+1 if successful or 0 if a load error occurred.
     sub load(str filenameptr, pointer address_override) -> pointer {
+        pointer @shared end
         %ir {{
             loadm.p r99200.p,[diskio.load.filenameptr]
             loadm.p r99201.p,[diskio.load.address_override]
             syscall 40 (r99200.p, r99201.p): r99202.p
-            returnr.p r99202.p
+            storem.p r99202.p,[diskio.load.end]
         }}
+        internal_ok = end != 0
+        return end
     }
 
     ; Identical to load(), but DOES INCLUDE the first 2 bytes in the file.
     ; No program header is assumed in the file. Everything is loaded.
     ; See comments on load() for more details.
     sub load_raw(str filenameptr, pointer start_address) -> pointer {
+        pointer @shared end
         %ir {{
             loadm.p r99200.p,[diskio.load_raw.filenameptr]
             loadm.p r99201.p,[diskio.load_raw.start_address]
             syscall 41 (r99200.p, r99201.p): r99202.p
-            returnr.p r99202.p
+            storem.p r99202.p,[diskio.load_raw.end]
         }}
+        internal_ok = end != 0
+        return end
     }
 
     sub delete(str filenameptr) {
         ; -- delete a file on the drive
         %ir {{
             loadm.p r99200.p,[diskio.delete.filenameptr]
-            syscall 43 (r99200.p)
+            syscall 43 (r99200.p): r99100.b
+            storem.b r99100.b,[diskio.internal_ok]
         }}
     }
 
@@ -294,7 +316,8 @@ diskio {
         %ir {{
             loadm.p r99200.p,[diskio.rename.oldfileptr]
             loadm.p r99201.p,[diskio.rename.newfileptr]
-            syscall 44 (r99200.p, r99201.p)
+            syscall 44 (r99200.p, r99201.p): r99100.b
+            storem.b r99100.b,[diskio.internal_ok]
         }}
     }
 
