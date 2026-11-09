@@ -808,14 +808,14 @@ main {
             }
         }
 
-        if (runner.profile.library == null) for ((name, source) in keyboardPrograms.filterKeys(runner::runs)) {
+        if (runner.profile.library == null || runner.profile.library == "cpm") for ((name, source) in keyboardPrograms.filterKeys(runner::runs)) {
             test("$name: reads the keys of stdin as an llvm16 program in ${runner.displayName}").config(enabledOrReasonIf = runner.requires) {
                 for (optimize in listOf(false, true)) {
                     withClue("optimize=$optimize") {
                         val llFile = compiledLlFile(compileText(target, optimize, source, outputDir.resolve(dirName).createDirectories()))
                         val (exitCode, output) = runner.buildAndRun(llFile, keyboardInput)
                         withClue(output) { exitCode shouldBe 0 }
-                        output shouldBe keyboardOutput(if (dirName == "tnylpo-cpm") 26 else 0)
+                        output shouldBe if (runner.profile.library == "cpm") cpmKeyboardOutput else keyboardOutput
                     }
                 }
             }
@@ -5616,8 +5616,11 @@ main {
 
 private const val keyboardInput = "ABhello world!\nZ"
 
-// getkey can't poll stdin, so it gives 0; at the end of the input waitkey gives 0, or on tnylpo CP/M's end of file ^Z (26)
-private fun keyboardOutput(endOfInputKey: Int) = "0\n65 66\n10:hello worl\n90 $endOfInputKey\n"
+// getkey can't poll stdin, so it gives 0; at the end of the input waitkey gives 0
+private const val keyboardOutput = "0\n65 66\n10:hello worl\n90 0\n"
+
+// on CP/M getkey polls with BDOS function 6, so it gets the first key of the input; at its end tnylpo gives ^Z (26)
+private const val cpmKeyboardOutput = "65\n66 104\n10:ello world\n90 26\n"
 
 private val outputPrograms = mapOf(
     "for loops over a str parameter, with a local and a qualified loop variable" to OutputProgram("""

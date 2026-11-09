@@ -603,11 +603,11 @@ class TestLlvmSyscallLowering: FunSpec({
         module.function("main.wait").lines().none { "call" in it } shouldBe true
     }
 
-    test("on mos-c64, whose C library has the file routines, only the directory, curdir and wait syscalls give their failure results") {
+    test("on mos-c64, whose C library has the file routines and whose support source has usleep, only the directory and curdir syscalls give their failure results") {
         val text = LlvmPrinter.print(TestProgram(LlvmTarget(2, LlvmTripleProfile.resolve("mos-c64"))).apply { allFileSyscallsSub(); allHandleSyscallsSub(); waitSub() }.module()).lines()
-        for (name in listOf("fopen", "fclose", "fflush", "remove", "rename"))
+        for (name in listOf("fopen", "fclose", "fflush", "remove", "rename", "usleep"))
             withClue(name) { text.any { it.startsWith("declare ") && "@$name(" in it } shouldBe true }
-        for (name in listOf("getcwd", "mkdir", "chdir", "rmdir", "usleep"))
+        for (name in listOf("getcwd", "mkdir", "chdir", "rmdir"))
             withClue(name) { text.none { "@$name(" in it } shouldBe true }
         text.none { ".sys.curdir.buf" in it } shouldBe true
     }

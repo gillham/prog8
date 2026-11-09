@@ -504,20 +504,25 @@ class TestLlvmTripleProfile: FunSpec({
                     shouldThrow<IllegalArgumentException> { profile.clang }.message!! shouldContain "LLVM_MOS"
                 else
                     profile.clang shouldBe System.getenv("LLVM_MOS") + "/bin/" + clang
-                profile.libcLacks.containsAll(listOf("opendir", "readdir", "usleep", "strtod", "sinf", "sqrt")) shouldBe true
+                profile.libcLacks.containsAll(listOf("opendir", "readdir", "strtod", "sinf", "sqrt")) shouldBe true
                 ("putchar" in profile.libcLacks) shouldBe false
             }
         }
         LlvmTripleProfile.resolve("mos-sim").let {
             it.outputExtension shouldBe ".sim"
             it.ioRanges shouldBe listOf(0xfff0u..0xffffu)
-            it.libcLacks.containsAll(listOf("fopen", "fclose", "remove")) shouldBe true
+            it.libcLacks.containsAll(listOf("fopen", "fclose", "remove", "usleep")) shouldBe true
+            it.library shouldBe null
         }
         LlvmTripleProfile.resolve("mos-c64").let {
             it.outputExtension shouldBe ".prg"
             it.ioRanges shouldBe emptyList()
             it.ioAllAddresses shouldBe true
             ("fopen" in it.libcLacks) shouldBe false
+            // usleep, for sys.wait, from its support source; its key routines from the c64 textio
+            ("usleep" in it.libcLacks) shouldBe false
+            it.startupSources shouldBe listOf("mos-c64-support.c")
+            it.library shouldBe "c64"
         }
     }
 

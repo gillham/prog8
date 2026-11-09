@@ -476,6 +476,10 @@ fails without it, but writing the ``.ll`` file works. ``sys.target`` is 252. The
 - ``mos-sim``, the default: builds for the SDK's 6502 simulator, which ``-emu`` runs with ``mos-sim``. The simulator
   prints the program's output and gives back its exit status.
 - ``mos-c64``: builds a Commodore 64 ``.prg`` file, which ``-emu`` starts in the VICE emulator ``x64sc``, in a window.
+  Its startup source ``mos-c64-support.c`` has the ``usleep`` that the SDK lacks: ``sys.wait()`` waits that many ticks
+  of the KERNAL's jiffy clock (``$A0-$A2``), which the interrupt advances 60 times a second on PAL and NTSC machines,
+  and ``sys.waitvsync()`` waits for one tick (not for the raster's vertical blank). With interrupts masked the clock
+  stops, and both return at once. Its textio family ``c64`` reads the keyboard with the KERNAL's ``GETIN``.
 
 Compared with ``llvm32`` and ``llvm64``:
 
@@ -635,12 +639,17 @@ wrong place from the second row on.
 **Keyboard input on llvm16.** Every llvm16 textio has ``txt.getkey()``, which gives the key pressed or 0 when there is
 none, without waiting, and ``txt.waitkey()``, which waits for a key and gives it. What they use depends on the textio:
 
-- the llvm16 textio (``mos-sim``, ``mos-c64``, ``z80-test``, ``z80-cpm``, ``mc6809-sim`` and generated profiles), where
-  the console is a stream: ``waitkey`` is ``txt.chrin()``, the next character of stdin, so it gives 0 at the end of the
-  input (on CP/M in tnylpo, which then gives ``^Z`` forever, 26). There is no keyboard polling: the C libraries of these
-  profiles can't read stdin without waiting, so ``getkey`` always gives 0. On ``mos-c64`` the SDK's ``getchar`` reads
-  through the KERNAL's ``CHRIN``, a whole line with the screen editor, so ``waitkey`` waits for RETURN and then gives the
-  line a character at a time. ``txt.input_line()`` doesn't echo what it reads: a terminal shows what is typed itself.
+- the llvm16 textio (``mos-sim``, ``z80-test``, ``mc6809-sim`` and generated profiles), where the console is a stream:
+  ``waitkey`` is ``txt.chrin()``, the next character of stdin, so it gives 0 at the end of the input. There is no
+  keyboard polling: the C libraries of these profiles can't read stdin without waiting, so ``getkey`` always gives 0.
+  ``txt.input_line()`` doesn't echo what it reads: a terminal shows what is typed itself.
+- the c64 and cpm textios (``mos-c64``, ``z80-cpm``) are that stream textio with key routines of their own. On
+  ``mos-c64`` ``getkey`` is the KERNAL's ``GETIN`` (the SDK's ``cbm_k_getin()``), which gives the next key typed (PETSCII)
+  or 0, and ``waitkey`` calls it until it gives a key; ``txt.chrin()`` and ``txt.input_line()`` still read through
+  ``CHRIN``, a whole line with the screen editor. On ``z80-cpm`` ``getkey`` is BDOS function 6 with ``$FF`` (in the
+  profile's startup source ``z80-cpm-keyboard.asm``), which gives the next key typed or 0, and ``waitkey`` is
+  ``txt.chrin()``, z88dk's ``fgetc_cons()``, the same BDOS call until it gives a key; at the end of the input tnylpo
+  gives ``^Z`` forever (26). z88dk's own ``getk()`` isn't used: it reads keys until none is left and gives the last.
 - the z88dk and z88dk-ansi textios (``z80-trs80``, ``z80-trs80-cmd``, ``z80-zx``, ``z80-c128``): ``getkey`` is z88dk's
   ``getk()`` (``int getk(void)``) and ``waitkey`` is ``txt.chrin()``, z88dk's ``fgetc_cons()`` (``int fgetc_cons(void)``),
   which waits for a key and doesn't echo it. On the TRS-80 ``getk`` calls the ROM's keyboard scan (``$002b``), which reports
@@ -812,7 +821,8 @@ Everything listed above for ``mc6809-sim`` applies, apart from these:
 - ``sys.wait()`` waits that many ticks of BASIC's 60 Hz ``TIMER`` (``$0112``), which its interrupt counts at each
   vertical sync, halting the CPU with ``SYNC`` until each interrupt; ``sys.waitvsync()`` waits for the next one, so it
   really waits for the vertical sync. The profile's startup source gives them a ``usleep``, which picolibc lacks.
-  While IRQs are masked (``sys.set_irqd()``) the timer stops, and both return at once.
+  While IRQs are masked (by machine code: ``sys.set_irqd()`` does nothing on the llvm targets yet) the timer stops,
+  and both return at once.
 - there are no files: picolibc for DECB has no ``open`` or ``unlink``, and as on ``mos-sim`` the file routines
   report a failure. There is no command line, and no floats or math library routines.
 
