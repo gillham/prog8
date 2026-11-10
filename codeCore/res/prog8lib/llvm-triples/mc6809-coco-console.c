@@ -1,7 +1,7 @@
 /*
  * Prog8's console output on DECB: each character goes straight to Color BASIC's CHROUT, without picolibc's line-buffered
  * stdout, so it stays in order with what the coco textio writes to the screen itself. CHROUT ignores LF, so '\n' becomes CR.
- * And txt.getkey's key poll, as a Prog8 extsub name can't start with an underscore, and the usleep of sys.wait.
+ * And txt.getkey's key poll, as a Prog8 extsub name can't start with an underscore, the usleep of sys.wait and sys.ticks.
  */
 void __decb_putc(char c);
 char __decb_getc(void);
@@ -18,6 +18,15 @@ int prog8_coco_getkey(void) {
 
 /* BASIC's IRQ counts the 60 Hz vertical sync here; with IRQs masked it stops, and usleep returns at once */
 #define TIMER (*(volatile unsigned short *)0x0112)
+
+/* sys.ticks (the profile's ticks_symbol): read until two reads agree, as the IRQ can change TIMER between its bytes */
+unsigned int prog8_coco_ticks(void) {
+    unsigned short ticks;
+    do
+        ticks = TIMER;
+    while (ticks != TIMER);
+    return ticks;
+}
 
 int usleep(unsigned long microseconds) {
     unsigned char cc;

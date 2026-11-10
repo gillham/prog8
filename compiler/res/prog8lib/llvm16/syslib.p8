@@ -93,6 +93,18 @@ sys {
         }}
     }
 
+    const ubyte TICKS_PER_SECOND = 60     ; the rate of ticks()
+
+    sub ticks() -> uword {
+        ; --- a clock: the number of 60ths of a second, which wraps around at 65536 (after about 18 minutes), so compare
+        ;     the difference of two counts. How often it changes and from when it counts depend on the machine; 0 where
+        ;     there is no clock (see the llvm targets' documentation).
+        %ir {{
+            syscall 216 (): r99000.w
+            returnr.w r99000.w
+        }}
+    }
+
     sub exit(ubyte returnvalue) {
         ; -- exit the program with a return code. All active defers in the call chain are unwound program-wide (LIFO) before the program ends.
         %ir {{

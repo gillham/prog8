@@ -94,7 +94,12 @@ data class LlvmTripleProfile(
      */
     val defmAsDefb: Boolean = false,
     /** A C routine `int f(void)` in the file sources: the drive that the last open found its file on, or 255; without it, always 255. */
-    val lastDriveSymbol: String? = null
+    val lastDriveSymbol: String? = null,
+    /** A routine `unsigned int f(void)` for sys.ticks(): a count of 60ths of a second; without it, llvm16 programs get 0. */
+    val ticksSymbol: String? = null,
+    /** Support sources like [fileSources], built along when the program calls [ticksSymbol], before the startup sources. */
+    val ticksSources: List<String> = emptyList(),
+    private val ticksSourceDirectory: Path? = null
 ) {
     /** The symbol that the C function of [C_FUNCTIONS] named [function] is called by, which the profile can change. */
     fun cSymbol(function: String): String = when (function) {
@@ -155,12 +160,13 @@ data class LlvmTripleProfile(
 
     /**
      * Writes the [startupSources] files that the link command builds along as `{startup}` next to [outputFile], the [fileSources]
-     * too when [withFileSources] and the [floatSources] when [withFloatSources], and returns them. They are read from the profile's
-     * directory, or else from the compiler's resources.
+     * too when [withFileSources], the [floatSources] when [withFloatSources] and, first, the [ticksSources] when [withTicksSources],
+     * and returns them. They are read from the profile's directory, or else from the compiler's resources.
      */
-    fun writeStartupSources(outputFile: Path, withFileSources: Boolean = false, withFloatSources: Boolean = false): List<Path> {
+    fun writeStartupSources(outputFile: Path, withFileSources: Boolean = false, withFloatSources: Boolean = false,
+                            withTicksSources: Boolean = false): List<Path> {
         val written = mutableListOf<Path>()
-        val sources = startupSources.map { it to directory } + (if (withFileSources) fileSources.map { it to fileSourceDirectory } else emptyList()) +
+        val sources = (if (withTicksSources) ticksSources.map { it to ticksSourceDirectory } else emptyList()) + startupSources.map { it to directory } + (if (withFileSources) fileSources.map { it to fileSourceDirectory } else emptyList()) +
             (if (withFloatSources) floatSources.map { it to floatSourceDirectory } else emptyList())
         try {
             for ((source, sourceDirectory) in sources) {
@@ -281,7 +287,7 @@ data class LlvmTripleProfile(
             "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "c_symbols", "waitvsync_symbol", "file_offset_size", "getchar_symbol",
             "putchar_symbol", "library", "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env",
             "load_address", "load_address_align", "link_script", "floats", "c_double_size", "float_source", "float_link_args", "float_digits_symbol",
-            "defm_as_defb", "last_drive_symbol")
+            "defm_as_defb", "last_drive_symbol", "ticks_symbol", "ticks_source")
 
         /** A ProcessBuilder for [command] with the tool environment of [profile], or a plain one without a profile. */
         fun processBuilder(profile: LlvmTripleProfile?, command: List<String>): ProcessBuilder =
@@ -295,7 +301,7 @@ data class LlvmTripleProfile(
         val C_FUNCTIONS: Set<String> = buildSet {
             addAll(listOf("fopen", "fclose", "fgetc", "fputc", "fread", "fwrite", "fseek", "ftell", "ferror", "feof", "fflush", "remove", "rename",
                 "getcwd", "mkdir", "chdir", "rmdir", "opendir", "readdir", "closedir", "strcmp", "strdup", "realloc", "free", "qsort",
-                "putchar", "getchar", "exit", "usleep", "strtod", "snprintf", "printf", "inp", "outp"))
+                "putchar", "getchar", "exit", "usleep", "strtod", "snprintf", "printf", "inp", "outp", "timespec_get"))
             for (math in listOf("sin", "cos", "tan", "atan", "atan2", "sqrt", "pow", "log", "log2", "fabs", "floor", "ceil", "roundeven")) {
                 add(math)
                 add(math + "f")
@@ -588,7 +594,10 @@ data class LlvmTripleProfile(
                     "true" -> true
                     else -> throw IllegalArgumentException("llvm triple profile '$name' has defm_as_defb '$value', it must be true or false")
                 },
-                optional("last_drive_symbol")
+                optional("last_drive_symbol"),
+                optional("ticks_symbol"),
+                words("ticks_source").orEmpty(),
+                supplier["ticks_source"]?.directory
             )
         }
 

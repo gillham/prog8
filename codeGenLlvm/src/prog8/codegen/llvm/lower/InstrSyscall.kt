@@ -67,6 +67,7 @@ private const val VM_LIST_DIRECTORY = 212
 private const val VM_PORT_IN = 213
 private const val VM_PORT_OUT = 214
 private const val VM_LAST_DRIVE = 215
+private const val VM_TICKS = 216
 
 /**
  * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory, file and filesystem
@@ -138,6 +139,7 @@ private fun FunctionLowering.lowerSyscall(site: CallSite, number: Int) {
         VM_PORT_IN -> portIn(site, number)
         VM_PORT_OUT -> portOut(site, number)
         VM_LAST_DRIVE -> lastDrive(site, number)
+        VM_TICKS -> ticks(site, number)
         else -> when (IMSyscall.entries.firstOrNull { it.number == number }) {
             IMSyscall.COMPARE_STRINGS -> compareStrings(site, number)
             IMSyscall.STRING_CONTAINS -> stringContains(site, number)
@@ -661,6 +663,56 @@ private fun FunctionLowering.lastDrive(site: CallSite, number: Int) {
     val cInt = builder.mapper.cInt
     val drive = derive("drive", cInt) { LlvmInstruction.Call(it, external(symbol, cInt, emptyList()), emptyList(), cInt) }
     result(site, convert(drive, LlvmType.I8, "drive"))
+}
+
+/**
+ * TICKS(): word, a count of 60ths of a second that wraps around: the profile's ticks_symbol, or else on the 32- and 64-bit
+ * targets C11's timespec_get(); 0 without either.
+ */
+private fun FunctionLowering.ticks(site: CallSite, number: Int) {
+    arguments(site, number, 0)
+    val symbol = builder.profile?.ticksSymbol
+    val ticks = when {
+        symbol != null -> {
+            val cInt = builder.mapper.cInt
+            convert(derive("ticks", cInt) { LlvmInstruction.Call(it, external(symbol, cInt, emptyList()), emptyList(), cInt) }, LlvmType.I16, "ticks")
+        }
+        builder.mapper.pointerBytes > 2 && !builder.lacks("timespec_get") ->
+            derive("ticks", LlvmType.I16) { LlvmInstruction.Call(it, builder.helperFunction(".sys.ticks") { builder.ticksHelper() }, emptyList(), LlvmType.I16) }
+        else -> LlvmValue.IntConstant(0, LlvmType.I16)
+    }
+    result(site, ticks)
+}
+
+/** `i16 ()`: the seconds and nanoseconds of timespec_get(TIME_UTC) as 60ths of a second, in 16 bits. */
+private fun LlvmFunctionBuilder.ticksHelper(): LlvmFunction {
+    val cLong = mapper.cLong
+    val timespec = LlvmType.Struct(listOf(LlvmType.I64, cLong), packed = false)
+    val time = LlvmValue.Local("time", LlvmType.Ptr)
+    val status = LlvmValue.Local("status", mapper.cInt)
+    val nanosField = LlvmValue.Local("nanos.field", LlvmType.Ptr)
+    val seconds = LlvmValue.Local("seconds", LlvmType.I64)
+    val nanosLong = LlvmValue.Local("nanos.long", cLong)
+    val nanos = LlvmValue.Local("nanos", LlvmType.I64)
+    val secondTicks = LlvmValue.Local("second.ticks", LlvmType.I64)
+    val nanoTicks = LlvmValue.Local("nano.ticks", LlvmType.I64)
+    val total = LlvmValue.Local("total", LlvmType.I64)
+    val ticks = LlvmValue.Local("ticks", LlvmType.I16)
+    val timespecGet = LlvmValue.Global(externalFunction("timespec_get", mapper.cInt, listOf(LlvmType.Ptr, mapper.cInt)).name)
+    return helper(".sys.ticks", LlvmType.I16, emptyList(),
+        "entry" to listOfNotNull(
+            LlvmInstruction.Alloca(time, timespec),
+            // TIME_UTC is 1
+            LlvmInstruction.Call(status, timespecGet, listOf(time, LlvmValue.IntConstant(1, mapper.cInt)), mapper.cInt),
+            LlvmInstruction.Load(seconds, time),
+            LlvmInstruction.GetElementPtr(nanosField, timespec, time, listOf(i32(0), i32(1))),
+            LlvmInstruction.Load(nanosLong, nanosField),
+            if (cLong == LlvmType.I64) null else LlvmInstruction.Cast(CastOperator.SEXT, nanos, nanosLong, LlvmType.I64),
+            LlvmInstruction.BinaryOp(BinaryOperator.MUL, secondTicks, seconds, LlvmValue.IntConstant(60, LlvmType.I64)),
+            LlvmInstruction.BinaryOp(BinaryOperator.SDIV, nanoTicks, if (cLong == LlvmType.I64) nanosLong else nanos, LlvmValue.IntConstant(16666667, LlvmType.I64)),
+            LlvmInstruction.BinaryOp(BinaryOperator.ADD, total, secondTicks, nanoTicks),
+            LlvmInstruction.Cast(CastOperator.TRUNC, ticks, total, LlvmType.I16),
+            LlvmInstruction.Ret(ticks)))
 }
 
 /** `i8 (needle, ptr array, i16 count)`: 1 when one of the count elements equals the needle, else 0. */

@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA3-llvm.1 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 72bf4b2c in branch llvm
+Prerelease version from git commit d6693bd9 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 LLVM version by Claude Code and Andrew Gillham (gillham@roadsign.com)
 Report issues with this version at https://github.com/gillham/prog8/issues
@@ -486,6 +486,7 @@ sys  {
     const ubyte  SIZEOF_UQUAD
     const ubyte  SIZEOF_UWORD
     const ubyte  SIZEOF_WORD
+    const ubyte  TICKS_PER_SECOND
     const ubyte  target
     argc  () -> uword
     argv  (uword index) -> str
@@ -501,6 +502,7 @@ sys  {
     reset_system  ()
     set_carry  ()
     set_irqd  ()
+    ticks  () -> uword
     wait  (uword jiffies)
     waitvsync  ()
 }

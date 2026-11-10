@@ -375,6 +375,10 @@ These are the keys of a profile; an unknown key is an error:
     created its file on, or 255, for ``diskio.last_drive()``; a program that calls it gets the file sources linked.
     Without it, ``diskio.last_drive()`` is always 255. The TRS-80 profiles have it (``prog8_trs80_last_drive``), from
     byte 6 of the file's FCB.
+``ticks_symbol`` and ``ticks_source``
+    A routine ``unsigned int f(void)`` for ``sys.ticks()``, a count of 60ths of a second, and source files like those of
+    ``file_source`` that are only built along with a program that calls it, before the ``startup_source`` files (so
+    their initialization code runs first). Without ``ticks_symbol``, ``sys.ticks()`` is 0 on llvm16.
 ``file_source``
     Source files like those of ``startup_source``, built along with the program only when it uses files (calls
     ``fopen()``, ``rename()`` or ``remove()``), such as the ``ftell``, ``fseek`` and ``fread`` of the TRS-80 profiles, which would otherwise make every
@@ -746,6 +750,28 @@ On the machine profiles (the z88dk, z88dk-ansi, trs80m4 and coco textios) the ke
 and a new line at Enter, as BASIC does. Backspace (8, the CoCo's and the TRS-80's left arrow; 12 and 127 are taken as
 it too, the delete key of the ZX Spectrum and the C128) removes the last character from the screen and the buffer.
 Other control codes, and the characters past the maximum length, are ignored. There is no end of the input there.
+
+**A clock on llvm16.** ``sys.ticks()`` counts 60ths of a second (``sys.TICKS_PER_SECOND``, the unit of ``sys.wait()``)
+in a ``uword``, which wraps around after about 18 minutes: take the difference of two counts. When it starts counting
+and how often it changes depend on the machine, and it is 0 where there is no clock:
+
+- ``mos-c64``: the KERNAL's jiffy clock (``$A1``-``$A2``), 60 a second.
+- ``mc6809-coco``: Color BASIC's ``TIMER`` (``$0112``), 60 a second.
+- ``z80-zx``: the ROM's ``FRAMES`` (23672), 50 a second, in 60ths: it goes up by 1 or 2.
+- ``z80-trs80-m4``, under TRSDOS 6 and LS-DOS 6: an interrupt task of the DOS, in a module named ``P8TICKS`` that the
+  first program that asks for the time puts below HIGH$ (and below ``$f400``, where the DOS pages in the keyboard and
+  screen; with HIGH$ above that, the memory up to HIGH$ stays unused). It stays there until the next reboot, and later
+  programs find it with ``@GTMOD``, so a program that ends in any way leaves no task behind. Task slot 11 runs 60 times
+  a second; when it is taken, slot 8 or 9 runs 30 times a second and adds 2.
+- ``z80-trs80-cmd`` under LDOS 5.3 on the Model III: the same module, in task slot 8, 9 or 10 (30 a second, adding 2).
+  LDOS 5.3 has no ``@GTMOD``: the program finds the module through the task table at ``4500H``. 0 on a Model I and
+  under TRSDOS 1.3 (``z80-trs80-m3-trsdos`` too), which have no interrupt tasks.
+- 0 on ``z80-trs80`` (the ``.cas`` file), ``z80-cpm``, ``z80-c128`` and the simulators (``mos-sim``, ``z80-test``,
+  ``mc6809-sim``).
+
+The DOS keeps interrupts off while it reads or writes a disk, so the TRS-80's count can fall behind during disk I/O.
+On llvm32 and llvm64 ``sys.ticks()`` comes from C11's ``timespec_get()``, the time of day in 60ths of a second, also
+in a ``uword``; 0 on the bare metal ARM and RISC-V profiles, whose C library lacks it.
 
 - ``z80-trs80``: the TRS-80 Model I and III, as a cassette file. The program starts at ``$5200``. The Model I has
   memory-mapped devices at ``$37e0-$37ff`` (the printer at ``$37e8`` and the disk controller), both models the

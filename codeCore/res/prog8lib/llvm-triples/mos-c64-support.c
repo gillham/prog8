@@ -6,8 +6,10 @@
  * - prog8_c64_waitvsync (the profile's waitvsync_symbol), for sys.waitvsync: waits until the raster wraps around to
  *   line 0, as the c64 target's sys.waitvsync does.
  * - prog8_c64_plot, the KERNAL's PLOT for txt.plot, which the SDK has no routine for.
+ * - prog8_c64_ticks (the profile's ticks_symbol), for sys.ticks: the low 16 bits of the jiffy clock.
  */
 #define JIFFY_LOW (*(volatile unsigned char *)0xA2)
+#define JIFFY_MID (*(volatile unsigned char *)0xA1)
 #define SCROLY (*(volatile unsigned char *)0xD011)
 
 int usleep(unsigned long microseconds)
@@ -24,6 +26,16 @@ int usleep(unsigned long microseconds)
             ;
     }
     return 0;
+}
+
+unsigned int prog8_c64_ticks(void)
+{
+    /* read until two reads agree, as the interrupt can change the clock between the bytes */
+    unsigned int ticks;
+    do
+        ticks = JIFFY_LOW | (JIFFY_MID << 8);
+    while (ticks != (JIFFY_LOW | (JIFFY_MID << 8)));
+    return ticks;
 }
 
 void prog8_c64_waitvsync(void)

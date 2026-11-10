@@ -41,7 +41,7 @@ BASE_PROFILE = ROOT / "codeCore/res/prog8lib/llvm-triples/z80-z88dk.properties"
 MATH_FUNCTIONS = ["sin", "cos", "tan", "atan", "atan2", "sqrt", "pow", "log", "log2", "fabs", "floor", "ceil", "roundeven"]
 C_FUNCTIONS = ["fopen", "fclose", "fgetc", "fputc", "fread", "fwrite", "fseek", "ftell", "ferror", "feof", "fflush", "remove", "rename",
                "getcwd", "mkdir", "chdir", "rmdir", "opendir", "readdir", "closedir", "strcmp", "strdup", "realloc", "free", "qsort",
-               "putchar", "getchar", "exit", "usleep", "strtod", "snprintf", "printf", "inp", "outp"] + [m + s for m in MATH_FUNCTIONS for s in ("", "f")]
+               "putchar", "getchar", "exit", "usleep", "strtod", "snprintf", "printf", "inp", "outp", "timespec_get"] + [m + s for m in MATH_FUNCTIONS for s in ("", "f")]
 
 # the functions that only a program with floats calls, which gets the base profile's float_link_args
 FLOAT_FUNCTIONS = {m + s for m in MATH_FUNCTIONS for s in ("", "f")} | {"strtod"}
@@ -262,8 +262,8 @@ def main():
 
     getchar_symbol = base_getchar_symbol()
     renamed = base_c_symbols()
-    # a prog8_ routine comes with the base profile's float source
-    probed = [f for f in C_FUNCTIONS if not renamed.get(f, "").startswith("prog8_")]
+    # a prog8_ routine comes with the base profile's float source; only the 32- and 64-bit targets call timespec_get
+    probed = [f for f in C_FUNCTIONS if not renamed.get(f, "").startswith("prog8_") and f != "timespec_get"]
     symbols = {f: c_symbol(renamed.get(f, f), getchar_symbol) for f in probed if f not in FLOAT_FUNCTIONS}
     float_symbols = {f: c_symbol(renamed.get(f, f), getchar_symbol) for f in probed if f in FLOAT_FUNCTIONS}
     float_args = base_value("float_link_args").split()

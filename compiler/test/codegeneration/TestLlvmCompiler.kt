@@ -728,6 +728,23 @@ main {
         mos.count { it.contains("@inp(") || it.contains("@outp(") } shouldBe 0
     }
 
+    test("sys.ticks calls the profile's ticks_symbol, timespec_get on llvm32 and llvm64, and is 0 without either") {
+        val source = $$"""
+%zeropage basicsafe
+main {
+    sub start() {
+        pokew($c000, sys.ticks())
+    }
+}"""
+        fun llLines(target: LlvmTarget, name: String) =
+            compiledLlFile(compileText(target, false, source, outputDir.resolve("ticks-$name").createDirectories(), assemble = false)).readLines().map { it.trim() }
+        llLines(LlvmTarget(2, LlvmTripleProfile.resolve("z80-trs80-m4")), "m4").any { it.matches(Regex("""%\S+ = call i16 @prog8_trs80_ticks\(\)""")) } shouldBe true
+        llLines(LlvmTarget(2, LlvmTripleProfile.resolve("mc6809-coco")), "coco").any { it.matches(Regex("""%\S+ = call i16 @prog8_coco_ticks\(\)""")) } shouldBe true
+        llLines(LlvmTarget(8), "llvm64").any { it.matches(Regex("""%\S+ = call i32 @timespec_get\(ptr %time, i32 1\)""")) } shouldBe true
+        val cpm = llLines(LlvmTarget(2, LlvmTripleProfile.resolve("z80-cpm")), "cpm")
+        cpm.count { it.contains("_ticks(") || it.contains("@timespec_get(") } shouldBe 0
+    }
+
     test("diskio.last_drive calls the profile's last_drive_symbol, and is 255 without one") {
         val source = $$"""
 %import diskio
@@ -1190,6 +1207,29 @@ main {
                 // after the line in which the IR file reader names the file
                 withClue("$name optimize=$optimize") { printedOnStdout { exitStatusOnVirtualMachine(irFile) } shouldEndWith "\n" + expected }
             }
+        }
+    }
+
+    test("sys.ticks counts 60ths of a second in a native executable for the host and under wasmtime").config(enabledOrReasonIf = requiresNativeLlvm) {
+        val source = """
+%import textio
+%zeropage basicsafe
+main {
+    sub start() {
+        uword t0 = sys.ticks()
+        sys.wait(30)
+        uword elapsed = sys.ticks() - t0
+        if elapsed >= 28 and elapsed <= 90
+            txt.print("ok")
+        else
+            txt.print_uw(elapsed)
+        txt.nl()
+    }
+}"""
+        buildAndRun(compiledLlFile(compileText(hostLlvmTarget, true, source, outputDir.resolve("ticks-native").createDirectories()))) shouldBe (0 to "ok\n")
+        if (requiresWasm(testCase).isEnabled) {
+            val llFile = compiledLlFile(compileText(LlvmTarget(4), true, source, outputDir.resolve("ticks-wasm").createDirectories()))
+            buildAndRunWasm(llFile, "", emptyList(), outputDir.resolve("ticks-wasm")) shouldBe (0 to "ok\n")
         }
     }
 
@@ -2466,11 +2506,13 @@ private val notRunOnTrs80gpCas: Map<String, String> = notRunOnTrs80gp +
         "diskio renaming and deleting files",
         "diskio status of the last disk operation",
         "diskio.last_drive gives the drive that the DOS found or created the file on"
-    ).associateWith { "without a DOS, z88dk's TRS-80 file routines are stubs that fail" }
+    ).associateWith { "without a DOS, z88dk's TRS-80 file routines are stubs that fail" } +
+    mapOf("sys.ticks counts two for each tick of the DOS's 30 Hz clock" to "without LDOS there is no interrupt task, and sys.ticks() is 0")
 
 // the programs that don't run as they are on llvm16 under TRSDOS 1.3 in trs80gp, with the reason
 private val notRunOnTrs80gpTrsdos: Map<String, String> = notRunOnTrs80gp +
     mapOf(
+        "sys.ticks counts two for each tick of the DOS's 30 Hz clock" to "TRSDOS 1.3 has no interrupt tasks, and sys.ticks() is 0",
         "diskio saving and loading memory" to
             "creating the file hangs: the floppy controller stays busy while the DOS loads an overlay, and the DOS aborts to its prompt (not understood yet)"
     )
@@ -5624,8 +5666,58 @@ main {
     }
 }""", "255 1 1 0 255 1 \n")
 
+// sys.ticks() in trs80gp, measured against the DOS's own 30 Hz counter: 002CH under TRSDOS 6 and LS-DOS 6, the
+// countdown at 4216H under LDOS on the Model III
+private val trs80gpTicksProgram = "sys.ticks counts two for each tick of the DOS's 30 Hz clock" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        uword changes = 0
+        ubyte last = @($4216)
+        uword t0 = sys.ticks()
+        while changes < 150 {
+            if @($4216) != last {
+                last = @($4216)
+                changes++
+            }
+        }
+        uword elapsed = sys.ticks() - t0
+        if elapsed >= 296 and elapsed <= 304
+            txt.print("ok")
+        else
+            txt.print_uw(elapsed)
+        txt.nl()
+    }
+}""", "ok\n")
+private val trs80gpM4TicksProgram = "sys.ticks counts two for each tick of the DOS's 30 Hz clock" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        uword changes = 0
+        ubyte last = @($002c)
+        uword t0 = sys.ticks()
+        while changes < 150 {
+            if @($002c) != last {
+                last = @($002c)
+                changes++
+            }
+        }
+        uword elapsed = sys.ticks() - t0
+        if elapsed >= 296 and elapsed <= 304
+            txt.print("ok")
+        else
+            txt.print_uw(elapsed)
+        txt.nl()
+    }
+}""", "ok\n")
+
 private val z88dkTextioPrograms = mapOf(
     trs80gpPortProgram,
+    trs80gpTicksProgram,
     trs80gpLastDriveProgram,
     "the z88dk textio routines" to OutputProgram("""
 %import textio
@@ -5703,6 +5795,7 @@ main {
  */
 private val trs80m4TextioPrograms = mapOf(
     trs80gpLastDriveProgram,
+    trs80gpM4TicksProgram,
     trs80gpPortProgram,
     "the trs80m4 textio routines" to OutputProgram("""
 %import textio

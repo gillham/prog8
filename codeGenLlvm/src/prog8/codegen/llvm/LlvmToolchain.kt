@@ -59,7 +59,7 @@ internal object LlvmToolchain {
             val withFloats = profile != null && (profile.floatSources.isNotEmpty() || profile.floatLinkArgs.isNotEmpty()) && usesFloats(llFile)
             startupFiles = try {
                 profile?.writeStartupSources(outputFile, withFileSources = profile.fileSources.isNotEmpty() && usesFiles(llFile, profile),
-                    withFloatSources = withFloats).orEmpty()
+                    withFloatSources = withFloats, withTicksSources = profile.ticksSources.isNotEmpty() && calls(llFile, profile.ticksSymbol)).orEmpty()
             } catch (x: IOException) {
                 return failed("Can't build '$outputFile': a startup source of the llvm triple profile couldn't be written: ${x.message}")
             }
@@ -179,6 +179,8 @@ internal object LlvmToolchain {
         val ir = Files.readString(llFile)
         return (listOf("fopen", "rename", "remove").map(profile::cSymbol) + listOfNotNull(profile.lastDriveSymbol)).any { ir.contains("@$it(") }
     }
+
+    private fun calls(llFile: Path, symbol: String?): Boolean = symbol != null && Files.readString(llFile).contains("@$symbol(")
 
     private fun failed(message: String): Boolean {
         System.err.println(message)

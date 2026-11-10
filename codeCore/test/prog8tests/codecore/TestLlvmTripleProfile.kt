@@ -325,7 +325,8 @@ class TestLlvmTripleProfile: FunSpec({
             withClue(name) {
                 profile.cIntSize shouldBe 4
                 profile.clang shouldBe null
-                profile.libcLacks shouldBe emptySet()
+                // newlib, the C library of the bare metal profiles, has no timespec_get for sys.ticks
+                profile.libcLacks shouldBe if (name == "armv7a-none-eabihf" || name == "riscv32-unknown-elf") setOf("timespec_get") else emptySet()
                 profile.ioRanges shouldBe emptyList()
                 profile.ioAllAddresses shouldBe false
                 profile.programArgs shouldBe true
