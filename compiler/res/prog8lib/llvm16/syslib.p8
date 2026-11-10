@@ -74,6 +74,25 @@ sys {
         }}
     }
 
+    sub inp(uword port) -> ubyte {
+        ; --- read a byte from the I/O port (the Z80's 16-bit port address, all of it on the bus as with IN A,(C)).
+        ;     0 on the 6502 and 6809 profiles, which have no I/O ports.
+        %ir {{
+            loadm.w r99000.w,[sys.inp.port]
+            syscall 213 (r99000.w): r99100.b
+            returnr.b r99100.b
+        }}
+    }
+
+    sub outp(uword port, ubyte value) {
+        ; --- write the byte to the I/O port (the Z80's 16-bit port address); nothing on the 6502 and 6809 profiles.
+        %ir {{
+            loadm.w r99000.w,[sys.outp.port]
+            loadm.b r99100.b,[sys.outp.value]
+            syscall 214 (r99000.w, r99100.b)
+        }}
+    }
+
     sub exit(ubyte returnvalue) {
         ; -- exit the program with a return code. All active defers in the call chain are unwound program-wide (LIFO) before the program ends.
         %ir {{

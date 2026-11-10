@@ -561,6 +561,11 @@ and others) built for z88dk, which llvm-z80's build installs.
 Everything listed above for ``llvm16`` applies, except the real addresses: the Z80 has its own I/O ports, so the
 profile has no ``io_ranges``, and the ``+test`` program itself starts at address 0. Besides:
 
+- the I/O ports: ``sys.inp(port)`` reads a byte from one and ``sys.outp(port, value)`` writes one, through z88dk's
+  ``inp`` and ``outp`` (``IN A,(C)`` and ``OUT (C),A``, with the whole 16-bit port in BC, as the ZX Spectrum needs).
+  The 6502 and 6809 profiles have no I/O ports: they list ``inp`` and ``outp`` in ``libc_lacks``, so ``sys.inp``
+  gives 0 and ``sys.outp`` does nothing.
+
 - console input works: the profile reads characters with z88dk's ``fgetc_cons`` (``getchar_symbol``).
 - files: opening, reading, writing and seeking work on the host's files, but ``z88dk-ticks`` can't delete or rename a
   file, and its ``ftell`` always fails, so deleting, renaming, the file position and size, and loading a file into
@@ -764,7 +769,11 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   (``prog8lib/llvm16/trs80m4/textio.p8``): ``plot``, ``getchr`` and ``setchr`` through ``@VDCTL``, reverse video
   through the display codes 16 and 17 (``getchr`` gives a reversed character with bit 7 set), ``cursor_on`` and
   ``cursor_off`` through 14 and 15, ``get_cursor`` through ``@VDCTL``, ``bell`` through ``@SOUND``, 80 columns and
-  24 rows, and no colors. Display code 21 doesn't switch to the alternate character set (checked in trs80gp). Files go through the DOS too: z88dk's file routines are stubs
+  24 rows, and no colors. Display code 21 doesn't switch to an alternate character set. Of the video control port
+  ``$84``, which ``sys.outp`` writes and which the DOS keeps a copy of at ``$0078`` (update both), bit 2 selects
+  64x16 instead of 80x24 characters and bit 3 shows characters 128-255 as inverse video instead of graphics and
+  special characters (as ``rvs_on`` does); bits 0 and 1 select the memory map, 5 and 7 locked up the DOS, and 4 and 6
+  showed no change (checked in trs80gp). Files go through the DOS too: z88dk's file routines are stubs
   there (``-lndos``), and the profile's ``file_source`` (``z80-trs80-m4-files.c``) has ``open``, ``close``, ``read``,
   ``write``, ``readbyte``, ``writebyte``, ``lseek``, ``fdtell``, ``remove`` and ``rename`` in their place, and an
   ``fread`` (``c_symbols``) that sets the end of the file, which z88dk's never does, with byte I/O

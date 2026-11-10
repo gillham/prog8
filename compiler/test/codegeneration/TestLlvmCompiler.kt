@@ -709,6 +709,25 @@ main {
         emulated.count { it.contains("volatile") } shouldBe 0
     }
 
+    test("sys.inp and sys.outp call the C library's inp and outp with the 16-bit port on the z80, and do nothing on the 6502") {
+        val source = $$"""
+%zeropage basicsafe
+main {
+    sub start() {
+        sys.outp($1234, 99)
+        @($c000) = sys.inp($fe)
+    }
+}"""
+        fun llLines(profile: String) =
+            compiledLlFile(compileText(LlvmTarget(2, LlvmTripleProfile.resolve(profile)), false, source,
+                outputDir.resolve("llvm16-ports-$profile").createDirectories(), assemble = false)).readLines().map { it.trim() }
+        val z80 = llLines("z80-test")
+        z80.any { it.matches(Regex("""%\S+ = call i16 @inp\(i16 %\S+\)""")) } shouldBe true
+        z80.any { it.matches(Regex("""call void @outp\(i16 %\S+, i16 %\S+\)""")) } shouldBe true
+        val mos = llLines("mos-sim")
+        mos.count { it.contains("@inp(") || it.contains("@outp(") } shouldBe 0
+    }
+
     test("llvm16 builds and runs a program in mos-sim").config(enabledOrReasonIf = requiresMosSim) {
         val source = """
 %import textio
@@ -5453,7 +5472,21 @@ main {
  * Programs for the z88dk textio, which has getchr() and setclr(): the output is trs80gp's printer copy (see trs80gp-output.c),
  * of a TRS-80 screen of 64 columns, and the exit status the number of the first screen read-back check that fails.
  */
+// sys.outp and sys.inp on trs80gp's emulator extension port, which reads 1 after function 255 is written to it
+private val trs80gpPortProgram = "sys.inp and sys.outp on trs80gp's extension port" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        sys.outp($47, 255)
+        txt.print_ub(sys.inp($47))
+        txt.nl()
+    }
+}""", "1\n")
+
 private val z88dkTextioPrograms = mapOf(
+    trs80gpPortProgram,
     "the z88dk textio routines" to OutputProgram("""
 %import textio
 %zeropage basicsafe
@@ -5529,6 +5562,7 @@ main {
  * first screen read-back check that fails.
  */
 private val trs80m4TextioPrograms = mapOf(
+    trs80gpPortProgram,
     "the trs80m4 textio routines" to OutputProgram("""
 %import textio
 %zeropage basicsafe

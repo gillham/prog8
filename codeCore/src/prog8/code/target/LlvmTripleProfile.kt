@@ -259,7 +259,7 @@ data class LlvmTripleProfile(
         val C_FUNCTIONS: Set<String> = buildSet {
             addAll(listOf("fopen", "fclose", "fgetc", "fputc", "fread", "fwrite", "fseek", "ftell", "ferror", "feof", "fflush", "remove", "rename",
                 "getcwd", "mkdir", "chdir", "rmdir", "opendir", "readdir", "closedir", "strcmp", "strdup", "realloc", "free", "qsort",
-                "putchar", "getchar", "exit", "usleep", "strtod", "snprintf", "printf"))
+                "putchar", "getchar", "exit", "usleep", "strtod", "snprintf", "printf", "inp", "outp"))
             for (math in listOf("sin", "cos", "tan", "atan", "atan2", "sqrt", "pow", "log", "log2", "fabs", "floor", "ceil", "roundeven")) {
                 add(math)
                 add(math + "f")

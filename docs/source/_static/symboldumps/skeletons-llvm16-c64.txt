@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA3-llvm.1 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 2c016e5b in branch llvm
+Prerelease version from git commit ef97eae2 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 LLVM version by Claude Code and Andrew Gillham (gillham@roadsign.com)
 Report issues with this version at https://github.com/gillham/prog8/issues
@@ -442,10 +442,12 @@ sys  {
     clear_irqd  ()
     die  (ubyte code, str message)
     exit  (ubyte returnvalue)
+    inp  (uword port) -> ubyte
     memcmp  (uword address1, uword address2, uword size) -> byte
     memcopy  (uword source, uword tgt, uword count)
     memset  (uword mem, uword numbytes, ubyte value)
     memsetw  (uword mem, uword numwords, uword value)
+    outp  (uword port, ubyte value)
     poweroff_system  ()
     reset_system  ()
     set_carry  ()

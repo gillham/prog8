@@ -65,6 +65,8 @@ private const val VM_FEOF = 209
 private const val VM_FLOAT_DIGITS = 210
 private const val VM_PARSE_FLOAT = 211
 private const val VM_LIST_DIRECTORY = 212
+private const val VM_PORT_IN = 213
+private const val VM_PORT_OUT = 214
 
 /**
  * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory, file and filesystem
@@ -133,6 +135,8 @@ private fun FunctionLowering.lowerSyscall(site: CallSite, number: Int) {
         VM_FLOAT_DIGITS -> floatDigits(site, number)
         VM_PARSE_FLOAT -> parseFloat(site, number)
         VM_LIST_DIRECTORY -> listDirectory(site, number)
+        VM_PORT_IN -> portIn(site, number)
+        VM_PORT_OUT -> portOut(site, number)
         else -> when (IMSyscall.entries.firstOrNull { it.number == number }) {
             IMSyscall.COMPARE_STRINGS -> compareStrings(site, number)
             IMSyscall.STRING_CONTAINS -> stringContains(site, number)
@@ -612,6 +616,28 @@ private fun FunctionLowering.listDirectory(site: CallSite, number: Int) {
     val helper = builder.helperFunction(".diskio.list") { builder.listDirectoryHelper(nameOffset) }
     val args = listOf(convert(read(kind), LlvmType.I8))
     result(site, derive("listed", LlvmType.I8) { LlvmInstruction.Call(it, helper, args, LlvmType.I8) })
+}
+
+/** PORT_IN(port word): the byte that C's inp() reads from the I/O port, or 0 without inp() in the C library (a CPU without I/O ports). */
+private fun FunctionLowering.portIn(site: CallSite, number: Int) {
+    val (port) = arguments(site, number, 1)
+    if (builder.lacks("inp")) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I8))
+        return
+    }
+    val cInt = builder.mapper.cInt
+    val value = derive("in", cInt) { LlvmInstruction.Call(it, external("inp", cInt, listOf(cInt)), listOf(convert(read(port), cInt)), cInt) }
+    result(site, convert(value, LlvmType.I8, "in"))
+}
+
+/** PORT_OUT(port word, value byte): C's outp() writes the byte to the I/O port; nothing without outp() in the C library. */
+private fun FunctionLowering.portOut(site: CallSite, number: Int) {
+    val (port, value) = arguments(site, number, 2)
+    if (builder.lacks("outp"))
+        return
+    val cInt = builder.mapper.cInt
+    val args = listOf(convert(read(port), cInt), convert(read(value), cInt))
+    emit(LlvmInstruction.Call(null, external("outp", LlvmType.Void, args.map { it.type }), args, LlvmType.Void))
 }
 
 /** `i8 (needle, ptr array, i16 count)`: 1 when one of the count elements equals the needle, else 0. */

@@ -39,7 +39,7 @@ BASE_PROFILE = ROOT / "codeCore/res/prog8lib/llvm-triples/z80-z88dk.properties"
 MATH_FUNCTIONS = ["sin", "cos", "tan", "atan", "atan2", "sqrt", "pow", "log", "log2", "fabs", "floor", "ceil", "roundeven"]
 C_FUNCTIONS = ["fopen", "fclose", "fgetc", "fputc", "fread", "fwrite", "fseek", "ftell", "ferror", "feof", "fflush", "remove", "rename",
                "getcwd", "mkdir", "chdir", "rmdir", "opendir", "readdir", "closedir", "strcmp", "strdup", "realloc", "free", "qsort",
-               "putchar", "getchar", "exit", "usleep", "strtod", "snprintf", "printf"] + [m + s for m in MATH_FUNCTIONS for s in ("", "f")]
+               "putchar", "getchar", "exit", "usleep", "strtod", "snprintf", "printf", "inp", "outp"] + [m + s for m in MATH_FUNCTIONS for s in ("", "f")]
 
 # the functions that only need classic malloc's heap to link; lacking them is better than reserving a heap
 ALLOCATION_FUNCTIONS = {"free", "realloc", "strdup"}
