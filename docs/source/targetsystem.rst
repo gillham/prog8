@@ -906,6 +906,10 @@ otherwise lose.
 
 Everything listed above for ``llvm16`` applies, with ``io_ranges`` of ``$ffc0-$ffcf``, the simulator's devices. Besides:
 
+- both 6809 profiles build static code (``-fno-pic`` in ``clang_args``): the program loads at a fixed address, so
+  static variables are addressed with 3-byte extended addressing instead of 4-byte PC-relative addressing, which made
+  p8vi's gap buffer test 4.4% smaller (a very small program can come out a few bytes larger).
+
 - the 6809 is big-endian, and so are the program's words, longs and quads in memory: ``peekw``, ``pokew``, word
   arrays, struct fields and byte views of words, such as ``@(&w)`` and ``@(&w+1)``, follow the machine's byte order:
   ``@(&w)`` is the most significant byte here. Use ``lsb``, ``msb``, ``setlsb``, ``setmsb`` and ``mkword`` for code that

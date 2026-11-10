@@ -639,7 +639,7 @@ class TestLlvmTripleProfile: FunSpec({
             shouldThrow<IllegalArgumentException> { profile.clang }.message!! shouldContain "LLVM_MC6809"
         else {
             profile.clang shouldBe System.getenv("LLVM_MC6809") + "/bin/clang"
-            profile.clangArgs shouldBe listOf("--target=mc6809-unknown-decb")
+            profile.clangArgs shouldBe listOf("--target=mc6809-unknown-decb", "-fno-pic")
             profile.linkCommand shouldBe listOf(System.getenv("LLVM_MC6809") + "/bin/clang", "--target=mc6809-unknown-decb", "-T", "{link_script}", "{startup}", "{object}", "-o", "{file}")
         }
     }
