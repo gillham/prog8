@@ -16,8 +16,10 @@ txt {
 
     const uword SCREEN = $2000
     const uword COLORS = $1000
-    const ubyte COLUMNS = 40
-    const ubyte ROWS = 25
+    const ubyte DEFAULT_WIDTH = 40
+    const ubyte DEFAULT_HEIGHT = 25
+    const ubyte COLUMNS = DEFAULT_WIDTH
+    const ubyte ROWS = DEFAULT_HEIGHT
     ubyte[8] c128_colors = [0, 2, 5, 7, 6, 4, 3, 1]     ; those that z88dk's ANSI console shows for the ANSI colors 0-7
 
 sub rvs_off() {

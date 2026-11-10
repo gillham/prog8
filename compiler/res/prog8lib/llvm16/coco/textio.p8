@@ -12,8 +12,10 @@ txt {
 
     const uword SCREEN = $0400
     const uword CURPOS = $0088      ; Color BASIC's cursor, the screen address where CHROUT prints next
-    const ubyte COLUMNS = 32
-    const ubyte ROWS = 16
+    const ubyte DEFAULT_WIDTH = 32
+    const ubyte DEFAULT_HEIGHT = 16
+    const ubyte COLUMNS = DEFAULT_WIDTH
+    const ubyte ROWS = DEFAULT_HEIGHT
 
     extsub prog8_coco_getkey() -> uword      ; picolibc's __decb_getc, in the profile's startup source
 

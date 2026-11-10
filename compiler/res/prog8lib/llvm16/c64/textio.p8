@@ -13,8 +13,10 @@ txt {
 
     const uword SCREEN = $0400
     const uword COLORS = $d800
-    const ubyte COLUMNS = 40
-    const ubyte ROWS = 25
+    const ubyte DEFAULT_WIDTH = 40
+    const ubyte DEFAULT_HEIGHT = 25
+    const ubyte COLUMNS = DEFAULT_WIDTH
+    const ubyte ROWS = DEFAULT_HEIGHT
 
     extsub cbm_k_getin() -> ubyte
     extsub cbm_k_chrout(ubyte char)

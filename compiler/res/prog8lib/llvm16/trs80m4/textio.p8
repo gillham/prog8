@@ -10,8 +10,10 @@
 txt {
 %option no_symbol_prefixing, ignore_unused
 
-    const ubyte COLUMNS = 80
-    const ubyte ROWS = 24
+    const ubyte DEFAULT_WIDTH = 80
+    const ubyte DEFAULT_HEIGHT = 24
+    const ubyte COLUMNS = DEFAULT_WIDTH
+    const ubyte ROWS = DEFAULT_HEIGHT
 
     extsub getk() -> word
     extsub prog8_trs80m4_plot(word col, word row)

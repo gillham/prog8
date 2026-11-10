@@ -701,9 +701,11 @@ built-in library, so that file replaces ``txt`` for the program. Keep the routin
 the rest of the library still finds what it uses.
 
 **Use** ``txt.width()`` **and** ``txt.height()`` **for the screen size, not** ``txt.DEFAULT_WIDTH`` **and**
-``txt.DEFAULT_HEIGHT``. Those constants are 80 and 25 on every ``llvm16`` profile, as one library serves them all,
-while the screen is 64 by 16 on the TRS-80, 32 by 24 on the ZX Spectrum and 40 by 25 on the C128.
-``txt.width()`` and ``txt.height()`` ask z88dk for the real size. Screen code of your own that computes a video RAM
+``txt.DEFAULT_HEIGHT``. With the z88dk textio those constants are 80 and 25, as one library serves all its machines,
+while the screen is 64 by 16 on the TRS-80 and 32 by 24 on the ZX Spectrum. ``txt.width()`` and ``txt.height()`` ask
+z88dk for the real size. (The textio of a single machine has its own: 40 by 25 with the z88dk-ansi textio of the C128
+and the c64 one, 80 by 24 with the trs80m4 one, 32 by 16 with the coco one; ``txt.COLUMNS`` and ``txt.ROWS`` are the
+same there.) Screen code of your own that computes a video RAM
 address from ``DEFAULT_WIDTH``, such as ``$3c00 + row * DEFAULT_WIDTH + col`` on the TRS-80, reads and writes the
 wrong place from the second row on.
 
@@ -931,7 +933,7 @@ Everything listed above for ``mc6809-sim`` applies, apart from these:
   - input goes through picolibc's ``getchar``, which waits for a key and doesn't echo it; ``txt.input_line()`` echoes
     what it reads, with backspace (the left arrow) removing the last character. ``txt.getkey()`` and ``txt.waitkey()``
     read the keyboard without waiting and waiting (see "Keyboard input on llvm16" above). ``DEFAULT_WIDTH`` and
-    ``DEFAULT_HEIGHT`` are the generic llvm16 ones.
+    ``DEFAULT_HEIGHT`` are the screen's 32 and 16.
 - ``sys.wait()`` waits that many ticks of BASIC's 60 Hz ``TIMER`` (``$0112``), which its interrupt counts at each
   vertical sync, halting the CPU with ``SYNC`` until each interrupt; ``sys.waitvsync()`` waits for the next one, so it
   really waits for the vertical sync. The profile's startup source gives them a ``usleep``, which picolibc lacks.

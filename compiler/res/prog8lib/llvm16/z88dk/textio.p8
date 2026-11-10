@@ -11,6 +11,10 @@
 txt {
 %option no_symbol_prefixing, ignore_unused
 
+    ; generic "terminal" dimensions: the screens of the z88dk machines differ, width() and height() give the real ones
+    const ubyte DEFAULT_WIDTH = 80
+    const ubyte DEFAULT_HEIGHT = 25
+
     ubyte ink_color = 255       ; the one of color(), which setclr() and setcc() put back; 255 before color() is called
 
 sub  clear_screen() {

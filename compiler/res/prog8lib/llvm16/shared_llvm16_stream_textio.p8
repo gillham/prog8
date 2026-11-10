@@ -10,6 +10,10 @@
 txt {
 %option merge, no_symbol_prefixing, ignore_unused
 
+    ; generic "terminal" dimensions
+    const ubyte DEFAULT_WIDTH = 80
+    const ubyte DEFAULT_HEIGHT = 25
+
 sub width() -> ubyte {
     return DEFAULT_WIDTH
 }
