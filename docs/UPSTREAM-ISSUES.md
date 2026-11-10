@@ -322,3 +322,12 @@ Keeping the list: add new items at the end with the next number, and remove an i
   40 column PET while the cursor is on a linked line, as after printing exactly 40 characters.
 - Branch: fixed; the row index finds the screen width once and keeps it: 40 columns when the 1 KB of video RAM
   shows again at $8400, or when `$D5` is 39; else 80. `txt.width()` uses the same. Checked in xpet 4032 and 8032.
+
+**U50. A void call of a sub whose body is `return other()` ends the caller after that call**
+- Where: `codeOptimizers/Inliner.kt` (`possiblyInlineFunctioncallStmt`), with `StatementReorderer`'s tail call.
+- Repro: `bugs/u50_inline_tail_call_void.p8`: `void wrap()` in a `repeat 3` loop, `wrap()` being `return inner()`.
+  On virtual it prints `i` instead of `ixixixend` (`master` 8bcd17674; correct with `-noopt`), with an "unreachable
+  code" warning. `StatementReorderer` turns `return inner()` into `goto inner`, a tail call, and the inliner copies
+  that `goto` into the caller, which then leaves the caller when `inner` returns. Found as `void txt.waitkey()` on
+  the llvm targets, whose `waitkey()` is `return chrin()`.
+- Branch: fixed; the inliner inlines a `goto` to a subroutine as a call of it.

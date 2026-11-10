@@ -458,6 +458,16 @@ class Inliner(private val program: Program, private val options: CompilationOpti
             return listOf(AstReplaceNode(origNode, scope, parent))
         }
 
+        // A goto to a subroutine is a tail call (StatementReorderer makes one of `return func()`): in the caller it is a call
+        // of that subroutine, as a goto there would leave the caller too. Null for a goto elsewhere.
+        fun inlineTailCall(toInline: Jump): Iterable<AstModification>? {
+            val target = toInline.target as? IdentifierReference ?: return null
+            val targetSub = target.targetSubroutine() ?: return null
+            sub.hasBeenInlined = true
+            val call = FunctionCallStatement(target.copy(), mutableListOf(), targetSub.returntypes.isNotEmpty(), origNode.position)
+            return listOf(AstReplaceNode(origNode, call, parent))
+        }
+
         fun possiblyInlineFunctionBody(toInline: Statement): Iterable<AstModification> {
             val inlinedStatement = substituteParameters(sub, origNode as IFunctionCall, toInline) as? Statement
                 ?: return noModifications
@@ -488,6 +498,7 @@ class Inliner(private val program: Program, private val options: CompilationOpti
             } else {
                 when (bodyStmt) {
                     is Return -> possiblyShortCircuitFunctionCall(bodyStmt)
+                    is Jump -> inlineTailCall(bodyStmt) ?: possiblyInlineFunctionBody(bodyStmt)
                     else -> possiblyInlineFunctionBody(bodyStmt)
                 }
             }

@@ -159,6 +159,33 @@ main {
         }
     }
 
+    test("a void call of a sub whose body is a tail call is inlined as a call, not as a goto that would leave the caller") {
+        // StatementReorderer turns `return inner()` into `goto inner`; inlined as that goto, the loop ended after one round
+        val src="""
+main {
+    sub start() {
+        repeat 3 {
+            void wrap()
+            cx16.r0++
+        }
+    }
+    sub wrap() -> ubyte {
+        return inner()
+    }
+    sub inner() -> ubyte {
+        cx16.r1++
+        return 1
+    }
+}"""
+        val result = compileText(Cx16Target(), true, src, outputDir, writeAssembly = false)!!
+        fun flattened(statements: List<Statement>): List<Statement> =
+            statements.flatMap { if (it is AnonymousScope) flattened(it.statements) else listOf(it) }
+        val loop = result.compilerAst.entrypoint.statements.filterIsInstance<RepeatLoop>().single()
+        val body = flattened(loop.body.statements)
+        body.any { it is Jump } shouldBe false
+        body.any { it is FunctionCallStatement && it.target.nameInSource.last() == "inner" } shouldBe true
+    }
+
     test("do not inline asmsub with parameters") {
         // Parameterized asmsubs cannot be inlined by the AST Inliner because it doesn't understand
         // the low-level register mapping (like @A) and cannot generate the necessary code to load
