@@ -750,6 +750,13 @@ none, without waiting, and ``txt.waitkey()``, which waits for a key and gives it
   is built with it, which turns Enter into 10, the code of the down arrow, so the TRS-80 profiles link their own
   ``getk`` and ``fgetc_cons`` from the startup source ``z80-trs80-keyboard.asm`` (``-pragma-redirect`` in the link
   command): they give the ROM's codes, Enter 13, down 10, up 91, left 8, right 9 and CLEAR 31, also to ``txt.chrin()``.
+  Letters come in lower case unshifted and as capitals shifted on the Model I and III alike: the Model III ROM's caps
+  lock (``$4019``) is off during each scan and put back after it, and the Model I ROM's capitals are swapped. The
+  ``trs80`` module (``prog8lib/llvm16/z88dk/trs80.p8``, ``%import trs80``) has ``caps_lock(bool)`` for capitals
+  unshifted, ``model()`` (1 or 3), ``dos()`` (``DOS_NONE``, ``DOS_TRSDOS``, ``DOS_LDOS``), ``has_lowercase()`` (false on a
+  Model I without the lower case kit) and ``capitals(bool)``, which makes the profiles' ``fputc_cons`` (redirected to
+  ``_prog8_trs80_console`` in the same source) show lower case letters as capitals. The Model 4 profile's ``trs80``
+  module gives ``model()`` 4 and ``dos()`` ``DOS_6``.
 - the trs80m4 textio (``z80-trs80-m4``): ``getkey`` is ``@KBD``, which gives the key typed or 0, and ``waitkey`` is
   ``txt.chrin()``, ``@KEY``, which waits for a key. Enter is 13, the left arrow and backspace 8, the right arrow 9 and
   BREAK 128; letters come as typed (lower case unless shift or caps lock).
@@ -776,11 +783,12 @@ and how often it changes depend on the machine, and it is 0 where there is no cl
   screen; with HIGH$ above that, the memory up to HIGH$ stays unused). It stays there until the next reboot, and later
   programs find it with ``@GTMOD``, so a program that ends in any way leaves no task behind. Task slot 11 runs 60 times
   a second; when it is taken, slot 8 or 9 runs 30 times a second and adds 2.
-- ``z80-trs80-cmd`` under LDOS 5.3 on the Model III: the same module, in task slot 8, 9 or 10 (30 a second, adding 2).
-  LDOS 5.3 has no ``@GTMOD``: the program finds the module through the task table at ``4500H``. 0 on a Model I and
-  under TRSDOS 1.3 (``z80-trs80-m3-trsdos`` too), which have no interrupt tasks. ``sys.wait()`` waits by this clock
-  (``wait_symbol``), and ``sys.waitvsync()`` until its next tick, a 30th of a second; without the clock both return at
-  once, as on the other Model I/III profiles.
+- ``z80-trs80-cmd`` under LDOS 5.3 on the Model III, and under LDOS 5.3 and TRSDOS 2.3 on the Model I: the same
+  module, in task slot 8, 9 or 10, which run at every interrupt: 30 times a second on the Model III, adding 2, and 40
+  on the Model I, adding 1 and 2 in turn. These DOSes have no ``@GTMOD``: the program finds the module through the task
+  table at ``4500H``, and calls ``@ADTSK`` at ``403DH`` (Model III) or ``4410H`` (Model I). 0 under TRSDOS 1.3
+  (``z80-trs80-m3-trsdos`` too), which has no interrupt tasks. ``sys.wait()`` waits by this clock (``wait_symbol``),
+  and ``sys.waitvsync()`` until its next tick; without the clock both return at once.
 - 0 on ``z80-trs80`` (the ``.cas`` file), ``z80-cpm``, ``z80-c128`` and the simulators (``mos-sim``, ``z80-test``,
   ``mc6809-sim``).
 

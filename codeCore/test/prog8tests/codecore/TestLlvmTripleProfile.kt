@@ -1041,7 +1041,8 @@ class TestLlvmTripleProfile: FunSpec({
     test("the link command, output and libc_lacks of each z88dk platform profile are what the profile generator finds, plus qsort")
         .config(enabled = python != null && System.getenv("Z88DK") != null) {
         // link options a profile adds by hand to what the generator finds
-        val trs80Keys = setOf("-pragma-redirect:getk=_prog8_trs80_getk", "-pragma-redirect:fgetc_cons=_prog8_trs80_fgetc_cons")
+        val trs80Keys = setOf("-pragma-redirect:fputc_cons=_prog8_trs80_console", "-pragma-redirect:getk=_prog8_trs80_getk",
+            "-pragma-redirect:fgetc_cons=_prog8_trs80_fgetc_cons")
         val handAdded = mapOf("z80-trs80" to setOf("-pragma-define:REGISTER_SP=-0x40B1") + trs80Keys, "z80-trs80-cmd" to trs80Keys,
             "z80-c128" to setOf("-pragma-define:ansicolumns=40"))
         for (name in embeddedZ88dk.keys) {

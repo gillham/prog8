@@ -6,13 +6,16 @@
  * y x, ESC b/c/s/r n) as its codes in decimal between braces, such as {22,34,36}: the tests then see the cursor and
  * color changes too, without a screen dump.
  * With -DPROG8_CONSOLE=name (the Model 4), name is the console routine instead, and every control code but 9, 10 and 13
- * is printed as {code}, as the Model 4's take no parameters.
+ * is printed as {code}, as the Model 4's take no parameters. With -DPROG8_GENERIC_CONSOLE=name (the Model I/III), name is
+ * the profile's own fputc_cons, which calls the generic console driver itself.
  */
 #include <stdio.h>
 #include <stdlib.h>
 
 #ifdef PROG8_CONSOLE
 extern int PROG8_CONSOLE(int c) __smallc;
+#elif defined(PROG8_GENERIC_CONSOLE)
+extern int PROG8_GENERIC_CONSOLE(int c) __smallc;
 #else
 extern int fputc_cons_generic(int c);
 #endif
@@ -96,6 +99,8 @@ int prog8_fputc(int c)
         mirror(c);
 #ifdef PROG8_CONSOLE
     return PROG8_CONSOLE(c);
+#elif defined(PROG8_GENERIC_CONSOLE)
+    return PROG8_GENERIC_CONSOLE(c);
 #else
     return fputc_cons_generic(c);
 #endif

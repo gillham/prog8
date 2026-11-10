@@ -757,6 +757,64 @@ main {
         mos.count { it.contains("@inp(") || it.contains("@outp(") } shouldBe 0
     }
 
+    test("the trs80 module tells the TRS-80 model, DOS and lower case, sys.wait waits by the clock, and capitals shows capitals, in trs80gp")
+        .config(enabledOrReasonIf = requiresTrs80gp) {
+        val source = """
+%import textio
+%import trs80
+%zeropage basicsafe
+main {
+    sub start() {
+        ubyte model = trs80.model()
+        ubyte dos = trs80.dos()
+        bool lower = trs80.has_lowercase()
+        uword t0 = sys.ticks()
+        sys.wait(60)
+        uword elapsed = sys.ticks() - t0
+        txt.plot(0, 10)
+        trs80.capitals(true)
+        txt.print("ab")
+        trs80.capitals(false)
+        txt.plot(0, 11)
+        txt.print("ab")
+        txt.plot(0, 12)
+        txt.print("model ")
+        txt.print_ub(model)
+        txt.print(" dos ")
+        txt.print_ub(dos)
+        txt.print(" lower ")
+        txt.print_bool(lower)
+        txt.print(" wait ")
+        if elapsed == 0
+            txt.print("none")
+        else if elapsed >= 60 and elapsed <= 63
+            txt.print("ok")
+        else
+            txt.print_uw(elapsed)
+        txt.print(" screen ")
+        txt.print_ub(txt.getchr(0, 10))
+        txt.spc()
+        txt.print_ub(txt.getchr(0, 11))
+        txt.nl()
+    }
+}"""
+        val expected = listOf(
+            "trs80gp-m1" to "model 1 dos 1 lower true wait ok screen 65 97",
+            "trs80gp-m1-ldos" to "model 1 dos 5 lower true wait ok screen 65 97",
+            "trs80gp-m1-nlc" to "model 1 dos 5 lower false wait ok screen 65 33",
+            "trs80gp-m3" to "model 3 dos 5 lower true wait ok screen 65 97",
+            "trs80gp-m3-trsdos" to "model 3 dos 1 lower true wait none screen 65 97")
+        for ((name, line) in expected) {
+            withClue(name) {
+                val runner = Llvm16ProgramRunner(testProfile(name), name, requiresTrs80gp, emptyMap(), pythonScript = true)
+                val llFile = compiledLlFile(compileText(LlvmTarget(2, runner.profile), true, source, outputDir.resolve("trs80-module-$name").createDirectories()))
+                val (exitCode, output) = runner.buildAndRun(llFile)
+                withClue(output) { exitCode shouldBe 0 }
+                output.lines().last { it.isNotEmpty() }.substringAfter("{22,44,32}") shouldBe line
+            }
+        }
+    }
+
     test("sys.ticks calls the profile's ticks_symbol, timespec_get on llvm32 and llvm64, and is 0 without either") {
         val source = $$"""
 %zeropage basicsafe
@@ -2586,6 +2644,7 @@ private val llvm16ProgramRunners = listOf(
     Llvm16ProgramRunner(testProfile("trs80gp-m3"), "trs80gp (TRS-80 Model III, LDOS)", requiresTrs80gp, notRunOnTrs80gp, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m3-trsdos"), "trs80gp (TRS-80 Model III, TRSDOS 1.3)", requiresTrs80gp, notRunOnTrs80gpTrsdos, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m1"), "trs80gp (TRS-80 Model I, TRSDOS)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
+    Llvm16ProgramRunner(testProfile("trs80gp-m1-ldos"), "trs80gp (TRS-80 Model I, LDOS)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m4"), "trs80gp (TRS-80 Model 4, TRSDOS 6)", requiresTrs80gp, notRunOnTrs80gp, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-m4-lsdos"), "trs80gp (TRS-80 Model 4, LS-DOS 6.3)", requiresTrs80gp, notRunOnTrs80gp, only = trs80gpSmokeTests, pythonScript = true),
     Llvm16ProgramRunner(testProfile("trs80gp-cas"), "trs80gp (TRS-80 Model III, ROM BASIC, .cas)", requiresTrs80gp, notRunOnTrs80gpCas, pythonScript = true)
