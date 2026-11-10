@@ -350,7 +350,9 @@ internal data class LlvmModule(
     var dataLayout: String? = null,
     val globals: MutableList<LlvmGlobal> = mutableListOf(),
     val functions: MutableList<LlvmFunction> = mutableListOf(),
-    val headerComments: MutableList<String> = mutableListOf()
+    val headerComments: MutableList<String> = mutableListOf(),
+    /** Attributes of every function the module defines, such as minsize, in an attribute group. */
+    val functionAttributes: List<String> = emptyList()
 )
 
 private fun requireValidAlignment(align: Int?) =

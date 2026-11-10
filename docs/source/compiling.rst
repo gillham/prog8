@@ -349,11 +349,22 @@ One or more .p8 module files
     profile that leaves out keys that clang supplies, and its llvm-as checks the ``.ll`` file.
     It is kept in the ``.p8ir`` file, and is an error with the other targets.
 
+``-O <level>``
+    The optimization level of the llvm targets: ``0``, ``1``, ``2`` or ``3``, or ``s`` for smaller and ``z`` for the smallest
+    code, also written as one word (``-Oz``). The default is ``z`` on ``llvm16``, whose 8-bit machines run out of memory before
+    they run out of time, and ``2`` on ``llvm32`` and ``llvm64``. ``s`` and ``z`` give every function of the program the
+    ``optsize`` and ``minsize`` attributes (clang's own ``-Os`` and ``-Oz`` don't add them to the functions of a ``.ll``
+    file, which are what makes the code smaller); clang gets the same ``-O`` option. On ``llvm16`` the code is 15% to 75%
+    smaller than at ``2``, as the inliner then no longer copies small routines into every call site; use ``-O2`` for a
+    program that needs the speed more than the memory. It is kept in the ``.p8ir`` file, and is an error with the other
+    targets. ``-noopt`` is a different thing: it turns off Prog8's own optimizations, before the LLVM IR is written.
+
 ``-Xcompile <argument>``, ``-Xlink <argument>``
     Pass one extra argument to the clang compile step, or to the link step, when the llvm targets
     build an executable. Repeat the option for more arguments; each value is passed as is, also when it starts with ``-``
     or contains spaces, for example ``-Xlink "-L/opt/my libs" -Xlink -lmylib`` or ``-Xcompile -mcpu=cortex-a7``.
-    The ``-Xcompile`` arguments come after the profile's ``clang_args``. The ``-Xlink`` arguments go at the end of the
+    The ``-Xcompile`` arguments come after the profile's ``clang_args`` and the ``-O`` option, so an ``-O`` among them
+    sets clang's level (but not the function attributes). The ``-Xlink`` arguments go at the end of the
     profile's ``link_command`` when it has one, otherwise at the end of the clang command that links, so libraries
     come after the program's object file. They are kept in the ``.p8ir`` file, and are an error with the other targets.
 

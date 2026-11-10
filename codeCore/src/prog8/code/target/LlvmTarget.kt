@@ -14,7 +14,9 @@ class LlvmTarget(
     val profile: LlvmTripleProfile = LlvmTripleProfile.resolve(defaultTriple(pointerSize)),
     val extraCompileArgs: List<String> = emptyList(),
     val extraLinkArgs: List<String> = emptyList(),
-    val clangOption: String? = null
+    val clangOption: String? = null,
+    /** The -O option's level (0, 1, 2, 3, s or z), or null for the target's default, [defaultOptLevel]. */
+    val optLevelOption: String? = null
 ): ICompilationTarget,
     IStringEncoding by Encoder(false),
     IMemSizer by NormalMemSizer(floatSize(pointerSize), pointerSize.toUInt()) {
@@ -38,6 +40,22 @@ class LlvmTarget(
     val targetTriple: String get() = profile.triple
     val dataLayout: String get() = profile.dataLayout
 
+    /**
+     * The optimization level: clang's -O level, and for s and z the optsize and minsize attributes on every function, as clang's
+     * -Os and -Oz don't add them to a .ll file's functions. z by default on llvm16, whose machines run out of memory first.
+     */
+    val optLevel: String = optLevelOption ?: defaultOptLevel(pointerSize)
+
+    /** The function attributes of [optLevel]: none for 0 to 3. */
+    val functionAttributes: List<String> = when (optLevel) {
+        "s" -> listOf("optsize")
+        "z" -> listOf("minsize", "optsize")
+        else -> emptyList()
+    }
+
+    /** The clang compile arguments: the -O option of [optLevel], then [extraCompileArgs], whose own -O comes later and wins. */
+    val compileArgs: List<String> get() = listOf("-O$optLevel") + extraCompileArgs
+
     /** The clang that builds the program, see [LlvmTripleProfile.resolveClang]. */
     fun clang(): Path? = profile.resolveClang(clangOption)
 
@@ -48,6 +66,7 @@ class LlvmTarget(
     val supportsFloats: Boolean = pointerSize != 2 || profile.floats
 
     init {
+        require(optLevel in OPT_LEVELS) { "the llvm optimization level must be one of ${OPT_LEVELS.joinToString()}, not '$optLevel'" }
         require(pointerSize == 2 || pointerSize == 4 || pointerSize == 8) { "the llvm targets have 2, 4 or 8 byte pointers, not $pointerSize" }
         require(profile.pointerBits == pointerSize * 8) {
             "llvm triple '${profile.triple}' has ${profile.pointerBits}-bit pointers, but the $name target needs ${pointerSize * 8}-bit pointers"
@@ -63,6 +82,12 @@ class LlvmTarget(
         const val DEFAULT_TRIPLE_32 = "wasm32-wasip1"
         const val DEFAULT_TRIPLE_16 = "mos-sim"
         const val FLOATS_UNSUPPORTED = "floats are not supported yet on the $NAME16 target"
+
+        /** The levels of the -O option. */
+        val OPT_LEVELS = listOf("0", "1", "2", "3", "s", "z")
+
+        /** z (smallest code) on llvm16, 2 on llvm32 and llvm64. */
+        fun defaultOptLevel(pointerSize: Int): String = if (pointerSize == 2) "z" else "2"
 
         /** The target names, and [ALIAS], that select an llvm target. */
         val NAMES = setOf(NAME16, NAME32, NAME64, ALIAS)
@@ -162,7 +187,7 @@ class LlvmTarget(
         }
         // the LLVM code generator module depends on this one, so its runner can only be loaded via reflection
         val runner = Class.forName("prog8.codegen.llvm.LlvmProgramRunner").getDeclaredConstructor().newInstance() as ILlvmProgramRunner
-        val status = runner.buildAndRun(programFile, quiet, profile, extraCompileArgs, extraLinkArgs, programArgs, linkLibraries, clangOption) ?: return null
+        val status = runner.buildAndRun(programFile, quiet, profile, compileArgs, extraLinkArgs, programArgs, linkLibraries, clangOption) ?: return null
         if (!quiet)
             println("\nProgram exited with status $status")
         return status

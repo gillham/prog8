@@ -59,6 +59,7 @@ internal fun compileFile(
         llvmTriple = (platform as? LlvmTarget)?.profile?.name,
         llvmCompileArgs = (platform as? LlvmTarget)?.extraCompileArgs.orEmpty(),
         llvmClang = (platform as? LlvmTarget)?.clangOption,
+        llvmOptLevel = (platform as? LlvmTarget)?.optLevelOption,
         llvmLinkArgs = (platform as? LlvmTarget)?.extraLinkArgs.orEmpty(),
         irComments = irComments,
         loadAddress = loadAddress

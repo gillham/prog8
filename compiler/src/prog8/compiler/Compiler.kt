@@ -77,6 +77,7 @@ class CompilerArguments(val filepath: Path,
                         val llvmCompileArgs: List<String> = emptyList(),
                         val llvmLinkArgs: List<String> = emptyList(),
                         val llvmClang: String? = null,
+                        val llvmOptLevel: String? = null,
                         val irComments: Boolean = false,
                         val loadAddress: UInt? = null)
 
@@ -94,7 +95,7 @@ fun compileProgram(args: CompilerArguments): CompilationResult? {
     val compTarget = if(targetConfigFile.isRegularFile()) {
         ConfigFileTarget.fromConfigFile(targetConfigFile)
     } else {
-        getCompilationTargetByName(args.compilationTarget, args.llvmTriple, args.llvmCompileArgs, args.llvmLinkArgs, args.llvmClang)
+        getCompilationTargetByName(args.compilationTarget, args.llvmTriple, args.llvmCompileArgs, args.llvmLinkArgs, args.llvmClang, args.llvmOptLevel)
     }
 
     if(args.varsGolden) {

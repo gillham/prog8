@@ -179,6 +179,35 @@ main {
         (IRFileReader().read(irFile).options.compTarget as LlvmTarget).clangOption shouldBe clang
     }
 
+    test("the -O level gives the optsize and minsize attributes on every function, and the clang -O option; z by default on llvm16") {
+        fun target(pointerSize: Int, level: String?) = getCompilationTargetByName(mapOf(2 to "llvm16", 4 to "llvm32", 8 to "llvm64").getValue(pointerSize),
+            if (pointerSize == 2) "mos-sim" else null, optLevel = level) as LlvmTarget
+        target(2, null).optLevel shouldBe "z"
+        target(4, null).optLevel shouldBe "2"
+        target(8, null).optLevel shouldBe "2"
+        target(2, null).functionAttributes shouldBe listOf("minsize", "optsize")
+        target(8, "s").functionAttributes shouldBe listOf("optsize")
+        target(2, "2").functionAttributes shouldBe emptyList()
+        LlvmTarget(4, extraCompileArgs = listOf("-g", "-O1"), optLevelOption = "3").compileArgs shouldBe listOf("-O3", "-g", "-O1")
+        shouldThrow<IllegalArgumentException> { target(8, "fast") }
+        shouldThrow<IllegalArgumentException> { getCompilationTargetByName("c64", optLevel = "z") }
+
+        fun defines(level: String?): List<String> {
+            val dir = outputDir.resolve("optlevel-${level ?: "default"}").createDirectories()
+            val result = compileText(target(2, level), false, programs.getValue("arithmetic expressions"), dir, assemble = false).shouldNotBeNull()
+            val llFile = compiledLlFile(result)
+            if (level != null)
+                (IRFileReader().read(result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")).options.compTarget as LlvmTarget).optLevelOption shouldBe level
+            return llFile.readLines()
+        }
+        defines(null).let { lines ->
+            lines.filter { it.startsWith("define ") }.all { it.endsWith(" #0 {") } shouldBe true
+            lines.any { it == "attributes #0 = { minsize optsize }" } shouldBe true
+        }
+        defines("2").count { it.contains("#0") } shouldBe 0
+        defines("s").any { it == "attributes #0 = { optsize }" } shouldBe true
+    }
+
     test("-Xcompile and -Xlink arguments are only accepted for the llvm targets") {
         shouldThrow<IllegalArgumentException> { getCompilationTargetByName("cx16", extraLinkArgs = listOf("-lfoo")) }
         shouldThrow<IllegalArgumentException> { getCompilationTargetByName("virtual", extraCompileArgs = listOf("-g")) }
@@ -581,7 +610,7 @@ main {
                 val lines = compiledLlFile(compileText(LlvmTarget(2), optimize, source, dir, assemble = false)).readLines()
                 lines shouldContain "target triple = \"mos\""
                 lines shouldContain "target datalayout = \"e-m:e-p:16:8-p1:8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:8-Fi8-n8\""
-                lines shouldContain "define i16 @main() {"
+                lines shouldContain "define i16 @main() #0 {"
                 lines.any { it.startsWith("@main.start.p = ") && it.contains(" i16 ") } shouldBe true
                 lines.count { it.contains(" i64") && !it.startsWith("@sys.") } shouldBe 0
             }
@@ -807,7 +836,7 @@ main {
         val sim = compiledLlFile(compileText(LlvmTarget(2), false, lacksSource, dir, assemble = false)).readLines()
         for (name in LlvmTripleProfile.resolve("mos-sim").libcLacks)
             withClue(name) { sim.none { it.startsWith("declare ") && "@$name(" in it } shouldBe true }
-        sim.any { it == "define i16 @main() {" } shouldBe true
+        sim.any { it == "define i16 @main() #0 {" } shouldBe true
         sim.any { it == "@.stack.data = internal global [256 x i8] zeroinitializer" } shouldBe true
         sim.none { ".sys.curdir.buf" in it || "@.sys.argc" in it } shouldBe true
         sim.none { "@llvm.sqrt" in it || "fptosi" in it } shouldBe true

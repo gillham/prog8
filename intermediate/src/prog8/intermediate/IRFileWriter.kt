@@ -300,6 +300,7 @@ class IRFileWriter(private val irProgram: IRProgram, outfileOverride: Path?) {
             target.extraCompileArgs.forEach { emitLine("llvmCompileArg=${escapeOptionValue(it)}") }
             target.extraLinkArgs.forEach { emitLine("llvmLinkArg=${escapeOptionValue(it)}") }
             target.clangOption?.let { emitLine("llvmClang=${escapeOptionValue(it)}") }
+            target.optLevelOption?.let { emitLine("llvmOptLevel=$it") }
         }
         irProgram.options.linkLibraries.forEach { emitLine("linkLibrary=${escapeOptionValue(it)}") }
         emitLine("output=${irProgram.options.output}")

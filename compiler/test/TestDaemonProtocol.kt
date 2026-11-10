@@ -44,6 +44,7 @@ class TestDaemonProtocol : FunSpec({
             llvmCompileArgs = listOf("-g", "-mcpu=cortex-a15"),
             llvmLinkArgs = listOf("-L/a b", "-lfoo", "x=\"y\""),
             llvmClang = "/opt/llvm \"mos\"/bin/mos-clang",
+            llvmOptLevel = "s",
             generateDocumentation = false,
             irComments = true
         )
@@ -84,6 +85,7 @@ class TestDaemonProtocol : FunSpec({
         decoded.llvmCompileArgs shouldBe request.llvmCompileArgs
         decoded.llvmLinkArgs shouldBe request.llvmLinkArgs
         decoded.llvmClang shouldBe request.llvmClang
+        decoded.llvmOptLevel shouldBe request.llvmOptLevel
         decoded.irComments shouldBe request.irComments
     }
 

@@ -112,7 +112,8 @@ val CompilationTargets = listOf(
  * the extra arguments of their compile and link steps, and the [clang] of the -clang option.
  */
 fun getCompilationTargetByName(name: String, triple: String? = null,
-                               extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList(), clang: String? = null): ICompilationTarget {
+                               extraCompileArgs: List<String> = emptyList(), extraLinkArgs: List<String> = emptyList(), clang: String? = null,
+                               optLevel: String? = null): ICompilationTarget {
     val lowercaseName = name.lowercase()
     val isLlvm = lowercaseName in LlvmTarget.NAMES
     if(triple != null && !isLlvm)
@@ -121,6 +122,8 @@ fun getCompilationTargetByName(name: String, triple: String? = null,
         throw IllegalArgumentException("-Xcompile and -Xlink can only be given for the llvm targets")
     if(clang != null && !isLlvm)
         throw IllegalArgumentException("-clang can only be given for the llvm targets")
+    if(optLevel != null && !isLlvm)
+        throw IllegalArgumentException("-O can only be given for the llvm targets")
     return when(lowercaseName) {
         C64Target.NAME -> C64Target()
         C128Target.NAME -> C128Target()
@@ -130,14 +133,15 @@ fun getCompilationTargetByName(name: String, triple: String? = null,
         Amiga500Target.NAME -> Amiga500Target()
         Amiga1200Target.NAME -> Amiga1200Target()
         VMTarget.NAME -> VMTarget()
-        LlvmTarget.NAME64, LlvmTarget.ALIAS -> llvmTarget(8, triple, extraCompileArgs, extraLinkArgs, clang)
-        LlvmTarget.NAME32 -> llvmTarget(4, triple, extraCompileArgs, extraLinkArgs, clang)
-        LlvmTarget.NAME16 -> llvmTarget(2, triple, extraCompileArgs, extraLinkArgs, clang)
+        LlvmTarget.NAME64, LlvmTarget.ALIAS -> llvmTarget(8, triple, extraCompileArgs, extraLinkArgs, clang, optLevel)
+        LlvmTarget.NAME32 -> llvmTarget(4, triple, extraCompileArgs, extraLinkArgs, clang, optLevel)
+        LlvmTarget.NAME16 -> llvmTarget(2, triple, extraCompileArgs, extraLinkArgs, clang, optLevel)
         else -> throw IllegalArgumentException("invalid compilation target")
     }
 }
 
-private fun llvmTarget(pointerSize: Int, triple: String?, extraCompileArgs: List<String>, extraLinkArgs: List<String>, clang: String?): LlvmTarget {
+private fun llvmTarget(pointerSize: Int, triple: String?, extraCompileArgs: List<String>, extraLinkArgs: List<String>, clang: String?,
+                       optLevel: String?): LlvmTarget {
     val profile = LlvmTripleProfile.resolve(triple ?: LlvmTarget.defaultTriple(pointerSize), clang)
-    return LlvmTarget(pointerSize, profile, extraCompileArgs, extraLinkArgs, clang)
+    return LlvmTarget(pointerSize, profile, extraCompileArgs, extraLinkArgs, clang, optLevel)
 }

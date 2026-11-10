@@ -507,7 +507,16 @@ The llvm16 target
 The ``llvm16`` target (experimental) compiles the program to LLVM IR for CPUs with 16-bit pointers, and builds it with
 the `llvm-mos <https://llvm-mos.org/>`_ SDK for the 6502 family, or for the Z80 (see :ref:`llvm16_z80`) or the 6809 (see :ref:`llvm16_6809`). The
 ``LLVM_MOS`` environment variable names the directory of the llvm-mos SDK, whose clang the mos profiles use; building
-fails without it, but writing the ``.ll`` file works. ``sys.target`` is 252. The built-in profiles for the 6502 are:
+fails without it, but writing the ``.ll`` file works. ``sys.target`` is 252.
+
+``llvm16`` programs are optimized for size by default (``-Oz``, see the ``-O`` command line option): every function gets
+the ``minsize`` and ``optsize`` attributes. Without them clang's inliner copies small routines into every call site
+on the 6502 and the 6809 (llvm-mos and llvm-mc6809 inline much more readily than llvm-z80), and a program of some
+size grows several times over: a 100-routine test program measured 44,773 bytes of code for the 6502 at ``-O2`` and
+17,950 at ``-Oz``, 65,236 and 16,447 for the 6809, 14,078 and 11,673 for the Z80. A very small program can come out a
+little larger at ``-Oz``. ``-O2`` gives speed back where it matters more than the memory.
+
+The built-in profiles for the 6502 are:
 
 - ``mos-sim``, the default: builds for the SDK's 6502 simulator, which ``-emu`` runs with ``mos-sim``. The simulator
   prints the program's output and gives back its exit status.

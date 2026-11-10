@@ -28,9 +28,14 @@ internal object LlvmPrinter {
             out.appendLine()
             module.globals.forEach { out.appendLine(format(it)) }
         }
+        val attributes = if (module.functionAttributes.isEmpty()) "" else " #0"
         for (function in module.functions) {
             out.appendLine()
-            printFunction(function, out)
+            printFunction(function, out, attributes)
+        }
+        if (module.functionAttributes.isNotEmpty()) {
+            out.appendLine()
+            out.appendLine("attributes #0 = { ${module.functionAttributes.joinToString(" ")} }")
         }
     }
 
@@ -114,7 +119,7 @@ internal object LlvmPrinter {
         global.align?.let { append(", align ").append(it) }
     }
 
-    private fun printFunction(function: LlvmFunction, out: Appendable) {
+    private fun printFunction(function: LlvmFunction, out: Appendable, attributes: String = "") {
         val returnType = format(function.returnType)
         val name = globalName(function.name)
         if (function.isExternal) {
@@ -123,7 +128,7 @@ internal object LlvmPrinter {
             return
         }
         require(function.blocks.isNotEmpty()) { "definition of $name needs at least one block" }
-        out.appendLine("define ${linkagePrefix(function.linkage)}$returnType $name(${function.parameters.joinToString { typed(it) }}) {")
+        out.appendLine("define ${linkagePrefix(function.linkage)}$returnType $name(${function.parameters.joinToString { typed(it) }})$attributes {")
         function.blocks.forEachIndexed { index, block ->
             if (index > 0) out.appendLine()
             out.appendLine("${identifier(block.label)}:")

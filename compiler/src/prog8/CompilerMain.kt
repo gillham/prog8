@@ -109,6 +109,7 @@ private class CompilerCli : CliktCommand(name = "prog8c") {
     val llvmTripleArg by option("-triple", "--triple", help = "triple profile of the llvm targets: a name such as ${LlvmTarget.DEFAULT_TRIPLE_32}, or a profile properties file")
     val llvmCompileArgs by option("-Xcompile", "--Xcompile", help = "pass one extra argument to the clang compile step of the llvm targets (can be repeated)").multiple()
     val llvmLinkArgs by option("-Xlink", "--Xlink", help = "pass one extra argument to the link step of the llvm targets, such as -lfoo (can be repeated)").multiple()
+    val llvmOptLevel by option("-O", "--O", help = "optimization level of the llvm targets: 0, 1, 2, 3, s (smaller code) or z (smallest); z on llvm16, 2 on llvm32 and llvm64")
     val llvmClangArg by option("-clang", "--clang", help = "the clang that builds programs of the llvm targets, instead of the one of the triple profile or the one found on the PATH")
     val showTimings by option("-timings", "--timings", help = "show internal compiler timings").flag()
     val varsGolden by option("-varsgolden", "--varsgolden", help = "put uninitialized variables and memory slabs in golden ram").flag()
@@ -236,9 +237,13 @@ private fun compileMain(args: Array<String>): Boolean {
             return false
         }
     }
-    if(llvmTriple!=null || llvmCompileArgs.isNotEmpty() || llvmLinkArgs.isNotEmpty() || llvmClang!=null) {
+    if(llvmOptLevel!=null && llvmOptLevel !in LlvmTarget.OPT_LEVELS) {
+        presenter.printErrorLine("Invalid -O: the optimization level must be one of ${LlvmTarget.OPT_LEVELS.joinToString()}, not '$llvmOptLevel'.")
+        return false
+    }
+    if(llvmTriple!=null || llvmCompileArgs.isNotEmpty() || llvmLinkArgs.isNotEmpty() || llvmClang!=null || llvmOptLevel!=null) {
         try {
-            val target = getCompilationTargetByName(compilationTarget ?: "", llvmTriple, llvmCompileArgs, llvmLinkArgs, llvmClang)
+            val target = getCompilationTargetByName(compilationTarget ?: "", llvmTriple, llvmCompileArgs, llvmLinkArgs, llvmClang, llvmOptLevel)
             if(programArgs.isNotEmpty() && target is LlvmTarget && !target.profile.programArgs) {
                 presenter.printErrorLine("Program arguments after -- can't be given: ${target.programArgsRejected()}.")
                 return false
@@ -355,6 +360,7 @@ private fun compileMain(args: Array<String>): Boolean {
                     llvmCompileArgs = llvmCompileArgs,
                     llvmLinkArgs = llvmLinkArgs,
                     llvmClang = llvmClang,
+                    llvmOptLevel = llvmOptLevel,
                     irComments = irComments,
                     loadAddress = loadAddress,
                 )
@@ -451,6 +457,7 @@ private fun compileMain(args: Array<String>): Boolean {
                 llvmCompileArgs = llvmCompileArgs,
                 llvmLinkArgs = llvmLinkArgs,
                 llvmClang = llvmClang,
+                llvmOptLevel = llvmOptLevel,
                 irComments = irComments,
                 loadAddress = loadAddress,
             )
@@ -464,7 +471,7 @@ private fun compileMain(args: Array<String>): Boolean {
                 } else {
                     val programFile = Path.of(response.outputFiles.first())
 
-                    val target = getCompilationTargetByName(compilationTarget!!, llvmTriple, llvmCompileArgs, llvmLinkArgs, llvmClang)
+                    val target = getCompilationTargetByName(compilationTarget!!, llvmTriple, llvmCompileArgs, llvmLinkArgs, llvmClang, llvmOptLevel)
                     if (startEmulator1) {
                         if (target is VMTarget) {
                             if(!launchVirtualMachine(target, programFile, quietAll, vmTrace, presenter))
@@ -527,6 +534,7 @@ private fun compileMain(args: Array<String>): Boolean {
                     llvmCompileArgs = llvmCompileArgs,
                     llvmLinkArgs = llvmLinkArgs,
                     llvmClang = llvmClang,
+                    llvmOptLevel = llvmOptLevel,
                     irComments = irComments,
                     loadAddress = loadAddress,
                 )
@@ -934,7 +942,7 @@ private fun printCompileStart(args: CompilerArguments) {
     val programPath = args.filepath.toAbsolutePath().normalize()
     val display = args.cwd.toAbsolutePath().relativize(programPath)
     println("Compiling program $display")
-    println("Compiler target: ${getCompilationTargetByName(args.compilationTarget, args.llvmTriple, args.llvmCompileArgs, args.llvmLinkArgs, args.llvmClang).name}")
+    println("Compiler target: ${getCompilationTargetByName(args.compilationTarget, args.llvmTriple, args.llvmCompileArgs, args.llvmLinkArgs, args.llvmClang, args.llvmOptLevel).name}")
 }
 
 private fun startDaemonProcess(quiet: Boolean = false): Boolean {
@@ -1033,6 +1041,7 @@ private fun communicateWithDaemon(channel: SocketChannel, compilerArgs: Compiler
             llvmCompileArgs = compilerArgs.llvmCompileArgs,
             llvmLinkArgs = compilerArgs.llvmLinkArgs,
             llvmClang = compilerArgs.llvmClang,
+            llvmOptLevel = compilerArgs.llvmOptLevel,
             loadAddress = compilerArgs.loadAddress
         )
 
