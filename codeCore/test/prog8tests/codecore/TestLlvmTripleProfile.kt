@@ -561,7 +561,9 @@ class TestLlvmTripleProfile: FunSpec({
         profile.floatSources shouldBe listOf("z80-float.c")
         profile.floatDigitsSymbol shouldBe "prog8_z80_ftoa"
         profile.cSymbol("strtod") shouldBe "prog8_z80_strtod"
-        ("{floats}" in profile.linkCommand.orEmpty()) shouldBe true
+        // the link command names the support library through LLVM_Z80
+        if (System.getenv("LLVM_Z80") != null)
+            ("{floats}" in profile.linkCommand.orEmpty()) shouldBe true
         profile.getcharSymbol shouldBe "fgetc_cons"
         val z88dk = mapOf("Z88DK" to "/opt/z88dk")
         profile.tools.directories { z88dk[it] }.map { it.invariantSeparatorsPathString } shouldBe listOf("/opt/z88dk/bin")

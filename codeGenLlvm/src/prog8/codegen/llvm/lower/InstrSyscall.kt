@@ -710,7 +710,8 @@ private fun LlvmFunctionBuilder.ticksHelper(): LlvmFunction {
     val nanoTicks = LlvmValue.Local("nano.ticks", LlvmType.I64)
     val total = LlvmValue.Local("total", LlvmType.I64)
     val ticks = LlvmValue.Local("ticks", LlvmType.I16)
-    val timespecGet = LlvmValue.Global(externalFunction("timespec_get", mapper.cInt, listOf(LlvmType.Ptr, mapper.cInt)).name)
+    val timespecGet = LlvmValue.Global(externalFunction(profile?.cSymbol("timespec_get") ?: "timespec_get", mapper.cInt, listOf(LlvmType.Ptr, mapper.cInt),
+        cName = "timespec_get").name)
     return helper(".sys.ticks", LlvmType.I16, emptyList(),
         "entry" to listOfNotNull(
             LlvmInstruction.Alloca(time, timespec),

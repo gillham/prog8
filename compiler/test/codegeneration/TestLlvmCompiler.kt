@@ -740,7 +740,8 @@ main {
             compiledLlFile(compileText(target, false, source, outputDir.resolve("ticks-$name").createDirectories(), assemble = false)).readLines().map { it.trim() }
         llLines(LlvmTarget(2, LlvmTripleProfile.resolve("z80-trs80-m4")), "m4").any { it.matches(Regex("""%\S+ = call i16 @prog8_trs80_ticks\(\)""")) } shouldBe true
         llLines(LlvmTarget(2, LlvmTripleProfile.resolve("mc6809-coco")), "coco").any { it.matches(Regex("""%\S+ = call i16 @prog8_coco_ticks\(\)""")) } shouldBe true
-        llLines(LlvmTarget(8), "llvm64").any { it.matches(Regex("""%\S+ = call i32 @timespec_get\(ptr %time, i32 1\)""")) } shouldBe true
+        // the Windows (MSVC) profile, a Windows host's, calls the _timespec64_get behind its inline timespec_get
+        llLines(LlvmTarget(8), "llvm64").any { it.matches(Regex("""%\S+ = call i32 @(_timespec64_get|timespec_get)\(ptr %time, i32 1\)""")) } shouldBe true
         val cpm = llLines(LlvmTarget(2, LlvmTripleProfile.resolve("z80-cpm")), "cpm")
         cpm.count { it.contains("_ticks(") || it.contains("@timespec_get(") } shouldBe 0
     }
@@ -2618,6 +2619,17 @@ private val quadProgramsForTheVm = listOf(
 
 /** Complete programs that exit with 0, or with the number of the first check that fails. @shared inputs can't be constant folded. */
 private val programs = mapOf(
+    "sys.ticks moves on during sys.wait, or is 0 without a clock" to """
+main {
+    sub start() {
+        uword t0 = sys.ticks()
+        sys.wait(6)
+        uword elapsed = sys.ticks() - t0
+        if elapsed == 0 or (elapsed >= 4 and elapsed <= 120)
+            sys.exit(0)
+        sys.exit(1)
+    }
+}""",
     "arithmetic expressions" to $$"""
 main {
     ubyte @shared ub1 = 200
