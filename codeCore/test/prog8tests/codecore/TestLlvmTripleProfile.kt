@@ -914,7 +914,7 @@ class TestLlvmTripleProfile: FunSpec({
         for (name in listOf("z80-trs80", "z80-trs80-cmd", "z80-trs80-m3-trsdos")) {
             val profile = LlvmTripleProfile.resolve(name)
             withClue(name) {
-                profile.startupSources shouldBe listOf("z80-trs80-keyboard.asm")
+                profile.startupSources shouldBe listOf("z80-trs80-keyboard.asm", "z80-trs80-command-line.asm")
                 if (System.getenv("LLVM_Z80") != null) {
                     ("-pragma-redirect:getk=_prog8_trs80_getk" in profile.linkCommand.orEmpty()) shouldBe true
                     ("-pragma-redirect:fgetc_cons=_prog8_trs80_fgetc_cons" in profile.linkCommand.orEmpty()) shouldBe true

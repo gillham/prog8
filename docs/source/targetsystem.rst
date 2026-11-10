@@ -748,7 +748,10 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   The program's stack starts at the top of memory, which it reads from ROM BASIC's MEMSIZ (``$40b1``), so it fits
   the machine's RAM size (checked with 16 and 48 KB).
 - ``z80-trs80-cmd``: a ``.cmd`` program for TRSDOS or LDOS on the Model I and III, started from the DOS prompt, which
-  passes its command line. The file routines go through z88dk's TRSDOS library. Its ``ftell`` doesn't link, its
+  passes its command line. The TRS-80 profiles' startup source ``z80-trs80-command-line.asm`` copies the command line
+  for z88dk's startup code, which parses a byte before it (the last letter of the program's name, or of its drive spec,
+  became ``argv(1)``), and gives no command line when the program doesn't get one, like one that trs80gp loads and
+  starts (where z88dk's code wrote a 0 into the DOS, after which ENTER no longer worked). The file routines go through z88dk's TRSDOS library. Its ``ftell`` doesn't link, its
   ``fread`` never sets the end of the file, and its ``fseek`` only moves forward with ``SEEK_CUR`` and ignores the
   offset with ``SEEK_END``, so the profile's ``file_source`` (``z80-trs80-files.c``) has an ``ftell``, ``fseek`` and
   ``fread`` of its own (``ftell_symbol``, ``fseek_symbol``, ``c_symbols``), and an ``fsync`` that succeeds, as
@@ -796,10 +799,8 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   ``fgetc_cons`` through ``@KBD`` and ``@KEY``; the program ends through ``@EXIT`` with its exit status in HL, after the
   rest of z88dk's exit code (which would close the files). Its other startup source ``z80-trs80-m4-wait.c`` has the
   ``usleep`` for ``sys.wait()`` and ``sys.waitvsync()``: ``@PAUSE``, whose count takes about 17 microseconds (measured
-  on trs80gp's Model 4). The command line is what follows the program's name, so a drive spec after the name comes
-  first: ``PROG:1 A B`` gives ``sys.argc()`` 4, with ``argv(1)`` the drive (``1``), then ``A`` and ``B``, which a
-  program can use to find its files on the drive it ran from; ``PROG A B`` gives 3. ``argv(0)``, the program name, is
-  empty, as z88dk's TRS-80 startup code doesn't set it. ``library = trs80m4`` gives ``txt`` the trs80m4 textio
+  on trs80gp's Model 4). ``PROG A B`` and ``PROG:1 A B`` give ``sys.argc()`` 3, with ``A`` and ``B``; ``argv(0)``,
+  the program name, is empty, as z88dk's TRS-80 startup code doesn't set it. ``library = trs80m4`` gives ``txt`` the trs80m4 textio
   (``prog8lib/llvm16/trs80m4/textio.p8``): ``plot``, ``getchr`` and ``setchr`` through ``@VDCTL``, reverse video
   through the display codes 16 and 17 (``getchr`` gives a reversed character with bit 7 set), ``cursor_on`` and
   ``cursor_off`` through 14 and 15, ``get_cursor`` through ``@VDCTL``, ``bell`` through ``@SOUND``, 80 columns and
