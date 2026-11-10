@@ -13,7 +13,6 @@ import prog8.codegen.llvm.model.LlvmType
 import prog8.codegen.llvm.model.LlvmValue
 import prog8.codegen.llvm.types.floatIntrinsic
 import prog8.codegen.llvm.types.floatSuffix
-import prog8.codegen.llvm.types.libmName
 import prog8.intermediate.IRDataType
 import prog8.intermediate.IRInstruction
 import prog8.intermediate.Opcode
@@ -48,19 +47,19 @@ internal fun FunctionLowering.lowerArithmetic(ins: IRInstruction) {
         Opcode.FTOUB, Opcode.FTOSB, Opcode.FTOUW, Opcode.FTOSW, Opcode.FTOSL, Opcode.FTOSQ ->
             ins.requireDest().let { write(it, floatToInteger(read(ins.requireSrcA()), typeOf(it.type))) }
         Opcode.FTOUQ -> ins.requireDest().let { write(it, floatToUnsignedQuad(read(ins.requireSrcA()), it.register.toString())) }
-        Opcode.FPOW -> ins.requireDest().let { write(it, intrinsic(floatIntrinsic("pow", floatType), floatType, read(it), read(ins.requireSrcA()))) }
-        Opcode.FABS -> floatFunction(ins, floatIntrinsic("fabs", floatType))
-        Opcode.FSIN -> floatFunction(ins, floatIntrinsic("sin", floatType))
-        Opcode.FCOS -> floatFunction(ins, floatIntrinsic("cos", floatType))
+        Opcode.FPOW -> ins.requireDest().let { write(it, mathFunction("pow", floatType, true, read(it), read(ins.requireSrcA()))) }
+        Opcode.FABS -> floatFunction(ins, "fabs")
+        Opcode.FSIN -> floatFunction(ins, "sin")
+        Opcode.FCOS -> floatFunction(ins, "cos")
         // the C library's, as LLVM only has the llvm.tan and llvm.atan intrinsics from version 19 on
-        Opcode.FTAN -> floatFunction(ins, libmName("tan", floatType))
-        Opcode.FATAN -> floatFunction(ins, libmName("atan", floatType))
-        Opcode.FLN -> floatFunction(ins, floatIntrinsic("log", floatType))
-        Opcode.FLOG -> floatFunction(ins, floatIntrinsic("log2", floatType))
+        Opcode.FTAN -> floatFunction(ins, "tan", intrinsic = false)
+        Opcode.FATAN -> floatFunction(ins, "atan", intrinsic = false)
+        Opcode.FLN -> floatFunction(ins, "log")
+        Opcode.FLOG -> floatFunction(ins, "log2")
         // the VM rounds with Kotlin's round(), which rounds half to even
-        Opcode.FROUND -> floatFunction(ins, floatIntrinsic("roundeven", floatType))
-        Opcode.FFLOOR -> floatFunction(ins, floatIntrinsic("floor", floatType))
-        Opcode.FCEIL -> floatFunction(ins, floatIntrinsic("ceil", floatType))
+        Opcode.FROUND -> floatFunction(ins, "roundeven")
+        Opcode.FFLOOR -> floatFunction(ins, "floor")
+        Opcode.FCEIL -> floatFunction(ins, "ceil")
         else -> throw IllegalArgumentException("${ins.opcode} is no arithmetic instruction")
     }
 }
@@ -254,7 +253,7 @@ private fun FunctionLowering.squareRoot(ins: IRInstruction) {
     val dest = ins.requireDest()
     val value = read(ins.requireSrcA())
     if (value.type.isFloatingPoint)
-        write(dest, intrinsic(floatIntrinsic("sqrt", value.type), value.type, value))
+        write(dest, mathFunction("sqrt", value.type, true, value))
     else if (floatType != LlvmType.Double || builder.lacks("sqrt"))
         write(dest, convert(integerSquareRoot(asInteger(value), signed = ins.type == IRDataType.LONG), typeOf(dest.type)))
     else {
@@ -335,5 +334,5 @@ private fun FunctionLowering.toFloat(ins: IRInstruction, operator: CastOperator)
     write(ins.requireDest(), derive("float", floatType) { LlvmInstruction.Cast(operator, it, value, floatType) })
 }
 
-private fun FunctionLowering.floatFunction(ins: IRInstruction, name: String) =
-    write(ins.requireDest(), intrinsic(name, floatType, read(ins.requireSrcA())))
+private fun FunctionLowering.floatFunction(ins: IRInstruction, name: String, intrinsic: Boolean = true) =
+    write(ins.requireDest(), mathFunction(name, floatType, intrinsic, read(ins.requireSrcA())))

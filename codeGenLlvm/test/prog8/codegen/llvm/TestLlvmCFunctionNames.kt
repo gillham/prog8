@@ -16,8 +16,8 @@ class TestLlvmCFunctionNames: FunSpec({
     test("every C function that the backend declares is a name that libc_lacks accepts") {
         val sources = listOf(Path("src"), Path("codeGenLlvm", "src")).first { it.resolve("prog8/codegen/llvm").exists() }
         val text = sources.walk().filter { it.toString().endsWith(".kt") }.joinToString("\n") { it.readText() }
-        val literal = Regex("""\b(external|externalFunction)\("([A-Za-z_][A-Za-z0-9_.]*)"""")
-        val libm = Regex("""\b(libmName|floatIntrinsic)\("([A-Za-z_][A-Za-z0-9_]*)"""")
+        val literal = Regex("""\b(external|externalFunction|cSymbol)\("([A-Za-z_][A-Za-z0-9_.]*)"""")
+        val libm = Regex("""\b(libmName|floatIntrinsic|mathFunction|floatFunction)\((?:ins, )?"([A-Za-z_][A-Za-z0-9_]*)"""")
         val declared = literal.findAll(text).map { it.groupValues[2] }.filterNot { it.startsWith("llvm.") }.toSet() +
             libm.findAll(text).flatMap { listOf(it.groupValues[2], it.groupValues[2] + "f") } +
             Libc.entries.map { it.name.lowercase() } + listOf("opendir", "readdir", "getchar", "putchar")

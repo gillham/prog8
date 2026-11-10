@@ -10,7 +10,9 @@ Usage:
 The platform's configuration in $Z88DK/lib/config tells which subtypes and C libraries it has; configurations
 for CPUs other than the Z80, and the new and sdcc C libraries, are refused. Small probe programs, assembled and
 linked by zcc itself, then find out:
-- libc_lacks: the C functions that Prog8 can call which the platform's C library doesn't link
+- libc_lacks: the C functions that Prog8 can call which the platform's C library doesn't link; the float ones (math
+  and strtod) with the base profile's float_link_args, as a program that uses floats gets those, and by the symbols
+  of its c_symbols, whose prog8_ routines come with its float source
 - output_extension and how zcc names its output: the -create-app file (which can have no extension), or the plain
   binary when that file's name doesn't follow the -o name
 - whether the link command needs a malloc heap (classic malloc's _heap), which it then gets with the
@@ -40,6 +42,9 @@ MATH_FUNCTIONS = ["sin", "cos", "tan", "atan", "atan2", "sqrt", "pow", "log", "l
 C_FUNCTIONS = ["fopen", "fclose", "fgetc", "fputc", "fread", "fwrite", "fseek", "ftell", "ferror", "feof", "fflush", "remove", "rename",
                "getcwd", "mkdir", "chdir", "rmdir", "opendir", "readdir", "closedir", "strcmp", "strdup", "realloc", "free", "qsort",
                "putchar", "getchar", "exit", "usleep", "strtod", "snprintf", "printf", "inp", "outp"] + [m + s for m in MATH_FUNCTIONS for s in ("", "f")]
+
+# the functions that only a program with floats calls, which gets the base profile's float_link_args
+FLOAT_FUNCTIONS = {m + s for m in MATH_FUNCTIONS for s in ("", "f")} | {"strtod"}
 
 # the functions that only need classic malloc's heap to link; lacking them is better than reserving a heap
 ALLOCATION_FUNCTIONS = {"free", "realloc", "strdup"}
@@ -215,12 +220,20 @@ def wrapped(key, words, width=120):
     return "\n".join(lines + [line])
 
 
-def base_getchar_symbol():
+def base_value(key, default=""):
     for line in BASE_PROFILE.read_text().splitlines():
-        key, _, value = line.partition("=")
-        if key.strip() == "getchar_symbol":
+        name, _, value = line.partition("=")
+        if name.strip() == key and not line.lstrip().startswith("#"):
             return value.strip()
-    return "getchar"
+    return default
+
+
+def base_getchar_symbol():
+    return base_value("getchar_symbol", "getchar")
+
+
+def base_c_symbols():
+    return dict(pair.split("=", 1) for pair in base_value("c_symbols").split())
 
 
 def main():
@@ -248,7 +261,12 @@ def main():
     libraries = [f"-l{lib}" for lib in args.libraries]
 
     getchar_symbol = base_getchar_symbol()
-    symbols = {f: c_symbol(f, getchar_symbol) for f in C_FUNCTIONS}
+    renamed = base_c_symbols()
+    # a prog8_ routine comes with the base profile's float source
+    probed = [f for f in C_FUNCTIONS if not renamed.get(f, "").startswith("prog8_")]
+    symbols = {f: c_symbol(renamed.get(f, f), getchar_symbol) for f in probed if f not in FLOAT_FUNCTIONS}
+    float_symbols = {f: c_symbol(renamed.get(f, f), getchar_symbol) for f in probed if f in FLOAT_FUNCTIONS}
+    float_args = base_value("float_link_args").split()
     with tempfile.TemporaryDirectory(prefix="z88dk-profile-") as directory:
         linker = Linker(z88dk, [f"+{args.platform}"] + selection + libraries, directory)
         pragmas = []
@@ -265,12 +283,14 @@ def main():
             if pragmas:
                 fail(f"these functions still lack a heap with {HEAP_PRAGMA}: {' '.join(sorted(heap_users))}")
             lacking |= heap_users
+        float_lacking, _ = find_lacking(linker, float_symbols, pragmas + float_args)
+        lacking |= float_lacking
         if pragmas and crt0_has_heap_top(crt0):
             pragmas.append(HEAP_TOP_PRAGMA)
         create_app, output_arg, extension = output_naming(linker, pragmas)
         verify_naming(linker, pragmas, create_app, output_arg, extension)
 
-    link_command = ["zcc", f"+{args.platform}"] + selection + create_app + pragmas + ["-o", output_arg, "{startup}", "{object}",
+    link_command = ["zcc", f"+{args.platform}"] + selection + create_app + pragmas + ["{floats}", "-o", output_arg, "{startup}", "{object}",
                                                                                        "-l${LLVM_Z80}/lib/z80/z80_rt_z88dk"] + libraries
     described = f"+{args.platform}, subtype {subtype or '(none)'}, C library {clib or '(none)'}" + (f", with {' '.join(libraries)}" if libraries else "")
     profile = [

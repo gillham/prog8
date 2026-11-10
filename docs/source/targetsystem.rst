@@ -351,6 +351,21 @@ These are the keys of a profile; an unknown key is an error:
     Arguments at the end of the clang command that links the executable, after the libraries of the program's ``%link``
     directives, such as ``-lm``: the Linux profiles link glibc's math library this way. A profile with a ``link_command``
     can't have them; it puts them in that command instead. Environment variables work as in ``clang_args``.
+``floats``
+    ``true`` lets an ``llvm16`` program use floats, which are 32 bits there; without it a float variable, value or
+    ``%import floats`` is an error. The 32- and 64-bit targets always have floats. The z80 profiles have it.
+``c_double_size``
+    The size of the C ``double`` that the C library's float formatting, parsing and math routines take: 8 (the default),
+    or 4 where it is the same as a ``float``, as with z88dk's ``math32`` on the z80.
+``float_source`` and ``float_link_args``
+    Source files like those of ``file_source``, and words that a ``{floats}`` word in the ``link_command`` becomes, both
+    only when the program uses floats (its LLVM IR has the ``float`` type), such as the float library: other programs
+    don't grow by them. Without ``{floats}`` (and ``{startup}`` for the sources) in the link command, a program with
+    floats doesn't link.
+``float_digits_symbol``
+    A C routine ``void f(char *buffer, double value)`` that writes the fewest digits that read back as the positive value,
+    as ``snprintf``'s ``"%.*e"`` does, for ``floats.tostr()`` and printing; without it, ``snprintf`` and ``strtod`` find
+    them, which needs both to be exact.
 ``file_source``
     Source files like those of ``startup_source``, built along with the program only when it uses files (calls
     ``fopen()``, ``rename()`` or ``remove()``), such as the ``ftell``, ``fseek`` and ``fread`` of the TRS-80 profiles, which would otherwise make every
@@ -511,7 +526,8 @@ Compared with ``llvm32`` and ``llvm64``:
 - ``sys.set_irqd()`` and ``sys.clear_irqd()`` mask and unmask the CPU's interrupts, with ``sei`` and ``cli`` on the
   6502, ``di`` and ``ei`` on the Z80, and ``orcc #$50`` and ``andcc #$AF`` (IRQ and FIRQ) on the 6809, as inline
   assembly in the LLVM IR. On ``llvm32`` and ``llvm64`` they do nothing.
-- floats are not supported yet: a float variable, value or ``%import floats`` is an error.
+- floats are 32 bits, on the profiles with ``floats = true``: the z80 ones (see :ref:`llvm16_z80`). On the mos and
+  6809 profiles they are not supported yet: a float variable, value or ``%import floats`` is an error.
 - the programs get no command line arguments (``program_args = false``): ``sys.argc()`` is 0, ``sys.argv()`` is an
   empty string, and giving arguments after ``--`` is an error.
 - ``sqrt`` of an integer is computed without floats.
@@ -565,6 +581,20 @@ profile has no ``io_ranges``, and the ``+test`` program itself starts at address
   ``inp`` and ``outp`` (``IN A,(C)`` and ``OUT (C),A``, with the whole 16-bit port in BC, as the ZX Spectrum needs).
   The 6502 and 6809 profiles have no I/O ports: they list ``inp`` and ``outp`` in ``libc_lacks``, so ``sys.inp``
   gives 0 and ``sys.outp`` does nothing.
+- floats: 32-bit IEEE floats, through z88dk's ``math32`` library, whose C ``double`` is the same 32-bit float
+  (``c_double_size = 4``); llvm-z80 calls its ``l_f32_`` routines for the arithmetic. The ``z80-z88dk`` base links
+  ``--math32`` and its ``float_source`` ``z80-float.c`` only into a program that uses floats (``{floats}`` and
+  ``{startup}`` in the link command), so the others stay as small. math32's ``printf`` gets about 7 digits right and
+  its ``strtod`` is off in the last place, so ``z80-float.c`` has exact ones, with big integers: ``prog8_z80_ftoa``
+  (``float_digits_symbol``) writes the shortest digits that read back as the float, as the other targets print them,
+  and ``prog8_z80_strtod`` (``c_symbols``) reads the nearest float. Its ``floorf``, ``ceilf`` and ``roundevenf`` give
+  0 and it has no ``tanf``, ``atanf``, ``atan2f`` and ``powf``, so ``c_symbols`` names its ``double`` routines for them
+  and ``z80-float.c``'s ``roundeven``; the code generator calls a math routine that ``c_symbols`` renames instead of
+  the LLVM intrinsic, whose name it couldn't change. The math routines are accurate to about 6 digits. math32
+  compares a NaN as equal to itself, so ``f != f`` is false for a NaN, which converts to an integer as a large number
+  instead of 0; ``floats.tostr()`` tells a NaN and infinity by their bits, so they print as ``NaN`` and ``Infinity``. A float is
+  converted to text in a fraction of a second on a 4 MHz Z80, more for very large or small values. A program with
+  floats is about 10 KB larger.
 
 - console input works: the profile reads characters with z88dk's ``fgetc_cons`` (``getchar_symbol``).
 - files: opening, reading, writing and seeking work on the host's files, but ``z88dk-ticks`` can't delete or rename a
@@ -610,7 +640,7 @@ Profile                  ``zcc`` platform             Output      ``io_ranges`` 
 =======================  ===========================  ==========  ===================  ============
 
 What ``z80-test`` lists above applies to them as well, except the file notes, which are about ``z88dk-ticks``. All of
-them lack the math, directory, ``usleep`` and ``strtod`` functions, and ``qsort`` because z88dk's calls the comparison
+them lack the directory and ``usleep`` functions, and ``qsort`` because z88dk's calls the comparison
 function with its arguments swapped. All but ``z80-trs80-cmd`` and ``z80-trs80-m3-trsdos`` also lack ``free``, ``realloc`` and ``strdup``, as
 their C library has no malloc heap. The programs
 that the compiler's tests build for ``z80-test`` also build for these profiles. The tests also run them for CP/M in

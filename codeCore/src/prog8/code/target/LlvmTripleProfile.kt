@@ -73,7 +73,21 @@ data class LlvmTripleProfile(
     private val linkScriptDirectory: Path? = null,
     /** Support sources like [startupSources], but only built along when the program uses files (calls fopen, rename or remove). */
     val fileSources: List<String> = emptyList(),
-    private val fileSourceDirectory: Path? = null
+    private val fileSourceDirectory: Path? = null,
+    /** True when an llvm16 program can use floats, which are 32 bits there; the 32- and 64-bit targets always can. */
+    val floats: Boolean = false,
+    /** The size of the C `double`, which the C library's float formatting, parsing and math take: 4 on the z80, where it is a float. */
+    val cDoubleSize: Int = 8,
+    /** Support sources like [fileSources], built along when the program uses floats. */
+    val floatSources: List<String> = emptyList(),
+    private val floatSourceDirectory: Path? = null,
+    /** The words of the link command's `{floats}` when the program uses floats, such as the float library; none otherwise. */
+    private val floatLinkArgsTemplate: List<String> = emptyList(),
+    /**
+     * A C routine `void f(char *buffer, double value)` that writes the fewest digits that read back as the positive value, as
+     * snprintf's "%.*e" does, for floats.tostr(); without it, snprintf and strtod find them.
+     */
+    val floatDigitsSymbol: String? = null
 ) {
     /** The symbol that the C function of [C_FUNCTIONS] named [function] is called by, which the profile can change. */
     fun cSymbol(function: String): String = when (function) {
@@ -108,6 +122,10 @@ data class LlvmTripleProfile(
     val linkCommand: List<String>?
         get() = linkCommandTemplate?.let { template -> expandEnvironment(template) { System.getenv(it) } }
 
+    /** The words of `{floats}` in the link command of a program that uses floats, with environment variables expanded as in [clangArgs]. */
+    val floatLinkArgs: List<String>
+        get() = expandEnvironment(floatLinkArgsTemplate) { System.getenv(it) }
+
     /** The command that runs the program, with environment variables expanded as in [clangArgs]. */
     val runCommand: List<String>?
         get() = runCommandTemplate?.let { template -> expandEnvironment(template) { System.getenv(it) } }
@@ -129,12 +147,14 @@ data class LlvmTripleProfile(
     fun processBuilder(command: List<String>): ProcessBuilder = tools.processBuilder(command)
 
     /**
-     * Writes the [startupSources] files that the link command builds along as `{startup}` next to [outputFile], and the
-     * [fileSources] too when [withFileSources], and returns them. They are read from the profile's directory, or else from the compiler's resources.
+     * Writes the [startupSources] files that the link command builds along as `{startup}` next to [outputFile], the [fileSources]
+     * too when [withFileSources] and the [floatSources] when [withFloatSources], and returns them. They are read from the profile's
+     * directory, or else from the compiler's resources.
      */
-    fun writeStartupSources(outputFile: Path, withFileSources: Boolean = false): List<Path> {
+    fun writeStartupSources(outputFile: Path, withFileSources: Boolean = false, withFloatSources: Boolean = false): List<Path> {
         val written = mutableListOf<Path>()
-        val sources = startupSources.map { it to directory } + (if (withFileSources) fileSources.map { it to fileSourceDirectory } else emptyList())
+        val sources = startupSources.map { it to directory } + (if (withFileSources) fileSources.map { it to fileSourceDirectory } else emptyList()) +
+            (if (withFloatSources) floatSources.map { it to floatSourceDirectory } else emptyList())
         try {
             for ((source, sourceDirectory) in sources) {
                 val file = outputFile.resolveSibling("${outputFile.fileName}.${Path(source).fileName}")
@@ -195,6 +215,13 @@ data class LlvmTripleProfile(
             require(supportFileExists(fileSourceDirectory, source)) {
                 "the file_source '$source' of llvm triple profile '$name' was not found"
             }
+        // a link_command without {startup} or {floats}, such as one written for an earlier z80-z88dk, just can't link floats
+        for (source in floatSources)
+            require(supportFileExists(floatSourceDirectory, source)) {
+                "the float_source '$source' of llvm triple profile '$name' was not found"
+            }
+        require(cDoubleSize == 4 || cDoubleSize == 8) { "the llvm triple profile '$name' has c_double_size $cDoubleSize, it must be 4 or 8" }
+        require(floatDigitsSymbol == null || floatDigitsSymbol.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "the float_digits_symbol of llvm triple profile '$name' must be a C identifier" }
         require(linkScript == null || linkCommandTemplate?.any { LINK_SCRIPT in it } == true) {
             "llvm triple profile '$name' has a link_script, so it needs {link_script} in its link_command"
         }
@@ -241,11 +268,12 @@ data class LlvmTripleProfile(
         const val RESOURCE_DIR = "/prog8lib/llvm-triples"
         const val LOAD_ADDRESS = "{load_address}"
         const val LINK_SCRIPT = "{link_script}"
+        const val FLOATS = "{floats}"
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
             "link_command", "link_args", "run_timeout_seconds", "startup_source", "file_source",
             "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "c_symbols", "waitvsync_symbol", "file_offset_size", "getchar_symbol",
             "putchar_symbol", "library", "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env",
-            "load_address", "load_address_align", "link_script")
+            "load_address", "load_address_align", "link_script", "floats", "c_double_size", "float_source", "float_link_args", "float_digits_symbol")
 
         /** A ProcessBuilder for [command] with the tool environment of [profile], or a plain one without a profile. */
         fun processBuilder(profile: LlvmTripleProfile?, command: List<String>): ProcessBuilder =
@@ -534,7 +562,19 @@ data class LlvmTripleProfile(
                 optional("link_script"),
                 supplier["link_script"]?.directory,
                 words("file_source").orEmpty(),
-                supplier["file_source"]?.directory
+                supplier["file_source"]?.directory,
+                when (val value = optional("floats")) {
+                    null, "false" -> false
+                    "true" -> true
+                    else -> throw IllegalArgumentException("llvm triple profile '$name' has floats '$value', it must be true or false")
+                },
+                optional("c_double_size")?.let {
+                    it.toIntOrNull() ?: throw IllegalArgumentException("llvm triple profile '$name' has a non-numeric c_double_size")
+                } ?: 8,
+                words("float_source").orEmpty(),
+                supplier["float_source"]?.directory,
+                words("float_link_args").orEmpty(),
+                optional("float_digits_symbol")
             )
         }
 

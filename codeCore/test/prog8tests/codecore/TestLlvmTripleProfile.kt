@@ -549,8 +549,18 @@ class TestLlvmTripleProfile: FunSpec({
         profile.programArgs shouldBe false
         profile.outputExtension shouldBe ".bin"
         profile.clangArgs shouldBe listOf("--target=z80-unknown-none-z88dk")
-        profile.libcLacks.containsAll(listOf("qsort", "free", "opendir", "strtod", "sqrtf")) shouldBe true
+        profile.libcLacks.containsAll(listOf("qsort", "free", "opendir", "roundeven")) shouldBe true
         (profile.libcLacks intersect setOf("putchar", "getchar", "fopen", "strcmp", "snprintf", "exit")) shouldBe emptySet()
+        // floats through z88dk's math32, linked for a program that uses them
+        profile.floats shouldBe true
+        profile.cDoubleSize shouldBe 4
+        (profile.libcLacks intersect setOf("strtod", "sqrtf", "sinf", "floorf", "roundevenf")) shouldBe emptySet()
+        profile.cSymbol("floorf") shouldBe "floor"
+        profile.cSymbol("roundevenf") shouldBe "prog8_z80_roundeven"
+        profile.floatSources shouldBe listOf("z80-float.c")
+        profile.floatDigitsSymbol shouldBe "prog8_z80_ftoa"
+        profile.cSymbol("strtod") shouldBe "prog8_z80_strtod"
+        ("{floats}" in profile.linkCommand.orEmpty()) shouldBe true
         profile.getcharSymbol shouldBe "fgetc_cons"
         val z88dk = mapOf("Z88DK" to "/opt/z88dk")
         profile.tools.directories { z88dk[it] }.map { it.invariantSeparatorsPathString } shouldBe listOf("/opt/z88dk/bin")
@@ -660,7 +670,8 @@ class TestLlvmTripleProfile: FunSpec({
                     linkCommand.take(2) shouldBe listOf("zcc", "+" + name.removePrefix("z80-").removeSuffix("-cmd"))
                     ("{startup}" in linkCommand) shouldBe true
                 }
-                profile.libcLacks.containsAll(listOf("qsort", "opendir", "strtod", "usleep", "sqrtf")) shouldBe true
+                profile.libcLacks.containsAll(listOf("qsort", "opendir", "usleep", "roundeven")) shouldBe true
+                (profile.libcLacks intersect setOf("strtod", "sqrtf", "floorf")) shouldBe emptySet()
                 (profile.libcLacks intersect setOf("putchar", "fopen", "fgetc", "strcmp", "snprintf", "exit")) shouldBe emptySet()
             }
         }
@@ -943,16 +954,22 @@ class TestLlvmTripleProfile: FunSpec({
             clang_args = --target=z80-unknown-none-z88dk
             tool_path = ${Z88DK}/bin
             tool_env = ZCCCFG=${Z88DK}/lib/config
-            link_command = zcc +test -o {file} {object} -l${LLVM_Z80}/lib/z80/z80_rt_z88dk
+            link_command = zcc +test {floats} -o {file} {startup} {object} -l${LLVM_Z80}/lib/z80/z80_rt_z88dk
             output_extension = .bin
             run_command = z88dk-ticks -counter 100000000000 {file}
             program_args = false
             getchar_symbol = fgetc_cons
-            libc_lacks = remove rename ftell getcwd mkdir chdir rmdir opendir readdir closedir strdup realloc free usleep strtod qsort \
-                sin sinf cos cosf tan tanf atan atanf atan2 atan2f sqrt sqrtf pow powf log logf log2 log2f fabs fabsf floor floorf ceil ceilf roundeven roundevenf
+            libc_lacks = remove rename ftell getcwd mkdir chdir rmdir opendir readdir closedir strdup realloc free usleep qsort roundeven
+            floats = true
+            c_double_size = 4
+            float_link_args = --math32
+            float_source = z80-float.c
+            float_digits_symbol = prog8_z80_ftoa
+            c_symbols = tanf=tan atanf=atan atan2f=atan2 powf=pow floorf=floor ceilf=ceil roundevenf=prog8_z80_roundeven strtod=prog8_z80_strtod
             """)
         val old = LlvmTripleProfile.load(before)
-        LlvmTripleProfile.resolve("z80-test") shouldBe old.copy(name = "z80-test", tools = old.tools.copy(profileName = "z80-test"), directory = null)
+        LlvmTripleProfile.resolve("z80-test") shouldBe old.copy(name = "z80-test", tools = old.tools.copy(profileName = "z80-test"), directory = null,
+            floatSourceDirectory = null)
     }
 
     test("a profile without tool_path and tool_env starts its processes as they are, one with them gets their environment") {

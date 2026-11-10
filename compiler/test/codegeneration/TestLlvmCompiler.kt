@@ -824,7 +824,7 @@ main {
                             "z88dk" -> program.z88dkConsoleOutput
                             "trs80m4" -> program.trs80m4ConsoleOutput
                             else -> null
-                        } ?: program.output)
+                        } ?: program.llvm16Output ?: program.output)
                         withClue("the files left in the working directory") { workingDirectory.listDirectoryEntries() shouldBe emptyList() }
                     }
                 }
@@ -839,6 +839,19 @@ main {
                         val (exitCode, output) = runner.buildAndRun(llFile, keyboardInput)
                         withClue(output) { exitCode shouldBe 0 }
                         output shouldBe if (runner.profile.library == "cpm") cpmKeyboardOutput else keyboardOutput
+                    }
+                }
+            }
+        }
+
+        if (runner.profile.floats) for ((name, program) in float32Programs.filterKeys(runner::runs)) {
+            test("$name: gives the expected exit code and console output with 32-bit floats in ${runner.displayName}").config(enabledOrReasonIf = runner.requires) {
+                for (optimize in listOf(false, true)) {
+                    withClue("optimize=$optimize") {
+                        val llFile = compiledLlFile(compileText(target, optimize, program.source, outputDir.resolve(dirName).createDirectories()))
+                        val (exitCode, output) = runner.buildAndRun(llFile)
+                        withClue(output) { exitCode shouldBe program.exitCode }
+                        output shouldBe program.output
                     }
                 }
             }
@@ -867,7 +880,7 @@ main {
         for (runner in llvm16ProgramRunners) {
             withClue("the programs that the notRun map of ${runner.displayName} names") { runner.notRun.keys.filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
             withClue("the programs that the only set of ${runner.displayName} names") {
-                runner.only.orEmpty().filter { it !in programs && it !in outputPrograms && it !in z88dkTextioPrograms && it !in trs80m4TextioPrograms } shouldBe emptyList()
+                runner.only.orEmpty().filter { it !in programs && it !in outputPrograms && it !in z88dkTextioPrograms && it !in trs80m4TextioPrograms && it !in float32Programs } shouldBe emptyList()
             }
         }
     }
@@ -881,7 +894,8 @@ main {
                 z88dkTextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "z88dk" || profile.library == "z88dk-ansi" }.orEmpty() +
                 cocoTextioPrograms.takeIf { profile.library == "coco" }.orEmpty() +
                 c64TextioPrograms.takeIf { profile.library == "c64" }.orEmpty() +
-                trs80m4TextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "trs80m4" }.orEmpty() + keyboardPrograms
+                trs80m4TextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "trs80m4" }.orEmpty() +
+                float32Programs.mapValues { it.value.source }.takeIf { profile.floats }.orEmpty() + keyboardPrograms
             val failed = sources.filterKeys { it !in linker.notLinked }.filter { (_, source) ->
                 val result = compileText(target, true, source, dir) ?: return@filter true
                 val llFile = compiledLlFile(result)
@@ -2328,8 +2342,11 @@ private val notRunOn6809: Map<String, String> =
 
 // the programs that don't run as they are on llvm16 in z88dk-ticks, with the reason
 private val notRunOnZ80: Map<String, String> =
+    mapOf(
+        "floats printing, conversion to and from strings, and random numbers" to "its values need 64-bit floats; llvm16's are 32 bits (see the 32-bit version)",
+        "extsubs call C library functions with long, quad, uquad, float, string and pointer types" to "z88dk's math32 library has no cbrt"
+    ) +
     programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
-    programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
     listOf(
         "command line arguments",
         "command line arguments when there are none",
@@ -2349,7 +2366,6 @@ private val notRunOnZ80: Map<String, String> =
     mapOf(
         "fileio copying between two open files, seeking and the end of the file" to
             "the fread of z88dk +test doesn't set the end-of-file flag, so a loop that reads until fileio.eof() never ends",
-        "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the z88dk +test C library lacks",
         "arena allocations aligned to 8 bytes, and sys.wait and sys.waitvsync" to "the llvm16 arena is the word arena, which doesn't align to 8 bytes",
         "pointers to memory-mapped variables use the same storage as the variables" to
             $$"the +test program starts at address 0, so its own variables are at the memory-mapped $0400"
@@ -2357,10 +2373,12 @@ private val notRunOnZ80: Map<String, String> =
 
 // what no z88dk platform runs as it is
 private val notRunOnZ88dk: Map<String, String> =
-    programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
-    programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
     mapOf(
-        "math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which every z88dk C library lacks",
+        "floats printing, conversion to and from strings, and random numbers" to "its values need 64-bit floats; llvm16's are 32 bits (see the 32-bit version)",
+        "extsubs call C library functions with long, quad, uquad, float, string and pointer types" to "z88dk's math32 library has no cbrt"
+    ) +
+    programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
+    mapOf(
         "arena allocations aligned to 8 bytes, and sys.wait and sys.waitvsync" to "the llvm16 arena is the word arena, which doesn't align to 8 bytes"
     )
 
@@ -2473,9 +2491,11 @@ private class LinkOnlyProfile(name: String, val notLinked: Map<String, String>, 
 }
 
 private val notLinkedOnZ88dk: Map<String, String> =
-    programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
-    programsWithFloats.associateWith { "floats are not supported yet on llvm16" } +
-    mapOf("math atan2, direction, mul16_last_upper, sorting and lineclip" to "math.atan2 needs atan2f and floorf, which the z88dk C libraries lack")
+    mapOf(
+        "floats printing, conversion to and from strings, and random numbers" to "its values need 64-bit floats; llvm16's are 32 bits (see the 32-bit version)",
+        "extsubs call C library functions with long, quad, uquad, float, string and pointer types" to "z88dk's math32 library has no cbrt"
+    ) +
+    programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" }
 
 private val notLinkedOnMos: Map<String, String> =
     programsWithWideAddresses.associateWith { "addresses wider than the 16-bit pointers of llvm16" } +
@@ -3247,10 +3267,22 @@ main {
         if (mixed as long) != -2023406815 or (mixed as word) != $4321 or (mixed as ubyte) != $21
             return 12
         float f = ubig as float
-        if f != 9223372036854777856.0 or (f as uquad) != ubig
-            return 13
-        if (qneg as float) != -7000000000.0 or (fneg as quad) != -123456789012 or (fbig as uquad) != 10000000000000000000
-            return 14
+        if sizeof(f) == 8 {
+            if f != 9223372036854777856.0 or (f as uquad) != ubig
+                return 13
+        } else {
+            ; a 32-bit float (llvm16) has 24 bits: ubig rounds to 2^63
+            if f != 9223372036854775808.0 or (f as uquad) != $8000_0000_0000_0000
+                return 13
+        }
+        if sizeof(f) == 8 {
+            if (qneg as float) != -7000000000.0 or (fneg as quad) != -123456789012 or (fbig as uquad) != 10000000000000000000
+                return 14
+        } else {
+            ; the nearest 32-bit floats of -123456789012.75 and 1.0e19
+            if (qneg as float) != -7000000000.0 or (fneg as quad) != -123456790528 or (fbig as uquad) != 9999999980506447872
+                return 14
+        }
         if qarr[idx] != sys.MIN_QUAD or qarr[idx+1] != 1234567890123456789 or q5e9 not in qarr or needle in qarr
             return 15
         qarr[idx] = qneg
@@ -3815,17 +3847,30 @@ main {
             return 32
 
         ; float to integer truncates toward zero
-        if (fnegfrac as quad) != -123456789012 or (fposfrac as quad) != 98765 or (fposfrac as uquad) != (98765 as uquad)
-            return 33
-        if (f1e18 as quad) != 1000000000000000000 or ((-f1e18) as quad) != -1000000000000000000
-            return 34
-        if (ftwo63 as uquad) != utop or (f1e19 as uquad) != 10000000000000000000 or (fbelow2pow64 as uquad) != $ffff_ffff_ffff_f800
-            return 35
+        if sizeof(f) == 8 {
+            if (fnegfrac as quad) != -123456789012 or (fposfrac as quad) != 98765 or (fposfrac as uquad) != (98765 as uquad)
+                return 33
+            if (f1e18 as quad) != 1000000000000000000 or ((-f1e18) as quad) != -1000000000000000000
+                return 34
+            if (ftwo63 as uquad) != utop or (f1e19 as uquad) != 10000000000000000000 or (fbelow2pow64 as uquad) != $ffff_ffff_ffff_f800
+                return 35
+        } else {
+            ; the nearest 32-bit floats; 18446744073709549568.0 rounds up to 2^64, which saturates
+            if (fnegfrac as quad) != -123456790528 or (fposfrac as quad) != 98765 or (fposfrac as uquad) != (98765 as uquad)
+                return 33
+            if (f1e18 as quad) != 999999984306749440 or ((-f1e18) as quad) != -999999984306749440
+                return 34
+            if (ftwo63 as uquad) != utop or (f1e19 as uquad) != 9999999980506447872 or (fbelow2pow64 as uquad) != umax
+                return 35
+        }
         ; out of range: quad saturates, a negative float wraps to uquad like a signed conversion, NaN gives 0
         float fnan = sqrt(fminus1)
-        if (f1e19 as quad) != 9223372036854775807 or ((-f1e19) as quad) != -9223372036854775808 or (fnan as quad) != 0
+        if (f1e19 as quad) != 9223372036854775807 or ((-f1e19) as quad) != -9223372036854775808
             return 36
-        if (fminus1 as uquad) != umax or (f1e20 as uquad) != umax or (fnan as uquad) != 0
+        if (fminus1 as uquad) != umax or (f1e20 as uquad) != umax
+            return 37
+        ; z88dk's math32 (llvm16 on the z80) compares a NaN as equal to itself, so it converts it as a large number
+        if sizeof(f) == 8 and ((fnan as quad) != 0 or (fnan as uquad) != 0)
             return 37
 
         ; bool conversions test all 64 bits
@@ -5347,10 +5392,11 @@ main {
  * A complete program that uses the llvm64 library, with the exit code and the console output that it should give
  * for the [input] and the command line [args]. It runs in an empty directory named run, which it has to leave empty.
  * [z88dkConsoleOutput] is the output with the z88dk textio when it differs, as trs80gp's printer copy shows it (see trs80gp-output.c),
- * and [trs80m4ConsoleOutput] the one with the trs80m4 textio.
+ * and [trs80m4ConsoleOutput] the one with the trs80m4 textio. [llvm16Output] is the output on llvm16 when it differs, as its floats
+ * are 32 bits, through z88dk's math32 on the z80.
  */
 private class OutputProgram(val source: String, val output: String, val exitCode: Int = 0, val input: String = "", val args: List<String> = emptyList(),
-                            val z88dkConsoleOutput: String? = null, val trs80m4ConsoleOutput: String? = null)
+                            val z88dkConsoleOutput: String? = null, val trs80m4ConsoleOutput: String? = null, val llvm16Output: String? = null)
 
 /** Programs with extsubs that call the C library: they can't import textio, which uses the runtime's own declarations of putchar and getchar. */
 private val externalPrograms = mapOf(
@@ -5472,6 +5518,44 @@ main {
  * Programs for the z88dk textio, which has getchr() and setclr(): the output is trs80gp's printer copy (see trs80gp-output.c),
  * of a TRS-80 screen of 64 columns, and the exit status the number of the first screen read-back check that fails.
  */
+// the llvm16 programs for its 32-bit floats, which the profiles with floats run (the z80 ones, through z88dk's math32 and
+// the exact text conversions of z80-float.c): the counterpart of the 64-bit float printing program
+private val float32Programs = mapOf(
+    "floats printing, conversion to and from strings, and random numbers, with 32-bit floats" to OutputProgram("""
+%import textio
+%import floats
+%zeropage basicsafe
+
+main {
+    sub start() {
+        float[] values = [0.0, -0.0, 1.0, -1.5, 0.1, 3.1415927, 100.0, 1234567.0, 9999999.0, 10000000.0, 0.001, 0.0009999, 1.0e-5,
+                          12345678000.0, 1.0e23, 2.0e-3, 3.4028234e38, 1.1754944e-38, 0.3, 2.0/3.0, 1.0e30, -123.456e-10]
+        ubyte i
+        for i in 0 to len(values)-1 {
+            txt.print_f(values[i])
+            txt.chrout(' ')
+            txt.print_bool(floats.parse(floats.tostr(values[i])) == values[i])
+            txt.nl()
+        }
+        txt.print(floats.tostr(floats.parse(" 1 2.5e1xyz")))
+        txt.nl()
+        txt.print_f(floats.parse("1e"))
+        txt.nl()
+        txt.print_f(floats.parse(""))
+        txt.nl()
+        txt.print_f(floats.parse("-.5"))
+        txt.nl()
+        floats.rndseed(1.234)
+        float r1 = floats.rnd()
+        float r2 = floats.rnd()
+        txt.print_bool(r1 >= 0.0 and r1 < 1.0 and r2 >= 0.0 and r2 < 1.0 and r2 != r1)
+        txt.nl()
+    }
+}""", "0.0 true\n-0.0 true\n1.0 true\n-1.5 true\n0.1 true\n3.1415927 true\n100.0 true\n1234567.0 true\n9999999.0 true\n1.0E7 true\n" +
+        "0.001 true\n9.999E-4 true\n1.0E-5 true\n1.2345678E10 true\n1.0E23 true\n0.002 true\n3.4028235E38 true\n1.1754944E-38 true\n" +
+        "0.3 true\n0.6666667 true\n1.0E30 true\n-1.23456E-8 true\n125.0\n0.0\n0.0\n-0.5\ntrue\n")
+)
+
 // sys.outp and sys.inp on trs80gp's emulator extension port, which reads 1 after function 255 is written to it
 private val trs80gpPortProgram = "sys.inp and sys.outp on trs80gp's extension port" to OutputProgram("""
 %import textio
@@ -7417,7 +7501,11 @@ main {
         txt.print_l(floats.round(value * 1000000.0) as long)
         txt.spc()
     }
-}""", "500000 500000 1000000 523599 1570796 -1570796 1570796 1047198 3141593 785398 785398 2356194 3926991 5497787 1570796 4712389 0 \n1500000 1414214 1024000000 2718282 1000000 1000000 4605170 10000000 \n-3000000 -2000000 -2000000 2000000 4000000 2000000 2000000 3000000 \n3141593 180000000 1000000 1000000 1000000 -2500000 2000000 -1000000 1500000 12500000 17500000 150000000 6283185 \ntruetruetrue\n"),
+}""", "500000 500000 1000000 523599 1570796 -1570796 1570796 1047198 3141593 785398 785398 2356194 3926991 5497787 1570796 4712389 0 \n1500000 1414214 1024000000 2718282 1000000 1000000 4605170 10000000 \n-3000000 -2000000 -2000000 2000000 4000000 2000000 2000000 3000000 \n3141593 180000000 1000000 1000000 1000000 -2500000 2000000 -1000000 1500000 12500000 17500000 150000000 6283185 \ntruetruetrue\n",
+        // 32-bit floats: z88dk's math32 functions are accurate to about 6 digits, and MAX_FLOAT is 3.4E38
+        llvm16Output = "500000 500000 1000000 523599 1570798 -1570798 1570798 1047198 3141594 785398 785399 2356194 3926992 5497786 1570796 4712389 0 \n" +
+            "1500000 1414214 1024000000 2718282 1000000 1000000 4605170 10000000 \n-3000000 -2000000 -2000000 2000000 4000000 2000000 2000000 3000000 \n" +
+            "3141593 180000000 1000000 1000000 1000000 -2500000 2000000 -1000000 1500000 12500000 17500000 150000000 6283186 \nfalsefalsetrue\n"),
 
     "floats printing, conversion to and from strings, and random numbers" to OutputProgram("""
 %import textio

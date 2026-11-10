@@ -49,8 +49,10 @@ internal object LlvmToolchain {
         try {
             if (!runTool(compileCommand + listOf("-c", llFile.toString(), "-o", objectFile.toString()), "clang", outputFile, profile))
                 return failed("clang couldn't compile '$llFile'")
+            val withFloats = profile != null && (profile.floatSources.isNotEmpty() || profile.floatLinkArgs.isNotEmpty()) && usesFloats(llFile)
             startupFiles = try {
-                profile?.writeStartupSources(outputFile, withFileSources = profile.fileSources.isNotEmpty() && usesFiles(llFile, profile)).orEmpty()
+                profile?.writeStartupSources(outputFile, withFileSources = profile.fileSources.isNotEmpty() && usesFiles(llFile, profile),
+                    withFloatSources = withFloats).orEmpty()
             } catch (x: IOException) {
                 return failed("Can't build '$outputFile': a startup source of the llvm triple profile couldn't be written: ${x.message}")
             }
@@ -61,7 +63,7 @@ internal object LlvmToolchain {
                 return failed("Can't build '$outputFile': the link script of the llvm triple profile couldn't be written: ${x.message}")
             }
             val link = linkCommandFor(linkCommand, objectFile, outputFile, startupFiles, extraLinkArgs, linkLibraries, profile?.outputExtension.orEmpty(),
-                address, linkScript)
+                address, linkScript, if (withFloats) profile?.floatLinkArgs.orEmpty() else emptyList())
             return runTool(link, link.first(), outputFile, profile) || failed("the link command couldn't build '$outputFile' from '$objectFile'")
         } finally {
             Files.deleteIfExists(objectFile)
@@ -95,7 +97,7 @@ internal object LlvmToolchain {
 
     internal fun linkCommandFor(template: List<String>, objectFile: Path, outputFile: Path, startupFiles: List<Path>, extraLinkArgs: List<String>,
                                 linkLibraries: List<String> = emptyList(), outputExtension: String = "",
-                                loadAddress: UInt? = null, linkScript: Path? = null): List<String> {
+                                loadAddress: UInt? = null, linkScript: Path? = null, floatLinkArgs: List<String> = emptyList()): List<String> {
         val file = outputFile.toString()
         val address = loadAddress?.let { "0x%04x".format(it.toLong()) }
         val stem = if (outputExtension.isNotEmpty() && file.endsWith(outputExtension)) file.dropLast(outputExtension.length) else file
@@ -103,6 +105,7 @@ internal object LlvmToolchain {
             when (it) {
                 LIBS -> linkLibraries
                 STARTUP -> startupFiles.map(Path::toString)
+                LlvmTripleProfile.FLOATS -> floatLinkArgs
                 else -> listOf(it.replace("{object}", objectFile.toString()).replace("{file}", file).replace("{stem}", stem)
                     .replace(STARTUP, startupFiles.joinToString(" "))
                     .let { word -> if (address != null) word.replace(LlvmTripleProfile.LOAD_ADDRESS, address) else word }
@@ -114,6 +117,11 @@ internal object LlvmToolchain {
 
     private const val LIBS = "{libs}"
     private const val STARTUP = "{startup}"
+
+    /** True when the program in [llFile] has float values (LLVM's `float` type), so the profile's float sources and float link arguments are needed. */
+    private fun usesFloats(llFile: Path): Boolean = floatType.containsMatchIn(Files.readString(llFile))
+
+    private val floatType = Regex("\\bfloat\\b")
 
     /** True when the program in [llFile] calls fopen(), rename() or remove() (by their [profile] symbols), so the profile's file sources have to be linked. */
     private fun usesFiles(llFile: Path, profile: LlvmTripleProfile): Boolean {

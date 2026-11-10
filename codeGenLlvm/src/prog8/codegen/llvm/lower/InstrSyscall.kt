@@ -11,7 +11,6 @@ import prog8.codegen.llvm.model.LlvmInstruction
 import prog8.codegen.llvm.model.LlvmLinkage
 import prog8.codegen.llvm.model.LlvmType
 import prog8.codegen.llvm.model.LlvmValue
-import prog8.codegen.llvm.types.floatIntrinsic
 import prog8.codegen.llvm.types.libmName
 import prog8.intermediate.CallSite
 import prog8.intermediate.CallTarget
@@ -223,7 +222,7 @@ private fun FunctionLowering.angle(site: CallSite, number: Int) {
     val (x1, y1, x2, y2) = arguments(site, number, 4).map { derive("coord", floatType) { value -> LlvmInstruction.Cast(CastOperator.UITOFP, value, convert(read(it), LlvmType.I8), floatType) } }
     val dy = derive("dy", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FSUB, it, y2, y1) }
     val dx = derive("dx", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FSUB, it, x2, x1) }
-    val radians = derive("radians", floatType) { LlvmInstruction.Call(it, external(libmName("atan2", floatType), floatType, listOf(floatType, floatType)), listOf(dy, dx), floatType) }
+    val radians = mathFunction("atan2", floatType, false, dy, dx)
     val negative = derive("negative", LlvmType.I1) { LlvmInstruction.Fcmp(FcmpCondition.OLT, it, radians, floatConstant(0.0)) }
     val turned = derive("radians", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FADD, it, radians, floatConstant(2 * Math.PI)) }
     val full = derive("radians", floatType) { LlvmInstruction.Select(it, negative, turned, radians) }
@@ -231,7 +230,7 @@ private fun FunctionLowering.angle(site: CallSite, number: Int) {
     val halved = derive("steps", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FDIV, it, full, floatConstant(2.0)) }
     val turns = derive("steps", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FDIV, it, halved, floatConstant(Math.PI)) }
     val scaled = derive("steps", floatType) { LlvmInstruction.BinaryOp(BinaryOperator.FMUL, it, turns, floatConstant(256.0)) }
-    val steps = derive("steps", LlvmType.I32) { LlvmInstruction.Cast(CastOperator.FPTOSI, it, intrinsic(floatIntrinsic("floor", floatType), floatType, scaled), LlvmType.I32) }
+    val steps = derive("steps", LlvmType.I32) { LlvmInstruction.Cast(CastOperator.FPTOSI, it, mathFunction("floor", floatType, true, scaled), LlvmType.I32) }
     result(site, convert(steps, LlvmType.I8, "angle"))
 }
 
@@ -569,11 +568,17 @@ private fun FunctionLowering.endOfFile(site: CallSite, number: Int) {
 }
 
 /**
- * FLOAT_DIGITS(buffer of 32 bytes, float): the shortest "%.*e" text of the float, of at least two digits, that reads back as the same float.
- * Without snprintf() or strtod() in the C library, the text is empty.
+ * FLOAT_DIGITS(buffer of 32 bytes, float): the shortest "%.*e" text of the float, of at least two digits, that reads back as the same float:
+ * the profile's float_digits_symbol writes it, or else snprintf() and strtod() find it. Without those, the text is empty.
  */
 private fun FunctionLowering.floatDigits(site: CallSite, number: Int) {
     val (buffer, value) = arguments(site, number, 2)
+    val digitsSymbol = builder.profile?.floatDigitsSymbol
+    if (digitsSymbol != null) {
+        val text = toCDouble(read(value))
+        emit(LlvmInstruction.Call(null, external(digitsSymbol, LlvmType.Void, listOf(LlvmType.Ptr, text.type)), listOf(pointerValue(buffer), text), LlvmType.Void))
+        return
+    }
     if (builder.lacks("snprintf", "strtod")) {
         emit(LlvmInstruction.Store(LlvmValue.IntConstant(0, LlvmType.I8), pointerValue(buffer)))
         return
@@ -590,15 +595,18 @@ private fun FunctionLowering.parseFloat(site: CallSite, number: Int) {
         return
     }
     val helper = builder.helperFunction(".float.parse") { builder.parseFloatHelper() }
-    result(site, fromCDouble(derive("float", LlvmType.Double) { LlvmInstruction.Call(it, helper, listOf(pointerValue(string)), LlvmType.Double) }))
+    val cDouble = builder.mapper.cDouble
+    result(site, fromCDouble(derive("float", cDouble) { LlvmInstruction.Call(it, helper, listOf(pointerValue(string)), cDouble) }))
 }
 
-// the C library's float text conversions work on doubles
-private fun FunctionLowering.toCDouble(value: LlvmValue): LlvmValue =
-    if (value.type == LlvmType.Double) value else derive("double", LlvmType.Double) { LlvmInstruction.Cast(CastOperator.FPEXT, it, value, LlvmType.Double) }
+// the C library's float text conversions work on C doubles, which are floats on the z80
+private fun FunctionLowering.toCDouble(value: LlvmValue): LlvmValue {
+    val cDouble = builder.mapper.cDouble
+    return if (value.type == cDouble) value else derive("double", cDouble) { LlvmInstruction.Cast(CastOperator.FPEXT, it, value, cDouble) }
+}
 
 private fun FunctionLowering.fromCDouble(value: LlvmValue): LlvmValue =
-    if (floatType == LlvmType.Double) value else derive("float", floatType) { LlvmInstruction.Cast(CastOperator.FPTRUNC, it, value, floatType) }
+    if (value.type == floatType) value else derive("float", floatType) { LlvmInstruction.Cast(CastOperator.FPTRUNC, it, value, floatType) }
 
 /**
  * LIST_DIRECTORY(kind byte): prints the entries of the current directory sorted by name, all of them for kind 0, the subdirectories
@@ -981,18 +989,19 @@ private fun LlvmFunctionBuilder.waitHelper(): LlvmFunction {
 }
 
 private fun LlvmFunctionBuilder.strtod(): LlvmValue.Global =
-    LlvmValue.Global(externalFunction("strtod", LlvmType.Double, listOf(LlvmType.Ptr, LlvmType.Ptr)).name)
+    LlvmValue.Global(externalFunction(profile?.cSymbol("strtod") ?: "strtod", mapper.cDouble, listOf(LlvmType.Ptr, LlvmType.Ptr), cName = "strtod").name)
 
 /**
- * `void (ptr buffer, double value)`: snprintf's "%.*e" of the value with the precisions 1 to 16, until strtod() reads it back as the value.
+ * `void (ptr buffer, double value)`: snprintf's "%.*e" of the value with the precisions 1 to 16, until strtod() reads it back as the value;
+ * the double is C's, a float on the z80.
  * It starts at two digits, because that is what Java's Double.toString gives when one would do, such as 4.9E-324 instead of 5.0E-324.
  */
 private fun LlvmFunctionBuilder.floatDigitsHelper(): LlvmFunction {
     val buffer = LlvmValue.Local("buffer", LlvmType.Ptr)
-    val value = LlvmValue.Local("value", LlvmType.Double)
+    val value = LlvmValue.Local("value", mapper.cDouble)
     val precision = LlvmValue.Local("precision", mapper.cInt)
     val next = LlvmValue.Local("next", mapper.cInt)
-    val parsed = LlvmValue.Local("parsed", LlvmType.Double)
+    val parsed = LlvmValue.Local("parsed", mapper.cDouble)
     val same = LlvmValue.Local("same", LlvmType.I1)
     val last = LlvmValue.Local("last", LlvmType.I1)
     val found = LlvmValue.Local("found", LlvmType.I1)
@@ -1003,7 +1012,7 @@ private fun LlvmFunctionBuilder.floatDigitsHelper(): LlvmFunction {
         "loop" to listOf(
             LlvmInstruction.Phi(precision, listOf(cIntConstant(1) to "entry", next to "loop")),
             LlvmInstruction.Call(null, LlvmValue.Global(snprintf.name), args, mapper.cInt, snprintf.type),
-            LlvmInstruction.Call(parsed, strtod(), listOf(buffer, LlvmValue.NullPtr()), LlvmType.Double),
+            LlvmInstruction.Call(parsed, strtod(), listOf(buffer, LlvmValue.NullPtr()), mapper.cDouble),
             LlvmInstruction.Fcmp(FcmpCondition.OEQ, same, parsed, value),
             LlvmInstruction.BinaryOp(BinaryOperator.ADD, next, precision, cIntConstant(1)),
             LlvmInstruction.Icmp(IcmpCondition.SGE, last, next, cIntConstant(17)),
@@ -1012,23 +1021,23 @@ private fun LlvmFunctionBuilder.floatDigitsHelper(): LlvmFunction {
         "done" to listOf(LlvmInstruction.Ret(null)))
 }
 
-/** `double (ptr string)`: strtod() of the string when it reads all of it, else 0.0. */
+/** `double (ptr string)`: strtod() of the string when it reads all of it, else 0.0; the double is C's, a float on the z80. */
 private fun LlvmFunctionBuilder.parseFloatHelper(): LlvmFunction {
     val string = LlvmValue.Local("string", LlvmType.Ptr)
     val endSlot = LlvmValue.Local("end_slot", LlvmType.Ptr)
-    val parsed = LlvmValue.Local("parsed", LlvmType.Double)
+    val parsed = LlvmValue.Local("parsed", mapper.cDouble)
     val end = LlvmValue.Local("end", LlvmType.Ptr)
     val rest = LlvmValue.Local("rest", LlvmType.I8)
     val whole = LlvmValue.Local("whole", LlvmType.I1)
-    val result = LlvmValue.Local("result", LlvmType.Double)
-    return helper(".float.parse", LlvmType.Double, listOf(string),
+    val result = LlvmValue.Local("result", mapper.cDouble)
+    return helper(".float.parse", mapper.cDouble, listOf(string),
         "entry" to listOf(
             LlvmInstruction.Alloca(endSlot, LlvmType.Ptr),
-            LlvmInstruction.Call(parsed, strtod(), listOf(string, endSlot), LlvmType.Double),
+            LlvmInstruction.Call(parsed, strtod(), listOf(string, endSlot), mapper.cDouble),
             LlvmInstruction.Load(end, endSlot),
             LlvmInstruction.Load(rest, end),
             LlvmInstruction.Icmp(IcmpCondition.EQ, whole, rest, LlvmValue.IntConstant(0, LlvmType.I8)),
-            LlvmInstruction.Select(result, whole, parsed, LlvmValue.FloatConstant(0.0)),
+            LlvmInstruction.Select(result, whole, parsed, LlvmValue.FloatConstant(0.0, mapper.cDouble)),
             LlvmInstruction.Ret(result)))
 }
 

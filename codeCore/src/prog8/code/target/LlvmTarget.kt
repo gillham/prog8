@@ -44,8 +44,8 @@ class LlvmTarget(
     /** True when constant addresses are the machine's own memory, which only the llvm backend reads. */
     val realAddresses: Boolean = pointerSize == 2
 
-    /** False on llvm16, whose f32 floats lack the formatting, parsing and math routines yet. */
-    val supportsFloats: Boolean = pointerSize != 2
+    /** False on llvm16 unless the profile has `floats = true` (f32 floats with the C library's routines); the mos and 6809 ones lack them. */
+    val supportsFloats: Boolean = pointerSize != 2 || profile.floats
 
     init {
         require(pointerSize == 2 || pointerSize == 4 || pointerSize == 8) { "the llvm targets have 2, 4 or 8 byte pointers, not $pointerSize" }

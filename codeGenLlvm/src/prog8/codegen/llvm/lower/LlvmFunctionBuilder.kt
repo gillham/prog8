@@ -15,6 +15,8 @@ import prog8.codegen.llvm.model.LlvmModule
 import prog8.codegen.llvm.model.LlvmType
 import prog8.codegen.llvm.model.LlvmValue
 import prog8.codegen.llvm.types.LlvmTypeMapper
+import prog8.codegen.llvm.types.floatIntrinsic
+import prog8.codegen.llvm.types.libmName
 import prog8.intermediate.*
 
 private const val PROGRAM_START = "main.start"
@@ -442,6 +444,16 @@ internal class FunctionLowering(val builder: LlvmFunctionBuilder, val sub: IRSub
         derive(name.removePrefix("llvm.").substringBefore('.'), type) {
             LlvmInstruction.Call(it, external(name, type, args.map { arg -> arg.type }), args.toList(), type)
         }
+
+    /**
+     * The C math function [name] of [type] values (`floor` is `floorf` on floats): the routine that the profile's c_symbols give for
+     * that C name, else the LLVM intrinsic when [intrinsic], else the C name. LLVM lowers an intrinsic to a fixed C name, which
+     * c_symbols can't change, so a profile whose C library has a broken one gets a call to its replacement instead.
+     */
+    fun mathFunction(name: String, type: LlvmType, intrinsic: Boolean, vararg args: LlvmValue): LlvmValue {
+        val callee = builder.profile?.cSymbols?.get(libmName(name, type)) ?: if (intrinsic) floatIntrinsic(name, type) else libmName(name, type)
+        return intrinsic(callee, type, *args)
+    }
 
     fun integerConstant(value: Long, type: LlvmType): LlvmValue = when {
         type != LlvmType.Ptr -> LlvmValue.IntConstant(truncate(value, checkNotNull(type.bitWidth) { "$type is no integer type" }), type)
