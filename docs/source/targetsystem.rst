@@ -866,8 +866,11 @@ in a ``uword``; 0 on the bare metal ARM and RISC-V profiles, whose C library lac
   existing file and creates it anew, as the DOS can't shorten one; ``"a"`` positions to the end (``@PEOF``).
   ``diskio.rename`` is the DOS's ``@RENAM``, which fails when the new name exists. A new file without a drive spec goes
   to the first drive, which must have room: the DOS doesn't try the next one. There are no subdirectories, so
-  ``mkdir``, ``chdir`` and ``rmdir`` fail, but ``diskio.directory`` lists the files of drive 0, sorted by name with
-  their sizes: the file source's ``opendir``, ``readdir`` and ``closedir`` read the directory "." through ``@RAMDIR``
+  ``mkdir`` and ``rmdir`` fail, but ``diskio.chdir(":1")`` makes drive 1 (0 to 7, when it is ready: ``@CKDRV``) the
+  current drive, which ``diskio.curdir()`` gives as ``":1"``: file names without a drive spec then get ``":1"`` (to open,
+  create, delete and rename them), and ``diskio.directory`` lists that drive. ``chdir("")`` (or ``":"``) goes back to no
+  current drive, as at the start. ``diskio.directory`` lists the files of the current drive (else drive 0), sorted by name
+  with their sizes: the file source's ``opendir``, ``readdir`` and ``closedir`` read the directory "." through ``@RAMDIR``
   (``dirent_name_offset = 0``), and its ``qsort`` (``c_symbols``) sorts, as z88dk's calls the comparison with the
   arguments swapped. In trs80gp,
   ``trs80gp -m4 prog.cmd`` boots TRSDOS 6 and runs it, and ``trs80gp -m4 -ld prog.cmd`` LS-DOS 6.3, whose boot disk

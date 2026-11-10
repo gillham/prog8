@@ -5,7 +5,8 @@
  * sector buffer, with byte I/O through @GET and @PUT. The position and size come from the FCB, which the DOS keeps up to
  * date in reading and writing; a seek moves to the record with @POSN and reads its way to the byte, so it can't go past
  * the end of the file. Also an fread (c_symbols) that sets the end of the file, which z88dk's never does; opendir, readdir
- * and closedir for the files of drive 0, the directory "." (the DOS has no subdirectories), through @RAMDIR; and a qsort
+ * and closedir for the files of the current drive (else drive 0), the directory "." (the DOS has no subdirectories), through
+ * @RAMDIR; chdir and getcwd for that current drive, ":0" to ":7", which file names without a drive spec then get; and a qsort
  * (c_symbols) for the sorted directory listing, as z88dk's calls the comparison with the arguments swapped. Linked when
  * the program opens, renames or removes files, lists a directory, or asks for the drive of the last file opened
  * (file_source).
@@ -17,6 +18,7 @@
 
 #define SVC_GET 3
 #define SVC_PUT 4
+#define SVC_CKDRV 33
 #define SVC_RAMDIR 35
 #define SVC_RENAM 56
 #define SVC_REMOV 57
@@ -46,6 +48,10 @@ int prog8_trs80_last_drive(void)
 
 /* the file spec as the DOS wants it: upper case, ended by a carriage return */
 static char spec[32];
+
+/* the drive that chdir(":d") made current, which file names without a drive spec get; -1 for none: the DOS then searches the
+   drives for a file that it opens, and creates a new one on the first drive it can write to */
+static signed char current_drive = -1;
 
 /* calls the supervisor call fn with BC, DE and HL; leaves A in svc_result and the Z flag in svc_zero */
 static void svc(int fn, int bc, int de, int hl) __smallc __naked
@@ -86,13 +92,28 @@ svc_not_zero:
 
 /* puts the name in spec, and the FCB gets it from @FSPEC; 0 when the name is a valid file spec. The FCB is cleared first:
    @FSPEC only writes the name, and the DOS's @INIT fails on what an earlier file left in the rest */
-static int file_spec(char *name, unsigned char *fcb)
+/* the name in upper case into the buffer of the given size, with ":d" of the current drive when it has no drive spec of its
+   own, ended by a carriage return */
+static void dos_name(char *name, char *buffer, int size)
 {
     int i;
+    int drive = 0;
+    for (i = 0; name[i] != 0 && i < size - 3; i++) {
+        buffer[i] = name[i] >= 'a' && name[i] <= 'z' ? name[i] - 32 : name[i];
+        if (name[i] == ':')
+            drive = 1;
+    }
+    if (!drive && current_drive >= 0) {
+        buffer[i++] = ':';
+        buffer[i++] = '0' + current_drive;
+    }
+    buffer[i] = 13;
+}
+
+static int file_spec(char *name, unsigned char *fcb)
+{
     memset(fcb, 0, 32);
-    for (i = 0; name[i] != 0 && i < (int)sizeof(spec) - 1; i++)
-        spec[i] = name[i] >= 'a' && name[i] <= 'z' ? name[i] - 32 : name[i];
-    spec[i] = 13;
+    dos_name(name, spec, sizeof(spec));
     svc(SVC_FSPEC, 0, (int)fcb, (int)spec);
     return svc_zero ? 0 : -1;
 }
@@ -274,18 +295,46 @@ int rename(char *oldname, char *newname)
 {
     static unsigned char fcb[32];
     static char newspec[32];
-    int i;
 
     if (file_spec(oldname, fcb) != 0)
         return -1;
-    for (i = 0; newname[i] != 0 && i < (int)sizeof(newspec) - 1; i++)
-        newspec[i] = newname[i] >= 'a' && newname[i] <= 'z' ? newname[i] - 32 : newname[i];
-    newspec[i] = 13;
+    dos_name(newname, newspec, sizeof(newspec));
     svc(SVC_RENAM, 0, (int)fcb, (int)newspec);
     return svc_zero ? 0 : -1;
 }
 
-/* the directory of drive 0: @RAMDIR's entries of 22 bytes, the name and drive padded to 15 characters, after a '+' */
+/* chdir(":d") makes drive d (0-7) the current drive, when it is ready (@CKDRV); "" or ":" goes back to none */
+int chdir(char *path)
+{
+    if (path[0] == 0 || (path[0] == ':' && path[1] == 0)) {
+        current_drive = -1;
+        return 0;
+    }
+    if (path[0] != ':' || path[1] < '0' || path[1] > '7' || path[2] != 0)
+        return -1;
+    svc(SVC_CKDRV, path[1] - '0', 0, 0);
+    if (!svc_zero)
+        return -1;
+    current_drive = path[1] - '0';
+    return 0;
+}
+
+/* ":d" for the current drive, or "" without one */
+char *getcwd(char *buffer, size_t size)
+{
+    if (size < 3)
+        return NULL;
+    if (current_drive < 0) {
+        buffer[0] = 0;
+    } else {
+        buffer[0] = ':';
+        buffer[1] = '0' + current_drive;
+        buffer[2] = 0;
+    }
+    return buffer;
+}
+
+/* the directory of the current drive (else drive 0): @RAMDIR's entries of 22 bytes, the name and drive padded to 15 characters, after a '+' */
 #define DIR_ENTRY 22
 #define DIR_ENTRIES 256
 
@@ -309,7 +358,7 @@ void *opendir(char *path)
     if (dir == NULL)
         return NULL;
     /* B = the drive, C = 0: all the entries */
-    svc(SVC_RAMDIR, 0, 0, (int)dir->entries);
+    svc(SVC_RAMDIR, (current_drive < 0 ? 0 : current_drive) << 8, 0, (int)dir->entries);
     if (!svc_zero) {
         free(dir);
         return NULL;

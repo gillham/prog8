@@ -5935,6 +5935,46 @@ main {
 }""", "{12}HELLO\nA 200\nAT{16}R{17}NCOL{15}{14}\n"),
 
     // the full listing depends on the files of trs80gp's boot disk; directory_dirs() reads it all and prints nothing
+    "diskio.chdir makes a drive current, for the directory and file names without a drive" to OutputProgram("""
+%import textio
+%import diskio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        show()
+        diskio.chdir(":1")
+        show()
+        txt.print_bool(diskio.save("zzcd.bin", $3000, 10))
+        txt.spc()
+        txt.print_ub(diskio.last_drive())
+        txt.nl()
+        diskio.chdir(":0")
+        show()
+        txt.print_bool(diskio.exists("zzcd.bin"))
+        txt.nl()
+        diskio.chdir("")
+        show()
+        txt.print_bool(diskio.exists("zzcd.bin"))
+        txt.nl()
+        diskio.chdir(":5")
+        show()
+        diskio.chdir(":1")
+        diskio.delete("zzcd.bin")
+        txt.print_ub(diskio.status_code())
+        txt.spc()
+        txt.print_bool(diskio.exists("zzcd.bin:1"))
+        txt.nl()
+    }
+
+    sub show() {
+        txt.print_ub(diskio.status_code())
+        txt.print(" [")
+        txt.print(diskio.curdir())
+        txt.print("]\n")
+    }
+}""", "0 []\n0 [:1]\ntrue 1\n0 [:0]\nfalse\n0 []\ntrue\n1 []\n0 false\n"),
+
     "diskio directory_dirs of a drive, which has no subdirectories" to OutputProgram("""
 %import textio
 %import diskio

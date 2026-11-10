@@ -173,12 +173,13 @@ internal object LlvmToolchain {
     private val floatType = Regex("\\bfloat\\b")
 
     /**
-     * True when the program in [llFile] calls fopen(), rename() or remove() (by their [profile] symbols), or the profile's
-     * last drive routine, so the profile's file sources have to be linked.
+     * True when the program in [llFile] calls fopen(), rename(), remove(), opendir(), chdir() or getcwd() (by their [profile]
+     * symbols), or the profile's last drive routine, so the profile's file sources have to be linked.
      */
     private fun usesFiles(llFile: Path, profile: LlvmTripleProfile): Boolean {
         val ir = Files.readString(llFile)
-        return (listOf("fopen", "rename", "remove").map(profile::cSymbol) + listOfNotNull(profile.lastDriveSymbol)).any { ir.contains("@$it(") }
+        return (listOf("fopen", "rename", "remove", "chdir", "getcwd").map(profile::cSymbol) + profile.opendirSymbol + listOfNotNull(profile.lastDriveSymbol))
+            .any { ir.contains("@$it(") }
     }
 
     private fun calls(llFile: Path, symbol: String?): Boolean = symbol != null && Files.readString(llFile).contains("@$symbol(")
