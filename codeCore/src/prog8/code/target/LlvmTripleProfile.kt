@@ -97,7 +97,9 @@ data class LlvmTripleProfile(
     val lastDriveSymbol: String? = null,
     /** A routine `unsigned int f(void)` for sys.ticks(): a count of 60ths of a second; without it, llvm16 programs get 0. */
     val ticksSymbol: String? = null,
-    /** Support sources like [fileSources], built along when the program calls [ticksSymbol], before the startup sources. */
+    /** A routine `void f(unsigned int jiffies)` that sys.wait() and sys.waitvsync() call instead of usleep(). */
+    val waitSymbol: String? = null,
+    /** Support sources like [fileSources], built along when the program calls [ticksSymbol] or [waitSymbol], before the startup sources. */
     val ticksSources: List<String> = emptyList(),
     private val ticksSourceDirectory: Path? = null
 ) {
@@ -287,7 +289,7 @@ data class LlvmTripleProfile(
             "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "c_symbols", "waitvsync_symbol", "file_offset_size", "getchar_symbol",
             "putchar_symbol", "library", "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env",
             "load_address", "load_address_align", "link_script", "floats", "c_double_size", "float_source", "float_link_args", "float_digits_symbol",
-            "defm_as_defb", "last_drive_symbol", "ticks_symbol", "ticks_source")
+            "defm_as_defb", "last_drive_symbol", "ticks_symbol", "wait_symbol", "ticks_source")
 
         /** A ProcessBuilder for [command] with the tool environment of [profile], or a plain one without a profile. */
         fun processBuilder(profile: LlvmTripleProfile?, command: List<String>): ProcessBuilder =
@@ -596,6 +598,7 @@ data class LlvmTripleProfile(
                 },
                 optional("last_drive_symbol"),
                 optional("ticks_symbol"),
+                optional("wait_symbol"),
                 words("ticks_source").orEmpty(),
                 supplier["ticks_source"]?.directory
             )

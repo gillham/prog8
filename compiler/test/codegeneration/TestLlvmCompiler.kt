@@ -745,6 +745,22 @@ main {
         cpm.count { it.contains("_ticks(") || it.contains("@timespec_get(") } shouldBe 0
     }
 
+    test("sys.wait and sys.waitvsync call the profile's wait_symbol, with the jiffies and with 1") {
+        val source = $$"""
+%zeropage basicsafe
+main {
+    sub start() {
+        sys.wait(cx16.r0)
+        sys.waitvsync()
+    }
+}"""
+        val lines = compiledLlFile(compileText(LlvmTarget(2, LlvmTripleProfile.resolve("z80-trs80-cmd")), true, source,
+            outputDir.resolve("wait-trs80").createDirectories(), assemble = false)).readLines().map { it.trim() }
+        lines.any { it.matches(Regex("""call void @prog8_trs80_wait\(i16 %\S+\)""")) } shouldBe true
+        lines.any { it == "call void @prog8_trs80_wait(i16 1)" } shouldBe true
+        lines.count { it.contains("@usleep(") } shouldBe 0
+    }
+
     test("diskio.last_drive calls the profile's last_drive_symbol, and is 255 without one") {
         val source = $$"""
 %import diskio
@@ -2507,12 +2523,14 @@ private val notRunOnTrs80gpCas: Map<String, String> = notRunOnTrs80gp +
         "diskio status of the last disk operation",
         "diskio.last_drive gives the drive that the DOS found or created the file on"
     ).associateWith { "without a DOS, z88dk's TRS-80 file routines are stubs that fail" } +
-    mapOf("sys.ticks counts two for each tick of the DOS's 30 Hz clock" to "without LDOS there is no interrupt task, and sys.ticks() is 0")
+    mapOf("sys.ticks counts two for each tick of the DOS's 30 Hz clock" to "without LDOS there is no interrupt task, and sys.ticks() is 0",
+        "sys.wait waits by the clock of sys.ticks" to "without LDOS there is no clock, and sys.wait() returns at once")
 
 // the programs that don't run as they are on llvm16 under TRSDOS 1.3 in trs80gp, with the reason
 private val notRunOnTrs80gpTrsdos: Map<String, String> = notRunOnTrs80gp +
     mapOf(
         "sys.ticks counts two for each tick of the DOS's 30 Hz clock" to "TRSDOS 1.3 has no interrupt tasks, and sys.ticks() is 0",
+        "sys.wait waits by the clock of sys.ticks" to "TRSDOS 1.3 has no clock, and sys.wait() returns at once",
         "diskio saving and loading memory" to
             "creating the file hangs: the floppy controller stays busy while the DOS loads an overlay, and the DOS aborts to its prompt (not understood yet)"
     )
@@ -5715,9 +5733,28 @@ main {
     }
 }""", "ok\n")
 
+// sys.wait() under LDOS on the Model III, which counts the ticks of sys.ticks()
+private val trs80gpWaitProgram = "sys.wait waits by the clock of sys.ticks" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        uword t0 = sys.ticks()
+        sys.wait(60)
+        uword elapsed = sys.ticks() - t0
+        if elapsed >= 60 and elapsed <= 63
+            txt.print("ok")
+        else
+            txt.print_uw(elapsed)
+        txt.nl()
+    }
+}""", "ok\n")
+
 private val z88dkTextioPrograms = mapOf(
     trs80gpPortProgram,
     trs80gpTicksProgram,
+    trs80gpWaitProgram,
     trs80gpLastDriveProgram,
     "the z88dk textio routines" to OutputProgram("""
 %import textio

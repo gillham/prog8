@@ -433,6 +433,10 @@ These are the keys of a profile; an unknown key is an error:
     A C routine ``void f(void)`` that ``sys.waitvsync()`` calls, such as a wait for the raster's vertical blank in a
     support source. Without it, ``sys.waitvsync()`` waits one 60th of a second with ``usleep()``, or returns at once
     when the C library lacks that.
+``wait_symbol``
+    A routine ``void f(unsigned int jiffies)`` that ``sys.wait()`` calls instead of ``usleep()``, and ``sys.waitvsync()``
+    with 1 when there is no ``waitvsync_symbol``; a ``ticks_source`` can have it, which is then built along with a
+    program that calls it. ``z80-trs80-cmd`` has one that counts the ticks of ``sys.ticks()``.
 ``c_symbols``
     Other names for C functions that Prog8 calls, as ``name=symbol`` pairs separated by spaces, such as replacements in
     a support source for routines that the C library lacks or gets wrong: the TRS-80 profiles have
@@ -765,7 +769,9 @@ and how often it changes depend on the machine, and it is 0 where there is no cl
   a second; when it is taken, slot 8 or 9 runs 30 times a second and adds 2.
 - ``z80-trs80-cmd`` under LDOS 5.3 on the Model III: the same module, in task slot 8, 9 or 10 (30 a second, adding 2).
   LDOS 5.3 has no ``@GTMOD``: the program finds the module through the task table at ``4500H``. 0 on a Model I and
-  under TRSDOS 1.3 (``z80-trs80-m3-trsdos`` too), which have no interrupt tasks.
+  under TRSDOS 1.3 (``z80-trs80-m3-trsdos`` too), which have no interrupt tasks. ``sys.wait()`` waits by this clock
+  (``wait_symbol``), and ``sys.waitvsync()`` until its next tick, a 30th of a second; without the clock both return at
+  once, as on the other Model I/III profiles.
 - 0 on ``z80-trs80`` (the ``.cas`` file), ``z80-cpm``, ``z80-c128`` and the simulators (``mos-sim``, ``z80-test``,
   ``mc6809-sim``).
 

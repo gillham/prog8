@@ -106,6 +106,12 @@ prog8_ticks_done:
 
     SECTION code_user
     PUBLIC _prog8_trs80_ticks
+    PUBLIC _prog8_trs80_clock
+
+; int prog8_trs80_clock(void): nonzero when there is a clock, for the wait in z80-trs80-wait.c
+_prog8_trs80_clock:
+    ld hl,(prog8_ticks_counter)
+    ret
 
 ; unsigned int prog8_trs80_ticks(void): the count, or 0 without the module
 _prog8_trs80_ticks:

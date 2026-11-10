@@ -96,6 +96,8 @@ private fun FunctionLowering.lowerSyscall(site: CallSite, number: Int) {
             val waitvsync = builder.profile?.waitvsyncSymbol
             if (waitvsync != null)
                 emit(LlvmInstruction.Call(null, external(waitvsync, LlvmType.Void, emptyList()), emptyList(), LlvmType.Void))
+            else if (builder.profile?.waitSymbol != null)
+                callWaitSymbol(LlvmValue.IntConstant(1, LlvmType.I16))
             else if (!builder.lacks("usleep"))
                 emit(LlvmInstruction.Call(null, builder.helperFunction(".sys.wait") { builder.waitHelper() }, listOf(LlvmValue.IntConstant(1, LlvmType.I16)), LlvmType.Void))
         }
@@ -245,14 +247,24 @@ private fun FunctionLowering.mul16LastUpper(site: CallSite, number: Int) {
 }
 
 /**
- * WAIT(jiffies word) sleeps for that many 1/60 seconds; WAITVSYNC() calls the profile's waitvsync_symbol, or else sleeps
- * for one, as there is no vertical blank to wait for. Without usleep() in the C library, they return at once.
+ * WAIT(jiffies word) sleeps for that many 1/60 seconds, through the profile's wait_symbol or else usleep(); WAITVSYNC() calls
+ * the profile's waitvsync_symbol, or else sleeps for one, as there is no vertical blank to wait for. Without either, they return at once.
  */
 private fun FunctionLowering.waitJiffies(site: CallSite, number: Int) {
     val (jiffies) = arguments(site, number, 1)
+    if (builder.profile?.waitSymbol != null) {
+        callWaitSymbol(convert(read(jiffies), LlvmType.I16))
+        return
+    }
     if (builder.lacks("usleep"))
         return
     emit(LlvmInstruction.Call(null, builder.helperFunction(".sys.wait") { builder.waitHelper() }, listOf(convert(read(jiffies), LlvmType.I16)), LlvmType.Void))
+}
+
+private fun FunctionLowering.callWaitSymbol(jiffies: LlvmValue) {
+    val cInt = builder.mapper.cInt
+    val argument = convert(jiffies, cInt)
+    emit(LlvmInstruction.Call(null, external(checkNotNull(builder.profile?.waitSymbol), LlvmType.Void, listOf(cInt)), listOf(argument), LlvmType.Void))
 }
 
 /** EXIT(status byte) ends the program with C's exit(), which the hosted llvm targets can rely on. */
