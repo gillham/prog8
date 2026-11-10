@@ -57,6 +57,22 @@ sub  plot  (ubyte col, ubyte row) {
         prog8_trs80m4_plot(col as word, row as word)
 }
 
+sub get_cursor() -> ubyte, ubyte {
+    ; ---- the cursor's column and row
+    uword position = prog8_trs80m4_where()
+    return lsb(position), msb(position)
+}
+
+sub cursor_on() {
+    ; ---- show the cursor (display code 14)
+    chrout(14)
+}
+
+sub cursor_off() {
+    ; ---- hide the cursor (display code 15)
+    chrout(15)
+}
+
 sub rvs_on() {
     ; ---- reverse video for the text printed from now on (the characters get bit 7 set, see getchr())
     chrout(16)

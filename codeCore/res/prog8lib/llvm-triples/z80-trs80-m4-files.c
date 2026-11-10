@@ -4,8 +4,10 @@
  * fsync, through the supervisor calls of TRSDOS 6 and LS-DOS 6. A file is the DOS's file control block (FCB) and its
  * sector buffer, with byte I/O through @GET and @PUT. The position and size come from the FCB, which the DOS keeps up to
  * date in reading and writing; a seek moves to the record with @POSN and reads its way to the byte, so it can't go past
- * the end of the file. Also an fread (c_symbols) that sets the end of the file, which z88dk's never does. Linked when the
- * program opens, renames or removes files (file_source).
+ * the end of the file. Also an fread (c_symbols) that sets the end of the file, which z88dk's never does; opendir, readdir
+ * and closedir for the files of drive 0, the directory "." (the DOS has no subdirectories), through @RAMDIR; and a qsort
+ * (c_symbols) for the sorted directory listing, as z88dk's calls the comparison with the arguments swapped. Linked when
+ * the program opens, renames or removes files, or lists a directory (file_source).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +16,7 @@
 
 #define SVC_GET 3
 #define SVC_PUT 4
+#define SVC_RAMDIR 35
 #define SVC_RENAM 56
 #define SVC_REMOV 57
 #define SVC_INIT 58
@@ -269,6 +272,83 @@ int rename(char *oldname, char *newname)
     newspec[i] = 13;
     svc(SVC_RENAM, 0, (int)fcb, (int)newspec);
     return svc_zero ? 0 : -1;
+}
+
+/* the directory of drive 0: @RAMDIR's entries of 22 bytes, the name and drive padded to 15 characters, after a '+' */
+#define DIR_ENTRY 22
+#define DIR_ENTRIES 256
+
+struct prog8_trs80m4_dirent {
+    char d_name[16];
+};
+
+struct prog8_trs80m4_dir {
+    unsigned char *next;
+    struct prog8_trs80m4_dirent entry;
+    unsigned char entries[DIR_ENTRY * DIR_ENTRIES + 1];
+};
+
+void *opendir(char *path)
+{
+    struct prog8_trs80m4_dir *dir;
+
+    if (path[0] != '.' || path[1] != 0)
+        return NULL;
+    dir = malloc(sizeof(struct prog8_trs80m4_dir));
+    if (dir == NULL)
+        return NULL;
+    /* B = the drive, C = 0: all the entries */
+    svc(SVC_RAMDIR, 0, 0, (int)dir->entries);
+    if (!svc_zero) {
+        free(dir);
+        return NULL;
+    }
+    dir->next = dir->entries;
+    return dir;
+}
+
+struct prog8_trs80m4_dirent *readdir(void *handle)
+{
+    struct prog8_trs80m4_dir *dir = handle;
+    int i;
+
+    if (*dir->next == '+' || dir->next >= dir->entries + DIR_ENTRY * DIR_ENTRIES)
+        return NULL;
+    /* the name without the drive spec and the padding */
+    for (i = 0; i < 15 && dir->next[i] != ':' && dir->next[i] != ' '; i++)
+        dir->entry.d_name[i] = dir->next[i];
+    dir->entry.d_name[i] = 0;
+    dir->next += DIR_ENTRY;
+    return &dir->entry;
+}
+
+int closedir(void *handle)
+{
+    free(handle);
+    return 0;
+}
+
+/* an insertion sort, as the directory listing sorts its names with it */
+void prog8_trs80m4_qsort(void *base, size_t count, size_t size, int (*compare)(void *, void *))
+{
+    unsigned char *array = base;
+    unsigned char *a, *b;
+    unsigned char swap;
+    size_t i, j, k;
+
+    for (i = 1; i < count; i++) {
+        for (j = i; j > 0; j--) {
+            a = array + (j - 1) * size;
+            b = array + j * size;
+            if (compare(a, b) <= 0)
+                break;
+            for (k = 0; k < size; k++) {
+                swap = a[k];
+                a[k] = b[k];
+                b[k] = swap;
+            }
+        }
+    }
 }
 
 /* readbyte, which stdio calls with the file in HL and which sets carry at the end of the file, and fsync, which has

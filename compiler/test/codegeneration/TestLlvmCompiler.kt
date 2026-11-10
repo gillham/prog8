@@ -5553,9 +5553,15 @@ main {
         txt.plot(0, 10)
         txt.column(4)
         txt.print("COL")
+        col, row = txt.get_cursor()
+        txt.cursor_off()
+        txt.cursor_on()
         txt.nl()
         sys.exit(check())
     }
+
+    ubyte col
+    ubyte row
 
     sub check() -> ubyte {
         if txt.getchr(0, 0) != 'H' or txt.getchr(4, 0) != 'O'
@@ -5576,9 +5582,27 @@ main {
         ; no key is waiting
         if txt.getkey() != 0
             return 8
+        if col != 7 or row != 10
+            return 9
         return 0
     }
-}""", "{12}HELLO\nA 200\nAT{16}R{17}NCOL\n")
+}""", "{12}HELLO\nA 200\nAT{16}R{17}NCOL{15}{14}\n"),
+
+    // the full listing depends on the files of trs80gp's boot disk; directory_dirs() reads it all and prints nothing
+    "diskio directory_dirs of a drive, which has no subdirectories" to OutputProgram("""
+%import textio
+%import diskio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.print_bool(diskio.save("zzlist.bin", $3000, 300))
+        txt.spc()
+        txt.print_bool(diskio.directory_dirs())
+        txt.nl()
+        diskio.delete("zzlist.bin")
+    }
+}""", "true true\n")
 )
 
 /**

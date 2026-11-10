@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA3-llvm.1 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit 692efd72 in branch llvm
+Prerelease version from git commit 5469c5ab in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 LLVM version by Claude Code and Andrew Gillham (gillham@roadsign.com)
 Report issues with this version at https://github.com/gillham/prog8/issues
@@ -620,8 +620,11 @@ txt  {
     cls  ()
     color  (ubyte txtcol)
     column  (ubyte col)
+    cursor_off  ()
+    cursor_on  ()
     eof  () -> bool
     fill_screen  (ubyte character, ubyte color)
+    get_cursor  () -> ubyte, ubyte
     getchr  (ubyte col, ubyte row) -> ubyte
     getk  () -> word
     getkey  () -> ubyte
@@ -662,6 +665,7 @@ txt  {
     print_uwbin  (uword value, bool prefix)
     print_uwhex  (uword value, bool prefix)
     print_w  (word value)
+    prog8_trs80m4_bell  ()
     prog8_trs80m4_getchr  (word col, word row) -> word
     prog8_trs80m4_plot  (word col, word row)
     prog8_trs80m4_setchr  (word col, word row, word char)

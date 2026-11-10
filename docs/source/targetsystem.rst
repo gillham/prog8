@@ -688,7 +688,8 @@ none, without waiting, and ``txt.waitkey()``, which waits for a key and gives it
   ``getk`` and ``fgetc_cons`` from the startup source ``z80-trs80-keyboard.asm`` (``-pragma-redirect`` in the link
   command): they give the ROM's codes, Enter 13, down 10, up 91, left 8, right 9 and CLEAR 31, also to ``txt.chrin()``.
 - the trs80m4 textio (``z80-trs80-m4``): ``getkey`` is ``@KBD``, which gives the key typed or 0, and ``waitkey`` is
-  ``txt.chrin()``, ``@KEY``, which waits for a key. Enter is 13.
+  ``txt.chrin()``, ``@KEY``, which waits for a key. Enter is 13, the left arrow and backspace 8, the right arrow 9 and
+  BREAK 128; letters come as typed (lower case unless shift or caps lock).
 - the coco textio (``mc6809-coco``): ``getkey`` calls Color BASIC's ``POLCAT`` (picolibc's ``char __decb_getc(void)``,
   through the wrapper ``int prog8_coco_getkey(void)`` in the profile's startup source), which reports each key press
   once, and ``waitkey`` calls it until it gives a key. Enter is 13 there, while ``txt.chrin()`` (picolibc's ``getchar``,
@@ -761,8 +762,9 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   program can use to find its files on the drive it ran from; ``PROG A B`` gives 3. ``argv(0)``, the program name, is
   empty, as z88dk's TRS-80 startup code doesn't set it. ``library = trs80m4`` gives ``txt`` the trs80m4 textio
   (``prog8lib/llvm16/trs80m4/textio.p8``): ``plot``, ``getchr`` and ``setchr`` through ``@VDCTL``, reverse video
-  through the display codes 16 and 17 (``getchr`` gives a reversed character with bit 7 set), ``bell`` through
-  ``@SOUND``, 80 columns and 24 rows, and no colors. Files go through the DOS too: z88dk's file routines are stubs
+  through the display codes 16 and 17 (``getchr`` gives a reversed character with bit 7 set), ``cursor_on`` and
+  ``cursor_off`` through 14 and 15, ``get_cursor`` through ``@VDCTL``, ``bell`` through ``@SOUND``, 80 columns and
+  24 rows, and no colors. Display code 21 doesn't switch to the alternate character set (checked in trs80gp). Files go through the DOS too: z88dk's file routines are stubs
   there (``-lndos``), and the profile's ``file_source`` (``z80-trs80-m4-files.c``) has ``open``, ``close``, ``read``,
   ``write``, ``readbyte``, ``writebyte``, ``lseek``, ``fdtell``, ``remove`` and ``rename`` in their place, and an
   ``fread`` (``c_symbols``) that sets the end of the file, which z88dk's never does, with byte I/O
@@ -771,8 +773,11 @@ Other control codes, and the characters past the maximum length, are ignored. Th
   record (``@POSN``) and reads its way to the byte, and can't go past the end of the file. Mode ``"w"`` removes an
   existing file and creates it anew, as the DOS can't shorten one; ``"a"`` positions to the end (``@PEOF``).
   ``diskio.rename`` is the DOS's ``@RENAM``, which fails when the new name exists. A new file without a drive spec goes
-  to the first drive, which must have room: the DOS doesn't try the next one. There are no directories, so
-  ``mkdir``, ``chdir``, ``rmdir`` and ``diskio.directory`` fail. In trs80gp,
+  to the first drive, which must have room: the DOS doesn't try the next one. There are no subdirectories, so
+  ``mkdir``, ``chdir`` and ``rmdir`` fail, but ``diskio.directory`` lists the files of drive 0, sorted by name with
+  their sizes: the file source's ``opendir``, ``readdir`` and ``closedir`` read the directory "." through ``@RAMDIR``
+  (``dirent_name_offset = 0``), and its ``qsort`` (``c_symbols``) sorts, as z88dk's calls the comparison with the
+  arguments swapped. In trs80gp,
   ``trs80gp -m4 prog.cmd`` boots TRSDOS 6 and runs it, and ``trs80gp -m4 -ld prog.cmd`` LS-DOS 6.3, whose boot disk
   has too little free space there for more than a small file.
 - ``z80-cpm``: a ``.com`` program for CP/M 2.2 and later, with file I/O through the BDOS. The command line comes
