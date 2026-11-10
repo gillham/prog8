@@ -966,6 +966,7 @@ class TestLlvmTripleProfile: FunSpec({
             float_source = z80-float.c
             float_digits_symbol = prog8_z80_ftoa
             c_symbols = tanf=tan atanf=atan atan2f=atan2 powf=pow floorf=floor ceilf=ceil roundevenf=prog8_z80_roundeven strtod=prog8_z80_strtod
+            defm_as_defb = true
             """)
         val old = LlvmTripleProfile.load(before)
         LlvmTripleProfile.resolve("z80-test") shouldBe old.copy(name = "z80-test", tools = old.tools.copy(profileName = "z80-test"), directory = null,

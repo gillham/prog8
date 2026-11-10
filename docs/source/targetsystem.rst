@@ -366,6 +366,10 @@ These are the keys of a profile; an unknown key is an error:
     A C routine ``void f(char *buffer, double value)`` that writes the fewest digits that read back as the positive value,
     as ``snprintf``'s ``"%.*e"`` does, for ``floats.tostr()`` and printing; without it, ``snprintf`` and ``strtod`` find
     them, which needs both to be exact.
+``defm_as_defb``
+    ``true`` has clang write the program's assembly and then assemble it, with each ``DEFM`` string that has an octal
+    escape before a digit 0-7 written as a ``DEFB`` list in between: z88dk-z80asm reads such an escape on into the digit,
+    so llvm-z80's ``"\0001"`` (the bytes 0 and ``'1'``) became the one byte 1. The z80 profiles have it.
 ``file_source``
     Source files like those of ``startup_source``, built along with the program only when it uses files (calls
     ``fopen()``, ``rename()`` or ``remove()``), such as the ``ftell``, ``fseek`` and ``fread`` of the TRS-80 profiles, which would otherwise make every

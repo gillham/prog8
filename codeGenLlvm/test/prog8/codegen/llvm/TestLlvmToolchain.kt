@@ -97,6 +97,11 @@ class TestLlvmToolchain: FunSpec({
             listOf("gcc", "boot.S", "console.c", "p.o", "-lm", "-o", "p.elf", "-L/a b", "-lfoo")
     }
 
+    test("a DEFM string with an octal escape before a digit 0-7 becomes a DEFB list, other lines stay as they are") {
+        val assembly = "_data:\n\tDEFM\t\"\\021\\0001\\0008a\\042\\134\"\n\tDEFM\t\"\\0008\\012ok\\000\"\n\tDEFB\t1\n"
+        LlvmToolchain.defmAsDefb(assembly) shouldBe "_data:\n\tDEFB\t17,0,49,0,56,97,34,92\n\tDEFM\t\"\\0008\\012ok\\000\"\n\tDEFB\t1\n"
+    }
+
     test("{stem} in the link command is the output file without the output extension, and {startup} without startup sources is nothing") {
         LlvmToolchain.linkCommandFor(listOf("zcc", "{startup}", "{object}", "-o", "{stem}.bin", "x{startup}y"), Path.of("p.tap.o"), Path.of("dir", "p.tap"), emptyList(), emptyList(),
             outputExtension = ".tap") shouldBe listOf("zcc", "p.tap.o", "-o", Path.of("dir", "p").toString() + ".bin", "xy")

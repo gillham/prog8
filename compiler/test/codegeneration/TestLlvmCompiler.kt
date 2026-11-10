@@ -5933,6 +5933,23 @@ main {
     }
 }""", "12 136\n0 0\n7 1\n294\n"),
 
+    "byte data with 0 before a digit (z88dk-z80asm reads \\0001 as one byte)" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    ubyte[] data = [$11, $00, $31, $01, $00, $37, $02, $00, $38, $03, $00, $00, $30, $04]
+    sub start() {
+        ubyte i
+        for i in 0 to len(data) - 1 {
+            txt.print_ubhex(data[i], false)
+            txt.spc()
+        }
+        txt.nl()
+    }
+}""", "11 00 31 01 00 37 02 00 38 03 00 00 30 04 \n"),
+
     "text output" to OutputProgram("""
 %import textio
 %import syslib

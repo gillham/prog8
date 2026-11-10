@@ -87,7 +87,12 @@ data class LlvmTripleProfile(
      * A C routine `void f(char *buffer, double value)` that writes the fewest digits that read back as the positive value, as
      * snprintf's "%.*e" does, for floats.tostr(); without it, snprintf and strtod find them.
      */
-    val floatDigitsSymbol: String? = null
+    val floatDigitsSymbol: String? = null,
+    /**
+     * True when clang writes assembly that is rewritten before it is assembled: a DEFM string with an octal escape before a digit
+     * becomes a DEFB list, as z88dk-z80asm takes `"\0001"` as one byte where llvm-z80 means `\000` and `1`.
+     */
+    val defmAsDefb: Boolean = false
 ) {
     /** The symbol that the C function of [C_FUNCTIONS] named [function] is called by, which the profile can change. */
     fun cSymbol(function: String): String = when (function) {
@@ -273,7 +278,8 @@ data class LlvmTripleProfile(
             "link_command", "link_args", "run_timeout_seconds", "startup_source", "file_source",
             "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "c_symbols", "waitvsync_symbol", "file_offset_size", "getchar_symbol",
             "putchar_symbol", "library", "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env",
-            "load_address", "load_address_align", "link_script", "floats", "c_double_size", "float_source", "float_link_args", "float_digits_symbol")
+            "load_address", "load_address_align", "link_script", "floats", "c_double_size", "float_source", "float_link_args", "float_digits_symbol",
+            "defm_as_defb")
 
         /** A ProcessBuilder for [command] with the tool environment of [profile], or a plain one without a profile. */
         fun processBuilder(profile: LlvmTripleProfile?, command: List<String>): ProcessBuilder =
@@ -574,7 +580,12 @@ data class LlvmTripleProfile(
                 words("float_source").orEmpty(),
                 supplier["float_source"]?.directory,
                 words("float_link_args").orEmpty(),
-                optional("float_digits_symbol")
+                optional("float_digits_symbol"),
+                when (val value = optional("defm_as_defb")) {
+                    null, "false" -> false
+                    "true" -> true
+                    else -> throw IllegalArgumentException("llvm triple profile '$name' has defm_as_defb '$value', it must be true or false")
+                }
             )
         }
 

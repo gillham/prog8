@@ -44,10 +44,17 @@ internal object LlvmToolchain {
             return runTool(clangLinkCommand(compileCommand, llFile, outputFile, extraLinkArgs + linkLibraries + profileLinkArgs), "clang", outputFile, profile) ||
                 failed("clang couldn't build '$outputFile' from '$llFile'")
         val objectFile = outputFile.resolveSibling("${outputFile.fileName}.o")
+        val assemblyFile = outputFile.resolveSibling("${outputFile.fileName}.s")
         var startupFiles = emptyList<Path>()
         var linkScript: Path? = null
         try {
-            if (!runTool(compileCommand + listOf("-c", llFile.toString(), "-o", objectFile.toString()), "clang", outputFile, profile))
+            if (profile?.defmAsDefb == true) {
+                if (!runTool(compileCommand + listOf("-S", llFile.toString(), "-o", assemblyFile.toString()), "clang", outputFile, profile))
+                    return failed("clang couldn't compile '$llFile'")
+                Files.writeString(assemblyFile, defmAsDefb(Files.readString(assemblyFile)))
+                if (!runTool(listOf(clang.toString()) + profileArgs + listOf("-c", assemblyFile.toString(), "-o", objectFile.toString()), "clang", outputFile, profile))
+                    return failed("clang couldn't assemble '$assemblyFile'")
+            } else if (!runTool(compileCommand + listOf("-c", llFile.toString(), "-o", objectFile.toString()), "clang", outputFile, profile))
                 return failed("clang couldn't compile '$llFile'")
             val withFloats = profile != null && (profile.floatSources.isNotEmpty() || profile.floatLinkArgs.isNotEmpty()) && usesFloats(llFile)
             startupFiles = try {
@@ -67,6 +74,7 @@ internal object LlvmToolchain {
             return runTool(link, link.first(), outputFile, profile) || failed("the link command couldn't build '$outputFile' from '$objectFile'")
         } finally {
             Files.deleteIfExists(objectFile)
+            Files.deleteIfExists(assemblyFile)
             startupFiles.forEach { Files.deleteIfExists(it) }
             linkScript?.let { Files.deleteIfExists(it) }
         }
@@ -113,6 +121,46 @@ internal object LlvmToolchain {
             }
         } + extraLinkArgs
         return if (LIBS in template) command else command + linkLibraries
+    }
+
+    /**
+     * [assembly] with each DEFM string that has an octal escape before a digit 0-7 written as a DEFB list instead, as
+     * z88dk-z80asm reads such an escape on into the digit (see [LlvmTripleProfile.defmAsDefb]).
+     */
+    internal fun defmAsDefb(assembly: String): String = assembly.lines().joinToString("\n") { line ->
+        val match = defmLine.matchEntire(line)
+        if (match == null || !escapeBeforeDigit.containsMatchIn(match.groupValues[2])) line
+        else match.groupValues[1] + "DEFB\t" + stringBytes(match.groupValues[2]).joinToString(",")
+    }
+
+    private val defmLine = Regex("""(\s*)DEFM\s+"((?:[^"\\]|\\.)*)"\s*""")
+    private val escapeBeforeDigit = Regex("""\\[0-7]{3}[0-7]""")
+
+    private fun stringBytes(text: String): List<Int> {
+        val bytes = mutableListOf<Int>()
+        var i = 0
+        while (i < text.length) {
+            if (text[i] != '\\') {
+                bytes += text[i++].code and 255
+                continue
+            }
+            val octal = text.substring(i + 1, minOf(text.length, i + 4)).takeWhile { it in '0'..'7' }
+            if (octal.isNotEmpty()) {
+                bytes += octal.toInt(8) and 255
+                i += 1 + octal.length
+            } else {
+                bytes += when (val c = text[i + 1]) {
+                    'n' -> 10
+                    'r' -> 13
+                    't' -> 9
+                    'b' -> 8
+                    'f' -> 12
+                    else -> c.code and 255
+                }
+                i += 2
+            }
+        }
+        return bytes
     }
 
     private const val LIBS = "{libs}"
