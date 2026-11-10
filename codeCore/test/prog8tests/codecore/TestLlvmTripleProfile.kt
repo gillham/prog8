@@ -865,6 +865,8 @@ class TestLlvmTripleProfile: FunSpec({
         trsdos.startupSources shouldBe cmd.startupSources
         trsdos.libcLacks shouldBe cmd.libcLacks
         trsdos.fileSources shouldBe cmd.fileSources
+        trsdos.lastDriveSymbol shouldBe "prog8_trs80_last_drive"
+        cmd.lastDriveSymbol shouldBe "prog8_trs80_last_drive"
         // the link command names the support library through LLVM_Z80
         if (System.getenv("LLVM_Z80") != null) {
             val linkCommand = trsdos.linkCommand.orEmpty()

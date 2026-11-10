@@ -728,6 +728,24 @@ main {
         mos.count { it.contains("@inp(") || it.contains("@outp(") } shouldBe 0
     }
 
+    test("diskio.last_drive calls the profile's last_drive_symbol, and is 255 without one") {
+        val source = $$"""
+%import diskio
+%zeropage basicsafe
+main {
+    sub start() {
+        @($c000) = diskio.last_drive()
+    }
+}"""
+        fun llLines(profile: String) =
+            compiledLlFile(compileText(LlvmTarget(2, LlvmTripleProfile.resolve(profile)), false, source,
+                outputDir.resolve("llvm16-last-drive-$profile").createDirectories(), assemble = false)).readLines().map { it.trim() }
+        llLines("z80-trs80-m4").any { it.matches(Regex("""%\S+ = call i16 @prog8_trs80_last_drive\(\)""")) } shouldBe true
+        val cpm = llLines("z80-cpm")
+        cpm.count { it.contains("@prog8_trs80_last_drive") } shouldBe 0
+        cpm.any { it.matches(Regex("""store i8 -1, ptr %r\d+\.slot""")) } shouldBe true
+    }
+
     test("llvm16 builds and runs a program in mos-sim").config(enabledOrReasonIf = requiresMosSim) {
         val source = """
 %import textio
@@ -878,7 +896,7 @@ main {
 
     test("the notRun maps and only sets of the llvm16 program runners only name existing programs") {
         for (runner in llvm16ProgramRunners) {
-            withClue("the programs that the notRun map of ${runner.displayName} names") { runner.notRun.keys.filter { it !in programs && it !in outputPrograms } shouldBe emptyList() }
+            withClue("the programs that the notRun map of ${runner.displayName} names") { runner.notRun.keys.filter { it !in programs && it !in outputPrograms && it !in z88dkTextioPrograms && it !in trs80m4TextioPrograms } shouldBe emptyList() }
             withClue("the programs that the only set of ${runner.displayName} names") {
                 runner.only.orEmpty().filter { it !in programs && it !in outputPrograms && it !in z88dkTextioPrograms && it !in trs80m4TextioPrograms && it !in float32Programs } shouldBe emptyList()
             }
@@ -2446,7 +2464,8 @@ private val notRunOnTrs80gpCas: Map<String, String> = notRunOnTrs80gp +
         "diskio saving and loading memory",
         "fileio appending to a file",
         "diskio renaming and deleting files",
-        "diskio status of the last disk operation"
+        "diskio status of the last disk operation",
+        "diskio.last_drive gives the drive that the DOS found or created the file on"
     ).associateWith { "without a DOS, z88dk's TRS-80 file routines are stubs that fail" }
 
 // the programs that don't run as they are on llvm16 under TRSDOS 1.3 in trs80gp, with the reason
@@ -5569,8 +5588,45 @@ main {
     }
 }""", "1\n")
 
+// diskio.last_drive() in trs80gp, whose test runs have a writable disk in drive 1: the DOS searches the drives for a name
+// without one, and creates a file on the first drive it can write to
+private val trs80gpLastDriveProgram = "diskio.last_drive gives the drive that the DOS found or created the file on" to OutputProgram("""
+%import textio
+%import diskio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        print_drive()
+        void diskio.f_open_w("lastdrv/txt:1")
+        void diskio.f_write("drive", 5)
+        diskio.f_close_w()
+        print_drive()
+        void diskio.f_open("lastdrv/txt")
+        diskio.f_close()
+        print_drive()
+        void diskio.f_open_w("lastdrv0/txt")
+        diskio.f_close_w()
+        print_drive()
+        void diskio.f_open("missing/txt")
+        print_drive()
+        void diskio.f_open("lastdrv/txt:1")
+        diskio.f_close()
+        print_drive()
+        txt.nl()
+        diskio.delete("lastdrv/txt:1")
+        diskio.delete("lastdrv0/txt")
+    }
+
+    sub print_drive() {
+        txt.print_ub(diskio.last_drive())
+        txt.spc()
+    }
+}""", "255 1 1 0 255 1 \n")
+
 private val z88dkTextioPrograms = mapOf(
     trs80gpPortProgram,
+    trs80gpLastDriveProgram,
     "the z88dk textio routines" to OutputProgram("""
 %import textio
 %zeropage basicsafe
@@ -5646,6 +5702,7 @@ main {
  * first screen read-back check that fails.
  */
 private val trs80m4TextioPrograms = mapOf(
+    trs80gpLastDriveProgram,
     trs80gpPortProgram,
     "the trs80m4 textio routines" to OutputProgram("""
 %import textio

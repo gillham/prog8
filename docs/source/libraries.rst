@@ -1076,6 +1076,12 @@ or ``chdir``): ``"00,ok"`` and 0 when it succeeded, else ``"01,error"`` and 1. S
 ``delete``, which return nothing, the same way as on the Commodore targets, but the code is not the drive's CBM-DOS
 error number: the C library gives no portable one.
 
+On llvm16, llvm32 and llvm64, ``last_drive()`` gives the drive (0-7) that the last ``f_open``, ``f_open_w``, ``save``,
+``load`` (or other open of a file) found or created the file on, or 255 when that open failed or the drive isn't known.
+Only the TRS-80 profiles know it: their DOSes search the drives for a name without a drive (``T/TXT`` rather than
+``T/TXT:1``) and create a new file on the first drive they can write to, so a program can't tell from the name where
+the file is. It is kept from the open, so it can be asked for after the file is closed. Elsewhere it is always 255.
+
 .. note::
     Opening a file using f_read() or f_read_w() doesn't set the default i/o channels to that file.
     In fact, after calling routines in diskio, it resets the input and output channels to their

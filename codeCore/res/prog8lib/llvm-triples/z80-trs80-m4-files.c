@@ -7,7 +7,8 @@
  * the end of the file. Also an fread (c_symbols) that sets the end of the file, which z88dk's never does; opendir, readdir
  * and closedir for the files of drive 0, the directory "." (the DOS has no subdirectories), through @RAMDIR; and a qsort
  * (c_symbols) for the sorted directory listing, as z88dk's calls the comparison with the arguments swapped. Linked when
- * the program opens, renames or removes files, or lists a directory (file_source).
+ * the program opens, renames or removes files, lists a directory, or asks for the drive of the last file opened
+ * (file_source).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +35,14 @@ struct prog8_trs80m4_file {
 /* A of the last supervisor call, and whether it set the Z flag (success for most) */
 static unsigned char svc_result;
 static unsigned char svc_zero;
+
+/* the drive the last open found or created its file on (the FCB's byte 6), or 255 when it failed: diskio.last_drive() */
+static unsigned char last_drive = 255;
+
+int prog8_trs80_last_drive(void)
+{
+    return last_drive;
+}
 
 /* the file spec as the DOS wants it: upper case, ended by a carriage return */
 static char spec[32];
@@ -110,6 +119,7 @@ int open(char *name, int flags, mode_t mode)
     struct prog8_trs80m4_file *file = malloc(sizeof(struct prog8_trs80m4_file));
     unsigned char *fcb;
 
+    last_drive = 255;
     if (file == NULL)
         return -1;
     fcb = file->fcb;
@@ -134,6 +144,7 @@ int open(char *name, int flags, mode_t mode)
         free(file);
         return -1;
     }
+    last_drive = fcb[6] & 7;
     if (flags & O_APPEND)
         svc(SVC_PEOF, 0, (int)fcb, 0);
     return (int)file;

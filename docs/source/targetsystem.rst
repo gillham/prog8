@@ -370,6 +370,11 @@ These are the keys of a profile; an unknown key is an error:
     ``true`` has clang write the program's assembly and then assemble it, with each ``DEFM`` string that has an octal
     escape before a digit 0-7 written as a ``DEFB`` list in between: z88dk-z80asm reads such an escape on into the digit,
     so llvm-z80's ``"\0001"`` (the bytes 0 and ``'1'``) became the one byte 1. The z80 profiles have it.
+``last_drive_symbol``
+    A C routine ``int f(void)`` among the ``file_source`` routines that gives the drive the last file open found or
+    created its file on, or 255, for ``diskio.last_drive()``; a program that calls it gets the file sources linked.
+    Without it, ``diskio.last_drive()`` is always 255. The TRS-80 profiles have it (``prog8_trs80_last_drive``), from
+    byte 6 of the file's FCB.
 ``file_source``
     Source files like those of ``startup_source``, built along with the program only when it uses files (calls
     ``fopen()``, ``rename()`` or ``remove()``), such as the ``ftell``, ``fseek`` and ``fread`` of the TRS-80 profiles, which would otherwise make every

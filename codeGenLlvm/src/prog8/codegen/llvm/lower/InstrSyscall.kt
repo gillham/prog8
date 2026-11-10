@@ -66,6 +66,7 @@ private const val VM_PARSE_FLOAT = 211
 private const val VM_LIST_DIRECTORY = 212
 private const val VM_PORT_IN = 213
 private const val VM_PORT_OUT = 214
+private const val VM_LAST_DRIVE = 215
 
 /**
  * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory, file and filesystem
@@ -136,6 +137,7 @@ private fun FunctionLowering.lowerSyscall(site: CallSite, number: Int) {
         VM_LIST_DIRECTORY -> listDirectory(site, number)
         VM_PORT_IN -> portIn(site, number)
         VM_PORT_OUT -> portOut(site, number)
+        VM_LAST_DRIVE -> lastDrive(site, number)
         else -> when (IMSyscall.entries.firstOrNull { it.number == number }) {
             IMSyscall.COMPARE_STRINGS -> compareStrings(site, number)
             IMSyscall.STRING_CONTAINS -> stringContains(site, number)
@@ -646,6 +648,19 @@ private fun FunctionLowering.portOut(site: CallSite, number: Int) {
     val cInt = builder.mapper.cInt
     val args = listOf(convert(read(port), cInt), convert(read(value), cInt))
     emit(LlvmInstruction.Call(null, external("outp", LlvmType.Void, args.map { it.type }), args, LlvmType.Void))
+}
+
+/** LAST_DRIVE(): byte, the drive that the last file open found its file on, from the profile's last_drive_symbol; 255 without one. */
+private fun FunctionLowering.lastDrive(site: CallSite, number: Int) {
+    arguments(site, number, 0)
+    val symbol = builder.profile?.lastDriveSymbol
+    if (symbol == null) {
+        result(site, LlvmValue.IntConstant(255, LlvmType.I8))
+        return
+    }
+    val cInt = builder.mapper.cInt
+    val drive = derive("drive", cInt) { LlvmInstruction.Call(it, external(symbol, cInt, emptyList()), emptyList(), cInt) }
+    result(site, convert(drive, LlvmType.I8, "drive"))
 }
 
 /** `i8 (needle, ptr array, i16 count)`: 1 when one of the count elements equals the needle, else 0. */

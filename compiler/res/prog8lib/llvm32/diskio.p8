@@ -244,6 +244,15 @@ diskio {
         return 1
     }
 
+    sub last_drive() -> ubyte {
+        ; -- the drive (0-7) that the DOS opened the last file on, which it found by searching the drives when the name has
+        ;    no drive (":1"), or 255 when the open failed or the drive isn't known. Only the TRS-80 profiles know it.
+        %ir {{
+            syscall 215 (): r99100.b
+            returnr.b r99100.b
+        }}
+    }
+
 
     sub save(str filenameptr, pointer start_address, pointer savesize) -> bool {
         ; -- save the memory block in a file, after a 2-byte prg header with the lower 16 bits of the start address.

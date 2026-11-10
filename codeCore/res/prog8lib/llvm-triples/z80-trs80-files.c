@@ -13,6 +13,7 @@
  * - rename (c_symbols), which z88dk lacks and no DOS call does: it copies the file to the new name and deletes the old
  *   one, so it needs room for the copy, and the copy gets the date of the rename and no password. It fails when the
  *   new name exists.
+ * - the drive of the last file opened, for diskio.last_drive() (last_drive_symbol).
  * - fsync, which fflush calls: z88dk's always fails, while byte I/O through the DOS has nothing to flush at this level.
  */
 #include <stdio.h>
@@ -50,6 +51,20 @@ static void set_written(FILE *fp, long position)
     fp->reserved2 = position >> 16;
 }
 
+/* the drive the last fopen found or created its file on (the FCB's drive), or 255 when it failed: diskio.last_drive() */
+static unsigned char last_drive = 255;
+
+int prog8_trs80_last_drive(void)
+{
+    return last_drive;
+}
+
+static FILE *opened(FILE *fp)
+{
+    last_drive = fp == NULL ? 255 : ((struct TRSDOS_FILE *)fp->desc.fd)->fcb.drive & 7;
+    return fp;
+}
+
 long prog8_trs80_ftell(FILE *fp)
 {
     if (READING(fp))
@@ -71,12 +86,12 @@ FILE *prog8_trs80_fopen(char *name, char *mode)
         trsdos(DOS_POS_EOF, 0, (char *)&((struct TRSDOS_FILE *)fp->desc.fd)->fcb);
         fp->flags = (fp->flags & ~_IOREAD) | _IOWRITE;
         set_written(fp, size);
-        return fp;
+        return opened(fp);
     }
     fp = fopen(name, mode);
     if (fp != NULL && WRITING(fp))
         set_written(fp, 0L);
-    return fp;
+    return opened(fp);
 }
 
 size_t prog8_trs80_fwrite(void *ptr, size_t size, size_t nmemb, FILE *fp)
