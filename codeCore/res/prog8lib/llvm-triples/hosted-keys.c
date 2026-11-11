@@ -1,6 +1,7 @@
 // txt.getkey() and txt.waitkey() of the llvm32 and llvm64 targets on Unix and Windows: one key, without waiting for it or
 // waiting, not echoed. Unix terminals go to a raw mode at the first call, and back when the program ends or reads a
-// character or line with txt.chrin() and txt.input_line(), which call prog8_getchar(). The cursor keys' escape sequences
+// character or line with txt.chrin() and txt.input_line(), which call prog8_getchar(); the Windows console likewise
+// turns Ctrl-C into a key. The cursor keys' escape sequences
 // become the PETSCII codes of the Commodore targets: 145 up, 17 down, 29 right, 157 left; DEL (127) becomes backspace (8),
 // as txt.KEY_BACKSPACE. Input that isn't a terminal is read as it comes.
 #include <stdio.h>
@@ -14,6 +15,8 @@
 #ifdef _WIN32
 #include <conio.h>
 #include <io.h>
+#include <stdlib.h>
+#include <windows.h>
 
 static int console(void) {
     static int known = 0, result = 0;
@@ -24,16 +27,48 @@ static int console(void) {
     return result;
 }
 
-// the next byte, waiting for it when wait_ms isn't 0, or -1: none yet, which only a console has, or the end of the input
+static HANDLE console_input;
+static DWORD saved_mode;
+static int raw = 0, restore_at_exit = 0;
+
+static void cooked(void) {
+    if (raw) {
+        SetConsoleMode(console_input, saved_mode);
+        raw = 0;
+    }
+}
+
+// without processed input, Ctrl-C is a key (3) also between the reads, instead of ending the program
+static void make_raw(void) {
+    if (raw || !console())
+        return;
+    console_input = GetStdHandle(STD_INPUT_HANDLE);
+    if (!GetConsoleMode(console_input, &saved_mode))
+        return;
+    SetConsoleMode(console_input, saved_mode & ~(DWORD)ENABLE_PROCESSED_INPUT);
+    raw = 1;
+    if (!restore_at_exit) {
+        atexit(cooked);
+        restore_at_exit = 1;
+    }
+}
+
+// the next byte, waiting up to wait_ms for it on a console (-1: as long as it takes), or -1
 static int next_byte(int wait_ms) {
     if (!console()) {
         int c = getchar();
         return c == EOF ? -1 : c;
     }
-    return wait_ms != 0 || _kbhit() ? _getch() : -1;
+    if (wait_ms < 0)
+        return _getch();
+    ULONGLONG deadline = GetTickCount64() + (ULONGLONG)wait_ms;
+    while (!_kbhit()) {
+        if (GetTickCount64() >= deadline)
+            return -1;
+        Sleep(1);
+    }
+    return _getch();
 }
-
-static void cooked(void) {}
 
 // _getch gives the cursor keys as 0 or 224 and a scan code
 static int special_key(int c) {
@@ -150,9 +185,7 @@ static int read_key(int wait) {
             pending_count = pending_next = 0;
         return c == 127 ? KEY_BACKSPACE : c;
     }
-#ifndef _WIN32
     make_raw();
-#endif
     int c = next_byte(wait ? -1 : 0);
     if (c < 0)
         return -1;
