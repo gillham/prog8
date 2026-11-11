@@ -71,6 +71,10 @@ class VirtualMachine(private val irProgram: IRProgram) {
 
     internal var fileOutputStream: java.io.RandomAccessFile? = null
     internal var fileInputStream: java.io.RandomAccessFile? = null
+    // Virtual current working directory for the program's file syscalls.
+    // The JVM process CWD cannot be changed at runtime, so diskio.chdir()
+    // instead retargets this: all relative file paths resolve against it.
+    internal var virtualCwd: java.io.File = java.io.File("").absoluteFile
     val memory = Memory()
     val machine = VMTarget()
     val program: List<IRCodeChunk>
@@ -154,7 +158,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
 //                    Thread.sleep(1)  // avoid 100% cpu core usage
 //                }
 
-                if(stepCount and MIPS_COUNTER_MASK == 0) {
+                if(!quiet && (stepCount and MIPS_COUNTER_MASK == 0)) {
                     val now = System.nanoTime()
                     val duration = now-before
                     before = now
@@ -180,6 +184,7 @@ class VirtualMachine(private val irProgram: IRProgram) {
         // "reset" the VM without erasing the currently loaded program
         // this allows you to re-run the program multiple times without having to reload it
         registers.reset()
+        virtualCwd = java.io.File("").absoluteFile
         if(clearMemory)
             memory.reset()
         pcIndex = 0

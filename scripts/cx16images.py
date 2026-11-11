@@ -3,6 +3,10 @@ Tools to convert bitmap images to an appropriate format for the Commander X16.
 This means: indexed colors (palette), 12 bits color space (4 bits per channel, for a total of 4096 possible colors)
 There are no restrictions on the size of the image.
 
+This file is primarily a *library*: other scripts (bmx.py, amiga-export-izx0.py) import
+BitmapImage and the ordered-dithering helpers from here. It also has a small CLI for
+one-off conversions (see main() at the bottom).
+
 Written by Irmen de Jong (irmen@razorvine.net) - Code is in the Public Domain.
 
 Requirements: Pillow  (pip install pillow)
@@ -117,16 +121,18 @@ class BitmapImage:
         """
         For 4 bpp (16 color) images:
         Get a rectangle of pixel values from the image, returns the bytes as a flat array.
-        Every byte encodes 2 pixels (4+4 bits).
+        Every byte encodes 2 pixels (4+4 bits). Odd widths are padded with a zero nibble,
+        out-of-image pixels read as zero.
         """
         assert self.has_palette()
-        data = bytearray(width // 2 * height)
+        img_width, img_height = self.img.size
+        data = bytearray((width + 1) // 2 * height)
         index = 0
         pix: Any = self.img.load()
         for py in range(y, y + height):
             for px in range(x, x + width, 2):
-                pix1 = pix[px, py]
-                pix2 = pix[px + 1, py]
+                pix1 = pix[px, py] if 0 <= px < img_width and 0 <= py < img_height else 0
+                pix2 = pix[px + 1, py] if px + 1 < x + width and 0 <= px + 1 < img_width and 0 <= py < img_height else 0
                 data[index] = pix1 << 4 | pix2
                 index += 1
         return data
@@ -135,16 +141,16 @@ class BitmapImage:
         """
         For 4 bpp (16 color) images:
         Get all pixel values from the image, returns the bytes as a flat array.
-        Every byte encodes 2 pixels (4+4 bits).
+        Every byte encodes 2 pixels (4+4 bits). An odd image width is padded with a zero nibble.
         """
         assert self.has_palette()
-        data = bytearray(self.width // 2 * self.height)
+        data = bytearray((self.width + 1) // 2 * self.height)
         index = 0
         pix: Any = self.img.load()
         for py in range(self.height):
             for px in range(0, self.width, 2):
                 pix1 = pix[px, py]
-                pix2 = pix[px + 1, py]
+                pix2 = pix[px + 1, py] if px + 1 < self.width else 0
                 data[index] = pix1 << 4 | pix2
                 index += 1
         return data
@@ -182,6 +188,7 @@ class BitmapImage:
         elif bits_per_pixel == 4:
             num_colors = 15 if fixed_color_zero else 16
             if num_colors==16 and preserve_first_16_colors:
+                self.img = self.img.convert("RGB")
                 return self.quantize_to(default_colors[:16], dither)
         elif bits_per_pixel == 2:
             assert preserve_first_16_colors==False, "bpp is too small for 16 default colors"
@@ -216,21 +223,78 @@ class BitmapImage:
         self.img = image_rgb
         self.quantize_to(palette_rgb, dither)
 
-    def constrain_size(self, hires: bool = False) -> None:
+    def constrain_size(self, hires: bool = False, max_width: Optional[int] = None, max_height: Optional[int] = None) -> None:
         """
         If the image is larger than the lores or hires screen size, scale it down so that it fits.
         If the image already fits, doesn't do anything.
+        Explicit max_width and max_height override the screen dimensions.
         """
+        if max_width is None:
+            max_width = 640 if hires else 320
+        if max_height is None:
+            max_height = 480 if hires else 240
         w, h = self.img.size
-        if hires and (w > 640 or h > 480):
-            self.img.thumbnail((640, 480))
-        elif w > 320 or h > 240:
-            self.img.thumbnail((320, 240))
+        if w > max_width or h > max_height:
+            self.img.thumbnail((max_width, max_height))
         self.size = self.img.size
         self.width, self.height = self.size
 
 
 # utility functions
+
+BAYER_4X4 = (
+    (0, 8, 2, 10),
+    (12, 4, 14, 6),
+    (3, 11, 1, 9),
+    (15, 7, 13, 5),
+)
+
+BAYER_8X8 = (
+    (0, 32, 8, 40, 2, 34, 10, 42),
+    (48, 16, 56, 24, 50, 18, 58, 26),
+    (12, 44, 4, 36, 14, 46, 6, 38),
+    (60, 28, 52, 20, 62, 30, 54, 22),
+    (3, 35, 11, 43, 1, 33, 9, 41),
+    (51, 19, 59, 27, 49, 17, 57, 25),
+    (15, 47, 7, 39, 13, 45, 5, 37),
+    (63, 31, 55, 23, 61, 29, 53, 21),
+)
+
+# Peak-to-peak amplitude of the ordered-dither threshold wave, in 8-bit steps.
+ORDERED_DITHER_SPREAD = 24.0
+
+
+def apply_ordered_dither(img, palette_img, matrix):
+    """Bayer ordered dithering of an RGB image into an existing palette.
+
+    Adds the per-pixel matrix threshold to each channel, then maps to the
+    nearest palette color (in C, via a non-dithering quantize).
+    """
+    size = len(matrix)
+    width, height = img.size
+    pixels = list(img.get_flattened_data() if hasattr(img, "get_flattened_data") else img.getdata())
+    adjusted = []
+    for y in range(height):
+        matrix_row = matrix[y % size]
+        row_base = y * width
+        for x in range(width):
+            threshold = (matrix_row[x % size] + 0.5) / (size * size) - 0.5
+            offset = threshold * ORDERED_DITHER_SPREAD
+            r, g, b = pixels[row_base + x]
+            adjusted.append(
+                (
+                    max(0, min(255, int(r + offset))),
+                    max(0, min(255, int(g + offset))),
+                    max(0, min(255, int(b + offset))),
+                )
+            )
+    noisy = Image.new("RGB", img.size)
+    noisy.putdata(adjusted)
+    return noisy.quantize(
+        palette=palette_img,
+        dither=Image.Dither.NONE,
+    )
+
 
 def channel_8to4(color: int) -> int:
     """Accurate conversion of a single 8 bit color channel value to 4 bits"""

@@ -1,17 +1,15 @@
 
-Prog8 compiler v14.0-BETA3-llvm by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit a0de2f48 in branch llvm
+Prog8 compiler v14.0-BETA3 by Irmen de Jong (irmen@razorvine.net)
+Prerelease version from git commit de2788c6 in branch master
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
-LLVM version by Claude Code and Andrew Gillham (gillham@roadsign.com)
-Report issues with this version at https://github.com/gillham/prog8/issues
 
-Compiling program import-all-amiga500.p8
+Compiling program docs/import-all-amiga500.p8
 Compiler target: amiga500
 
 
 BUILTIN FUNCTIONS
 -----------------
-abs  (ubyte|byte|uword|word|long|float|quad|uquad value) -> undefined
+abs  (ubyte|byte|uword|word|long|float value) -> undefined
 call  (pointer address) -> uword
 callfar  (ubyte bank, pointer address, uword arg) -> uword
 callfar2  (ubyte bank, pointer address, ubyte argA, ubyte argX, ubyte argY, bool argC) -> uword
@@ -20,44 +18,40 @@ cmp  (ubyte|byte|uword|word|long value1, ubyte|byte|uword|word|long|float value2
 divmod  (ubyte|uword dividend, ubyte|uword divisor) -> undefined, undefined
 len  (str|array|array_splitw values) -> uword
 lmh  (long value) -> ubyte, ubyte, ubyte
-lsb  (uword|word|long|quad|uquad value) -> ubyte
-lsw  (uword|word|long|quad|uquad value) -> uword
+lsb  (uword|word|long value) -> ubyte
+lsw  (uword|word|long value) -> uword
 max  (byte val1, byte val2) -> undefined
 memory  (str name, uword size, uword alignment) -> pointer
 min  (byte val1, byte val2) -> undefined
 mklong  (ubyte msb, ubyte b2, ubyte b1, ubyte lsb) -> long
 mklong2  (uword msw, uword lsw) -> long
 mkword  (ubyte msb, ubyte lsb) -> uword
-msb  (uword|word|long|quad|uquad value) -> ubyte
-msw  (uword|word|long|quad|uquad value) -> uword
+msb  (uword|word|long value) -> ubyte
+msw  (uword|word|long value) -> uword
 offsetof  (ubyte field) -> ubyte
-peek  (uword|long|uquad|pointer address) -> ubyte
-peekbool  (uword|long|uquad|pointer address) -> bool
-peekf  (uword|long|uquad|pointer address) -> float
-peekl  (uword|long|uquad|pointer address) -> long
-peekp  (pointer|uword|long|uquad address) -> pointer
-peekq  (uword|long|uquad|pointer address) -> quad
-peekw  (uword|long|uquad|pointer address) -> uword
-poke  (uword|long|uquad|pointer address, ubyte|byte value)
-pokebool  (uword|long|uquad|pointer address, bool value)
-pokebowl  (uword|long|uquad|pointer address, bool value)
-pokef  (uword|long|uquad|pointer address, float value)
-pokel  (uword|long|uquad|pointer address, long value)
-pokemon  (uword|long|uquad|pointer address, ubyte value) -> ubyte
-pokep  (pointer|uword|long|uquad address, pointer value)
-pokeq  (uword|long|uquad|pointer address, quad|uquad value)
-pokew  (uword|long|uquad|pointer address, uword|word value)
+peek  (uword|long|pointer address) -> ubyte
+peekbool  (uword|long|pointer address) -> bool
+peekf  (uword|long|pointer address) -> float
+peekl  (uword|long|pointer address) -> long
+peekp  (pointer|uword|long address) -> pointer
+peekw  (uword|long|pointer address) -> uword
+poke  (uword|long|pointer address, ubyte|byte value)
+pokebool  (uword|long|pointer address, bool value)
+pokebowl  (uword|long|pointer address, bool value)
+pokef  (uword|long|pointer address, float value)
+pokel  (uword|long|pointer address, long value)
+pokemon  (uword|long|pointer address, ubyte value) -> ubyte
+pokep  (pointer|uword|long address, pointer value)
+pokew  (uword|long|pointer address, uword|word value)
 pop  () -> ubyte
 popf  () -> float
 popl  () -> long
 popp  () -> pointer
-popq  () -> quad
 popw  () -> uword
 push  (ubyte|byte|bool value)
 pushf  (float value)
 pushl  (long value)
 pushp  (pointer value)
-pushq  (quad|uquad value)
 pushw  (uword|word|pointer value)
 rol  (ubyte|uword|long item)
 rol2  (ubyte|uword|long item)
@@ -67,9 +61,9 @@ rrestore  ()
 rsave  ()
 setlsb  (word|uword|long variable, byte|ubyte value)
 setmsb  (word|uword|long variable, byte|ubyte value)
-sgn  (ubyte|byte|uword|word|long|float|quad|uquad value) -> byte
-sizeof  (ubyte|byte|uword|word|long|quad|uquad|float|bool|str|array|array_splitw|pointer|undefined object) -> ubyte
-sqrt  (ubyte|byte|uword|word|long|float|uquad value) -> undefined
+sgn  (ubyte|byte|uword|word|long|float value) -> byte
+sizeof  (ubyte|byte|uword|word|long|float|bool|str|array|array_splitw|pointer|undefined object) -> ubyte
+sqrt  (ubyte|byte|uword|word|long|float value) -> undefined
 
 
 LIBRARY MODULE NAME: adpcm
@@ -650,7 +644,7 @@ blitter  {
     copy_rect  (long src @A0, long dst @A1, uword width_words @D0, uword height @D1, uword src_mod @D2, uword dst_mod @D3, uword minterm @D4, ubyte descending @D5)
     fill_rect  (long dst @A0, uword width_words @D0, uword height @D1, uword pattern @D2, uword modulo @D3)
     horiz_line  (long dst @A1, uword x1 @D0, uword x2 @D2, uword y @D1, uword pattern @D3, bool erase @D5)
-    line_color  (uword x1, uword y1, uword x2, uword y2, ubyte pen, ubyte depth, ^^long planes)
+    line_color  (uword x1, uword y1, uword x2, uword y2, ubyte pen, ubyte depth, ^^pointer planes)
     line_draw  (uword x1 @D0, uword y1 @D1, uword x2 @D2, uword y2 @D3, long screen_ptr @A1, bool erase @D5, bool fill @D7)
     line_init  (uword mask @D0, uword pixel @D1, uword pattern @D2, uword screen_mod @D4)
     masked_blit  (long src @A0, long mask @A1, long dst @A2, uword width_words @D0, uword height @D1, uword src_mod @D2, uword mask_mod @D3, uword dst_mod @D4)
@@ -693,7 +687,7 @@ smallstack  {
 }
 
 stack  {
-    ^^ubyte  buffer_ptr
+    uword  buffer_ptr
     uword  sp
     free  () -> uword
     init  ()
@@ -707,7 +701,7 @@ stack  {
 }
 
 ringbuffer  {
-    ^^ubyte  buffer_ptr
+    uword  buffer_ptr
     uword  fill
     uword  head
     uword  tail
@@ -774,12 +768,13 @@ copper  {
     aga_move  (ubyte index) -> uword
     aga_set  (uword base, ubyte index, long rgb24)
     attach_planes  (ubyte depth) -> uword
+    base_list  (^^custom.DisplayRegs display, ubyte depth) -> uword
     end  ()
     init  (^^uword buffer, uword words)
     move  (uword reg, uword value) -> uword
     rasterbar  (ubyte vstart, ubyte lines) -> uword
     set  (uword slot, uword value)
-    set_planes  (uword base, ^^long planes, ubyte depth)
+    set_planes  (uword base, ^^pointer planes, ubyte depth)
     skip  (ubyte v, ubyte h)
     wait  (ubyte v, ubyte h)
 }
@@ -2043,6 +2038,43 @@ dos  {
     Write  (long file @D1, long buffer @D2, long length @D3) -> long @D0@bank 2 = -$30
     WriteChars  (str buf @D1, long buflen @D2) -> long @D0@bank 2 = -$03ae
     read_file  (str filename, bool chip_ram) -> long, long
+}
+
+
+LIBRARY MODULE NAME: easygfx
+----------------------------
+
+easygfx  {
+    ubyte  depth
+    uword  height
+    ^^graphics.RastPort  rastport
+    uword  width
+    ^^intuition.Window  window
+    circle  (word cx, word cy, word radius, ubyte pen)
+    clear  (ubyte pen)
+    close  ()
+    disc  (word cx, word cy, word radius, ubyte pen)
+    drawmode  (ubyte mode)
+    fill  (word x, word y, ubyte pen)
+    filled_oval  (word cx, word cy, word rx, word ry, ubyte pen)
+    fillrect  (word x, word y, word w, word h, ubyte pen)
+    fillto  (word x, word y, ubyte pen, ubyte outline)
+    fullscreen  (uword w, uword h, ubyte ndepth, uword viewmodes, str title) -> bool
+    imsg_poll  () -> ^^intuition.IntuiMessage
+    imsg_reply  (^^intuition.IntuiMessage msg) -> ^^intuition.IntuiMessage
+    imsg_wait  () -> ^^intuition.IntuiMessage
+    line  (word x1, word y1, word x2, word y2, ubyte pen)
+    mouse_xy  (^^intuition.IntuiMessage msg) -> word, word
+    oval  (word cx, word cy, word rx, word ry, ubyte pen)
+    palette  (long colors, uword count)
+    plot  (word x, word y, ubyte pen)
+    readpixel  (word x, word y) -> long
+    rect  (word x, word y, word w, word h, ubyte pen)
+    scrollrect  (word dx, word dy, word x, word y, word w, word h)
+    setcolor  (ubyte index, ubyte red, ubyte green, ubyte blue)
+    text  (word x, word y, str s, ubyte pen)
+    textwidth  (str s) -> word
+    windowed  (uword x, uword y, uword w, uword h, str title) -> bool
 }
 
 
@@ -5408,7 +5440,7 @@ LIBRARY MODULE NAME: text
 
 text  {
     char  (uword x, uword y, ubyte chr, ubyte color)
-    init  (uword p, ubyte d, ^^long bitplanes)
+    init  (uword p, ubyte d, ^^pointer bitplanes)
     print  (uword x, uword y, str message, ubyte color)
 }
 
@@ -5417,8 +5449,6 @@ LIBRARY MODULE NAME: textio
 ---------------------------
 
 txt  {
-    bool  eof_exit
-    bool  eof_flag
     bell  ()
     bold  ()
     chrout  (ubyte char @D0)
@@ -5428,7 +5458,6 @@ txt  {
     cursor_off  ()
     cursor_on  ()
     dim  ()
-    eof  () -> bool
     flush  ()
     height  () -> ubyte
     home  ()

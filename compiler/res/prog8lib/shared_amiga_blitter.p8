@@ -19,9 +19,9 @@ blitter {
     ; Standard Amiga screens (320/640 pixels) fit within this limit.
     ; For wider images, split the blit into multiple operations manually.
     ;
-    ; WAITING BEHAVIOR: All blitter operations wait for the blitter to become idle
-    ; at the START of the call, but do NOT wait for the operation to finish before
-    ; returning. This allows the CPU to continue working while the blitter runs.
+    ; WAITING BEHAVIOR: Operations wait for the blitter to become idle before
+    ; programming its registers or accessing target chip memory. CPU-only setup
+    ; may overlap a previous blit. Calls return after triggering, not completion.
     ; Call blitter.wait() explicitly when you need to ensure the blitter has completed
     ; (e.g., before reading back modified memory or swapping display buffers).
 
@@ -70,16 +70,13 @@ blitter {
     ; Only channels A and D are set up, so minterm must be A-only:
     ; MINTERM_A_ONLY (copy), MINTERM_NOT_A (invert), MINTERM_CLEAR,
     ; MINTERM_SET. Minterms referencing B or C read unset channels.
-    ; Waits for blitter idle at start, returns immediately after triggering the blit.
+    ; Waits for blitter idle before programming it, returns immediately after triggering the blit.
     asmsub copy_rect(pointer src @A0, pointer dst @A1, uword width_words @D0, uword height @D1, uword src_mod @D2, uword dst_mod @D3, uword minterm @D4, ubyte descending @D5) {
         %asm {{
-        movem.l d2-d7/a2-a6,-(sp)
+        movem.l d6-d7,-(sp)
         move.w  d0,d6           ; d6 = width
         move.w  d1,d7           ; d7 = height
-        move.w  d2,d2           ; src_mod
-        move.w  d3,d3           ; dst_mod
-        bsr     .wait_blt
-        tst.w   d5
+        tst.b   d5
         beq.s   .no_desc
         move.w  d6,d0
         lsl.w   #1,d0
@@ -106,6 +103,9 @@ blitter {
         add.l   d0,d1
         add.l   d1,a1
 .no_desc:
+.wait_blt:
+        btst.b  #6,custom.DMACONR
+        bne.s   .wait_blt
         move.w  d2,custom.BLTAMOD
         move.w  d3,custom.BLTDMOD
         move.w  #$ffff,custom.BLTAFWM
@@ -114,49 +114,36 @@ blitter {
         move.l  a1,custom.BLTDPT
         move.w  d4,d1
         or.w    #$0900,d1
-        move.w  d1,custom.BLTCON0
-        moveq   #0,d1
-        tst.w   d5
+        swap    d1
+        move.w  #$0800,d1
+        tst.b   d5
         beq.s   .nodesc
-        move.w  #$0002,d1
+        ori.w   #$0002,d1
 .nodesc:
-        or.w    #$0800,d1       ; B32: AGA 32-bit blit mode
-        move.w  d1,custom.BLTCON1
+        move.l  d1,custom.BLTCON0
         move.w  d7,d1
         lsl.w   #6,d1
         or.w    d6,d1
         move.w  d1,custom.BLTSIZE
-        movem.l (sp)+,d2-d7/a2-a6
-        rts
-.wait_blt:
-        btst.b  #6,custom.DMACONR
-        bne.s   .wait_blt
+        movem.l (sp)+,d6-d7
         rts
         }}
     }
 
     ; Fill a rectangular block with a pattern.
-    ; Waits for blitter idle at start, returns immediately after triggering the blit.
+    ; Waits for blitter idle before programming it, returns immediately after triggering the blit.
     asmsub fill_rect(pointer dst @A0, uword width_words @D0, uword height @D1, uword pattern @D2, uword modulo @D3) {
         %asm {{
-        movem.l d2-d7/a2-a6,-(sp)
-        bsr     .wait_blt
-        move.w  d3,custom.BLTDMOD
-        move.w  #$ffff,custom.BLTAFWM
-        move.w  #$ffff,custom.BLTALWM
-        move.w  d2,custom.BLTCDAT
-        move.l  a0,custom.BLTDPT
-        move.w  #(custom.BC0F_DEST|blitter.MINTERM_IDENTITY),custom.BLTCON0  ; DEST only, D=BLTCDAT
-        move.w  #$0800,custom.BLTCON1 ; B32: AGA 32-bit blit mode
-        move.w  d1,d1
-        lsl.w   #6,d1
-        or.w    d0,d1
-        move.w  d1,custom.BLTSIZE
-        movem.l (sp)+,d2-d7/a2-a6
-        rts
 .wait_blt:
         btst.b  #6,custom.DMACONR
         bne.s   .wait_blt
+        move.w  d3,custom.BLTDMOD
+        move.w  d2,custom.BLTCDAT
+        move.l  a0,custom.BLTDPT
+        move.l  #(((custom.BC0F_DEST|blitter.MINTERM_IDENTITY)<<16)|$0800),custom.BLTCON0
+        lsl.w   #6,d1
+        or.w    d0,d1
+        move.w  d1,custom.BLTSIZE
         rts
         }}
     }
@@ -168,8 +155,9 @@ blitter {
     ; Waits for blitter idle at start, returns immediately after setup.
     asmsub line_init(uword mask @D0, uword pixel @D1, uword pattern @D2, uword screen_mod @D4) {
         %asm {{
-        movem.l d2-d7/a2-a6,-(sp)
-        bsr     .wait_blt
+.wait_blt:
+        btst.b  #6,custom.DMACONR
+        bne.s   .wait_blt
         move.w  d0,custom.BLTAFWM
         move.w  #$ffff,custom.BLTALWM
         move.w  d1,custom.BLTADAT
@@ -178,11 +166,6 @@ blitter {
         move.w  d4,custom.BLTDMOD
         move.w  d2,blitter.line_pattern
         move.w  d4,blitter.line_mod
-        movem.l (sp)+,d2-d7/a2-a6
-        rts
-.wait_blt:
-        btst.b  #6,custom.DMACONR
-        bne.s   .wait_blt
         rts
         }}
     }
@@ -215,35 +198,71 @@ blitter {
     ; x2, y2: ending coordinates
     ; screen_ptr: pointer to bitplane memory (CHIP RAM)
     ; erase: clear the line's pixels instead of setting them
-    ; fill: draw with ONEDOT set (one pixel per row), for polygon outlines
-    ;   later filled with area_fill
-    ; Waits for blitter idle at start, returns immediately after triggering the blit.
+    ; fill: draw a top-to-bottom XOR boundary with ONEDOT set; horizontal
+    ;   edges are skipped and should be drawn after area_fill. fill overrides erase.
+    ; Waits for blitter idle before programming it, returns immediately after triggering the blit.
     asmsub line_draw(uword x1 @D0, uword y1 @D1, uword x2 @D2, uword y2 @D3, pointer screen_ptr @A1, bool erase @D5, bool fill @D7) {
         %asm {{
-        movem.l d2-d7/a2-a6,-(sp)
+        tst.b   d7
+        beq.s   .not_fill_line
+        cmp.w   d1,d3
+        beq.s   .empty_fill_line
+        movem.l d2-d6/a2-a4,-(sp)
+        bge.s   .fill_down
+        exg     d0,d2
+        exg     d1,d3
+.fill_down:
+        cmp.w   d1,d3
+        beq     .finish
+        bra.s   .line_setup
+.not_fill_line:
 
         ; Axis-aligned fast path: dispatch horizontal spans to the CPU routine.
         cmp.w   d1,d3
-        bne.s   .not_horiz_fast
+        bne.s   .save_for_line
         ; horizontal: y1 == y2
+        move.l  d3,-(sp)
         move.w  blitter.line_pattern,d3
         bsr     blitter.horiz_line
-        bra     .finish
-.not_horiz_fast:
-        ; note: there is no faster vertical line case possible.
+        move.l  (sp)+,d3
+        rts
+.save_for_line:
+        movem.l d2-d6/a2-a4,-(sp)
+        bra.s   .line_setup
+.empty_fill_line:
+        rts
 
+.line_setup:
         ; CPU setup (these would normally be done once in LineInit and
         ; preserved across calls; we set them up here for self-containment).
-        move.w  #1*64+2,a3           ; add-value for BLTSIZE
         ; minterm pack: $B0000000 | (minterm << 20) | $0f. After the
         ; and.w/ror.l #4/octant dance below this yields
         ; BLTCON0 = $xBRM (x = x1 & $f shift, B = SRCA|SRCC|SRCD, minterm)
         ; and BLTCON1 high byte $00; the octant table fills BLTCON1's low byte.
         move.l  #($B0000000)|(blitter.MINTERM_OR<<20)|$0000000f,a4    ; draw: D = A | C
         tst.b   d5
-        beq.s   .minterm_ready
+        beq.s   .not_erase
         move.l  #($B0000000)|(blitter.MINTERM_ERASE<<20)|$0000000f,a4 ; erase: D = ~A & C
+.not_erase:
+        tst.b   d7
+        beq.s   .minterm_ready
+        move.l  #($B0000000)|(blitter.MINTERM_A_XOR_C<<20)|$0000000f,a4 ; fill: D = A XOR C
 .minterm_ready:
+
+        tst.b   d7
+        beq.s   .fill_start_ready
+        movea.l a1,a2
+        move.w  d1,d4
+        mulu.w  blitter.line_mod,d4
+        adda.l  d4,a2
+        move.w  d0,d4
+        lsr.w   #3,d4
+        adda.w  d4,a2
+        move.w  d0,d4
+        and.w   #$000f,d4
+        eor.w   #$000f,d4
+        move.w  d4,a3
+.fill_start_ready:
 
         ; d0=x1, d1=y1, d2=x2, d3=y2, d4=screen_mod, a1=screen_ptr
         move.l  a4,d6                ; minterm+mask
@@ -280,8 +299,7 @@ blitter {
         sub.w   d3,d5                ; d5 = 2*SDelta - LDelta
         smi     d0                   ; if (2*Sdelta-Ldelta) < 0,
         sub.b   d0,d6                ; add 1 (subtract -1) to octant lookup
-        lea     OctTbl(pc),a0
-        move.b  (a0,d6.w),d6         ; look up BLTCON bits for octant
+        move.b  OctTbl(pc,d6.w),d6   ; look up BLTCON bits for octant
         tst.b   d7
         beq.s   .no_onedot
         ori.w   #$0002,d6            ; ONEDOT: one pixel per row for area-fill outlines
@@ -290,10 +308,17 @@ blitter {
         move.w  d5,d2                ; d2 low word = 2*SDelta - LDelta
         sub.w   d3,d2                ; d2 low word = 2*SDelta - 2*LDelta
         asl.w   #6,d3                ; d3 = LDelta << 6
-        add.w   a3,d3                ; d3 = BLTSIZE
+        add.w   #66,d3               ; d3 = BLTSIZE
 
         ; --- blit ---
-        bsr     .wait_blt
+.wait_blt:
+        btst.b  #6,custom.DMACONR
+        bne.s   .wait_blt
+        tst.b   d7
+        beq.s   .no_fill_start
+        move.w  a3,d0
+        bchg    d0,(a2)
+.no_fill_start:
         move.w  #$8000,custom.BLTADAT    ; reseed: A-channel blits (e.g. area_fill) leave garbage here
         move.l  d6,custom.BLTCON0    ; shift, minterm, octant bits
         move.w  d5,custom.BLTAPTL    ; 2*SDelta - LDelta
@@ -302,18 +327,13 @@ blitter {
         move.l  d1,custom.BLTDPT     ; destination
         move.w  d3,custom.BLTSIZE
 .finish:
-        movem.l (sp)+,d2-d7/a2-a6
-        rts
-
-.wait_blt:
-        btst.b  #6,custom.DMACONR
-        bne.s   .wait_blt
+        movem.l (sp)+,d2-d6/a2-a4
         rts
 
 ; Octant lookup table placed right after the rts so it is reachable via
 ; PC-relative addressing from the move.b OctTbl(PC,d6.w) instruction above.
 ; Each pair of entries encodes BLTCON1 octant bits for one of the 8 octants.
-; First byte has SING=0, second has SING=1 (descending mode).
+; First byte has SIGN=0, second has SIGN=1.
 OctTbl:
         dc.b 0*4+1,0*4+1+64    ;7
         dc.b 4*4+1,4*4+1+64    ;6
@@ -327,11 +347,12 @@ OctTbl:
         }}
     }
 
-    ; Waits for blitter idle at start, returns immediately after triggering the blit.
+    ; Waits for blitter idle before programming it, returns immediately after triggering the blit.
     asmsub masked_blit(pointer src @A0, pointer mask @A1, pointer dst @A2, uword width_words @D0, uword height @D1, uword src_mod @D2, uword mask_mod @D3, uword dst_mod @D4) {
         %asm {{
-        movem.l d2-d7/a2-a6,-(sp)
-        bsr     .wait_blt
+.wait_blt:
+        btst.b  #6,custom.DMACONR
+        bne.s   .wait_blt
         move.w  d2,custom.BLTBMOD
         move.w  d3,custom.BLTAMOD
         move.w  d4,custom.BLTDMOD
@@ -342,17 +363,10 @@ OctTbl:
         move.l  a0,custom.BLTBPT
         move.l  a2,custom.BLTCPT
         move.l  a2,custom.BLTDPT
-        move.w  #(custom.BC0F_SRCA|custom.BC0F_SRCB|custom.BC0F_SRCC|custom.BC0F_DEST|blitter.MINTERM_MASKED),custom.BLTCON0
-        move.w  #$0800,custom.BLTCON1 ; B32: AGA 32-bit blit mode
-        move.w  d1,d1
+        move.l  #(((custom.BC0F_SRCA|custom.BC0F_SRCB|custom.BC0F_SRCC|custom.BC0F_DEST|blitter.MINTERM_MASKED)<<16)|$0800),custom.BLTCON0
         lsl.w   #6,d1
         or.w    d0,d1
         move.w  d1,custom.BLTSIZE
-        movem.l (sp)+,d2-d7/a2-a6
-        rts
-.wait_blt:
-        btst.b  #6,custom.DMACONR
-        bne.s   .wait_blt
         rts
         }}
     }
@@ -371,11 +385,10 @@ OctTbl:
     ; mod is the row modulo in bytes (bitplane pitch minus region width).
     ; After drawing a polygon outline with line_draw(..., fill=true),
     ; call this to fill it solid.
-    ; Waits for blitter idle at start, returns immediately after triggering.
+    ; Waits for blitter idle before programming it, returns immediately after triggering.
     asmsub area_fill(pointer src @A0, uword width_words @D0, uword height @D1, uword mod @D2) {
         %asm {{
-        movem.l d2-d7/a2-a6,-(sp)
-        bsr     .wait_blt
+        movem.l d4-d5,-(sp)
         ; Descending setup: point at the last fetched word. The hardware
         ; SUBTRACTS the modulos in descending mode (HRM), so the positive
         ; per-row skip is passed unchanged; negating it would push the
@@ -392,23 +405,20 @@ OctTbl:
         subq.l  #1,d4                ; minus one = last fetched word index
         add.l   d4,d4                ; total bytes
         add.l   d4,a0                ; a0 = last word of region
+.wait_blt:
+        btst.b  #6,custom.DMACONR
+        bne.s   .wait_blt
         move.l  a0,custom.BLTAPT
         move.l  a0,custom.BLTDPT
         move.w  d2,custom.BLTAMOD
         move.w  d2,custom.BLTDMOD
         move.w  #$ffff,custom.BLTAFWM
         move.w  #$ffff,custom.BLTALWM
-        move.w  #(custom.BC0F_SRCA|custom.BC0F_DEST|blitter.MINTERM_A_ONLY),custom.BLTCON0  ; USEA=1, USED=1, D=A (solid copy)
-        move.w  #$000a,custom.BLTCON1  ; DESC (bit 1) | FILL_OR (bit 3)
-        move.w  d1,d1
+        move.l  #(((custom.BC0F_SRCA|custom.BC0F_DEST|blitter.MINTERM_A_ONLY)<<16)|$000a),custom.BLTCON0  ; USEA=1, USED=1, D=A (solid copy)
         lsl.w   #6,d1
         or.w    d0,d1
         move.w  d1,custom.BLTSIZE
-        movem.l (sp)+,d2-d7/a2-a6
-        rts
-.wait_blt:
-        btst.b  #6,custom.DMACONR
-        bne.s   .wait_blt
+        movem.l (sp)+,d4-d5
         rts
         }}
     }
@@ -419,11 +429,8 @@ OctTbl:
     asmsub horiz_line(pointer dst @A1, uword x1 @D0, uword x2 @D2, uword y @D1, uword pattern @D3, bool erase @D5) {
         %asm {{
         movem.l d2-d7/a2-a3,-(sp)
+        ext.w   d5
         move.w  d5,a2            ; save erase flag
-        ; wait for any in-flight blit before touching chip RAM
-.h_wait:
-        btst.b  #6,custom.DMACONR
-        bne.s   .h_wait
         ; swap x if needed
         cmp.w   d2,d0
         ble.s   .h_nswap
@@ -432,14 +439,14 @@ OctTbl:
         ; leftMask -> d6
         move.w  d0,d5
         and.w   #15,d5
-        move.w  #$ffff,d6
+        moveq   #-1,d6
         lsr.w   d5,d6
         ; rightMask -> a0 (low word)
         move.w  d2,d5
         and.w   #15,d5
-        move.w  #15,d7
+        moveq   #15,d7
         sub.w   d5,d7
-        move.w  #$ffff,d5
+        moveq   #-1,d5
         lsl.w   d7,d5
         move.w  d5,a0
         ; leftWord -> d5, rightWord -> d7
@@ -456,6 +463,10 @@ OctTbl:
         add.l   d2,d1
         lea     (a1,d1.l),a3     ; dst base
         move.w  d3,d4            ; pattern (screen_mod is dead now)
+        ; wait for any in-flight blit before touching chip RAM
+.h_wait:
+        btst.b  #6,custom.DMACONR
+        bne.s   .h_wait
         ; same word?
         cmp.w   d5,d7
         bne.s   .h_multi

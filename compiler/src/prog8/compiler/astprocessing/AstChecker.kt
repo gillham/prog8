@@ -1562,7 +1562,7 @@ internal class AstChecker(private val program: Program,
                 if(directive.args[0].int!! >= 64u)
                     errors.info("large alignment might waste a lot of memory (check Gaps in assembler output)", directive.position)
                 val prev = directive.previousSibling()
-                if (prev !=null && prev !is Block && prev !is Break && prev !is Continue && prev !is Jump && prev !is Return && prev !is Subroutine && prev !is VarDecl)
+                if (prev != null && prev.emitsFallThroughCode())
                     errors.warn("dangerous location for %align, after a regular statement it will likely corrupt the program", directive.position)
             }
             "%output" -> {
@@ -1706,8 +1706,8 @@ internal class AstChecker(private val program: Program,
                 }
                 if(directive.args.any { it.string=="enable_floats" } && !floatsSupported)
                     err(LlvmTarget.FLOATS_UNSUPPORTED)
-                if(directive.args.any { it.string=="verafxmuls" } && options.compTarget.name != Cx16Target.NAME)
-                    err("verafx option is only valid on cx16 target")
+                if(directive.args.any { it.string=="verafxmuls" } && options.compTarget.name !in setOf(Cx16Target.NAME, C64Target.NAME))
+                    err("verafx option is only valid on cx16 or c64 targets")
                 if(directive.args.any { it.string=="amiga_chipram" } && options.compTarget.name != Amiga500Target.NAME && options.compTarget.name != Amiga1200Target.NAME)
                     err("amiga_chipram option is only valid on amiga targets")
             }
@@ -1760,12 +1760,25 @@ internal class AstChecker(private val program: Program,
                     else if (target !is Subroutine)
                         errors.err("jmptable entry can only be a subroutine: $name", arg.position)
                     else if (target.parameters.isNotEmpty())
-                        errors.err("can't dispatch to a subroutine that takes parameters: ${target.name}", arg.position)
+                        errors.warn("jmptable entry is a subroutine that takes parameters (caller must set up arguments): ${target.name}", arg.position)
+
                 }
             }
             else -> throw SyntaxError("invalid directive ${directive.directive}", directive.position)
         }
         super.visit(directive)
+    }
+
+    // %align padding only corrupts the output if it lands between executable
+    // statements that fall through; declarations, directives, labels and
+    // terminating control flow (return/break/continue/goto) are all safe.
+    private fun Statement.emitsFallThroughCode(): Boolean = when (this) {
+        is Assignment, is ChainedAssignment, is Swap,
+        is FunctionCallStatement, is InlineAssembly,
+        is IfElse, is ConditionalBranch, is ForLoop, is WhileLoop,
+        is RepeatLoop, is UntilLoop, is UnrollLoop, is When, is OnGoto,
+        is AnonymousScope, is Defer -> true
+        else -> false
     }
 
     private fun checkFileExists(directive: Directive, filename: String) {
@@ -2878,10 +2891,14 @@ internal class AstChecker(private val program: Program,
     }
 
     override fun visit(inlineAssembly: InlineAssembly) {
-        if(inlineAssembly.isIR && options.compTarget.name != VMTarget.NAME && !options.compTarget.cpu.isLlvm)
-            errors.err("%asm containing IR code cannot be translated to 6502 assembly", inlineAssembly.position)
-        if(!inlineAssembly.isIR && options.compTarget.cpu.isLlvm)
+        if(inlineAssembly.isIR) {
+            if(options.compTarget.name != VMTarget.NAME && !options.compTarget.cpu.isLlvm)
+                errors.err("%asm containing IR code cannot be translated to 6502 assembly", inlineAssembly.position)
+        } else if(options.compTarget.cpu.isLlvm) {
             errors.err("%asm with native assembly code can't be used on the llvm targets, use %ir instead", inlineAssembly.position)
+        } else if(options.compTarget.name == VMTarget.NAME && !inlineAssembly.definingBlock.isInLibrary) {
+            errors.err("%asm blocks with native assembly code cannot be executed by the virtual machine, use %ir {{ ... }} instead", inlineAssembly.position)
+        }
     }
 
     override fun visit(struct: StructDecl) {

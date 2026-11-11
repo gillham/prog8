@@ -1558,9 +1558,12 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             } else {
                 emptyList<IRStStaticVariable>() to initdVars
             }
+        // struct instances used as inline array element initializers are already emitted as raw
+        // bytes inside the array variable's data; their standalone copy would be dead data
+        val inlineArrayInstanceNames = program.st.inlineStructArrayInstanceNames()
         val structInstancesWithInit: List<IRStStructInstance> = program.st.allStructInstances().filter {
             val def = program.st.lookup(it.structName) as IRStStructDef
-            it.values.isNotEmpty() && !def.isUnion
+            it.values.isNotEmpty() && !def.isUnion && it.name !in inlineArrayInstanceNames
         }.toList()
         val (chipramStructs: List<IRStStructInstance>, normalStructs: List<IRStStructInstance>) =
             if (chipramBlocks.isNotEmpty()) {
@@ -1739,23 +1742,27 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                         val sym = (elt as? IRStSymbolicReference.Symbol)?.name ?: error("expected struct instance symbol for ${v.name}")
                         val instanceName = sym.removePrefix("@")
                         val instance = program.st.lookup(instanceName) as? IRStStructInstance ?: error("struct instance $instanceName not found for ${v.name}")
-                        for(fieldVal in instance.values) {
-                            val valueStr = when(val ref = fieldVal.value) {
-                                is IRStSymbolicReference.Numeric -> ref.value.toInt().toString()
-                                is IRStSymbolicReference.Symbol -> fixNameSymbols(ref.name)
-                                is IRStSymbolicReference.BoolValue -> if(ref.value) "1" else "0"
-                            }
-                            when(fieldVal.dt) {
-                                BaseDataType.UBYTE, BaseDataType.BOOL -> emitLine("dc.b  $valueStr")
-                                BaseDataType.BYTE -> emitLine("dc.b  $valueStr")
-                                BaseDataType.UWORD, BaseDataType.WORD -> emitLine("dc.w  $valueStr")
-                                BaseDataType.LONG -> emitLine("dc.l  $valueStr")
-                                BaseDataType.FLOAT -> {
-                                    val bytes = target.getFloatAsmBytes(valueStr.toDouble())
-                                    emitLine("dc.b  $bytes")
+                        if(instance.values.isEmpty()) {
+                            emitLine("dcb.b  ${instance.size},0")
+                        } else {
+                            for(fieldVal in instance.values) {
+                                val valueStr = when(val ref = fieldVal.value) {
+                                    is IRStSymbolicReference.Numeric -> ref.value.toInt().toString()
+                                    is IRStSymbolicReference.Symbol -> fixNameSymbols(ref.name)
+                                    is IRStSymbolicReference.BoolValue -> if(ref.value) "1" else "0"
                                 }
-                                BaseDataType.POINTER -> emitLine("dc.l  $valueStr")
-                                else -> error("unsupported struct field type ${fieldVal.dt} for ${v.name}")
+                                when(fieldVal.dt) {
+                                    BaseDataType.UBYTE, BaseDataType.BOOL -> emitLine("dc.b  $valueStr")
+                                    BaseDataType.BYTE -> emitLine("dc.b  $valueStr")
+                                    BaseDataType.UWORD, BaseDataType.WORD -> emitLine("dc.w  $valueStr")
+                                    BaseDataType.LONG -> emitLine("dc.l  $valueStr")
+                                    BaseDataType.FLOAT -> {
+                                        val bytes = target.getFloatAsmBytes(valueStr.toDouble())
+                                        emitLine("dc.b  $bytes")
+                                    }
+                                    BaseDataType.POINTER -> emitLine("dc.l  $valueStr")
+                                    else -> error("unsupported struct field type ${fieldVal.dt} for ${v.name}")
+                                }
                             }
                         }
                     }
@@ -1907,9 +1914,10 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
             } else {
                 emptyList<IRStStaticVariable>() to allBssVars
             }
+        val inlineArrayInstanceNames = program.st.inlineStructArrayInstanceNames()
         val allStructsNoInit: List<IRStStructInstance> = program.st.allStructInstances().filter {
             val def = program.st.lookup(it.structName) as IRStStructDef
-            it.values.isEmpty() || def.isUnion
+            (it.values.isEmpty() || def.isUnion) && it.name !in inlineArrayInstanceNames
         }.toList()
         val (chipramStructsNoInit: List<IRStStructInstance>, normalStructsNoInit: List<IRStStructInstance>) =
             if (chipramBlocks.isNotEmpty()) {
