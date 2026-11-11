@@ -11,6 +11,7 @@ import prog8.code.core.IErrorReporter
 import prog8.codegen.intermediate.IRCodeGen
 import prog8.intermediate.IRDataType
 import prog8.intermediate.IRFileWriter
+import prog8.intermediate.IRProgram
 import prog8.intermediate.VirtualRegister
 
 class New6502CodeGenerator(val retainSSA: Boolean,
@@ -36,7 +37,11 @@ class New6502CodeGenerator(val retainSSA: Boolean,
         }
 
         IRFileWriter(irProgram, null).write()
+        return generateFromIR(irProgram, errors)
+    }
 
+    /** The assembly program of an [IRProgram], also one read from a .p8ir file. */
+    fun generateFromIR(irProgram: IRProgram, errors: IErrorReporter): IAssemblyProgram? {
         val gen = AsmGen(irProgram, irProgram.options.compTarget, errors)
         val success = CompilationTimings.measure("asm generation") { gen.generate() }
         if(!success)

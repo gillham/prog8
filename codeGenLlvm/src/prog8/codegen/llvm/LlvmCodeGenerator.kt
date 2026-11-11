@@ -40,7 +40,13 @@ class LlvmCodeGenerator(private val retainSSA: Boolean) : ICodeGeneratorBackend 
         if (options.dumpVariables)
             dumpVariables(irProgram)
         IRFileWriter(irProgram, null).write()
+        return generateFromIR(irProgram, errors)
+    }
 
+    /** The LLVM IR of an [IRProgram], also one read from a .p8ir file, whose options name the llvm target. */
+    fun generateFromIR(irProgram: IRProgram, errors: IErrorReporter): IAssemblyProgram? {
+        val options = irProgram.options
+        val target = requireNotNull(options.compTarget as? LlvmTarget) { "the LLVM code generator needs an llvm target" }
         val module = try {
             module(irProgram, target, options, errors)
         } catch (x: IllegalArgumentException) {

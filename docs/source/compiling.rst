@@ -422,6 +422,24 @@ One or more .p8 module files
     load and run a 'p8ir' intermediate representation file in the internal VirtualMachine instead of compiling a prog8 program file.
     ``prog8c`` exits with the program's exit status.
 
+**Building a .p8ir file.** Given a single ``.p8ir`` file instead of a Prog8 source file (and no ``-vm``), ``prog8c``
+runs only the back half of a compilation: it reads the IR and builds the program with the IR based code generator of
+the target that the file names, the new 6502 code generator (as with ``-newcodegen``) for the 6502 targets, or the
+llvm code generator for the llvm targets. Another tool can write the IR this way and leave the code generation to
+``prog8c``::
+
+    prog8c -target cx16 -out build program.p8ir         # build/program.asm and build/program.prg
+    prog8c -target cx16 -emu program.p8ir               # and start the emulator
+
+The options come from the file's ``<OPTIONS>``, except: the output location (``-out``, ``-o``; the directory the file
+records is ignored), ``-quiet``, ``-asmlist``, ``-noasm``, ``-D`` symbols, and the placement of the variables
+(``-varshigh``, ``-varsgolden``, ``-varsaddress``), which the file doesn't record. ``-target`` may be left out; when it
+is given, it must be the file's target. The output files are named after the program's name in the file, unless
+``-o`` names them. ``-emu`` and ``-emu2`` start the program as usual. A ``.p8ir`` file for the
+virtual target is an error: run it with ``-vm``. The register types aren't verified, as the file doesn't have the code
+generator's map of them, and the floats routines are set up when the file has the ``floats`` library's block.
+A program built from its own ``.p8ir`` file this way works the same, though variables can end up at other addresses.
+
 ``-vmtrace``
     Enable instruction-by-instruction tracing when running the virtual machine (use with ``-vm`` or ``-emu`` on the virtual target).
     Prints each executed IR instruction with its location (chunk name and instruction index).

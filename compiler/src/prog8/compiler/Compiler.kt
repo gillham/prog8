@@ -1007,3 +1007,85 @@ private fun createAssemblyAndAssemble(program: PtProgram,
     })
     return AssemblyResult(success, instructionCount, chunkCount, registerCount)
 }
+
+
+/** What [compileIrFile] takes from the command line instead of the .p8ir file, whose options don't record them. */
+class IrFileArguments(val outputDir: Path,
+                      val outputFile: Path? = null,
+                      val quiet: Boolean = false,
+                      val asmListfile: Boolean = false,
+                      val symbolDefs: Map<String, String> = emptyMap(),
+                      val varsHighBank: Int? = null,
+                      val varsGolden: Boolean = false,
+                      val varsAddress: UInt? = null,
+                      val assemble: Boolean = true)
+
+class IrFileResult(val options: CompilationOptions, val outputs: OutputFiles)
+
+/**
+ * Builds the program of a .p8ir file with the IR based back end of its target, the new 6502 code generator or an llvm
+ * target: the back half of a compilation, for IR that another tool wrote. The options are the file's, except those
+ * in [args]; the register types aren't verified, as the file doesn't have the code generator's map of them.
+ */
+fun compileIrFile(irFile: Path, expectedTarget: String?, args: IrFileArguments, errors: IErrorReporter): IrFileResult? =
+    try {
+        buildIrFile(irFile, expectedTarget, args, errors)
+    } catch (_: ErrorsReportedException) {
+        null
+    }
+
+private fun buildIrFile(irFile: Path, expectedTarget: String?, args: IrFileArguments, errors: IErrorReporter): IrFileResult? {
+    val position = Position(irFile.toString(), 0, 0, 0)
+    val text = try {
+        irFile.toFile().readText()
+    } catch (x: java.io.IOException) {
+        errors.err("can't read the .p8ir file: ${x.message}", position)
+        errors.report()
+        return null
+    }
+    val irProgram = try {
+        prog8.intermediate.IRFileReader().read(text)
+    } catch (x: Exception) {
+        // the reader also fails with the XML parser's exceptions and require()'s IllegalArgumentException
+        errors.err("invalid .p8ir file: ${x.message}", position)
+        errors.report()
+        return null
+    }
+    val options = irProgram.options
+    val target = options.compTarget
+    if(expectedTarget!=null && !expectedTarget.equals(target.name, ignoreCase = true) && !(expectedTarget.lowercase()==LlvmTarget.ALIAS && target is LlvmTarget)) {
+        errors.err("the .p8ir file is for the ${target.name} target, not $expectedTarget", position)
+        errors.report()
+        return null
+    }
+    options.outputDir = args.outputDir
+    options.outputFile = args.outputFile
+    options.quiet = args.quiet
+    options.asmQuiet = args.quiet
+    options.asmListfile = args.asmListfile
+    options.symbolDefs = args.symbolDefs
+    options.varsHighBank = args.varsHighBank
+    options.varsGolden = args.varsGolden
+    options.varsAddress = args.varsAddress
+    // %option enable_floats isn't in the file's options, but the floats library's block is there when the program uses it
+    if(irProgram.blocks.any { it.label=="floats" })
+        options.floats = true
+
+    val backend = when {
+        target.cpu==CpuType.CPU6502 || target.cpu==CpuType.CPU65C02 -> { p: prog8.intermediate.IRProgram -> prog8.codegen.new6502.New6502CodeGenerator(true).generateFromIR(p, errors) }
+        target.cpu.isLlvm -> { p: prog8.intermediate.IRProgram -> prog8.codegen.llvm.LlvmCodeGenerator(true).generateFromIR(p, errors) }
+        else -> {
+            val hint = if(target is VMTarget) ": run it with -vm" else ""
+            errors.err("a .p8ir file can only be built for the 6502 targets and the llvm targets, not ${target.name}$hint", position)
+            errors.report()
+            return null
+        }
+    }
+    val assembly = CompilationTimings.measure("code generation") { backend(irProgram) }
+    errors.report()
+    if(assembly==null || !errors.noErrors())
+        return null
+    if(args.assemble && !CompilationTimings.measure("assembling") { assembly.assemble(options, errors) })
+        return null
+    return IrFileResult(options, OutputFiles.of(options, irProgram.name))
+}

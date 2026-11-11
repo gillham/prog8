@@ -344,3 +344,18 @@ Keeping the list: add new items at the end with the next number, and remove an i
   this is documented, but the llvm targets' `memcopy` (`memmove`) handles overlap.
 - Branch: llvm32 and llvm64 take a `long` size for all three, and `memcopy` handles overlap there; virtual and the
   m68k targets are unchanged, as on `master`.
+
+**U52. A negative signed constant or initial value comes back positive from a `.p8ir` file**
+- Where: `intermediate/IRFileReader.kt` (`parseConstant`, `parseInitValue`).
+- Repro: `const long LOWEST = -2147483648` and `long @shared value = LOWEST`; the `.p8ir` file has
+  `long main.value=$80000000`, the two's complement bits as hexadecimal, and the reader takes that as +2147483648.
+  `IRFileReader().read()` then gives a constant of 2147483648, and the new 6502 code generator, reading the file,
+  initializes `value` to `$7fffffff`. The same goes for signed bytes and words, and for array elements.
+- Branch: fixed; the reader gives a signed byte, word or long value above its type's maximum the sign back.
+
+**U53. Building a program from a `.p8ir` file**
+- Not a bug: a feature request from a tool that writes Prog8 IR, which has no way to run it on the 6502 targets.
+- Branch: `prog8c -target cx16 program.p8ir` builds the program with the new 6502 code generator, and with the llvm
+  code generator for the llvm targets (`compileIrFile` in `compiler/Compiler.kt`, `generateFromIR` in both back ends;
+  see `docs/source/compiling.rst`). The changes to shared code are small: the dispatch in `CompilerMain`, the split
+  of `New6502CodeGenerator.generate()`, and `CompilationOptions.floats` became a `var`.

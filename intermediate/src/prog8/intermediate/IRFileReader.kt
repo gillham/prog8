@@ -286,8 +286,16 @@ class IRFileReader {
             val bits = parseIRQuadValue(valueStr)
             return IRStConstant(name, dt, quadBitsToDouble(bits, dt.isUnsignedQuad), null, noPrefix, bits)
         }
-        val value: Double? = if(memorySlabName != null) null else parseIRValue(valueStr)
+        val value: Double? = if(memorySlabName != null) null else signedValue(dt.base, parseIRValue(valueStr))
         return IRStConstant(name, dt, value, memorySlabName, noPrefix)
+    }
+
+    // the writer gives a negative signed value as the hexadecimal of its two's complement bits, such as $80000000
+    private fun signedValue(type: BaseDataType?, value: Double): Double = when {
+        type==BaseDataType.BYTE && value > 127.0 && value <= 255.0 -> value - 256.0
+        type==BaseDataType.WORD && value > 32767.0 && value <= 65535.0 -> value - 65536.0
+        type==BaseDataType.LONG && value > 2147483647.0 && value <= 4294967295.0 -> value - 4294967296.0
+        else -> value
     }
 
     private fun parseVariables(reader: XMLEventReader): List<IRStStaticVariable> =
@@ -329,7 +337,7 @@ class IRFileReader {
                 val bits = parseIRQuadValue(value)
                 IRVariableInitializer.Numeric(quadBitsToDouble(bits, dt.isUnsignedQuad), bits)
             }
-            dt.isNumericOrBool || dt.isPointer -> IRVariableInitializer.Numeric(parseIRValue(value))
+            dt.isNumericOrBool || dt.isPointer -> IRVariableInitializer.Numeric(signedValue(dt.base, parseIRValue(value)))
             dt.isBoolArray -> {
                 val elements = value.split(',').map {
                     IRStSymbolicReference.BoolValue(parseIRValue(it) != 0.0)
@@ -345,7 +353,7 @@ class IRFileReader {
                         IRStSymbolicReference.Numeric(quadBitsToDouble(bits, dt.isUnsignedQuadArray), bits)
                     }
                     else
-                        IRStSymbolicReference.Numeric(parseIRValue(it))
+                        IRStSymbolicReference.Numeric(signedValue(dt.sub, parseIRValue(it)))
                 }
                 if(arraysize!=null && elements.all { it is IRStSymbolicReference.Numeric && it.value==0.0 })
                     null

@@ -204,7 +204,8 @@ private fun compileMain(args: Array<String>): Boolean {
 
     val srcdirs = sourceDirs.flatMap { it.split(File.pathSeparator) }.map { expandTilde(it) }
 
-    if(!startVm) {
+    val irInput = !startVm && moduleFiles.size==1 && Path(moduleFiles.single()).extension=="p8ir"
+    if(!startVm && !irInput) {
         if(compilationTarget==null) {
             presenter.printErrorLine("No compilation target specified")
             return false
@@ -312,6 +313,22 @@ private fun compileMain(args: Array<String>): Boolean {
     val outputPath = pathFrom(outputDir.value)
     outputFile?.let { pathFrom(it).parent?.createDirectories() }
     outputPath.createDirectories()
+
+    if(irInput) {
+        val txtcolors = if(plainText) ErrorReporter.PlainText else ErrorReporter.AnsiColors
+        val arguments = IrFileArguments(outputPath, outputFile?.let { pathFrom(it) }, quietAll, asmListfile, processedSymbols,
+            varsHighBank, varsGolden, varsAddress, assemble = !dontWriteAssembly)
+        val result = compileIrFile(pathFrom(moduleFiles.single()), compilationTarget, arguments, ErrorReporter(txtcolors)) ?: return false
+        val target = result.options.compTarget
+        if(startEmulator1) {
+            if(target is LlvmTarget)
+                emulatedProgramStatus = target.launchEmulator(1, result.outputs.programFile, quietAll, programArgs, result.options.linkLibraries) ?: return false
+            else
+                target.launchEmulator(1, result.outputs.programFile, quietAll)
+        } else if(startEmulator2)
+            target.launchEmulator(2, result.outputs.programFile, quietAll)
+        return true
+    }
 
     if(watchMode) {
         val watchservice = FileSystems.getDefault().newWatchService()
@@ -583,6 +600,7 @@ private fun compileMain(args: Array<String>): Boolean {
 
     return true
     }
+
 }
 
 private fun banner(presenter: Presenter) {
