@@ -111,31 +111,31 @@ sys {
         }}
     }
 
-    sub memcopy(pointer source, pointer tgt, uword count)  {
+    sub memcopy(pointer source, pointer tgt, long count)  {
         ; -- copy count bytes; overlapping areas are copied correctly
         %ir {{
             loadm.p r99200.p,[sys.memcopy.source]
             loadm.p r99201.p,[sys.memcopy.tgt]
-            loadm.w r99002.w,[sys.memcopy.count]
-            syscall 36 (r99200.p, r99201.p, r99002.w)
+            loadm.l r99202.l,[sys.memcopy.count]
+            syscall 36 (r99200.p, r99201.p, r99202.l)
         }}
     }
 
-    sub memset(pointer mem, uword numbytes, ubyte value)  {
+    sub memset(pointer mem, long numbytes, ubyte value)  {
         %ir {{
             loadm.p r99200.p,[sys.memset.mem]
-            loadm.w r99001.w,[sys.memset.numbytes]
+            loadm.l r99202.l,[sys.memset.numbytes]
             loadm.b r99100.b,[sys.memset.value]
-            syscall 37 (r99200.p, r99001.w, r99100.b)
+            syscall 37 (r99200.p, r99202.l, r99100.b)
         }}
     }
 
-    sub memsetw(pointer mem, uword numwords, uword value)  {
+    sub memsetw(pointer mem, long numwords, uword value)  {
         %ir {{
             loadm.p r99200.p,[sys.memsetw.mem]
-            loadm.w r99001.w,[sys.memsetw.numwords]
+            loadm.l r99202.l,[sys.memsetw.numwords]
             loadm.w r99002.w,[sys.memsetw.value]
-            syscall 38 (r99200.p, r99001.w, r99002.w)
+            syscall 38 (r99200.p, r99202.l, r99002.w)
         }}
     }
 

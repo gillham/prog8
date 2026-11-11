@@ -2531,6 +2531,7 @@ private val programsWithWideAddresses =
         $$"32-bit literals above $7fff_ffff keep their written value as a uquad, quad or pointer, also in comparisons and regrouped constants",
         "untyped pointers",
         "pointer element updates and offsets beyond 64 KiB",
+        "memcopy, memset and memsetw of more than 65535 bytes, and overlapping copies in both directions",
         "lsb, msb, lsw and msw of quads and addresses, and signed offsets to addresses"
     )
 
@@ -4447,6 +4448,46 @@ main {
         return 0
     }
 }""",
+    "memcopy, memset and memsetw of more than 65535 bytes, and overlapping copies in both directions" to $$"""
+main {
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        pointer source = memory("source", 100002, 0)
+        pointer target = memory("target", 100002, 0)
+        long @shared size = 100000
+        long i
+        for i in 0 to size-1
+            @(source + i) = lsb(i) ^ msb(i)
+        sys.memset(target, size+2, $ee)
+        sys.memcopy(source, target, size)
+        for i in 0 to size-1
+            if @(target + i) != lsb(i) ^ msb(i)
+                return 1
+        if @(target + size) != $ee or @(target + size + 1) != $ee
+            return 2
+        ; a gap buffer's moves: up by 2 bytes, then back down
+        sys.memcopy(target, target + 2, size)
+        for i in 0 to size-1
+            if @(target + i + 2) != lsb(i) ^ msb(i)
+                return 3
+        sys.memcopy(target + 2, target, size)
+        for i in 0 to size-1
+            if @(target + i) != lsb(i) ^ msb(i)
+                return 4
+        sys.memset(source, size, $5a)
+        if @(source) != $5a or @(source + size - 1) != $5a or @(source + size) == $5a
+            return 5
+        sys.memsetw(target, size / 2, $1234)
+        if peekw(target) != $1234 or peekw(target + size - 2) != $1234 or @(target + size) == $34
+            return 6
+        return 0
+    }
+}
+""",
+
     "pointer element updates and offsets beyond 64 KiB" to $$"""
 main {
     struct Node {

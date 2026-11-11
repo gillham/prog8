@@ -331,3 +331,16 @@ Keeping the list: add new items at the end with the next number, and remove an i
   that `goto` into the caller, which then leaves the caller when `inner` returns. Found as `void txt.waitkey()` on
   the llvm targets, whose `waitkey()` is `return chrin()`.
 - Branch: fixed; the inliner inlines a `goto` to a subroutine as a call of it.
+
+**U51. `sys.memset` and `memsetw` take a `uword` size on the 32-bit targets, and the VM's `memcopy` too**
+- Where: `compiler/res/prog8lib/virtual/syslib.p8` (`memcopy`, `memset`, `memsetw`) with the VM's `MEMCOPY`, `MEMSET`
+  and `MEMSETW` in `virtualmachine/SysCalls.kt`; `shared_m68k_memory_routines.p8` (`memset`, `memsetw`, `memsetl`).
+- On these targets addresses are 32 bits, but a size over 65535 can't be given, and a larger one cast to `uword`
+  silently handles only its low 16 bits. The m68k `memcopy` already takes a `long count`. Found with a gap buffer
+  of 344 KB on llvm64, where a large move left zeros in the text; it would show the same on the Amiga with a gap over
+  64 KB.
+- Also: the VM's `memcopy` copies forwards, so a move to a higher overlapping address repeats the first byte
+  (`sys.memcopy(&buf, &buf+1, 10)` gives `1 1 1 ...`). The docs say `memcopy` only handles non-overlapping areas, so
+  this is documented, but the llvm targets' `memcopy` (`memmove`) handles overlap.
+- Branch: llvm32 and llvm64 take a `long` size for all three, and `memcopy` handles overlap there; virtual and the
+  m68k targets are unchanged, as on `master`.

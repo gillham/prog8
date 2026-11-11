@@ -380,8 +380,9 @@ private fun FunctionLowering.memorySet(site: CallSite, number: Int) {
 /** MEMSETW(address, number of words, word value). */
 private fun FunctionLowering.memorySetWords(site: CallSite, number: Int) {
     val (address, count, value) = arguments(site, number, 3)
-    val args = listOf(pointerValue(address), convert(read(count), LlvmType.I16), convert(read(value), LlvmType.I16))
-    emit(LlvmInstruction.Call(null, builder.helperFunction(".memsetw") { setWordsHelper(builder.mapper.intPtr) }, args, LlvmType.Void))
+    val intPtr = builder.mapper.intPtr
+    val args = listOf(pointerValue(address), convert(read(count), intPtr), convert(read(value), LlvmType.I16))
+    emit(LlvmInstruction.Call(null, builder.helperFunction(".memsetw") { setWordsHelper(intPtr) }, args, LlvmType.Void))
 }
 
 /** LOAD(name, address) and LOAD_RAW(name, address): the end address of the file's data at the address, or null for an error. */
@@ -866,18 +867,17 @@ private fun printStringHelper(putchar: LlvmValue.Global, intPtr: LlvmType, cInt:
         "done" to listOf(LlvmInstruction.Ret(null)))
 }
 
-/** `void (ptr address, i16 count, i16 value)`: stores count copies of the word value from address on. */
+/** `void (ptr address, intptr count, i16 value)`: stores count copies of the word value from address on. */
 private fun setWordsHelper(intPtr: LlvmType): LlvmFunction {
     val address = LlvmValue.Local("address", LlvmType.Ptr)
-    val count = LlvmValue.Local("count", LlvmType.I16)
+    val n = LlvmValue.Local("count", intPtr)
     val value = LlvmValue.Local("value", LlvmType.I16)
-    val n = if (intPtr == LlvmType.I16) count else LlvmValue.Local("n", intPtr)
     val i = LlvmValue.Local("i", intPtr)
     val more = LlvmValue.Local("more", LlvmType.I1)
     val slot = LlvmValue.Local("slot", LlvmType.Ptr)
     val next = LlvmValue.Local("next", intPtr)
-    return helper(".memsetw", LlvmType.Void, listOf(address, count, value),
-        "entry" to listOfNotNull(if (n === count) null else LlvmInstruction.Cast(CastOperator.ZEXT, n, count, intPtr), LlvmInstruction.Br("loop")),
+    return helper(".memsetw", LlvmType.Void, listOf(address, n, value),
+        "entry" to listOf(LlvmInstruction.Br("loop")),
         "loop" to listOf(
             LlvmInstruction.Phi(i, listOf(LlvmValue.IntConstant(0, intPtr) to "entry", next to "body")),
             LlvmInstruction.Icmp(IcmpCondition.ULT, more, i, n),

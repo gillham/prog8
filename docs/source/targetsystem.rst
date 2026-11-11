@@ -564,6 +564,9 @@ Compared with ``llvm32`` and ``llvm64``:
   empty string, and giving arguments after ``--`` is an error.
 - ``sqrt`` of an integer is computed without floats.
 - the value stack of ``push()`` and ``pop()`` has 256 bytes, instead of 1024.
+- ``sys.memcopy``, ``sys.memset`` and ``sys.memsetw`` take a ``uword`` size; on ``llvm32`` and ``llvm64`` it is a
+  ``long``, so more than 65535 bytes or words can be copied or set at once. On every llvm target ``memcopy`` copies
+  overlapping areas correctly, in either direction.
 - as on the other llvm targets, array indexes are words, so an array can have up to 65535 bytes, and ``%asm``,
   ``asmsub`` bodies and ``extsub`` with an address are errors (see :ref:`llvm_triples`).
 

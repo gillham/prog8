@@ -495,9 +495,9 @@ sys  {
     die  (ubyte code, str message)
     exit  (ubyte returnvalue)
     memcmp  (uquad address1, uquad address2, uword size) -> byte
-    memcopy  (uquad source, uquad tgt, uword count)
-    memset  (uquad mem, uword numbytes, ubyte value)
-    memsetw  (uquad mem, uword numwords, uword value)
+    memcopy  (uquad source, uquad tgt, long count)
+    memset  (uquad mem, long numbytes, ubyte value)
+    memsetw  (uquad mem, long numwords, uword value)
     poweroff_system  ()
     reset_system  ()
     set_carry  ()
