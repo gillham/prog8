@@ -17,6 +17,17 @@ txt {
     const ubyte COLUMNS = DEFAULT_WIDTH
     const ubyte ROWS = DEFAULT_HEIGHT
 
+    ; the codes of getkey() and waitkey() for the keys that differ between the machines (a key that a machine lacks gets
+    ; one that no key gives: 248 up, 249 down, 250 left, 251 right, 252 escape, 253 backspace, 254 break)
+    const ubyte KEY_UP = 94
+    const ubyte KEY_DOWN = 10
+    const ubyte KEY_LEFT = 8            ; also the backspace of line input
+    const ubyte KEY_RIGHT = 9
+    const ubyte KEY_ENTER = 13
+    const ubyte KEY_ESC = 252
+    const ubyte KEY_BACKSPACE = 253
+    const ubyte KEY_BREAK = 3
+
     extsub prog8_coco_getkey() -> uword      ; picolibc's __decb_getc, in the profile's startup source
 
     ; 128 = print inverse characters, 0 = normal

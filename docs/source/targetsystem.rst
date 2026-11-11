@@ -379,6 +379,12 @@ These are the keys of a profile; an unknown key is an error:
     A routine ``unsigned int f(void)`` for ``sys.ticks()``, a count of 60ths of a second, and source files like those of
     ``file_source`` that are only built along with a program that calls it, before the ``startup_source`` files (so
     their initialization code runs first). Without ``ticks_symbol``, ``sys.ticks()`` is 0 on llvm16.
+``getkey_source``
+    Source files like those of ``file_source`` with ``int prog8_getkey(void)`` and ``int prog8_waitkey(void)`` for the
+    llvm32 and llvm64 ``txt.getkey()`` and ``txt.waitkey()``, and ``int prog8_getchar(void)``, which ``txt.chrin()``
+    then calls instead of ``getchar()``; built along, first, only with a program that calls one of the key routines.
+    Without it, both are ``getchar()``. The Unix and Windows
+    profiles have it (``hosted-keys.c``).
 ``file_source``
     Source files like those of ``startup_source``, built along with the program only when it uses files (calls
     ``fopen()``, ``rename()`` or ``remove()``), such as the ``ftell``, ``fseek`` and ``fread`` of the TRS-80 profiles, which would otherwise make every
@@ -675,9 +681,12 @@ the Model I and 4, and as ``.cas`` files from ROM BASIC without a DOS). They do 
 ``compiler/test/fixtures/llvm-triples``, built on ``z80-cpm``, ``z80-trs80-cmd``, ``z80-trs80-m3-trsdos`` and ``z80-trs80``, whose support sources mirror the console output where the runner script can catch
 it (the TRS-80 printer) and pass on the exit status (a last output line on CP/M, as tnylpo always exits with 0).
 
-**The z88dk textio.** ``z80-trs80``, ``z80-trs80-cmd`` and ``z80-zx`` set ``library = z88dk`` and
-``putchar_symbol = fputc_cons``: all console output goes through z88dk's generic console, and ``txt`` comes from
-``prog8lib/llvm16/z88dk/textio.p8`` instead of the ANSI one. Its routines are those of the llvm16 ``txt``, plus
+**The z88dk and trs80 textios.** ``z80-zx`` sets ``library = z88dk``, and ``z80-trs80`` and ``z80-trs80-cmd`` (and
+``z80-trs80-m3-trsdos``, based on it) ``library = trs80``, with ``putchar_symbol = fputc_cons``: all console output goes
+through z88dk's generic console, and ``txt`` comes from ``prog8lib/llvm16/z88dk/textio.p8`` or
+``prog8lib/llvm16/trs80/textio.p8`` instead of the ANSI one. The two have the same routines, from
+``shared_z88dk_console_textio.p8``, and differ in their constants: ``DEFAULT_WIDTH`` and ``DEFAULT_HEIGHT`` (64 by 16 on
+the TRS-80) and the key codes (see the keyboard input below); the ``trs80`` module is only in the trs80 family. Its routines are those of the llvm16 ``txt``, plus
 ``getchr`` and ``setclr``. ``cls``, ``home``, ``plot``, ``column``, ``setchr`` (which leaves the cursor where it was),
 ``width`` and ``height`` work everywhere; ``getchr`` reads the screen with z88dk's ``cvpeek``, and ``setclr``
 rewrites the character it reads there in the new ink. ``color``, ``setclr``, ``setcc``, ``rvs_on`` and ``rvs_off``
@@ -685,7 +694,8 @@ send the generic console's ink and inverse codes, which only do something where 
 Spectrum does, the TRS-80 has neither colour nor inverse video. ``bell`` does nothing. ``z80-cpm``
 and generated profiles keep the ANSI textio on standard output; a generated profile can add the two keys for a
 platform that has z88dk's generic console. Its routines are listed in
-`skeletons-llvm16-z88dk.txt <_static/symboldumps/skeletons-llvm16-z88dk.txt>`_.
+`skeletons-llvm16-z88dk.txt <_static/symboldumps/skeletons-llvm16-z88dk.txt>`_ and
+`skeletons-llvm16-trs80.txt <_static/symboldumps/skeletons-llvm16-trs80.txt>`_.
 
 **The z88dk-ansi textio.** ``z80-c128`` sets ``library = z88dk-ansi`` and ``putchar_symbol = fputc_cons``: all
 console output goes through z88dk's ANSI console, and ``txt`` comes from ``prog8lib/llvm16/z88dk-ansi/textio.p8``,
@@ -719,10 +729,10 @@ the rest of the library still finds what it uses.
 
 **Use** ``txt.width()`` **and** ``txt.height()`` **for the screen size, not** ``txt.DEFAULT_WIDTH`` **and**
 ``txt.DEFAULT_HEIGHT``. With the z88dk textio those constants are 80 and 25, as one library serves all its machines,
-while the screen is 64 by 16 on the TRS-80 and 32 by 24 on the ZX Spectrum. ``txt.width()`` and ``txt.height()`` ask
-z88dk for the real size. (The textio of a single machine has its own: 40 by 25 with the z88dk-ansi textio of the C128
-and the c64 one, 80 by 24 with the trs80m4 one, 32 by 16 with the coco one; ``txt.COLUMNS`` and ``txt.ROWS`` are the
-same there.) Screen code of your own that computes a video RAM
+while the screen is 32 by 24 on the ZX Spectrum. ``txt.width()`` and ``txt.height()`` ask z88dk for the real size.
+(The textio of a single machine has its own: 64 by 16 with the trs80 textio, 40 by 25 with the z88dk-ansi textio of the
+C128 and the c64 one, 80 by 24 with the trs80m4 one, 32 by 16 with the coco one; ``txt.COLUMNS`` and ``txt.ROWS`` are the
+same with the last three.) Screen code of your own that computes a video RAM
 address from ``DEFAULT_WIDTH``, such as ``$3c00 + row * DEFAULT_WIDTH + col`` on the TRS-80, reads and writes the
 wrong place from the second row on.
 
@@ -740,7 +750,7 @@ none, without waiting, and ``txt.waitkey()``, which waits for a key and gives it
   ``$FF`` (in the profile's startup source ``z80-cpm-keyboard.asm``), which gives the next key typed or 0, and ``waitkey`` is
   ``txt.chrin()``, z88dk's ``fgetc_cons()``, the same BDOS call until it gives a key; at the end of the input tnylpo
   gives ``^Z`` forever (26). z88dk's own ``getk()`` isn't used: it reads keys until none is left and gives the last.
-- the z88dk and z88dk-ansi textios (``z80-trs80``, ``z80-trs80-cmd``, ``z80-zx``, ``z80-c128``): ``getkey`` is z88dk's
+- the z88dk, trs80 and z88dk-ansi textios (``z80-zx``, ``z80-trs80``, ``z80-trs80-cmd``, ``z80-c128``): ``getkey`` is z88dk's
   ``getk()`` (``int getk(void)``) and ``waitkey`` is ``txt.chrin()``, z88dk's ``fgetc_cons()`` (``int fgetc_cons(void)``),
   which waits for a key and doesn't echo it. On the TRS-80 ``getk`` calls the ROM's keyboard scan (``$002b``), which reports
   a new key press; on the ZX Spectrum it takes the ROM's last key (``LAST-K``) and clears it; on the C128 it scans the
@@ -752,7 +762,7 @@ none, without waiting, and ``txt.waitkey()``, which waits for a key and gives it
   command): they give the ROM's codes, Enter 13, down 10, up 91, left 8, right 9 and CLEAR 31, also to ``txt.chrin()``.
   Letters come in lower case unshifted and as capitals shifted on the Model I and III alike: the Model III ROM's caps
   lock (``$4019``) is off during each scan and put back after it, and the Model I ROM's capitals are swapped. The
-  ``trs80`` module (``prog8lib/llvm16/z88dk/trs80.p8``, ``%import trs80``) has ``caps_lock(bool)`` for capitals
+  ``trs80`` module (``prog8lib/llvm16/trs80/trs80.p8``, ``%import trs80``) has ``caps_lock(bool)`` for capitals
   unshifted, ``model()`` (1 or 3), ``dos()`` (``DOS_NONE``, ``DOS_TRSDOS``, ``DOS_LDOS``), ``has_lowercase()`` (false on a
   Model I without the lower case kit) and ``capitals(bool)``, which makes the profiles' ``fputc_cons`` (redirected to
   ``_prog8_trs80_console`` in the same source) show lower case letters as capitals. The Model 4 profile's ``trs80``
@@ -770,6 +780,47 @@ On the machine profiles (the z88dk, z88dk-ansi, trs80m4 and coco textios) the ke
 and a new line at Enter, as BASIC does. Backspace (8, the CoCo's and the TRS-80's left arrow; 12 and 127 are taken as
 it too, the delete key of the ZX Spectrum and the C128) removes the last character from the screen and the buffer.
 Other control codes, and the characters past the maximum length, are ignored. There is no end of the input there.
+
+**Key codes.** The keys whose codes differ between the machines have constants in every llvm ``txt``, for
+``getkey()`` and ``waitkey()``: ``KEY_UP``, ``KEY_DOWN``, ``KEY_LEFT``, ``KEY_RIGHT``, ``KEY_ENTER``, ``KEY_ESC``,
+``KEY_BACKSPACE`` and ``KEY_BREAK``. Letters, digits and other printable keys need none: a character literal such as
+``'a'`` is the code of the key everywhere. A key that the machine lacks gets a code that no key there gives, the same one
+for that key on every machine (248 up, 249 down, 250 left, 251 right, 252 escape, 253 backspace, 254 break), so the
+constants of one textio all differ and can be the choices of a ``when``:
+
+=================================  ====  =====  =====  =====  =====  ===  =========  =====
+textio (profiles)                  UP    DOWN   LEFT   RIGHT  ENTER  ESC  BACKSPACE  BREAK
+=================================  ====  =====  =====  =====  =====  ===  =========  =====
+llvm32, llvm64                     145   17     157    29     13     27   8          3
+llvm16 (``mos-sim``, ...)          248   249    250    251    10     27   8          254
+cpm (``z80-cpm``)                  5     24     19     4      13     27   8          3
+c64 (``mos-c64``)                  145   17     157    29     13     252  20         3
+coco (``mc6809-coco``)             94    10     8      9      13     252  253        3
+trs80 (Model I and III)            91    10     8      9      13     27   253        1
+trs80m4 (``z80-trs80-m4``)         11    10     8      9      13     27   253        128
+z88dk (``z80-zx``)                 11    10     8      9      13     7    12         254
+z88dk-ansi (``z80-c128``)          248   249    250    251    13     252  12         3
+=================================  ====  =====  =====  =====  =====  ===  =========  =====
+
+On the CoCo and the TRS-80 the left arrow is also the backspace of ``txt.input_line()``, so ``KEY_BACKSPACE`` is the
+code of a missing key there. ESC is shift and the up arrow on the TRS-80, EDIT on the ZX Spectrum; the C128's Z80 mode
+key scan has no codes for the cursor keys. CP/M has the WordStar keys (Ctrl-E, Ctrl-X, Ctrl-S, Ctrl-D), as its
+terminals differ. The llvm16 stream textio's ``waitkey()`` reads lines from stdin, so Enter is its line end, 10.
+
+**Keyboard input on llvm32 and llvm64.** ``txt.getkey()`` gives the key pressed or 0 when there is none, without waiting
+and without echo, for programs such as editors that read single keys, and ``txt.waitkey()`` waits for a key and gives
+it, or 0 at the end of the input. On Unix it switches a terminal on stdin to a raw
+mode at its first call: no echo, no line editing, and no signals, so Enter gives 13 and Ctrl-C 3 (and Ctrl-Z 26) instead
+of ending or stopping the program; DEL (127) is given as backspace, 8. Output keeps its processing, so ``"\n"`` still starts a new line. The terminal goes
+back to its own mode when the program ends, and while ``txt.chrin()`` or ``txt.input_line()`` (and ``input_chars``,
+``readln`` and ``prompt``) read, which echo and edit the line as usual; the next ``getkey`` makes it raw again. On
+Windows it is the console's ``_kbhit()`` and ``_getch()``. The cursor keys' escape sequences (``ESC [ A`` and ``ESC O A``,
+also with modifiers such as ``ESC [ 1 ; 5 A``) become the PETSCII cursor codes of the Commodore targets: 145 up,
+17 down, 29 right and 157 left; on Windows the console's cursor keys do too. Other escape sequences come as their bytes,
+one per call, and ``ESC`` alone, with nothing after it within 30 milliseconds, as 27. When stdin isn't a terminal or a
+console, ``getkey`` reads its next byte, waiting for it, and gives 0 at the end of the input. The wasm and bare-metal
+profiles have no such keyboard: there ``getkey`` and ``waitkey`` are ``txt.chrin()``. A program that only uses
+``txt.chrin()`` and ``txt.input_line()`` is built as before, without this code.
 
 **A clock on llvm16.** ``sys.ticks()`` counts 60ths of a second (``sys.TICKS_PER_SECOND``, the unit of ``sys.wait()``)
 in a ``uword``, which wraps around after about 18 minutes: take the difference of two counts. When it starts counting

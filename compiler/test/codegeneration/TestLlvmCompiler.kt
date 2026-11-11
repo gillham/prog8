@@ -116,6 +116,96 @@ class TestLlvmCompiler: FunSpec({
         }
     }
 
+    val getkeyProgram = """
+%import textio
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    sub start() {
+        repeat {
+            ubyte key = txt.getkey()
+            if key == 0
+                break
+            txt.print_ub(key)
+            txt.spc()
+            if key == 'l' {
+                txt.nl()
+                txt.print(txt.readln())
+                txt.nl()
+            }
+        }
+    }
+}"""
+
+    test("txt.getkey calls the getkey source of the profile, and txt.chrin its getchar; without one, both call getchar") {
+        val lines = compiledLlFile(compileText(hostLlvmTarget, false, getkeyProgram, outputDir)).readLines()
+        lines.any { it.startsWith("declare i32 @prog8_getkey()") } shouldBe true
+        lines.any { it.startsWith("declare i32 @prog8_getchar()") } shouldBe true
+        lines.any { it.startsWith("declare i32 @getchar()") } shouldBe false
+        val wasmLines = compiledLlFile(compileText(LlvmTarget(4), false, getkeyProgram, outputDir)).readLines()
+        wasmLines.any { "@prog8_get" in it } shouldBe false
+        wasmLines.any { it.startsWith("declare i32 @getchar()") } shouldBe true
+        val chrinOnly = """
+%import textio
+%zeropage basicsafe
+
+main {
+    sub start() {
+        txt.print_ub(txt.chrin())
+    }
+}"""
+        withClue("the unused key routines of the library, which stay without optimization") {
+            compiledLlFile(compileText(hostLlvmTarget, false, chrinOnly, outputDir)).readLines().any { "@prog8_" in it && "key(" in it } shouldBe false
+        }
+    }
+
+    test("txt.waitkey waits for each key, gives 0 at the end of the input, and the txt.KEY_ constants are its codes, in a native executable").config(enabledOrReasonIf = requiresNativeLlvm) {
+        val source = """
+%import textio
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    sub start() {
+        repeat {
+            ubyte key = txt.waitkey()
+            when key {
+                0 -> break
+                txt.KEY_UP -> txt.print("up ")
+                txt.KEY_DOWN -> txt.print("down ")
+                txt.KEY_LEFT -> txt.print("left ")
+                txt.KEY_RIGHT -> txt.print("right ")
+                txt.KEY_ENTER -> txt.print("enter ")
+                txt.KEY_ESC -> txt.print("esc ")
+                txt.KEY_BACKSPACE -> txt.print("backspace ")
+                txt.KEY_BREAK -> txt.print("break ")
+                else -> txt.chrout(key)
+            }
+        }
+    }
+}"""
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val llFile = compiledLlFile(compileText(hostLlvmTarget, optimize, source, outputDir))
+                val (exitCode, output) = buildAndRun(llFile, "a\u001b[A\u001b[B\u001b[D\u001b[C\r\u001b\u007f\b\u0003z")
+                withClue(output) { exitCode shouldBe 0 }
+                output shouldBe "aup down left right enter esc backspace backspace break z"
+            }
+        }
+    }
+
+    test("txt.getkey gives the cursor keys' escape sequences as PETSCII codes, and other sequences as they came, in a native executable").config(enabledOrReasonIf = requiresNativeLlvm) {
+        for (optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val llFile = compiledLlFile(compileText(hostLlvmTarget, optimize, getkeyProgram, outputDir))
+                val (exitCode, output) = buildAndRun(llFile, "a\u001b[A\u001b[B\u001bOC\u001b[1;5D\u001b[3~\u001bx\rl rest\nz")
+                withClue(output) { exitCode shouldBe 0 }
+                output shouldBe "97 145 17 29 157 27 91 51 126 27 120 13 108 \n rest\n122 "
+            }
+        }
+    }
+
     test("llvm is another name for the llvm64 target, whose program file is the LLVM IR text") {
         getCompilationTargetByName("llvm").name shouldBe LlvmTarget.NAME64
         getCompilationTargetByName("LLVM64").name shouldBe LlvmTarget.NAME64
@@ -960,7 +1050,7 @@ main {
                         val (exitCode, output) = runner.buildAndRun(llFile, program.input, workingDirectory, program.args.takeIf { runner.profile.programArgs }.orEmpty())
                         withClue(output) { exitCode shouldBe program.exitCode }
                         output shouldBe (when (runner.profile.library) {
-                            "z88dk" -> program.z88dkConsoleOutput
+                            "z88dk", "trs80" -> program.z88dkConsoleOutput
                             "trs80m4" -> program.trs80m4ConsoleOutput
                             else -> null
                         } ?: program.llvm16Output ?: program.output)
@@ -997,7 +1087,7 @@ main {
         }
 
         val textioPrograms = when (runner.profile.library) {
-            "z88dk" -> z88dkTextioPrograms
+            "z88dk", "trs80" -> z88dkTextioPrograms
             "trs80m4" -> trs80m4TextioPrograms
             else -> emptyMap()
         }
@@ -1030,7 +1120,7 @@ main {
         test("the llvm16 programs build, optimized, into ${profile.outputExtension.ifEmpty { "extensionless" }} files with the ${profile.name} profile").config(enabledOrReasonIf = { enabledUnless(linker.toolsReason(profile)) }) {
             val dir = outputDir.resolve("${profile.name}-link").createDirectories()
             val sources = programs + outputPrograms.mapValues { it.value.source } +
-                z88dkTextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "z88dk" || profile.library == "z88dk-ansi" }.orEmpty() +
+                z88dkTextioPrograms.mapValues { it.value.source }.takeIf { profile.library in listOf("z88dk", "trs80", "z88dk-ansi") }.orEmpty() +
                 cocoTextioPrograms.takeIf { profile.library == "coco" }.orEmpty() +
                 c64TextioPrograms.takeIf { profile.library == "c64" }.orEmpty() +
                 trs80m4TextioPrograms.mapValues { it.value.source }.takeIf { profile.library == "trs80m4" }.orEmpty() +

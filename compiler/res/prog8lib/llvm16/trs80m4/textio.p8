@@ -15,6 +15,17 @@ txt {
     const ubyte COLUMNS = DEFAULT_WIDTH
     const ubyte ROWS = DEFAULT_HEIGHT
 
+    ; the codes of getkey() and waitkey() for the keys that differ between the machines (a key that a machine lacks gets
+    ; one that no key gives: 248 up, 249 down, 250 left, 251 right, 252 escape, 253 backspace, 254 break)
+    const ubyte KEY_UP = 11
+    const ubyte KEY_DOWN = 10
+    const ubyte KEY_LEFT = 8            ; also the backspace of line input
+    const ubyte KEY_RIGHT = 9
+    const ubyte KEY_ENTER = 13
+    const ubyte KEY_ESC = 27            ; shift and the up arrow
+    const ubyte KEY_BACKSPACE = 253
+    const ubyte KEY_BREAK = 128
+
     extsub getk() -> word
     extsub prog8_trs80m4_plot(word col, word row)
     extsub prog8_trs80m4_where() -> uword

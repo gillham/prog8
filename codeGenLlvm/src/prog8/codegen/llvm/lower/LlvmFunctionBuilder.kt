@@ -48,6 +48,25 @@ internal class LlvmFunctionBuilder(val program: IRProgram, val symbols: LlvmData
         }
         found
     }
+    /**
+     * Whether the program calls a subroutine with the syscall of txt.getkey() or txt.waitkey(), so that GET_C reads with the
+     * getkey source's getchar; without optimization, the library's unused key routines are still in the program.
+     */
+    val usesGetkey: Boolean = run {
+        val keyRoutines = program.allSubs().filter { sub ->
+            sub.chunks.any { chunk -> chunk.instructions.any {
+                it.opcode == Opcode.SYSCALL && (it.requireCallSite().target as? CallTarget.SystemCall)?.number.let { number -> number == VM_GETKEY || number == VM_WAITKEY }
+            } }
+        }.map { it.label }.toSet()
+        var found = false
+        if (keyRoutines.isNotEmpty()) program.forEachInstruction {
+            val call = it.callSite?.target
+            val reference = (call as? CallTarget.Direct)?.reference ?: (call as? CallTarget.Banked)?.reference ?: it.target
+            if ((reference as? CodeReference.Label)?.name in keyRoutines || (it.immediate as? ImmediateOperand.SymbolAddress)?.symbol in keyRoutines)
+                found = true
+        }
+        found
+    }
     private val subroutines = program.allSubs().associateBy { it.label }
     private val asmSubroutines = program.allAsmSubs().associateBy { it.label }
     private val externalFunctions = linkedMapOf<String, LlvmFunction>()

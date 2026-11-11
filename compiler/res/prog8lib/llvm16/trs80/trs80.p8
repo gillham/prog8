@@ -1,6 +1,6 @@
 ; Prog8 definitions for the TRS-80 Model I and III, for the llvm16 target's z80-trs80, z80-trs80-cmd and
 ; z80-trs80-m3-trsdos profiles: which machine and DOS the program runs on, whether the screen shows lower case, and the
-; case of the letters typed and shown. Only for the TRS-80: the other z88dk profiles don't have its routines.
+; case of the letters typed and shown.
 
 %option ignore_unused
 

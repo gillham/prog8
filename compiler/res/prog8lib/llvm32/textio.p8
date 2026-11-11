@@ -17,6 +17,17 @@ txt {
     const ubyte DEFAULT_WIDTH = 80
     const ubyte DEFAULT_HEIGHT = 25
 
+    ; the codes of getkey() and waitkey() for the keys that differ between the machines (a key that a machine lacks gets
+    ; one that no key gives: 248 up, 249 down, 250 left, 251 right, 252 escape, 253 backspace, 254 break)
+    const ubyte KEY_UP = 145
+    const ubyte KEY_DOWN = 17
+    const ubyte KEY_LEFT = 157
+    const ubyte KEY_RIGHT = 29
+    const ubyte KEY_ENTER = 13
+    const ubyte KEY_ESC = 27
+    const ubyte KEY_BACKSPACE = 8       ; also DEL (127)
+    const ubyte KEY_BREAK = 3           ; Ctrl-C
+
 sub width() -> ubyte {
     return DEFAULT_WIDTH
 }
@@ -202,6 +213,25 @@ sub chrin() -> ubyte {
     ; ---- read the next character (byte) from stdin, waiting for it if needed; 0 at the end of the input
     %ir {{
         syscall 69 (): r99100.b
+        returnr.b r99100.b
+    }}
+}
+
+sub getkey() -> ubyte {
+    ; ---- the key pressed, or 0 when there is none, without waiting and without echo; see the KEY_ constants. A terminal
+    ;      goes to a raw mode for it (until the program ends, or reads with chrin() or input_line()), so Ctrl-C is a key.
+    ;      On Unix and Windows; elsewhere, and when stdin isn't a terminal, it is the next byte of stdin, waiting for it,
+    ;      and 0 at the end of the input.
+    %ir {{
+        syscall 217 (): r99100.b
+        returnr.b r99100.b
+    }}
+}
+
+sub waitkey() -> ubyte {
+    ; ---- wait for a key and return it, as getkey() does; 0 only at the end of the input
+    %ir {{
+        syscall 218 (): r99100.b
         returnr.b r99100.b
     }}
 }

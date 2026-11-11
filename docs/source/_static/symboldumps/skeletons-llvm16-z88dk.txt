@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA3-llvm.1 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit d6693bd9 in branch llvm
+Prerelease version from git commit 103fd63c in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 LLVM version by Claude Code and Andrew Gillham (gillham@roadsign.com)
 Report issues with this version at https://github.com/gillham/prog8/issues
@@ -613,6 +613,14 @@ LIBRARY MODULE NAME: textio
 txt  {
     const ubyte  DEFAULT_HEIGHT
     const ubyte  DEFAULT_WIDTH
+    const ubyte  KEY_BACKSPACE
+    const ubyte  KEY_BREAK
+    const ubyte  KEY_DOWN
+    const ubyte  KEY_ENTER
+    const ubyte  KEY_ESC
+    const ubyte  KEY_LEFT
+    const ubyte  KEY_RIGHT
+    const ubyte  KEY_UP
     bool @shared  eof_exit
     bool  eof_flag
     ubyte  ink_color

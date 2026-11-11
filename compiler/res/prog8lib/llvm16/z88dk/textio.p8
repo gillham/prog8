@@ -1,12 +1,10 @@
 ; Prog8 definitions for the Text I/O console routines for the llvm16 target, on the z88dk platforms with its generic console,
-; such as the TRS-80 and the ZX Spectrum. Text goes to the console through fputc_cons (the profile's putchar_symbol);
-; cursor movement, colors and reverse video use the generic console's control codes, and work where the platform supports them.
+; such as the ZX Spectrum (the TRS-80 Model I and III have the trs80 textio). Text goes to the console through fputc_cons
+; (the profile's putchar_symbol); cursor movement, colors and reverse video use the generic console's control codes, and
+; work where the platform supports them.
 ; txt.print_f is not here: floats are not supported yet on llvm16.
 
-%import shared_llvm16_textio
-%import shared_llvm16_putchar_textio
-%import shared_llvm16_echo_input_textio
-%import shared_z88dk_textio
+%import shared_z88dk_console_textio
 
 txt {
 %option no_symbol_prefixing, ignore_unused
@@ -15,115 +13,15 @@ txt {
     const ubyte DEFAULT_WIDTH = 80
     const ubyte DEFAULT_HEIGHT = 25
 
-    ubyte ink_color = 255       ; the one of color(), which setclr() and setcc() put back; 255 before color() is called
-
-sub  clear_screen() {
-    chrout(12)
-}
-
-sub rvs_on() {
-    chrout(27)
-    chrout('p')
-}
-
-sub rvs_off() {
-    chrout(27)
-    chrout('q')
-}
-
-sub color (ubyte txtcol) {
-    ; ---- set the ink color, where the platform has colors (the ZX Spectrum: 0-7)
-    ink_color = txtcol
-    chrout(16)
-    chrout(32 + txtcol)
-}
-
-sub bell() {
-    ; the generic console has no bell
-}
-
-sub  plot  (ubyte col, ubyte row) {
-    ; ---- move the cursor to the position, 0,0 is the top left; a position off the screen is ignored
-    chrout(22)
-    chrout(row + 32)
-    chrout(col + 32)
-}
-
-sub setchr (ubyte col, ubyte row, ubyte char) {
-    ; ---- put the character on the screen at the position; the cursor stays where it was
-    ubyte x = lsb(wherex())
-    ubyte y = lsb(wherey())
-    plot(col, row)
-    if char < 32 {
-        chrout(27)
-        chrout('r')     ; prints a control code as a character
-    }
-    chrout(char)
-    plot(x, y)
-}
-
-sub getchr (ubyte col, ubyte row) -> ubyte {
-    ; ---- the character on the screen at the position (z88dk's cvpeek)
-    return lsb(cvpeek(col as word, row as word))
-}
-
-sub setclr (ubyte col, ubyte row, ubyte color) {
-    ; ---- color the character at the position: rewrites it, read back with getchr(), in that ink.
-    ;      The cursor and the ink of color() stay as they were.
-    ubyte x = lsb(wherex())
-    ubyte y = lsb(wherey())
-    ubyte char = getchr(col, row)
-    plot(col, row)
-    chrout(16)
-    chrout(32 + color)
-    if char < 32 {
-        chrout(27)
-        chrout('r')     ; prints a control code as a character
-    }
-    chrout(char)
-    if ink_color != 255 {
-        chrout(16)
-        chrout(32 + ink_color)
-    }
-    plot(x, y)
-}
-
-sub setcc(ubyte col, ubyte row, ubyte char, ubyte color) {
-    ; ---- put the character on the screen at the position, in that ink; the cursor and the ink of color() stay as they were
-    ubyte x = lsb(wherex())
-    ubyte y = lsb(wherey())
-    plot(col, row)
-    chrout(16)
-    chrout(32 + color)
-    if char < 32 {
-        chrout(27)
-        chrout('r')     ; prints a control code as a character
-    }
-    chrout(char)
-    if ink_color != 255 {
-        chrout(16)
-        chrout(32 + ink_color)
-    }
-    plot(x, y)
-}
-
-sub clear_screenchars(ubyte character) {
-    ; ---- fill the screen with the character, and put the cursor at the top left
-    plot(0, 0)
-    uword count = width() as uword * height()
-    repeat count {
-        if character < 32 {
-            chrout(27)
-            chrout('r')
-        }
-        chrout(character)
-    }
-    plot(0, 0)
-}
-
-sub fill_screen(ubyte character, ubyte color) {
-    ; ---- fill the screen with the character in that ink, which stays set, and put the cursor at the top left
-    txt.color(color)
-    clear_screenchars(character)
-}
+    ; the codes of getkey() and waitkey() for the keys that differ between the machines: those of the ZX Spectrum, which
+    ; other z88dk platforms may not share (a key that a machine lacks gets one that no key gives: 248 up, 249 down,
+    ; 250 left, 251 right, 252 escape, 253 backspace, 254 break)
+    const ubyte KEY_UP = 11
+    const ubyte KEY_DOWN = 10
+    const ubyte KEY_LEFT = 8
+    const ubyte KEY_RIGHT = 9
+    const ubyte KEY_ENTER = 13
+    const ubyte KEY_ESC = 7             ; EDIT (caps shift 1)
+    const ubyte KEY_BACKSPACE = 12      ; DELETE (caps shift 0)
+    const ubyte KEY_BREAK = 254
 }

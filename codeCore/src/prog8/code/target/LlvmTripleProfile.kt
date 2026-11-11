@@ -101,7 +101,14 @@ data class LlvmTripleProfile(
     val waitSymbol: String? = null,
     /** Support sources like [fileSources], built along when the program calls [ticksSymbol] or [waitSymbol], before the startup sources. */
     val ticksSources: List<String> = emptyList(),
-    private val ticksSourceDirectory: Path? = null
+    private val ticksSourceDirectory: Path? = null,
+    /**
+     * Support sources like [fileSources] with `int prog8_getkey(void)` and `int prog8_waitkey(void)` for txt.getkey() and
+     * txt.waitkey(), and `int prog8_getchar(void)` that txt.chrin() then calls instead of getchar(); built along, first, when
+     * the program calls either key routine.
+     */
+    val getkeySources: List<String> = emptyList(),
+    private val getkeySourceDirectory: Path? = null
 ) {
     /** The symbol that the C function of [C_FUNCTIONS] named [function] is called by, which the profile can change. */
     fun cSymbol(function: String): String = when (function) {
@@ -162,13 +169,13 @@ data class LlvmTripleProfile(
 
     /**
      * Writes the [startupSources] files that the link command builds along as `{startup}` next to [outputFile], the [fileSources]
-     * too when [withFileSources], the [floatSources] when [withFloatSources] and, first, the [ticksSources] when [withTicksSources],
-     * and returns them. They are read from the profile's directory, or else from the compiler's resources.
+     * too when [withFileSources], the [floatSources] when [withFloatSources] and, first, the [getkeySources] when [withGetkeySources]
+     * and the [ticksSources] when [withTicksSources], and returns them. They are read from the profile's directory, or else from the compiler's resources.
      */
     fun writeStartupSources(outputFile: Path, withFileSources: Boolean = false, withFloatSources: Boolean = false,
-                            withTicksSources: Boolean = false): List<Path> {
+                            withTicksSources: Boolean = false, withGetkeySources: Boolean = false): List<Path> {
         val written = mutableListOf<Path>()
-        val sources = (if (withTicksSources) ticksSources.map { it to ticksSourceDirectory } else emptyList()) + startupSources.map { it to directory } + (if (withFileSources) fileSources.map { it to fileSourceDirectory } else emptyList()) +
+        val sources = (if (withGetkeySources) getkeySources.map { it to getkeySourceDirectory } else emptyList()) + (if (withTicksSources) ticksSources.map { it to ticksSourceDirectory } else emptyList()) + startupSources.map { it to directory } + (if (withFileSources) fileSources.map { it to fileSourceDirectory } else emptyList()) +
             (if (withFloatSources) floatSources.map { it to floatSourceDirectory } else emptyList())
         try {
             for ((source, sourceDirectory) in sources) {
@@ -284,12 +291,16 @@ data class LlvmTripleProfile(
         const val LOAD_ADDRESS = "{load_address}"
         const val LINK_SCRIPT = "{link_script}"
         const val FLOATS = "{floats}"
+        /** The routines of the [getkeySources]. */
+        const val GETKEY_SYMBOL = "prog8_getkey"
+        const val WAITKEY_SYMBOL = "prog8_waitkey"
+        const val GETKEY_GETCHAR_SYMBOL = "prog8_getchar"
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
             "link_command", "link_args", "run_timeout_seconds", "startup_source", "file_source",
             "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "c_symbols", "waitvsync_symbol", "file_offset_size", "getchar_symbol",
             "putchar_symbol", "library", "file_extension_separator", "c_int_size", "clang", "libc_lacks", "io_ranges", "program_args", "tool_path", "tool_env",
             "load_address", "load_address_align", "link_script", "floats", "c_double_size", "float_source", "float_link_args", "float_digits_symbol",
-            "defm_as_defb", "last_drive_symbol", "ticks_symbol", "wait_symbol", "ticks_source")
+            "defm_as_defb", "last_drive_symbol", "ticks_symbol", "wait_symbol", "ticks_source", "getkey_source")
 
         /** A ProcessBuilder for [command] with the tool environment of [profile], or a plain one without a profile. */
         fun processBuilder(profile: LlvmTripleProfile?, command: List<String>): ProcessBuilder =
@@ -600,7 +611,9 @@ data class LlvmTripleProfile(
                 optional("ticks_symbol"),
                 optional("wait_symbol"),
                 words("ticks_source").orEmpty(),
-                supplier["ticks_source"]?.directory
+                supplier["ticks_source"]?.directory,
+                words("getkey_source").orEmpty(),
+                supplier["getkey_source"]?.directory
             )
         }
 

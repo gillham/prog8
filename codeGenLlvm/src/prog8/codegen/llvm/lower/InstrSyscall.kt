@@ -1,5 +1,6 @@
 package prog8.codegen.llvm.lower
 
+import prog8.code.target.LlvmTripleProfile
 import prog8.codegen.llvm.LlvmPrinter
 import prog8.codegen.llvm.model.BinaryOperator
 import prog8.codegen.llvm.model.CastOperator
@@ -68,6 +69,8 @@ private const val VM_PORT_IN = 213
 private const val VM_PORT_OUT = 214
 private const val VM_LAST_DRIVE = 215
 private const val VM_TICKS = 216
+internal const val VM_GETKEY = 217
+internal const val VM_WAITKEY = 218
 
 /**
  * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory, file and filesystem
@@ -142,6 +145,8 @@ private fun FunctionLowering.lowerSyscall(site: CallSite, number: Int) {
         VM_PORT_OUT -> portOut(site, number)
         VM_LAST_DRIVE -> lastDrive(site, number)
         VM_TICKS -> ticks(site, number)
+        VM_GETKEY -> getKey(site, number, LlvmTripleProfile.GETKEY_SYMBOL)
+        VM_WAITKEY -> getKey(site, number, LlvmTripleProfile.WAITKEY_SYMBOL)
         else -> when (IMSyscall.entries.firstOrNull { it.number == number }) {
             IMSyscall.COMPARE_STRINGS -> compareStrings(site, number)
             IMSyscall.STRING_CONTAINS -> stringContains(site, number)
@@ -294,8 +299,8 @@ private fun FunctionLowering.putchar(): LlvmValue.Global =
     external(builder.profile?.putcharSymbol ?: "putchar", builder.mapper.cInt, listOf(builder.mapper.cInt), cName = "putchar")
 
 /**
- * GET_C(): the next byte from stdin, read with C's getchar() or the profile's routine for it; its negative EOF becomes 0,
- * as in the VM, which is also the result without either.
+ * GET_C(): the next byte from stdin, read with C's getchar(), the profile's routine for it, or the getkey source's when the
+ * program calls txt.getkey(); its negative EOF becomes 0, as in the VM, which is also the result without either.
  */
 private fun FunctionLowering.getChar(site: CallSite, number: Int) {
     arguments(site, number, 0)
@@ -304,9 +309,28 @@ private fun FunctionLowering.getChar(site: CallSite, number: Int) {
         return
     }
     val cInt = builder.mapper.cInt
-    val getchar = external(builder.profile?.getcharSymbol ?: "getchar", cInt, emptyList())
-    val code = derive("ch", cInt) { LlvmInstruction.Call(it, getchar, emptyList(), cInt) }
-    result(site, convert(intrinsic("llvm.smax.${LlvmPrinter.format(cInt)}", cInt, code, LlvmValue.IntConstant(0, cInt)), LlvmType.I8, "ch"))
+    val symbol = if (builder.usesGetkey && builder.profile?.getkeySources.orEmpty().isNotEmpty()) LlvmTripleProfile.GETKEY_GETCHAR_SYMBOL
+        else builder.profile?.getcharSymbol ?: "getchar"
+    result(site, readByte(symbol))
+}
+
+private fun FunctionLowering.readByte(symbol: String): LlvmValue {
+    val cInt = builder.mapper.cInt
+    val code = derive("ch", cInt) { LlvmInstruction.Call(it, external(symbol, cInt, emptyList()), emptyList(), cInt) }
+    return convert(intrinsic("llvm.smax.${LlvmPrinter.format(cInt)}", cInt, code, LlvmValue.IntConstant(0, cInt)), LlvmType.I8, "ch")
+}
+
+/**
+ * GETKEY() and WAITKEY(): a key without waiting for it or 0, and a key, waiting for it, with the [symbol] of the profile's
+ * getkey_source; without one, both are the next byte of stdin as with GET_C, waiting for it. So are the key routines that
+ * the program doesn't call, so that the source isn't linked for them.
+ */
+private fun FunctionLowering.getKey(site: CallSite, number: Int, symbol: String) {
+    if (builder.usesGetkey && builder.profile?.getkeySources.orEmpty().isNotEmpty()) {
+        arguments(site, number, 0)
+        result(site, readByte(symbol))
+    } else
+        getChar(site, number)
 }
 
 /** GET_ARGC(): the number of command line arguments as a word, including the program name; it can't count past 65535, and is 0 without [LlvmFunctionBuilder.programArgs]. */

@@ -40,9 +40,21 @@ internal object LlvmToolchain {
             return false
         }
         val compileCommand = compileCommand(clang.toString(), profileArgs, optLevel, extraCompileArgs)
-        if (linkCommand == null)
-            return runTool(clangLinkCommand(compileCommand, llFile, outputFile, extraLinkArgs + linkLibraries + profileLinkArgs), "clang", outputFile, profile) ||
-                failed("clang couldn't build '$outputFile' from '$llFile'")
+        val withGetkey = profile != null && profile.getkeySources.isNotEmpty() &&
+            (calls(llFile, LlvmTripleProfile.GETKEY_SYMBOL) || calls(llFile, LlvmTripleProfile.WAITKEY_SYMBOL))
+        if (linkCommand == null) {
+            val keySources = try {
+                if (withGetkey) profile.writeStartupSources(outputFile, withGetkeySources = true) else emptyList()
+            } catch (x: IOException) {
+                return failed("Can't build '$outputFile': a support source of the llvm triple profile couldn't be written: ${x.message}")
+            }
+            try {
+                return runTool(clangLinkCommand(compileCommand, llFile, outputFile, keySources.map(Path::toString) + extraLinkArgs + linkLibraries + profileLinkArgs),
+                    "clang", outputFile, profile) || failed("clang couldn't build '$outputFile' from '$llFile'")
+            } finally {
+                keySources.forEach { Files.deleteIfExists(it) }
+            }
+        }
         val objectFile = outputFile.resolveSibling("${outputFile.fileName}.o")
         val assemblyFile = outputFile.resolveSibling("${outputFile.fileName}.s")
         var startupFiles = emptyList<Path>()
@@ -60,7 +72,7 @@ internal object LlvmToolchain {
             startupFiles = try {
                 profile?.writeStartupSources(outputFile, withFileSources = profile.fileSources.isNotEmpty() && usesFiles(llFile, profile),
                     withFloatSources = withFloats, withTicksSources = profile.ticksSources.isNotEmpty() &&
-                    (calls(llFile, profile.ticksSymbol) || calls(llFile, profile.waitSymbol))).orEmpty()
+                    (calls(llFile, profile.ticksSymbol) || calls(llFile, profile.waitSymbol)), withGetkeySources = withGetkey).orEmpty()
             } catch (x: IOException) {
                 return failed("Can't build '$outputFile': a startup source of the llvm triple profile couldn't be written: ${x.message}")
             }

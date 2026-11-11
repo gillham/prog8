@@ -142,6 +142,17 @@ class TestLlvmTripleProfile: FunSpec({
         }
     }
 
+    test("the Unix and Windows profiles have txt.getkey's source, written first, and the wasm and bare-metal ones don't") {
+        for (name in listOf("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "armv7-unknown-linux-gnueabihf", "riscv32-unknown-linux-gnu",
+                "riscv64-unknown-linux-gnu", "arm64-apple-macosx", "x86_64-apple-macosx", "x86_64-pc-windows-msvc", "x86_64-w64-windows-gnu"))
+            withClue(name) { LlvmTripleProfile.resolve(name).getkeySources shouldBe listOf("hosted-keys.c") }
+        for (name in listOf("wasm32-wasip1", "wasm32-unknown-emscripten", "armv7a-none-eabihf", "riscv32-unknown-elf"))
+            withClue(name) { LlvmTripleProfile.resolve(name).getkeySources shouldBe emptyList() }
+        val written = LlvmTripleProfile.resolve("x86_64-pc-windows-msvc").writeStartupSources(directory.resolve("keys.exe"), withGetkeySources = true)
+        written.map { it.fileName.toString() } shouldBe listOf("keys.exe.hosted-keys.c", "keys.exe.windows-console.c")
+        written.first().readText() shouldContain "int prog8_getkey(void)"
+    }
+
     test("a profile file's startup_source files are read from the profile's directory, and need {startup} in the link command") {
         val sources = directory.resolve("withstartup").createDirectories()
         sources.resolve("boot.S").writeText("; boot code")

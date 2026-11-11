@@ -18,6 +18,17 @@ txt {
     const ubyte COLUMNS = DEFAULT_WIDTH
     const ubyte ROWS = DEFAULT_HEIGHT
 
+    ; the codes of getkey() and waitkey() for the keys that differ between the machines (a key that a machine lacks gets
+    ; one that no key gives: 248 up, 249 down, 250 left, 251 right, 252 escape, 253 backspace, 254 break)
+    const ubyte KEY_UP = 145
+    const ubyte KEY_DOWN = 17
+    const ubyte KEY_LEFT = 157
+    const ubyte KEY_RIGHT = 29
+    const ubyte KEY_ENTER = 13          ; RETURN
+    const ubyte KEY_ESC = 252
+    const ubyte KEY_BACKSPACE = 20      ; DEL
+    const ubyte KEY_BREAK = 3           ; RUN/STOP
+
     extsub cbm_k_getin() -> ubyte
     extsub cbm_k_chrout(ubyte char)
     extsub prog8_c64_plot(ubyte col, ubyte row)     ; the KERNAL's PLOT, in the profile's support source

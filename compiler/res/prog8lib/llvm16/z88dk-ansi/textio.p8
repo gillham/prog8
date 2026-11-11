@@ -20,6 +20,18 @@ txt {
     const ubyte DEFAULT_HEIGHT = 25
     const ubyte COLUMNS = DEFAULT_WIDTH
     const ubyte ROWS = DEFAULT_HEIGHT
+
+    ; the codes of getkey() and waitkey() for the keys that differ between the machines (a key that a machine lacks gets
+    ; one that no key gives: 248 up, 249 down, 250 left, 251 right, 252 escape, 253 backspace, 254 break)
+    const ubyte KEY_UP = 248
+    const ubyte KEY_DOWN = 249
+    const ubyte KEY_LEFT = 250
+    const ubyte KEY_RIGHT = 251
+    const ubyte KEY_ENTER = 13          ; RETURN
+    const ubyte KEY_ESC = 252
+    const ubyte KEY_BACKSPACE = 12      ; DEL
+    const ubyte KEY_BREAK = 3           ; RUN/STOP
+
     ubyte[8] c128_colors = [0, 2, 5, 7, 6, 4, 3, 1]     ; those that z88dk's ANSI console shows for the ANSI colors 0-7
 
 sub rvs_off() {

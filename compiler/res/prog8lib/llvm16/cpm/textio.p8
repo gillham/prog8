@@ -7,6 +7,17 @@
 txt {
 %option no_symbol_prefixing, ignore_unused
 
+    ; the codes of getkey() and waitkey() for the keys that differ between the machines (a key that a machine lacks gets
+    ; one that no key gives: 248 up, 249 down, 250 left, 251 right, 252 escape, 253 backspace, 254 break)
+    const ubyte KEY_UP = 5              ; Ctrl-E, as in WordStar
+    const ubyte KEY_DOWN = 24           ; Ctrl-X
+    const ubyte KEY_LEFT = 19           ; Ctrl-S
+    const ubyte KEY_RIGHT = 4           ; Ctrl-D
+    const ubyte KEY_ENTER = 13
+    const ubyte KEY_ESC = 27
+    const ubyte KEY_BACKSPACE = 8
+    const ubyte KEY_BREAK = 3           ; Ctrl-C
+
     extsub prog8_cpm_getkey() -> uword
 
 sub getkey() -> ubyte {
