@@ -142,6 +142,8 @@ static int escape_sequence(void) {
 
 // a key, 0 for a key that has no code (a Windows function key), or -1: none, or the end of the input when waiting
 static int read_key(int wait) {
+    // stdio flushes a line-buffered stdout when it reads, poll(), read() and _getch() don't
+    fflush(stdout);
     if (pending_next < pending_count) {
         int c = pending[pending_next++];
         if (pending_next == pending_count)
