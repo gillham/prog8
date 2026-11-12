@@ -359,3 +359,76 @@ Keeping the list: add new items at the end with the next number, and remove an i
   code generator for the llvm targets (`compileIrFile` in `compiler/Compiler.kt`, `generateFromIR` in both back ends;
   see `docs/source/compiling.rst`). The changes to shared code are small: the dispatch in `CompilerMain`, the split
   of `New6502CodeGenerator.generate()`, and `CompilationOptions.floats` became a `var`.
+
+**U54. A constant index above 65535 through a struct pointer field crashes the compiler**
+- Where: `compiler/astprocessing/VariousCleanups.kt`, the rewrite `ptr.field[index] --> peek(ptr.field + index)`,
+  and `codeGenIntermediate/AssignmentGen.translateRegularAssignPointerIndexed` for a store.
+- Repro: `b.data[70000] = 42` with `^^Buf b` and a `^^ubyte data` field: "Failed requirement" in `NumericLiteral`
+  (it builds a `UWORD` literal of the index), and for the store "indirect displacement out of range: 70000".
+- Branch: fixed; the index gets the target's pointer type, a constant one too big for 16-bit pointers is a normal
+  error at its position, and a store with an offset beyond the displacement range adds it to the pointer first.
+
+**U55. An index through a struct pointer field is cut to 16 bits, and a negative one is taken as positive**
+- Where: the same rewrite in `VariousCleanups.kt` casts every index to `uword`; for a store, `loadIndexReg` in
+  `codeGenIntermediate/IRCodeGen.kt` narrows the index to a word and `elementOffset` zero extends it.
+- Repro on virtual or qemu68k: `long i = 70000` and `b.data[i] = 42` writes at `b.data + 4464`; with `word w = -1`,
+  `b.data[w] = 77` writes 65535 elements further instead of one element back. Indexing a local copy of the pointer
+  (`d[i]`) is correct, as `CodeDesugarer` already uses the pointer type there.
+- Branch: fixed; a long index keeps all its bits and a signed index its sign when pointers are wider than 16 bits
+  (`pointerIndexOffset` in `IRCodeGen.kt`).
+
+**U56. `repeat` with a constant count above 65536 is an internal error on the IR targets**
+- Where: `codeGenIntermediate/IRCodeGen.kt`, `translate(repeat: PtRepeatLoop)`: `require(constRepeats in 1..65536)`.
+- Repro: `repeat 70000 count++` on virtual or qemu68k; `-check` passes.
+- Branch: fixed; a larger constant count uses the counted loop of a non-constant count.
+
+**U57. A subroutine that returns a float with other values crashes the IR code generator**
+- Where: `codeGenIntermediate/IRCodeGen.kt`, `setCpuRegister`: for a calling-convention slot it always stores the
+  integer register, which is -1 for a float ("register number out of range: -1"). The m68k back end then also
+  emitted `fmove.s fp2,fp0` for the store into the slot, which the assembler rejects (`InstrLoadStore.kt`, STOREHR).
+- Repro: `sub f(ubyte x) -> bool, float { return true, 1.5 }` and `ok, v = f(1)` on virtual or qemu68k.
+- Branch: fixed in both places.
+
+**U58. A multi-value return loses its later values when the first one calls a subroutine that returns several**
+- Where: `codeGenIntermediate/IRCodeGen.kt`, the translation of a `return` with several values: it stores the
+  later values in their return slots before it evaluates the first one, whose call overwrites those slots.
+- Repro: `return first(), 7`, where `first()` does `r, t = pair()` with `pair()` returning two values: the caller
+  gets 99 instead of 7 (virtual, qemu68k and llvm; the 6502 code generator is correct). A recursive call does the same.
+- Branch: fixed; all values are evaluated before any of them is stored, and the first is still stored last.
+
+**U59. `-newcodegen`: rol2 and ror2 are plain shifts**
+- Where: `codeGenNew6502/InstrBitwise.kt` (`rotateLeft`, `rotateLeftMemory`, `rotateRight`, `rotateRightMemory`)
+  start with `clc`, so the bit that leaves one end does not come back in at the other; and
+  `codeGenIntermediate/BuiltinFuncGen.kt` (`funcRolRor`) rotates the two halves of an element of a split word
+  array separately (`rolm.b` on `_lsb` and on `_msb`), which is only right for rol and ror, through the carry.
+- Repro: `compiler/test/arithmetic/bitshift2.p8` with `-target cx16 -newcodegen`; `rol2` of 130 gives 4.
+- Branch: fixed; the carry first gets the bit that wraps around, and rol2/ror2 of a split array element load,
+  rotate and store the whole word. bitshift2.p8 prints the same with both code generators.
+
+**U60. `-newcodegen`: a for loop over an array of strings is an internal error**
+- Where: `codeGenIntermediate/IRCodeGen.kt`, the for loop over an array: `loopvarDt > elementDt` compares the
+  `IRDataType` enum order, in which POINTER comes after LONG, so a 16-bit string address is widened for a
+  `^^ubyte` loop variable; the widening register was also declared WORD while EXT.w writes a LONG.
+- Repro: `for strptr in lines` with `str[] lines` and `^^ubyte strptr`, `-target cx16 -newcodegen`: "Reg type
+  mismatch for register r6 type LONG: expected WORD". `examples/cx16/cxlogo.p8` fails the same way.
+- Branch: fixed; the widths are compared with POINTER as the target's address type, and the widened register has
+  the type EXT writes.
+
+**U61. Reading a `.p8ir` file fails when the XML parser splits the text of a `<REGS>` element**
+- Where: `intermediate/IRFileReader.kt`, `parseCodeBlock`: it requires exactly one characters event between
+  `<REGS>` and `</REGS>`, but StAX may hand a CDATA section over in several pieces, depending on where it falls
+  in the parser's buffer.
+- Repro: an unoptimized program of some size, where a chunk's register list happens to cross a buffer boundary:
+  `prog8c -target virtual -noopt -emu` then stops with "Failed requirement" in `parseCodeBlock`. Whether a given
+  program hits it depends on the file's layout, so a small change elsewhere makes it come and go.
+- Branch: fixed; the reader skips all text events there.
+
+**U62. `-newcodegen`: a return, break or goto out of a repeat loop leaves the loop counter on the stack**
+- Where: `codeGenNew6502/AsmGen.kt`, `translateLoopChunk` and the copy of it in `emitNestedSubroutine`: a counted
+  loop keeps its counter in Y and saves it with `tya`/`pha` around the body, so leaving the body skips the `pla`
+  and the next `rts` returns to a wrong address. In a nested subroutine the save was done per body chunk, after the
+  chunk's label, so a do-until loop at the top of the body pushed the counter on every pass.
+- Repro: `repeat 10 { if next() == 4 return true }` with `-target cx16 -newcodegen` ends in the monitor;
+  `examples/maze.p8` stops in the monitor the same way.
+- Branch: fixed; a counted loop counts in a byte or word variable of its own in BSS, like the regular 6502 code
+  generator does, so nothing is left on the stack; trip counts above 256 now work too, they were cut to a byte.

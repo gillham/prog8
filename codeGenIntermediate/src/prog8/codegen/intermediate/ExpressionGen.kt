@@ -702,9 +702,7 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
                 addInstr(result, IRInstructions.binaryImmediate(Opcode.ADD, IRDataType.POINTER, pointerReg, memOffset), null)
         }
         else {
-            val (code, indexWordReg) = codeGen.loadIndexReg(index, true)
-            result += code
-            val (offsetCode, offsetReg) = codeGen.elementOffset(indexWordReg, eltSize)
+            val (offsetCode, offsetReg) = codeGen.pointerIndexOffset(index, eltSize)
             result += offsetCode
             addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, offsetReg), null)
         }

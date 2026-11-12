@@ -48,27 +48,28 @@ class TestLoopCodegen : FunSpec({
         return asmFile.readText().lines().map { it.trimStart() }
     }
 
-    test("IRLoopChunk uses Y as counter") {
+    test("IRLoopChunk counts in a byte variable of its own, not in Y on the stack") {
         val body = IRCodeChunk(null, null).also {
             it += IRInstructions.memoryOp(Opcode.INCM, IRDataType.BYTE, IRMemory.direct("p8b_main.p8v_sum"))
         }
         val loop = IRLoopChunk("p8_label_gen_1", 5, mutableListOf(body))
         val lines = generateAsmForLoop(loop)
-        lines.any { it.startsWith("ldy  #5") } shouldBe true
-        lines.any { it.startsWith("dey") } shouldBe true
+        lines.any { it.startsWith("p8_label_gen_1_counter  .byte") } shouldBe true
+        lines.any { it.startsWith("lda  #5") } shouldBe true
+        lines.any { it.startsWith("dec  p8_label_gen_1_counter") } shouldBe true
         lines.any { it.startsWith("bne  p8_label_gen_1") } shouldBe true
+        val loopLines = lines.dropWhile { !it.startsWith("p8_label_gen_1") || it.contains("counter") }.takeWhile { !it.startsWith("bne  p8_label_gen_1") }
+        loopLines.isEmpty() shouldBe false
+        loopLines.count { it.startsWith("pha") || it.startsWith("tya") } shouldBe 0
     }
 
-    test("IRLoopChunk preserves Y around body chunk that uses Y") {
+    test("IRLoopChunk with more than 256 trips counts in a word variable") {
         val body = IRCodeChunk(null, null).also {
-            it += IRInstructions.storeMemory(Opcode.STOREI, IRDataType.BYTE, 2, IRMemory.indirect(3))
+            it += IRInstructions.memoryOp(Opcode.INCM, IRDataType.BYTE, IRMemory.direct("p8b_main.p8v_sum"))
         }
-        val loop = IRLoopChunk("p8_label_gen_1", 5, mutableListOf(body))
+        val loop = IRLoopChunk("p8_label_gen_1", 300, mutableListOf(body))
         val lines = generateAsmForLoop(loop)
-        lines.any { it.startsWith("ldy  #5") } shouldBe true
-        lines.any { it.startsWith("tya") } shouldBe true
-        lines.any { it.startsWith("pha") } shouldBe true
-        lines.any { it.startsWith("pla") } shouldBe true
-        lines.any { it.startsWith("tay") } shouldBe true
+        lines.any { it.startsWith("p8_label_gen_1_counter  .word") } shouldBe true
+        lines.any { it.startsWith("dec  p8_label_gen_1_counter+1") } shouldBe true
     }
 })

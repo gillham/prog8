@@ -234,6 +234,7 @@ When the task involves writing or understanding `.p8` (Prog8 source) or `.p8ir` 
 | `gradle :compiler:compileKotlin --console=plain` | Quick syntax check (no tests) | ~10-20s |
 | `gradle installdist installshadowdist --console=plain` | After compiler changes (to use them) | ~10-20s |
 | `gradle build --console=plain` | Before commits, after major changes | ~45-60s |
+| `gradle build -Plight --console=plain` | Quick tested build: leaves out the llvm runs on emulators, qemu, wasm and node | ~2-3 min |
 | `gradle test --tests "*Name*" --console=plain` | Run specific tests | ~5-30s |
 
 **Note:** Use system `gradle` command, not wrapper. Run `gradle clean` if you suspect stale artifacts.

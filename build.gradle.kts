@@ -97,6 +97,10 @@ subprojects {
             }
         }
 
+        // -Plight leaves out the slow llvm test runs on emulators and other platforms, for a quicker tested install
+        if(project.hasProperty("light"))
+            systemProperty("prog8.lightTests", "true")
+
         // Show test results - only show failures to reduce noise
         testLogging {
             events("failed")

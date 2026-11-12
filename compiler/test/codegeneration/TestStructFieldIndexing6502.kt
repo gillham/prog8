@@ -2,6 +2,7 @@ package prog8tests.codegeneration
 
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
+import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import prog8.code.target.Cx16Target
 import prog8tests.helpers.ErrorReporterForTests
@@ -86,5 +87,20 @@ class TestStructFieldIndexing6502 : FunSpec({
         machine.assertMemory(0x0200, 1)
         machine.assertMemory(0x0201, 44)
         errors.warnings.single() shouldContain "the value is the address of a split word array, but the ^^uword field 'wptr' reads its elements as consecutive words"
+    }
+
+    test("a constant index beyond 16-bit pointers through a struct field is an error, not a crash") {
+        val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+        compileText(Cx16Target(), false, """
+            main {
+                struct Buf {
+                    ^^ubyte data
+                }
+                sub start() {
+                    ^^Buf b = 4000
+                    cx16.r0L = b.data[70000]
+                }
+            }""", outputDir, errors = errors, writeAssembly = false) shouldBe null
+        errors.errors.single() shouldContain "index out of range for 16-bit pointers"
     }
 })

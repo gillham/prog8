@@ -57,7 +57,6 @@ internal class AsmGen(val program: IRProgram, private val target: ICompilationTa
 
     private var labelSeqCounter = 0
     private var lastSourceLine = -1
-    private var loopNestingDepth = 0
 
     fun makeLabel(prefix: String): String {
         val label = "${prefix}_$labelSeqCounter"
@@ -757,58 +756,7 @@ internal class AsmGen(val program: IRProgram, private val target: ICompilationTa
                         translateInstruction(insn, chunk.instructions.getOrNull(index + 1))
                     }
                 }
-                is IRLoopChunk -> {
-                    // nested loop inside nested sub: emit inline handling via labels and Y
-                    val label = chunk.label!!
-                    val tripVal = if(chunk.trip==256) 0 else chunk.trip
-                    emitRaw("    ldy  #$tripVal")
-                    emitRaw("    $label:")
-                    for(bodyChunk in chunk.body) {
-                        when(bodyChunk) {
-                            is IRCodeChunk -> {
-                                val cl2 = bodyChunk.label
-                                if(cl2!=null && cl2!=label) emitRaw("    $cl2:")
-                                emitRaw("    tya        ; save loop counter Y")
-                                emitRaw("    pha")
-                                for(index in bodyChunk.instructions.indices) {
-                                    val insn = bodyChunk.instructions[index]
-                                    emitRaw("        ; $insn")
-                                    translateInstruction(insn, bodyChunk.instructions.getOrNull(index + 1))
-                                }
-                                emitRaw("    pla")
-                                emitRaw("    tay        ; restore loop counter Y")
-                            }
-                            is IRLoopChunk -> {
-                                // deep nesting: recurse via same handling (simplified)
-                                emitRaw("    ; nested loop ${bodyChunk.label} trip ${bodyChunk.trip}")
-                                val innerLabel = bodyChunk.label!!
-                                val innerTrip = if(bodyChunk.trip==256) 0 else bodyChunk.trip
-                                emitRaw("    tya")
-                                emitRaw("    pha")
-                                emitRaw("    ldy  #$innerTrip")
-                                emitRaw("    $innerLabel:")
-                                for(innerBody in bodyChunk.body) if(innerBody is IRCodeChunk) {
-                                    emitRaw("    tya        ; save outer loop counter Y")
-                                    emitRaw("    pha")
-                                    for(index in innerBody.instructions.indices){
-                                        val insn = innerBody.instructions[index]
-                                        emitRaw("        ; $insn")
-                                        translateInstruction(insn, innerBody.instructions.getOrNull(index + 1))
-                                    }
-                                    emitRaw("    pla")
-                                    emitRaw("    tay        ; restore outer loop counter Y")
-                                }
-                                emitRaw("    dey")
-                                emitRaw("    bne  $innerLabel")
-                                emitRaw("    pla")
-                                emitRaw("    tay")
-                            }
-                            else -> {}
-                        }
-                    }
-                    emitRaw("    dey")
-                    emitRaw("    bne  $label")
-                }
+                is IRLoopChunk -> translateLoopChunk(chunk)
                 is IRInlineAsmChunk -> {
                     val cl = chunk.label
                     if (cl != null && cl != sub.label) emitRaw("    $cl:")
@@ -849,26 +797,30 @@ internal class AsmGen(val program: IRProgram, private val target: ICompilationTa
         emitRaw("")
     }
 
+    /**
+     * A counted loop keeps its counter in a variable of its own, not in Y on the stack,
+     * so that a return, break or goto out of the body leaves nothing behind.
+     */
     private fun translateLoopChunk(loop: IRLoopChunk) {
         val label = loop.label!!
-        val needsSave = loopNestingDepth > 0
-        if(needsSave) {
-            emitLine("tya")
-            emitLine("pha")
+        val counter = "${label}_counter"
+        require(loop.trip in 2..65536) { "loop trip count out of range: ${loop.trip}" }
+        val wordCounter = loop.trip > 256
+        emitRaw("    .section BSS")
+        emitRaw("$counter  .${if(wordCounter) "word" else "byte"}  ?")
+        emitRaw("    .send BSS")
+        if(wordCounter) {
+            // the low byte counts down first, so the high byte is one more unless the low byte starts at 0
+            val count = if(loop.trip==65536) 0 else if(loop.trip and 255 == 0) loop.trip else loop.trip + 256
+            emitLine("lda  #<$count")
+            emitLine("sta  $counter")
+            emitLine("lda  #>$count")
+            emitLine("sta  $counter+1")
+        } else {
+            emitLine("lda  #${loop.trip and 255}")
+            emitLine("sta  $counter")
         }
-        val tripVal = if(loop.trip==256) 0 else loop.trip
-        // trip >256 should not occur on 6502 due to AstChecker; but handle truncated
-        if(loop.trip>256) {
-            // fallback: use WORD counter via p8_regfile? For now emit warning and truncate
-            emitRaw("; WARNING: loop trip ${loop.trip} >256 truncated to byte for 6502")
-        }
-        emitLine("ldy  #$tripVal")
         emitLabel(label)
-        loopNestingDepth++
-        // Save/restore Y once around the whole body: a conditional branch between body chunks
-        // would otherwise skip a per-chunk restore and leave the loop counter and stack corrupted.
-        emitLine("tya", "save loop counter Y")
-        emitLine("pha")
         for(chunk in loop.body) {
             when(chunk) {
                 is IRCodeChunk -> {
@@ -889,14 +841,11 @@ internal class AsmGen(val program: IRProgram, private val target: ICompilationTa
                 }
             }
         }
-        emitLine("pla")
-        emitLine("tay", "restore loop counter Y")
-        loopNestingDepth--
-        emitLine("dey")
+        emitLine("dec  $counter")
         emitLine("bne  $label")
-        if(needsSave) {
-            emitLine("pla")
-            emitLine("tay")
+        if(wordCounter) {
+            emitLine("dec  $counter+1")
+            emitLine("bne  $label")
         }
     }
 

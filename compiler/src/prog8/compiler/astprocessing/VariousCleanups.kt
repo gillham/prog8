@@ -660,13 +660,21 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
                 if(dt.sub!=null) {
                     // other pointee types (such as ^^str) are left alone for later validation
                     val (peek, valueCast) = peekFunc(dt.sub!!) ?: return noModifications
+                    val indexType = options.compTarget.pointerType
                     val indexer = if(constIndex==null) {
-                        if(parent.indexer.indexExpr.inferType(program).isUnsignedWord)
+                        val actualType = parent.indexer.indexExpr.inferType(program).getOrUndef()
+                        // a signed index can't be cast to uquad; the addition sign extends a long instead
+                        val castType = if(indexType.isUnsignedQuad && actualType.isSigned) DataType.LONG else indexType
+                        if(actualType == castType)
                             parent.indexer.indexExpr
                         else
-                            TypecastExpression(parent.indexer.indexExpr, DataType.UWORD, true, deref.position)
+                            TypecastExpression(parent.indexer.indexExpr, castType, true, deref.position)
                     } else {
-                        NumericLiteral(BaseDataType.UWORD, constIndex.toDouble(), deref.position)
+                        if(indexType.isUnsignedWord && constIndex !in 0..65535) {
+                            errors.err("index out of range for 16-bit pointers", parent.indexer.position)
+                            return noModifications
+                        }
+                        NumericLiteral(indexType.base, constIndex.toDouble(), deref.position)
                     }
                     val plusOffset = BinaryExpression(replaceDerefWithIdentifier(deref), "+", indexer, deref.position)
                     val peekF = FunctionCallExpression(IdentifierReference(listOf(peek), deref.position), mutableListOf(plusOffset), deref.position)

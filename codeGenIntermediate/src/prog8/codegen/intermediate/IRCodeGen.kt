@@ -743,7 +743,8 @@ class IRCodeGen(
                 val iterableLength = symbolTable.getLength(iterable.name)
                 val loopvarSymbol = forLoop.variable.name
                 val loopvarDt = irType((loopvar.astNode as IPtVariable).type)
-                val needsWidening = loopvarDt > elementDt && elementDt != IRDataType.FLOAT
+                fun width(dt: IRDataType) = if(dt == IRDataType.POINTER) addressDt else dt
+                val needsWidening = width(loopvarDt) > width(elementDt) && elementDt != IRDataType.FLOAT
                 val indexRegType = if(wordArrayIndex) IRDataType.WORD else IRDataType.BYTE
                 val indexReg = registers.next(indexRegType)
                 val tmpReg = registers.next(elementDt)
@@ -754,14 +755,15 @@ class IRCodeGen(
                 // for BYTE->LONG we use EXTL (single step)
                 fun emitWidening(chunk: IRCodeChunk, srcReg: Int, srcDt: IRDataType): Pair<Int, IRDataType> {
                     if(!needsWidening) return Pair(srcReg, srcDt)
-                    if(loopvarDt == IRDataType.LONG && srcDt == IRDataType.BYTE) {
+                    if(width(loopvarDt) == IRDataType.LONG && srcDt == IRDataType.BYTE) {
                         val longReg = registers.next(IRDataType.LONG)
                         chunk += IRInstructions.binary(Opcode.EXTL, srcDt, longReg, srcReg)
                         return Pair(longReg, IRDataType.LONG)
                     }
-                    val wordReg = registers.next(IRDataType.WORD)
-                    chunk += IRInstructions.binary(Opcode.EXT, srcDt, wordReg, srcReg)
-                    return Pair(wordReg, loopvarDt)
+                    val extDt = if(srcDt == IRDataType.BYTE) IRDataType.WORD else IRDataType.LONG
+                    val extReg = registers.next(extDt)
+                    chunk += IRInstructions.binary(Opcode.EXT, srcDt, extReg, srcReg)
+                    return Pair(extReg, extDt)
                 }
 
                 when {
@@ -1285,6 +1287,33 @@ class IRCodeGen(
         return code to offsetReg
     }
 
+    /** The byte offset of element [index] behind a pointer: when pointers are wider than 16 bits, a long index keeps all its bits and a signed one its sign. */
+    internal fun pointerIndexOffset(index: PtExpression, eltSize: Int): Pair<IRCodeChunks, Int> {
+        if(options.compTarget.POINTER_MEM_SIZE <= 2u || !(index.type.isLong || index.type.isQuad || index.type.isSigned)) {
+            val (code, indexWordReg) = loadIndexReg(index, true)
+            val (offsetCode, offsetReg) = elementOffset(indexWordReg, eltSize)
+            return code + offsetCode to offsetReg
+        }
+        val result = mutableListOf<IRCodeChunkBase>()
+        val tr = expressionEval.translateExpression(index)
+        addToResult(result, tr, tr.resultReg, -1)
+        val offsetDt = options.compTarget.pointerType
+        val signed = index.type.isSigned
+        var offsetReg = tr.resultReg
+        if(tr.dt == IRDataType.BYTE || tr.dt == IRDataType.WORD) {
+            offsetReg = registers.next(IRDataType.LONG)
+            val opcode = if(tr.dt == IRDataType.BYTE) { if(signed) Opcode.EXTLS else Opcode.EXTL } else { if(signed) Opcode.EXTS else Opcode.EXT }
+            addInstr(result, IRInstructions.binary(opcode, tr.dt, offsetReg, tr.resultReg), null)
+        }
+        if(offsetDt.isQuad && irType(index.type) != IRDataType.QUAD) {
+            val longReg = offsetReg
+            offsetReg = registers.next(IRDataType.QUAD)
+            addInstr(result, IRInstructions.binary(if(signed) Opcode.EXTQS else Opcode.EXTQ, IRDataType.LONG, offsetReg, longReg), null)
+        }
+        result += multiplyByConst(offsetDt, offsetReg, eltSize)
+        return result to offsetReg
+    }
+
     internal fun multiplyByConst(dt: DataType, reg: Int, factor: Long): IRCodeChunk {
         val irdt = irType(dt)
         val code = IRCodeChunk(null, null)
@@ -1787,12 +1816,13 @@ class IRCodeGen(
                 0 -> return emptyList()
                 1 -> return translateNode(repeat.statements)
             }
-            require(constRepeats in 1..65536) { "repeat count out of range 1..65536: $constRepeats" }
-            val repeatLabel = createLabelName()
-            val bodyChunks = translateNode(repeat.statements).toMutableList()
-            // Preserve counted trip as IR loop; backend will emit optimal dbra/dey loop
-            val loop = IRLoopChunk(repeatLabel, constRepeats, bodyChunks, null)
-            return listOf(loop)
+            if(constRepeats in 2..65536) {
+                val repeatLabel = createLabelName()
+                val bodyChunks = translateNode(repeat.statements).toMutableList()
+                // Preserve counted trip as IR loop; backend will emit optimal dbra/dey loop
+                val loop = IRLoopChunk(repeatLabel, constRepeats, bodyChunks, null)
+                return listOf(loop)
+            }
         }
 
         val repeatLabel = createLabelName()
@@ -1916,29 +1946,20 @@ class IRCodeGen(
             }
 
             val values = ret.children.zip(returnRegs)
-            // first all but the first return values
-            for ((value, register) in values.drop(1)) {
+            // evaluate all values before any hardware store, as a call in one could clobber them; in the order the
+            // stack-saved values around a defer are popped: all but the first, then the first
+            val evaluated = (values.drop(1) + values.first()).map { (value, register) ->
                 val tr = expressionEval.translateExpression(value as PtExpression)
-                if(register.second.isFloat) {
-                    addToResult(result, tr, -1, tr.resultFpReg)
-                    result += setCpuRegister(register.first, IRDataType.FLOAT, -1, tr.resultFpReg)
-                }
-                else {
-                    addToResult(result, tr, tr.resultReg, -1)
-                    result += setCpuRegister(register.first, irType(register.second), tr.resultReg, -1)
-                }
+                if(register.second.isFloat) addToResult(result, tr, -1, tr.resultFpReg)
+                else addToResult(result, tr, tr.resultReg, -1)
+                Triple(register, tr.resultReg, tr.resultFpReg)
             }
-            // finally do the first of the return values (this avoids clobbering of its value in AY)
-            values.first().also { (value, register) ->
-                val tr = expressionEval.translateExpression(value as PtExpression)
-                if(register.second.isFloat) {
-                    addToResult(result, tr, -1, tr.resultFpReg)
-                    result += setCpuRegister(register.first, IRDataType.FLOAT, -1, tr.resultFpReg)
-                }
-                else {
-                    addToResult(result, tr, tr.resultReg, -1)
-                    result += setCpuRegister(register.first, irType(register.second), tr.resultReg, -1)
-                }
+            // the first of the return values is stored last (this avoids clobbering of its value in AY)
+            for ((register, reg, fpReg) in evaluated) {
+                if(register.second.isFloat)
+                    result += setCpuRegister(register.first, IRDataType.FLOAT, -1, fpReg)
+                else
+                    result += setCpuRegister(register.first, irType(register.second), reg, -1)
             }
             addInstr(result, IRInstructions.returnVoid(), null)
             return result
@@ -2191,7 +2212,7 @@ class IRCodeGen(
         else null to null
         val m68kSlot = slot?.takeIf { it.value >= 10 }
         if (m68kSlot != null) {
-            chunk += IRInstructions.hardwareStore(paramDt, resultReg, m68kSlot)
+            chunk += IRInstructions.hardwareStore(paramDt, if(paramDt==IRDataType.FLOAT) resultFpReg else resultReg, m68kSlot)
         } else when(registerOrFlag.registerOrPair) {
             RegisterOrPair.A -> chunk += IRInstructions.hardwareStore(IRDataType.BYTE, resultReg, CallingConventionSlot(0))
             RegisterOrPair.X -> chunk += IRInstructions.hardwareStore(IRDataType.BYTE, resultReg, CallingConventionSlot(1))

@@ -946,16 +946,18 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
 
         val arr = (arg as? PtArrayIndexer)
         val index = arr?.index?.asConstInteger()
-        if(arr!=null && index!=null && arr.variable!=null) {
+        // a rotation without carry can't be split over the two halves of a split word array
+        val rotatesSplitHalves = arr?.splitWords==true && opcodeMemAndReg.first in arrayOf(Opcode.ROLM, Opcode.RORM)
+        if(arr!=null && index!=null && arr.variable!=null && !rotatesSplitHalves) {
             val variable = arr.variable!!.name
             if(arr.splitWords) {
                 result += IRCodeChunk(null, null).also {
                     when(opcodeMemAndReg.first) {
-                        Opcode.ROXRM, Opcode.RORM -> {
+                        Opcode.ROXRM -> {
                             it += IRInstructions.memoryOp(opcodeMemAndReg.first, IRDataType.BYTE, IRMemory.direct("${variable}_msb", index))
                             it += IRInstructions.memoryOp(opcodeMemAndReg.first, IRDataType.BYTE, IRMemory.direct("${variable}_lsb", index))
                         }
-                        Opcode.ROXLM, Opcode.ROLM -> {
+                        Opcode.ROXLM -> {
                             it += IRInstructions.memoryOp(opcodeMemAndReg.first, IRDataType.BYTE, IRMemory.direct("${variable}_lsb", index))
                             it += IRInstructions.memoryOp(opcodeMemAndReg.first, IRDataType.BYTE, IRMemory.direct("${variable}_msb", index))
                         }

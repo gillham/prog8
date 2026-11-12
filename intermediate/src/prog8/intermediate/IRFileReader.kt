@@ -506,7 +506,8 @@ class IRFileReader {
         // now skip <REGS> as it is informational
         val regsStart = reader.nextEvent().asStartElement()
         require(regsStart.name.localPart=="REGS") { "missing REGS" }
-        require(reader.nextEvent().isCharacters)
+        // the parser may hand a long text over in several pieces
+        skipText(reader)
         require(reader.nextEvent().isEndElement)
 
         val positions = mutableListOf<Position>()

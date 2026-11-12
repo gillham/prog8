@@ -964,7 +964,12 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
 
         val fixedIndex = targetArray.index.asConstInteger()
         if(fixedIndex!=null) {
-            val offset = fixedIndex*eltSize
+            var offset = fixedIndex*eltSize
+            if(offset !in 0..65535) {
+                // beyond the displacement range of an indirect store: add it to the pointer instead
+                addInstr(result, IRInstructions.binaryImmediate(Opcode.ADD, IRDataType.POINTER, pointerReg, offset), null)
+                offset = 0
+            }
             if(zero) {
                 addInstr(result, IRInstructions.storeZero(Opcode.STOREZI, targetDt, IRMemory.indirect(pointerReg, offset)), null)
             } else {
@@ -978,9 +983,7 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
             }
         } else {
             // index is an expression
-            val (code, indexReg) = codeGen.loadIndexReg(targetArray.index, true)
-            result += code
-            val (offsetCode, offsetReg) = codeGen.elementOffset(indexReg, eltSize)
+            val (offsetCode, offsetReg) = codeGen.pointerIndexOffset(targetArray.index, eltSize)
             result += offsetCode
             addInstr(result, IRInstructions.binary(Opcode.ADDR, IRDataType.POINTER, pointerReg, offsetReg), null)
             if(zero) {

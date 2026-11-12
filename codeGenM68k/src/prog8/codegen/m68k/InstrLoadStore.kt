@@ -385,7 +385,7 @@ private fun AsmGen.translateFloatLoadStore(insn: IRInstruction, suppressRegfileS
             // the vreg already lives in its slot register: no move needed.
             if (floatOperand(src) == hwReg)
                 return
-            emitLine("fmove.s  ${floatOperand(src)}, $FP_ACC")
+            emitFmoveFloat(floatOperand(src), FP_ACC)
             emitLine("fmove  $FP_ACC, $hwReg")
         }
 

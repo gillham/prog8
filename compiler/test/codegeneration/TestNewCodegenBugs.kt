@@ -292,4 +292,124 @@ class TestNewCodegenBugs : FunSpec({
         (flagIdx < plaIdx) shouldBe true
         (plaIdx < staIdx) shouldBe true
     }
+
+    test("rol2 and ror2 bring the wrapped bit back in, also on an element of a split word array") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            main {
+                uword[2] words
+                sub start() {
+                    ubyte @shared b = 130
+                    rol2(b)
+                    @($0340) = b
+                    b = 65
+                    ror2(b)
+                    @($0341) = b
+                    uword @shared w = $8280
+                    rol2(w)
+                    @($0342) = lsb(w)
+                    @($0343) = msb(w)
+                    w = $8301
+                    ror2(w)
+                    @($0344) = lsb(w)
+                    @($0345) = msb(w)
+                    words[1] = $8080
+                    rol2(words[1])
+                    @($0346) = lsb(words[1])
+                    @($0347) = msb(words[1])
+                    words[0] = $0101
+                    ror2(words[0])
+                    @($0348) = lsb(words[0])
+                    @($0349) = msb(words[0])
+                }
+            }
+        """.trimIndent()
+        val expected = listOf(5, 160, 1, 5, 0x80, 0xc1, 1, 1, 0x80, 0x80)
+        for (newCodegen in listOf(true, false)) {
+            val machine = compileText(C64Target(), false, src, outputDir, newCodegen = newCodegen, writeAssembly = true)!!.simulate()
+            expected.forEachIndexed { i, value -> machine.assertMemory(0x340 + i, value) }
+        }
+    }
+
+    test("a for loop over an array of strings with a byte pointer loop variable") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            main {
+                str[] lines = ["one", "two", "three"]
+                sub start() {
+                    ^^ubyte strptr
+                    ubyte count = 0
+                    ubyte starting_with_t = 0
+                    for strptr in lines {
+                        count++
+                        if strptr[0] == 't'
+                            starting_with_t++
+                    }
+                    @($0340) = count
+                    @($0341) = starting_with_t
+                }
+            }
+        """.trimIndent()
+        val machine = compileText(C64Target(), false, src, outputDir, newCodegen = true, writeAssembly = true)!!.simulate()
+        machine.assertMemory(0x340, 3)
+        machine.assertMemory(0x341, 2)
+    }
+
+    test("a return or break out of a repeat loop, nested repeat loops and a repeat of more than 256") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            main {
+                ubyte counter
+                sub next() -> ubyte {
+                    counter++
+                    return counter
+                }
+                sub search() -> bool {
+                    repeat 10 {
+                        if next() == 4
+                            return true
+                    }
+                    return false
+                }
+                sub start() {
+                    @($0340) = search() as ubyte
+                    @($0341) = counter
+                    ubyte broken = 0
+                    repeat 20 {
+                        broken++
+                        if next() == 9
+                            break
+                    }
+                    @($0342) = broken
+                    uword total = 0
+                    repeat 3 {
+                        repeat 7 {
+                            total++
+                            void next()
+                        }
+                    }
+                    @($0343) = lsb(total)
+                    total = 0
+                    repeat 300
+                        total++
+                    @($0344) = lsb(total)
+                    @($0345) = msb(total)
+                    sub nested() {
+                        repeat 5
+                            total++
+                    }
+                    nested()
+                    @($0346) = lsb(total)
+                }
+            }
+        """.trimIndent()
+        val expected = listOf(1, 4, 5, 21, 44, 1, 49)
+        for (optimize in listOf(false, true)) {
+            val machine = compileText(C64Target(), optimize, src, outputDir, newCodegen = true, writeAssembly = true)!!.simulate()
+            expected.forEachIndexed { i, value -> machine.assertMemory(0x340 + i, value) }
+        }
+    }
 })

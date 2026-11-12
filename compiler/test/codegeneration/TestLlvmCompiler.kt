@@ -713,7 +713,7 @@ main {
         val dir = outputDir.resolve("unset-tool-path").createDirectories()
         val profileFile = dir.resolve("unsettools.properties").also {
             it.writeText("triple = z80-unknown-none-z88dk\n" +
-                "datalayout = e-m:o-p:16:8-i16:8-i32:8-i64:8-i128:8-f16:8-f32:8-f64:8-f128:8-ve-a:8-n8:16\n" +
+                "datalayout = e-m:o-p:16:8-i16:8-i32:8-i64:8-i128:8-f16:8-f32:8-f64:8-f128:8-a:8-n8:16\n" +
                 "c_int_size = 2\nc_long_size = 4\n" +
                 $$"tool_path = ${PROG8_TEST_NEVER_SET}/bin\n" + $$"tool_env = ZZTEST=${PROG8_TEST_NEVER_SET}\n")
         }
@@ -1382,6 +1382,17 @@ main {
         // the llvm tests compile the same sources, to a file of the same name, which also writes a .p8ir
         val vmDir = outputDir.resolve("vm-quad").createDirectories()
         for (name in quadProgramsForTheVm) {
+            for (optimize in listOf(false, true)) {
+                val result = compileText(VMTarget(), optimize, programs.getValue(name), vmDir).shouldNotBeNull()
+                val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+                withClue("$name optimize=$optimize: exit status = the number of the failed check") { exitStatusOnVirtualMachine(irFile) shouldBe 0 }
+            }
+        }
+    }
+
+    test("the multi-value return, repeat and struct field index programs also pass on the virtual machine") {
+        val vmDir = outputDir.resolve("vm-ircodegen").createDirectories()
+        for (name in listOf("multi-value returns with a call in the first value or a float value, and repeat counts above 65536", "struct pointer field indexes beyond 64 KiB and negative ones")) {
             for (optimize in listOf(false, true)) {
                 val result = compileText(VMTarget(), optimize, programs.getValue(name), vmDir).shouldNotBeNull()
                 val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
@@ -2155,7 +2166,7 @@ private fun buildAndRun(llFile: Path, input: String = "", args: List<String> = e
     return execute(executable.toString(), *args.toTypedArray(), stdin = stdin, directory = directory)
 }
 
-private val requiresWasm: (TestCase) -> Enabled = {
+private val requiresWasm: (TestCase) -> Enabled = skippedInLightRuns {
     val sysroot = System.getenv("WASI_SYSROOT") ?: "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot"
     fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
@@ -2192,7 +2203,7 @@ private val armProfile = LlvmTripleProfile.resolve("armv7a-none-eabihf")
 
 private fun armTarget() = LlvmTarget(4, armProfile)
 
-private val requiresArm: (TestCase) -> Enabled = {
+private val requiresArm: (TestCase) -> Enabled = skippedInLightRuns {
     val linker = try { armProfile.linkCommand?.first()?.let { Path(LlvmToolLocator.executableName(it)) } } catch (_: IllegalArgumentException) { null } catch (_: InvalidPathException) { null }
     fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
@@ -2227,7 +2238,7 @@ private val riscvGcc: Path? = System.getenv("RISCV_NONE_ELF_GCC")?.let { try { P
     ?: Path(System.getProperty("user.home"), "Library/xPacks/@xpack-dev-tools/riscv-none-elf-gcc").toFile().listFiles().orEmpty()
         .sortedDescending().map { it.toPath().resolve(".content/bin/riscv-none-elf-gcc") }.firstOrNull { Files.isExecutable(it) }
 
-private val requiresRiscv: (TestCase) -> Enabled = {
+private val requiresRiscv: (TestCase) -> Enabled = skippedInLightRuns {
     fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
         defaultClang == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
@@ -2238,7 +2249,7 @@ private val requiresRiscv: (TestCase) -> Enabled = {
 }
 
 // launchEmulator links with the profile's own link command, which finds riscv-none-elf-gcc only through RISCV_NONE_ELF_GCC or the PATH
-private val requiresRiscvOnThePath: (TestCase) -> Enabled = {
+private val requiresRiscvOnThePath: (TestCase) -> Enabled = skippedInLightRuns {
     val linker = riscvProfile.linkCommand?.first()
     val found = linker != null && LlvmToolLocator.find(linker) != null || System.getenv("RISCV_NONE_ELF_GCC") != null
     if (!found) Enabled.disabled("riscv-none-elf-gcc is not in RISCV_NONE_ELF_GCC or on the PATH") else requiresRiscv(it)
@@ -2279,7 +2290,15 @@ private fun noProfileToolsReason(profile: LlvmTripleProfile, variables: Map<Stri
     return null
 }
 
-private fun enabledUnless(reason: String?): Enabled = reason?.let { Enabled.disabled(it) } ?: Enabled.enabled
+// gradle -Plight leaves out the slow runs: on emulators, qemu, wasm, node and the llvm16 tool chains
+private val lightTestRun = System.getProperty("prog8.lightTests") == "true"
+private const val LIGHT_TEST_RUN = "a light test run (gradle -Plight) leaves out the runs on other platforms and emulators"
+
+private fun skippedInLightRuns(check: (TestCase) -> Enabled): (TestCase) -> Enabled =
+    { if (lightTestRun) Enabled.disabled(LIGHT_TEST_RUN) else check(it) }
+
+private fun enabledUnless(reason: String?): Enabled =
+    if (lightTestRun) Enabled.disabled(LIGHT_TEST_RUN) else reason?.let { Enabled.disabled(it) } ?: Enabled.enabled
 
 private val requiresMosSim: (TestCase) -> Enabled = {
     enabledUnless(noProfileToolsReason(mosSimProfile, mapOf("LLVM_MOS" to "the llvm-mos SDK directory"), true))
@@ -2379,7 +2398,7 @@ private val emcc: Path? = System.getenv("EMCC")?.let { try { Path(it) } catch (_
     ?: System.getenv("PATH").orEmpty().split(File.pathSeparator)
         .mapNotNull { try { Path(it).resolve("emcc") } catch (_: InvalidPathException) { null } }.firstOrNull { Files.isExecutable(it) }
 
-private val requiresEmscripten: (TestCase) -> Enabled = {
+private val requiresEmscripten: (TestCase) -> Enabled = skippedInLightRuns {
     fun onPath(tool: String) = LlvmToolLocator.find(tool) != null
     when {
         defaultClang == null -> Enabled.disabled("clang not found on the PATH or in /opt/homebrew/opt/llvm/bin")
@@ -2390,7 +2409,7 @@ private val requiresEmscripten: (TestCase) -> Enabled = {
 }
 
 // launchEmulator runs the profile's own link command, which finds emcc only through EMCC or the PATH
-private val requiresEmscriptenOnThePath: (TestCase) -> Enabled = {
+private val requiresEmscriptenOnThePath: (TestCase) -> Enabled = skippedInLightRuns {
     val found = System.getenv("EMCC") != null || System.getenv("PATH").orEmpty().split(File.pathSeparator)
         .any { try { Files.isExecutable(Path(it).resolve("emcc")) } catch (_: InvalidPathException) { false } }
     if (!found) Enabled.disabled("emcc is not in EMCC or on the PATH") else requiresEmscripten(it)
@@ -2532,10 +2551,12 @@ private val programsWithWideAddresses =
         "untyped pointers",
         "pointer element updates and offsets beyond 64 KiB",
         "memcopy, memset and memsetw of more than 65535 bytes, and overlapping copies in both directions",
-        "lsb, msb, lsw and msw of quads and addresses, and signed offsets to addresses"
+        "lsb, msb, lsw and msw of quads and addresses, and signed offsets to addresses",
+        "struct pointer field indexes beyond 64 KiB and negative ones"
     )
 
 private val programsWithFloats = listOf(
+    "multi-value returns with a call in the first value or a float value, and repeat counts above 65536",
     "subroutines with parameters and return values",
     "arrays",
     "64-bit quad and uquad integers",
@@ -2798,6 +2819,109 @@ private val quadProgramsForTheVm = listOf(
 
 /** Complete programs that exit with 0, or with the number of the first check that fails. @shared inputs can't be constant folded. */
 private val programs = mapOf(
+    "multi-value returns with a call in the first value or a float value, and repeat counts above 65536" to $$"""
+%import floats
+main {
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub pair() -> uword, ubyte {
+        return 100, 99
+    }
+
+    sub first() -> uword {
+        uword r
+        ubyte t
+        r, t = pair()
+        return r + 1
+    }
+
+    sub outer() -> uword, ubyte {
+        return first(), 7
+    }
+
+    sub binary(ubyte depth) -> uword, ubyte {
+        if depth == 0
+            return 1, 2
+        return inner(depth), 7
+    }
+
+    sub inner(ubyte depth) -> uword {
+        uword r
+        ubyte t
+        r, t = binary(depth - 1)
+        return r + 10
+    }
+
+    sub withfloat(ubyte x) -> bool, float {
+        if x == 0
+            return false, 0.0
+        return true, 1.5
+    }
+
+    sub check() -> ubyte {
+        uword a
+        ubyte b
+        a, b = outer()
+        if a != 101 or b != 7
+            return 1
+        a, b = binary(3)
+        if a != 31 or b != 7
+            return 2
+        bool ok
+        float f
+        ok, f = withfloat(1)
+        if not ok or f != 1.5
+            return 3
+        ok, f = withfloat(0)
+        if ok or f != 0.0
+            return 4
+        long count = 0
+        repeat 70000
+            count++
+        if count != 70000
+            return 5
+        return 0
+    }
+}""",
+    "struct pointer field indexes beyond 64 KiB and negative ones" to $$"""
+main {
+    struct Buf {
+        ^^uword data
+        long len
+    }
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ^^Buf b = memory("buf", sizeof(Buf), 0)
+        b.data = memory("data", 200000, 0)
+        ^^uword d = b.data
+        long @shared i = 70000
+        word @shared w = -1
+        d[70000 - 32768] = 0
+        b.data[i] = 4242
+        b.data[70001] = 4343
+        if d[70000] != 4242 or b.data[i] != 4242
+            return 1
+        if d[70001] != 4343 or b.data[70001] != 4343
+            return 2
+        if d[70000 - 32768] != 0
+            return 3
+        d[1] = 0
+        b.data += 2
+        b.data[w] = 77
+        if d[1] != 77
+            return 4
+        d[1] = 55
+        if b.data[w] != 55
+            return 5
+        return 0
+    }
+}""",
     "sys.ticks moves on during sys.wait, or is 0 without a clock" to """
 main {
     sub start() {

@@ -9,8 +9,8 @@
  * Variable-count shifts use a loop with X as the counter.
  * Arithmetic shifts use CMP #128 + ROR to preserve the sign bit.
  *
- * Note: ROL/ROR without carry prefix (clc) are rotate-through-carry,
- * while ROXL/ROXR explicitly use carry for multi-byte rotates.
+ * Note: ROL/ROR rotate without the carry: the bit that leaves one end comes back in at the other (and in the carry),
+ * while ROXL/ROXR rotate through the carry.
  */
 
 package prog8.codegen.new6502
@@ -697,16 +697,19 @@ private fun AsmGen.shiftMemoryLeftVar(target: String, countReg: Int, type: IRDat
 private fun AsmGen.rotateLeft(reg: Int, type: IRDataType) {
     when (type) {
         IRDataType.BYTE -> {
-            emitLine("clc")
+            emitLine("lda  ${regAddrLo(reg)}")
+            emitLine("asl  a")
             emitLine("rol  ${regAddrLo(reg)}")
         }
         IRDataType.WORD -> {
-            emitLine("clc")
+            emitLine("lda  ${regAddrHi(reg)}")
+            emitLine("asl  a")
             emitLine("rol  ${regAddrLo(reg)}")
             emitLine("rol  ${regAddrHi(reg)}")
         }
         IRDataType.LONG -> {
-            emitLine("clc")
+            emitLine("lda  ${regAddrByte(reg, 3)}")
+            emitLine("asl  a")
             emitLine("rol  ${regAddrLo(reg)}")
             emitLine("rol  ${regAddrHi(reg)}")
             emitLine("rol  ${regAddrByte(reg, 2)}")
@@ -719,16 +722,19 @@ private fun AsmGen.rotateLeft(reg: Int, type: IRDataType) {
 private fun AsmGen.rotateLeftMemory(target: String, type: IRDataType) {
     when (type) {
         IRDataType.BYTE -> {
-            emitLine("clc")
+            emitLine("lda  $target")
+            emitLine("asl  a")
             emitLine("rol  $target")
         }
         IRDataType.WORD -> {
-            emitLine("clc")
+            emitLine("lda  $target+1")
+            emitLine("asl  a")
             emitLine("rol  $target")
             emitLine("rol  $target+1")
         }
         IRDataType.LONG -> {
-            emitLine("clc")
+            emitLine("lda  $target+3")
+            emitLine("asl  a")
             emitLine("rol  $target")
             emitLine("rol  $target+1")
             emitLine("rol  $target+2")
@@ -741,16 +747,19 @@ private fun AsmGen.rotateLeftMemory(target: String, type: IRDataType) {
 private fun AsmGen.rotateRight(reg: Int, type: IRDataType) {
     when (type) {
         IRDataType.BYTE -> {
-            emitLine("clc")
+            emitLine("lda  ${regAddrLo(reg)}")
+            emitLine("lsr  a")
             emitLine("ror  ${regAddrLo(reg)}")
         }
         IRDataType.WORD -> {
-            emitLine("clc")
+            emitLine("lda  ${regAddrLo(reg)}")
+            emitLine("lsr  a")
             emitLine("ror  ${regAddrHi(reg)}")
             emitLine("ror  ${regAddrLo(reg)}")
         }
         IRDataType.LONG -> {
-            emitLine("clc")
+            emitLine("lda  ${regAddrLo(reg)}")
+            emitLine("lsr  a")
             emitLine("ror  ${regAddrByte(reg, 3)}")
             emitLine("ror  ${regAddrByte(reg, 2)}")
             emitLine("ror  ${regAddrHi(reg)}")
@@ -763,16 +772,19 @@ private fun AsmGen.rotateRight(reg: Int, type: IRDataType) {
 private fun AsmGen.rotateRightMemory(target: String, type: IRDataType) {
     when (type) {
         IRDataType.BYTE -> {
-            emitLine("clc")
+            emitLine("lda  $target")
+            emitLine("lsr  a")
             emitLine("ror  $target")
         }
         IRDataType.WORD -> {
-            emitLine("clc")
+            emitLine("lda  $target")
+            emitLine("lsr  a")
             emitLine("ror  $target+1")
             emitLine("ror  $target")
         }
         IRDataType.LONG -> {
-            emitLine("clc")
+            emitLine("lda  $target")
+            emitLine("lsr  a")
             emitLine("ror  $target+3")
             emitLine("ror  $target+2")
             emitLine("ror  $target+1")
