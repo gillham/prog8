@@ -1732,4 +1732,36 @@ main {
         valueOf("d").operator shouldBe "+"
         valueOf("e").operator shouldBe "*"
     }
+
+    test("an inlined subroutine gives a value of its return type: a constant result that doesn't fit leaves the call") {
+        val src = $$"""
+            main {
+                ubyte @shared ra
+                uword @shared rb
+                uword @shared rc
+                sub one(ubyte a) -> ubyte {
+                    return a + 1
+                }
+                sub start() {
+                    ubyte x = 255
+                    rb = one(255)
+                    rc = one(x)
+                    ra = one(3)
+                }
+            }"""
+        for(optimize in listOf(false, true)) {
+            val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+            val irSrc = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir").readText()
+            val irProgram = prog8.intermediate.IRFileReader().read(irSrc)
+            irProgram.st.stripAllPrefixes()
+            val allocations = prog8.vm.VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+            prog8.vm.VmRunner().runAndTestProgram(irSrc) { vm ->
+                withClue("optimize=$optimize") {
+                    vm.memory.getUW(allocations["main.rb"]!!) shouldBe 0u
+                    vm.memory.getUW(allocations["main.rc"]!!) shouldBe 0u
+                    vm.memory.getUB(allocations["main.ra"]!!) shouldBe 4u
+                }
+            }
+        }
+    }
 })

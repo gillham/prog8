@@ -410,6 +410,11 @@ class Inliner(private val program: Program, private val options: CompilationOpti
             return if (toInline.values.size == 1 && functionCallExpr !== toInline.values[0]) {
                 val substitutedReturn = substituteParameters(sub, functionCallExpr, toInline.values[0]) as? Expression
                     ?: return noModifications
+                // constants fold exactly, but the call gives a value of its return type: ubyte 255+1 is 0, not 256
+                val returnType = sub.returntypes.singleOrNull()
+                val constResult = foldedConstant(substitutedReturn)
+                if(returnType!=null && returnType.isInteger && constResult!=null && !fitsIn(constResult.number, returnType))
+                    return noModifications
                 sub.hasBeenInlined = true
                 listOf(AstReplaceNode(functionCallExpr, substitutedReturn, parent))
             } else
@@ -506,6 +511,34 @@ class Inliner(private val program: Program, private val options: CompilationOpti
         return noModifications
     }
 
+
+    private val constEvaluator = ConstExprEvaluator()
+
+    /** The value of an expression of constants, as the constant folding computes it, or null. */
+    private fun foldedConstant(expr: Expression): NumericLiteral? = try {
+        when(expr) {
+            is NumericLiteral -> expr
+            is IdentifierReference -> expr.constValue(program)
+            is PrefixExpression -> foldedConstant(expr.expression)?.let { if(expr.operator=="-") NumericLiteral.optimalNumeric(-it.number, expr.position) else null }
+            is BinaryExpression -> {
+                val left = foldedConstant(expr.left)
+                val right = foldedConstant(expr.right)
+                if(left!=null && right!=null) constEvaluator.evaluate(left, expr.operator, right) else null
+            }
+            else -> null
+        }
+    } catch(_: Exception) {
+        null
+    }
+
+    private fun fitsIn(value: Double, type: DataType): Boolean = when {
+        type.isUnsignedByte -> value in 0.0..255.0
+        type.isSignedByte -> value in -128.0..127.0
+        type.isUnsignedWord -> value in 0.0..65535.0
+        type.isSignedWord -> value in -32768.0..32767.0
+        type.isLong -> value in -2147483648.0..2147483647.0
+        else -> true
+    }
 
     private fun isSimpleReturnExpression(expr: Expression): Boolean {
         return when (expr) {

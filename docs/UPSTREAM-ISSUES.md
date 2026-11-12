@@ -517,3 +517,12 @@ Keeping the list: add new items at the end with the next number, and remove an i
   and it did so for an element address `@(&p[i])` too, leaving out the index.
 - Repro: `^^ubyte @zp p = &storage + 1` and `@(&p) == lsb(p)` is false on cx16 (true with `-newcodegen`).
 - Branch: fixed; the shortcut is gone, and the generic code computes the address.
+
+**U72. An inlined subroutine's result isn't of its return type when its arguments are constants**
+- Where: `codeOptimizers/Inliner.kt`, inlining a call in an expression: it puts the return expression in place of
+  the call, with the arguments for the parameters. With constant arguments that expression is folded exactly, as
+  every constant expression is (`255 + 1` is 256), while the call gives a value of its return type (0 for a ubyte).
+- Repro: `sub one(ubyte a) -> ubyte { return a + 1 }` and `txt.print_uw(one(255))` prints 256 when optimized and
+  0 with `-noopt`; the same with `ubyte x = 255` (never written, so a constant) and `one(x)`. Every target.
+- Branch: fixed; a call whose inlined value is a constant that doesn't fit the return type isn't inlined, so it
+  gives the same value as with `-noopt`. Other calls are inlined as before (`one(3)` becomes 4).
