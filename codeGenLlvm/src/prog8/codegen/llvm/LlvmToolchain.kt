@@ -41,7 +41,7 @@ internal object LlvmToolchain {
         }
         val compileCommand = compileCommand(clang.toString(), profileArgs, optLevel, extraCompileArgs)
         val withGetkey = profile != null && profile.getkeySources.isNotEmpty() &&
-            (calls(llFile, LlvmTripleProfile.GETKEY_SYMBOL) || calls(llFile, LlvmTripleProfile.WAITKEY_SYMBOL))
+            (calls(llFile, LlvmTripleProfile.GETKEY_SYMBOL) || calls(llFile, LlvmTripleProfile.WAITKEY_SYMBOL) || calls(llFile, LlvmTripleProfile.TERMSIZE_SYMBOL))
         if (linkCommand == null) {
             val keySources = try {
                 if (withGetkey) profile.writeStartupSources(outputFile, withGetkeySources = true) else emptyList()

@@ -28,17 +28,42 @@ txt {
     const ubyte KEY_BACKSPACE = 8       ; also DEL (127)
     const ubyte KEY_BREAK = 3           ; Ctrl-C
 
+uword @nozp @shared last_size
+
+sub terminal_size() -> uword {
+    ; -- the terminal's columns (lsb) and rows (msb), or the default size when stdout isn't a terminal
+    uword termsize
+    %ir {{
+        syscall 219 (): r99000.w
+        storem.w r99000.w,[txt.terminal_size.termsize]
+    }}
+    if termsize == 0
+        termsize = mkword(DEFAULT_HEIGHT, DEFAULT_WIDTH)
+    last_size = termsize
+    return termsize
+}
+
 sub width() -> ubyte {
-    return DEFAULT_WIDTH
+    ; -- the number of columns of the terminal window, now; DEFAULT_WIDTH when stdout isn't a terminal
+    return lsb(terminal_size())
 }
 
 sub height() -> ubyte {
-    return DEFAULT_HEIGHT
+    ; -- the number of rows of the terminal window, now; DEFAULT_HEIGHT when stdout isn't a terminal
+    return msb(terminal_size())
 }
 
 sub size() -> ubyte, ubyte {
     ; -- returns the text screen width and height (number of columns and rows)
-    return width(), height()
+    uword termsize = terminal_size()
+    return lsb(termsize), msb(termsize)
+}
+
+sub size_changed() -> bool {
+    ; -- true when the terminal window has another size than width(), height(), size() or size_changed() last found,
+    ;    so a program can check now and then whether to lay out its screen again
+    uword previous = last_size
+    return previous != 0 and terminal_size() != previous
 }
 
 sub  clear_screen() {
@@ -332,8 +357,10 @@ sub setcc(ubyte col, ubyte row, ubyte char, ubyte color) {
 sub clear_screenchars(ubyte character) {
     plot(0,0)
     ubyte w,h
-    for h in 0 to DEFAULT_HEIGHT-1 {
-        for h in 0 to DEFAULT_WIDTH-1 {
+    ubyte columns, rows
+    columns, rows = size()
+    for h in 1 to rows {
+        for w in 1 to columns {
             chrout(character)
         }
     }
@@ -347,8 +374,10 @@ sub fill_screen(ubyte character, ubyte color) {
     ; fill screen
     plot(0,0)
     ubyte w,h
-    for h in 0 to DEFAULT_HEIGHT-1 {
-        for h in 0 to DEFAULT_WIDTH-1 {
+    ubyte columns, rows
+    columns, rows = size()
+    for h in 1 to rows {
+        for w in 1 to columns {
             chrout(character)
         }
     }

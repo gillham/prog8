@@ -104,8 +104,8 @@ data class LlvmTripleProfile(
     private val ticksSourceDirectory: Path? = null,
     /**
      * Support sources like [fileSources] with `int prog8_getkey(void)` and `int prog8_waitkey(void)` for txt.getkey() and
-     * txt.waitkey(), and `int prog8_getchar(void)` that txt.chrin() then calls instead of getchar(); built along, first, when
-     * the program calls either key routine.
+     * txt.waitkey(), `int prog8_getchar(void)` that txt.chrin() then calls instead of getchar(), and `int prog8_termsize(void)`
+     * for the terminal's size; built along, first, when the program calls a key routine or the terminal size.
      */
     val getkeySources: List<String> = emptyList(),
     private val getkeySourceDirectory: Path? = null
@@ -295,6 +295,7 @@ data class LlvmTripleProfile(
         const val GETKEY_SYMBOL = "prog8_getkey"
         const val WAITKEY_SYMBOL = "prog8_waitkey"
         const val GETKEY_GETCHAR_SYMBOL = "prog8_getchar"
+        const val TERMSIZE_SYMBOL = "prog8_termsize"
         private val knownKeys = setOf("triple", "datalayout", "c_long_size", "clang_args", "output_extension", "run_command", "strict_indirect_signatures", "c_main_symbol",
             "link_command", "link_args", "run_timeout_seconds", "startup_source", "file_source",
             "dirent_name_offset", "opendir_symbol", "readdir_symbol", "fseek_symbol", "ftell_symbol", "c_symbols", "waitvsync_symbol", "file_offset_size", "getchar_symbol",

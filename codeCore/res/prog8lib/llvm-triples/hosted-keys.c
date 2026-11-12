@@ -4,6 +4,7 @@
 // turns Ctrl-C into a key. The cursor keys' escape sequences
 // become the PETSCII codes of the Commodore targets: 145 up, 17 down, 29 right, 157 left; DEL (127) becomes backspace (8),
 // as txt.KEY_BACKSPACE. Input that isn't a terminal is read as it comes.
+// prog8_termsize() is the size of the terminal that stdout writes to, for txt.width(), txt.height() and txt.size().
 #include <stdio.h>
 
 #define KEY_UP 145
@@ -70,6 +71,16 @@ static int next_byte(int wait_ms) {
     return _getch();
 }
 
+// the visible window, not the whole buffer
+static int terminal_size(int *columns, int *rows) {
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (!_isatty(1) || !GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info))
+        return 0;
+    *columns = info.srWindow.Right - info.srWindow.Left + 1;
+    *rows = info.srWindow.Bottom - info.srWindow.Top + 1;
+    return 1;
+}
+
 // _getch gives the cursor keys as 0 or 224 and a scan code
 static int special_key(int c) {
     if ((c == 0 || c == 224) && console()) {
@@ -86,6 +97,7 @@ static int special_key(int c) {
 #else
 #include <poll.h>
 #include <stdlib.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -134,6 +146,15 @@ static int next_byte(int wait_ms) {
 static int special_key(int c) {
     (void)c;
     return -1;
+}
+
+static int terminal_size(int *columns, int *rows) {
+    struct winsize size;
+    if (!isatty(1) || ioctl(1, TIOCGWINSZ, &size) != 0)
+        return 0;
+    *columns = size.ws_col;
+    *rows = size.ws_row;
+    return 1;
 }
 #endif
 
@@ -212,4 +233,12 @@ int prog8_waitkey(void) {
 int prog8_getchar(void) {
     cooked();
     return getchar();
+}
+
+// the columns in the low byte and the rows in the high byte, each at most 255, or 0 when stdout isn't a terminal
+int prog8_termsize(void) {
+    int columns, rows;
+    if (!terminal_size(&columns, &rows) || columns <= 0 || rows <= 0)
+        return 0;
+    return (columns > 255 ? 255 : columns) | (rows > 255 ? 255 : rows) << 8;
 }

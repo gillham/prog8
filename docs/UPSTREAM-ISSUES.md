@@ -470,3 +470,20 @@ Keeping the list: add new items at the end with the next number, and remove an i
   are correct.
 - Branch: fixed; the shortcuts only take an address-of that isn't of an element, and the TODOs fall back to the
   generic code, which computes the element's address.
+
+**U67. `-newcodegen`: an uninitialized array reserves one byte per element unless it holds floats**
+- Where: `codeGenNew6502/AsmGen.kt`, `emitUninitializedVariable`: the size of an array in BSS is its length times 1,
+  or times 5 for floats, so arrays of struct instances, `@nosplit` word arrays and long arrays get too little room
+  and overlap the variables after them.
+- Repro: `Point[4] points` with a 5-byte struct followed by `ubyte[32] after`, `-target cx16 -newcodegen`: the
+  assembly has `p8v_points .fill 4`, and clearing the points overwrites `after`. The same from a `.p8ir` file.
+- Branch: fixed; the size is the target's memory size of the whole array type.
+
+**U68. The Amiga targets' `txt.width()` and `txt.height()` are always 80 by 25**
+- Not a bug: a follow-up, so the m68k targets match llvm32/64 when the Amiga port starts.
+- Where: `compiler/res/prog8lib/amiga1200/textio.p8` (and amiga500): `width()`, `height()` and `size()` return 80
+  and 25, with `; TODO use console Query Window Size escape sequence`. An AmigaDOS console window can be resized.
+- How: the console's Window Status Request, `CSI 0 SPACE q`, which the console answers with
+  `CSI 1;1;<rows>;<columns> SPACE r` on its input; and a `size_changed()` that compares with the size last found.
+- Branch: llvm32/64 give the terminal's size (`ioctl(TIOCGWINSZ)`, the Windows console window) and have
+  `txt.size_changed()`, through syscall 219 and `prog8_termsize()` in `hosted-keys.c`; the Amiga is as on `master`.

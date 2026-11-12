@@ -1432,11 +1432,8 @@ internal class AsmGen(val program: IRProgram, private val target: ICompilationTa
             dt.isSignedWord -> ".sint" to 1
             dt.isLong -> ".dint" to 1
             dt.isFloat -> ".fill" to target.FLOAT_MEM_SIZE.toInt()
-            dt.isArray || dt.isString -> {
-                val elementSize = if (dt.elementType().isFloat) target.FLOAT_MEM_SIZE.toInt() else 1
-                val sz = (v.length ?: 1u).toInt() * elementSize
-                ".fill" to sz
-            }
+            dt.isString -> ".fill" to (v.length ?: 1u).toInt()
+            dt.isArray -> ".fill" to target.memorySize(dt, (v.length ?: 1u).toInt())
             else -> ".byte" to 1
         }
 

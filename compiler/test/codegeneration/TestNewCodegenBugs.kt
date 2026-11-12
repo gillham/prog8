@@ -443,4 +443,35 @@ class TestNewCodegenBugs : FunSpec({
         (patch in 0 until jsrfar) shouldBe true
         (lastArgumentLoad > patch) shouldBe true
     }
+
+    test("uninitialized arrays of struct instances, nosplit words, longs and floats reserve their whole size") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %import floats
+            main {
+                struct Point {
+                    word x
+                    word y
+                    ubyte color
+                }
+                Point[4] points
+                uword[5] @nosplit nwords
+                long[3] longs
+                float[2] fl
+                sub start() {
+                    cx16.r0L = points[1].color
+                    cx16.r1 = nwords[1]
+                    cx16.r2L = lsb(longs[1])
+                    fl[1] = 0.0
+                }
+            }
+        """.trimIndent()
+        val result = compileText(C64Target(), false, src, outputDir, newCodegen = true, writeAssembly = true)!!
+        val asm = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".asm").readText().lines().map { it.trim() }
+        asm.any { it == "p8b_main.p8v_points  .fill  20" } shouldBe true
+        asm.any { it == "p8b_main.p8v_nwords  .fill  10" } shouldBe true
+        asm.any { it == "p8b_main.p8v_longs  .fill  12" } shouldBe true
+        asm.any { it == "p8b_main.p8v_fl  .fill  10" } shouldBe true
+    }
 })

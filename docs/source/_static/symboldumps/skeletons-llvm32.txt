@@ -671,6 +671,7 @@ txt  {
     const ubyte  KEY_UP
     bool @shared  eof_exit
     bool  eof_flag
+    uword @shared  last_size
     bell  ()
     chrin  () -> ubyte
     chrout  (ubyte char)
@@ -727,7 +728,9 @@ txt  {
     setcc  (ubyte col, ubyte row, ubyte char, ubyte color)
     setchr  (ubyte col, ubyte row, ubyte char)
     size  () -> ubyte, ubyte
+    size_changed  () -> bool
     spc  ()
+    terminal_size  () -> uword
     uppercase  ()
     waitkey  () -> ubyte
     width  () -> ubyte

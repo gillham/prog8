@@ -71,6 +71,7 @@ private const val VM_LAST_DRIVE = 215
 private const val VM_TICKS = 216
 internal const val VM_GETKEY = 217
 internal const val VM_WAITKEY = 218
+private const val VM_TERMINAL_SIZE = 219
 
 /**
  * Lowers the syscalls that the compiler emits for builtin functions and operators, the exit, console, memory, file and filesystem
@@ -147,6 +148,7 @@ private fun FunctionLowering.lowerSyscall(site: CallSite, number: Int) {
         VM_TICKS -> ticks(site, number)
         VM_GETKEY -> getKey(site, number, LlvmTripleProfile.GETKEY_SYMBOL)
         VM_WAITKEY -> getKey(site, number, LlvmTripleProfile.WAITKEY_SYMBOL)
+        VM_TERMINAL_SIZE -> terminalSize(site, number)
         else -> when (IMSyscall.entries.firstOrNull { it.number == number }) {
             IMSyscall.COMPARE_STRINGS -> compareStrings(site, number)
             IMSyscall.STRING_CONTAINS -> stringContains(site, number)
@@ -331,6 +333,21 @@ private fun FunctionLowering.getKey(site: CallSite, number: Int, symbol: String)
         result(site, readByte(symbol))
     } else
         getChar(site, number)
+}
+
+/**
+ * TERMINAL_SIZE(): the terminal's columns in the low byte and rows in the high byte, from the profile's getkey source,
+ * or 0 when stdout isn't a terminal or the profile has none (wasm, bare metal), for which txt takes its default size.
+ */
+private fun FunctionLowering.terminalSize(site: CallSite, number: Int) {
+    arguments(site, number, 0)
+    if (builder.profile?.getkeySources.orEmpty().isEmpty()) {
+        result(site, LlvmValue.IntConstant(0, LlvmType.I16))
+        return
+    }
+    val cInt = builder.mapper.cInt
+    val size = derive("termsize", cInt) { LlvmInstruction.Call(it, external(LlvmTripleProfile.TERMSIZE_SYMBOL, cInt, emptyList()), emptyList(), cInt) }
+    result(site, convert(size, LlvmType.I16, "termsize"))
 }
 
 /** GET_ARGC(): the number of command line arguments as a word, including the program name; it can't count past 65535, and is 0 without [LlvmFunctionBuilder.programArgs]. */

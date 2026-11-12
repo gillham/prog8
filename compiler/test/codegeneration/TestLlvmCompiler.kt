@@ -160,6 +160,69 @@ main {
         }
     }
 
+    val terminalSizeProgram = """
+%import textio
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    sub start() {
+        ubyte w, h
+        w, h = txt.size()
+        txt.print_ub(txt.width())
+        txt.spc()
+        txt.print_ub(txt.height())
+        txt.spc()
+        txt.print_ub(w)
+        txt.spc()
+        txt.print_ub(h)
+        txt.spc()
+        txt.print_bool(txt.size_changed())
+        txt.nl()
+        if sys.argc() > 1 {
+            repeat 500 {
+                if txt.size_changed() {
+                    txt.print("changed ")
+                    txt.print_ub(txt.width())
+                    txt.spc()
+                    txt.print_ub(txt.height())
+                    txt.nl()
+                    return
+                }
+                sys.wait(1)
+            }
+            txt.print("no change\n")
+        }
+    }
+}"""
+
+    test("txt.width, height and size call the terminal size of the getkey source, and wasm has none") {
+        val nativeLines = compiledLlFile(compileText(hostLlvmTarget, false, terminalSizeProgram, outputDir)).readLines()
+        nativeLines.any { it.startsWith("declare i32 @prog8_termsize()") } shouldBe true
+        compiledLlFile(compileText(LlvmTarget(4), false, terminalSizeProgram, outputDir)).readLines().any { "@prog8_termsize" in it } shouldBe false
+    }
+
+    test("txt.width, height and size are the default size when stdout isn't a terminal, in a native executable").config(enabledOrReasonIf = requiresNativeLlvm) {
+        for (optimize in listOf(false, true)) {
+            val (exitCode, output) = buildAndRun(compiledLlFile(compileText(hostLlvmTarget, optimize, terminalSizeProgram, outputDir)))
+            withClue("optimize=$optimize") {
+                exitCode shouldBe 0
+                output shouldBe "80 25 80 25 false\n"
+            }
+        }
+    }
+
+    test("txt.width, height and size are the terminal's size, and txt.size_changed sees it change, in a pty").config(enabledOrReasonIf = requiresPty) {
+        val dir = outputDir.resolve("terminal-size").createDirectories()
+        val llFile = compiledLlFile(compileText(hostLlvmTarget, true, terminalSizeProgram, dir))
+        val executable = hostExecutable(llFile.resolveSibling(llFile.fileName.toString().removeSuffix(".ll")))
+        LlvmProgramRunner().build(llFile, executable, hostLlvmProfile) shouldBe true
+        val script = dir.resolve("run_in_pty.py").also { it.writeText(ptyScript) }
+        val (exitCode, output) = execute(checkNotNull(python3), "-I", script.toString(), executable.toString())
+        withClue(output) { exitCode shouldBe 0 }
+        output.replace("\r", "") shouldBe "132 43 132 43 false\n100 30 100 30 false\nchanged 120 40\n"
+    }
+
     test("txt.waitkey waits for each key, gives 0 at the end of the input, and the txt.KEY_ constants are its codes, in a native executable").config(enabledOrReasonIf = requiresNativeLlvm) {
         val source = """
 %import textio
@@ -2071,6 +2134,51 @@ private fun stdioBindingsProgram(fileType: String, extra: String) = """
 
 // a python.org install on Windows has no python3 command, and its python is Python 3
 private val python3: String? = listOf("python3", "python").firstOrNull { LlvmToolLocator.find(it) != null }
+
+// a pty and its TIOCSWINSZ only exist on Unix
+private val requiresPty: (TestCase) -> Enabled = {
+    when {
+        System.getProperty("os.name").orEmpty().startsWith("Windows") -> Enabled.disabled("a pty needs Unix")
+        python3 == null -> Enabled.disabled("python3 not found on the PATH")
+        else -> requiresNativeLlvm(it)
+    }
+}
+
+/** Runs the program given as its argument in a pty of 132 x 43, then again with an argument in one of 100 x 30 that becomes 120 x 40. */
+private val ptyScript = """
+import fcntl, os, pty, select, struct, sys, termios, time
+
+def set_size(fd, columns, rows):
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
+
+def run(args, columns, rows, resize=None):
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execv(args[0], args)
+    set_size(fd, columns, rows)
+    output = b""
+    start = time.time()
+    resized = False
+    while time.time() - start < 20:
+        if resize and not resized and b"\n" in output:
+            set_size(fd, *resize)
+            resized = True
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        if ready:
+            try:
+                data = os.read(fd, 1024)
+            except OSError:
+                break
+            if not data:
+                break
+            output += data
+    os.waitpid(pid, 0)
+    return output.decode()
+
+program = sys.argv[1]
+sys.stdout.write(run([program], 132, 43))
+sys.stdout.write(run([program, "wait"], 100, 30, resize=(120, 40)))
+""".trimIndent()
 
 private val requiresNativeLlvmAndPython: (TestCase) -> Enabled = {
     if (python3 == null) Enabled.disabled("python3 not found on the PATH") else requiresNativeLlvm(it)

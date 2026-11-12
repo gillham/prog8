@@ -384,9 +384,10 @@ These are the keys of a profile; an unknown key is an error:
 ``getkey_source``
     Source files like those of ``file_source`` with ``int prog8_getkey(void)`` and ``int prog8_waitkey(void)`` for the
     llvm32 and llvm64 ``txt.getkey()`` and ``txt.waitkey()``, and ``int prog8_getchar(void)``, which ``txt.chrin()``
-    then calls instead of ``getchar()``; built along, first, only with a program that calls one of the key routines.
-    Without it, both are ``getchar()``. The Unix and Windows
-    profiles have it (``hosted-keys.c``).
+    then calls instead of ``getchar()``, and ``int prog8_termsize(void)`` for ``txt.width()`` and ``txt.height()``
+    (the columns in the low byte and the rows in the high byte, or 0 for the default size); built along, first, only
+    with a program that calls one of the key routines or the terminal size. Without it, both key routines are
+    ``getchar()`` and the size is the default. The Unix and Windows profiles have it (``hosted-keys.c``).
 ``file_source``
     Source files like those of ``startup_source``, built along with the program only when it uses files (calls
     ``fopen()``, ``rename()`` or ``remove()``), such as the ``ftell``, ``fseek`` and ``fread`` of the TRS-80 profiles, which would otherwise make every
@@ -826,6 +827,16 @@ one per call, and ``ESC`` alone, with nothing after it within 30 milliseconds, a
 console, ``getkey`` reads its next byte, waiting for it, and gives 0 at the end of the input. The wasm and bare-metal
 profiles have no such keyboard: there ``getkey`` and ``waitkey`` are ``txt.chrin()``. A program that only uses
 ``txt.chrin()`` and ``txt.input_line()`` is built as before, without this code.
+
+**The terminal's size on llvm32 and llvm64.** ``txt.width()``, ``txt.height()`` and ``txt.size()`` give the size of
+the terminal window that stdout writes to, at the moment of the call, as on the cx16 they give the current screen
+mode's: on Unix from ``ioctl(TIOCGWINSZ)``, on Windows the visible window of the console. When stdout isn't a terminal
+(a pipe or a file), and on the wasm and bare-metal profiles, they give ``txt.DEFAULT_WIDTH`` and
+``txt.DEFAULT_HEIGHT`` (80 by 25), so a program whose output is piped always sees the same size. Each is at most 255.
+Nothing is read from stdin for this, and nothing waits. ``txt.size_changed()`` is true when the window now has another
+size than one of these routines last found, so a program such as an editor can check now and then (between keys, with
+``txt.getkey()``) whether to lay out its screen again. ``txt.clear_screenchars()`` and ``txt.fill_screen()`` fill the
+current size. ``txt.DEFAULT_WIDTH`` and ``txt.DEFAULT_HEIGHT`` stay constants, for array sizes.
 
 **A clock on llvm16.** ``sys.ticks()`` counts 60ths of a second (``sys.TICKS_PER_SECOND``, the unit of ``sys.wait()``)
 in a ``uword``, which wraps around after about 18 minutes: take the difference of two counts. When it starts counting
