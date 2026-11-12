@@ -331,7 +331,7 @@ One or more .p8 module files
 ``-target <compilation target>``
     Sets the target output of the compiler. This option is required.
     ``c64`` = Commodore 64, ``c128`` = Commodore 128, ``cx16`` = Commander X16, ``pet32`` - Commodore PET model 4032,
-    ``qemu68k`` = Qemu M68k (experimental), ``amiga500`` = Amiga 500 (experimental), ``amiga1200`` = Amiga 1200 (experimental),
+    ``qemu68k`` = Qemu M68k, ``amiga500`` = Amiga 500, ``amiga1200`` = Amiga 1200,
     ``virtual`` = builtin virtual machine, ``llvm64`` (or ``llvm``) and ``llvm32`` = hosted programs compiled to LLVM IR
     (by default for the 64-bit platform the compiler runs on and for 32-bit WebAssembly with WASI),
     ``llvm16`` = 16-bit programs compiled to LLVM IR and built with llvm-mos (experimental, by default for its 6502 simulator).
