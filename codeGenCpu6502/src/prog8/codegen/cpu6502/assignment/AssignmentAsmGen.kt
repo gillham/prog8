@@ -578,7 +578,7 @@ internal class AssignmentAsmGen(
         else if (address is PtBinaryExpression) {
             val result = asmgen.pointerViaIndexRegisterPossible(address)
             if(result!=null) {
-                val addressOfIdentifier = (result.first as? PtAddressOf)?.identifier
+                val addressOfIdentifier = (result.first as? PtAddressOf)?.takeUnless { it.isFromArrayElement }?.identifier
                 if(addressOfIdentifier!=null) {
                     var varname = asmgen.asmVariableName(addressOfIdentifier)
                     if(addressOfIdentifier.type.isSplitWordArray(program.target)) {

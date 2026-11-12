@@ -1371,7 +1371,7 @@ import prog8.codegen.cpu6502.assignment.*
             is PtBinaryExpression -> {
                 val result = asmgen.pointerViaIndexRegisterPossible(addrExpr)
                 val pointer = result?.first as? PtIdentifier
-                val addressOfIdentifier = (result?.first as? PtAddressOf)?.identifier
+                val addressOfIdentifier = (result?.first as? PtAddressOf)?.takeUnless { it.isFromArrayElement }?.identifier
                 if(pointer!=null && asmgen.isZpVar(pointer)) {
                     // can do (ZP),Y indexing
                     val varname = asmgen.asmVariableName(pointer)
@@ -1446,7 +1446,7 @@ import prog8.codegen.cpu6502.assignment.*
             is PtBinaryExpression -> {
                 val result = asmgen.pointerViaIndexRegisterPossible(addrExpr)
                 val pointer = result?.first as? PtIdentifier
-                val addressOfIdentifier = (result?.first as? PtAddressOf)?.identifier
+                val addressOfIdentifier = (result?.first as? PtAddressOf)?.takeUnless { it.isFromArrayElement }?.identifier
                 if(pointer!=null && asmgen.isZpVar(pointer)) {
                     // can do (ZP),Y indexing
                     val varname = asmgen.asmVariableName(pointer)
@@ -1620,7 +1620,7 @@ import prog8.codegen.cpu6502.assignment.*
 
         else if(targetArg is PtBinaryExpression) {
             val result = asmgen.pointerViaIndexRegisterPossible(targetArg)
-            val addressOfIdentifier = (result?.first as? PtAddressOf)?.identifier
+            val addressOfIdentifier = (result?.first as? PtAddressOf)?.takeUnless { it.isFromArrayElement }?.identifier
             if(addressOfIdentifier!=null && (addressOfIdentifier.type.isLong || addressOfIdentifier.type.isByteArray)) {
                 val varname = asmgen.asmVariableName(addressOfIdentifier)
                 if(result.second is PtNumber) {
@@ -1749,7 +1749,7 @@ import prog8.codegen.cpu6502.assignment.*
             is PtBinaryExpression -> {
                 val result = asmgen.pointerViaIndexRegisterPossible(addrExpr)
                 val pointer = result?.first as? PtIdentifier
-                val addressOfIdentifier = (result?.first as? PtAddressOf)?.identifier
+                val addressOfIdentifier = (result?.first as? PtAddressOf)?.takeUnless { it.isFromArrayElement }?.identifier
                 if(pointer!=null && asmgen.isZpVar(pointer)) {
                     // can do (ZP),Y indexing
                     val varname = asmgen.asmVariableName(pointer)
@@ -1803,7 +1803,7 @@ import prog8.codegen.cpu6502.assignment.*
             is PtBinaryExpression -> {
                 val result = asmgen.pointerViaIndexRegisterPossible(addrExpr)
                 val pointer = result?.first as? PtIdentifier
-                val addressOfIdentifier = (result?.first as? PtAddressOf)?.identifier
+                val addressOfIdentifier = (result?.first as? PtAddressOf)?.takeUnless { it.isFromArrayElement }?.identifier
                 if(pointer!=null && asmgen.isZpVar(pointer)) {
                     // can do (ZP),Y indexing
                     val varname = asmgen.asmVariableName(pointer)
@@ -1971,7 +1971,7 @@ import prog8.codegen.cpu6502.assignment.*
 
         // Handle addressOf identifier cases
         val result = asmgen.pointerViaIndexRegisterPossible(addressArg)
-        val addressOfIdentifier = (result?.first as? PtAddressOf)?.identifier
+        val addressOfIdentifier = (result?.first as? PtAddressOf)?.takeUnless { it.isFromArrayElement }?.identifier
         if(addressOfIdentifier!=null && (addressOfIdentifier.type.isLong || addressOfIdentifier.type.isByteArray)) {
             val varname = asmgen.asmVariableName(addressOfIdentifier)
             if (result.second is PtNumber) {

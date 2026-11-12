@@ -2036,7 +2036,7 @@ internal class PrimitiveAssignmentsGen(
                         if(byteValue==null) asmgen.out("  pla") else asmgen.out("  lda  #${byteValue.toHex()}")
                         asmgen.out("  sta  $base,y")
                     } else {
-                        TODO("address-of array element $addressOf")
+                        storeViaExprEval()
                     }
                 } else if(addressOf.dereference!=null) {
                     throw AssemblyError("write &dereference, makes no sense at ${addressOf.position}")
@@ -2066,7 +2066,7 @@ internal class PrimitiveAssignmentsGen(
                         asmgen.out("  sta  $base,y")
                         return
                     }
-                    val addressOfIdentifier = addrOf?.identifier
+                    val addressOfIdentifier = addrOf?.takeUnless { it.isFromArrayElement }?.identifier
                     if(addressOfIdentifier!=null) {
                         var varname = asmgen.asmVariableName(addressOfIdentifier)
                         if(addressOfIdentifier.type.isSplitWordArray(program.memsizer)) {

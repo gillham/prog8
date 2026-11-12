@@ -4,6 +4,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.ints.shouldBeGreaterThan
 import io.kotest.matchers.shouldBe
 import prog8.code.target.C64Target
+import prog8.code.target.Cx16Target
 import prog8tests.helpers.compileText
 import prog8tests.helpers.simulate
 import java.nio.file.Files
@@ -411,5 +412,35 @@ class TestNewCodegenBugs : FunSpec({
             val machine = compileText(C64Target(), optimize, src, outputDir, newCodegen = true, writeAssembly = true)!!.simulate()
             expected.forEachIndexed { i, value -> machine.assertMemory(0x340 + i, value) }
         }
+    }
+
+    test("an extsub with a bank selector passes the call-site ID, and the bank doesn't overwrite an argument in A") {
+        val src = $$"""
+            %option no_sysinit
+            main {
+                ubyte last_id
+                extsub @bank selector $A000 = first(uword value @AY)
+                extsub @bank selector $A000 = second(uword value @AY)
+                sub selector(ubyte call_id) -> ubyte {
+                    last_id = call_id
+                    return 4
+                }
+                sub start() {
+                    if last_id == 99
+                        first(0)
+                    second(1111)
+                }
+            }
+        """.trimIndent()
+        val result = compileText(Cx16Target(), false, src, outputDir, newCodegen = true, writeAssembly = true)!!
+        val name = result.compilerAst.name
+        val ir = result.compilationOptions.outputDir.resolve("$name.p8ir").readText().lines()
+        ir.count { it.startsWith("call p8b_main.p8s_selector(p8v_call_id=") } shouldBe 2
+        val asm = result.compilationOptions.outputDir.resolve("$name.asm").readText().lines().map { it.trim() }
+        val jsrfar = asm.indexOfLast { it.startsWith("jsr  cx16.JSRFAR") }
+        val patch = asm.indexOfLast { it.startsWith("sta  callfarvb_patch") }
+        val lastArgumentLoad = asm.subList(0, jsrfar).indexOfLast { it.startsWith("lda  ") }
+        (patch in 0 until jsrfar) shouldBe true
+        (lastArgumentLoad > patch) shouldBe true
     }
 })

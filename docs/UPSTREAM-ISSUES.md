@@ -432,3 +432,41 @@ Keeping the list: add new items at the end with the next number, and remove an i
   `examples/maze.p8` stops in the monitor the same way.
 - Branch: fixed; a counted loop counts in a byte or word variable of its own in BSS, like the regular 6502 code
   generator does, so nothing is left on the stack; trip counts above 256 now work too, they were cut to a byte.
+
+**U63. `-newcodegen`: an extsub with a bank selector gets the wrong bank and a corrupted argument in A**
+- Where: `codeGenIntermediate/ExpressionGen.kt`, the bank selector call: it looks up the call-site ID with the
+  call's name, but the IDs are keyed by the unprefixed name, and the 6502 targets prefix the symbols
+  (`p8b_main.p8s_store_r0`), so the selector is called without its ID. And `codeGenNew6502/InstrControl.kt`,
+  CALLFARVB: it patches the bank into the JSRFAR operand through A after loading the register arguments, so an
+  argument in A (or AY) loses its low byte. This also affects `extsub @bank banknr`, with the bank in a variable.
+- Repro: `extsub @bank selector $A000 = store_r0(uword value @AY)` called as `store_r0(1111)` with
+  `-target cx16 -newcodegen`: the routine receives 1028 and the selector the ID 0 instead of 1.
+  `examples/cx16/dynamicbanking` calls everything in bank 4.
+- Branch: fixed; the lookup also tries the unprefixed name, and the bank is patched in before the arguments are
+  loaded. The dynamicbanking example prints the same with both code generators.
+
+**U64. `-newcodegen`: a variable index into an array of struct instances calls a routine that doesn't exist**
+- Where: `codeGenNew6502/InstrLoadStore.kt`, the scaling of an index register by an element size that is not a
+  power of two (`scaleIndexRegIfNeeded` and the pointer variant) calls `prog8_lib.multiply_bytes`; the routine is
+  `prog8_math.multiply_bytes`.
+- Repro: `Enemy[4] enemies` with a 5-byte struct and `enemies[i].xpos = i + 40` in a loop, `-target cx16
+  -newcodegen`: the assembler stops with "not defined symbol 'multiply_bytes'".
+- Branch: fixed.
+
+**U65. `sizeof()` of an array of struct instances is the size of one element**
+- Where: `compiler/BuiltinFunctions.kt`, `builtinSizeof`: it sizes the element type with the element count, and
+  `memorySize` ignores the count for a struct instance type.
+- Repro: `Enemy[3] squad` with a 5-byte struct: `sizeof(squad)` is 5 instead of 15 on every target.
+- Branch: fixed; it sizes the array type itself, which gives the same as before for all other arrays.
+
+**U66. The 6502 code generator drops the element offset of `&array[i] + offset`**
+- Where: `codeGenCpu6502`: several shortcuts for a memory read or write at an address-of plus an offset take the
+  array's name and ignore that the address is of an element (`AssignmentAsmGen` for a read,
+  `PrimitiveAssignmentsGen.storeRegisterAInMemoryAddress` for a write, the peek/poke variants in
+  `BuiltinFunctionsAsmGen`); where a shortcut did check it, a non-struct array was a TODO.
+- Repro: with `Point[4] points` (word x, word y, ubyte color) and `^^Point p = &points[0]`: `points[j].color++`
+  reads the color of element 0, `p[1].y = 77` and `p[1].color = 9` store into element 0, and with a byte array
+  `@(&bytes[3] + 4)` reads `bytes[4]` and `@(&bytes[2] + 5) = 70` writes `bytes[5]`. The VM and `-newcodegen`
+  are correct.
+- Branch: fixed; the shortcuts only take an address-of that isn't of an element, and the TODOs fall back to the
+  generic code, which computes the element's address.

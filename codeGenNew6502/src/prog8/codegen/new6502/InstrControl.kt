@@ -97,6 +97,9 @@ internal fun AsmGen.translateControl(insn: IRInstruction) {
             val bankReg = bankedTarget.bankRegister.intNumber
             val jsrfar = jsrfarRoutine()
             val patchLabel = makeLabel("callfarvb_patch")
+            // the bank goes in first: patching it in uses A, which may be an argument register
+            emitLine("lda  ${regAddrLo(bankReg)}")
+            emitLine("sta  ${patchLabel}+2")
             for ((index, arg) in site.arguments.withIndex()) {
                 if (arg.hardwareSlot == null)
                     translateArgument(arg, index, null)
@@ -104,8 +107,6 @@ internal fun AsmGen.translateControl(insn: IRInstruction) {
             for ((index, arg) in site.arguments.inSlotLoadOrder()) {
                 translateArgument(arg, index, null)
             }
-            emitLine("lda  ${regAddrLo(bankReg)}")
-            emitLine("sta  ${patchLabel}+2")
             emitLine("jsr  $jsrfar")
             emitLabel(patchLabel)
             emitLine(".word  $target")

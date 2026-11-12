@@ -182,8 +182,8 @@ private fun builtinSizeof(args: List<Expression>, position: Position, program: P
         return when {
             dt.isArray -> {
                 val length = (target as VarDecl).arraysize?.constIndex() ?: throw CannotEvaluateException("sizeof", "unknown array size")
-                val elementDt = dt.getOrUndef().elementType()
-                NumericLiteral.optimalInteger(program.target.memorySize(elementDt, length), position)
+                // the array type itself, as the element type of an array of struct instances doesn't count the elements
+                NumericLiteral.optimalInteger(program.target.memorySize(dt.getOrUndef(), length), position)
             }
             dt.isString -> {
                 if(target is VarDecl) {

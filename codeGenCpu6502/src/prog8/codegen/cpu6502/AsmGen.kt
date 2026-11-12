@@ -2325,7 +2325,7 @@ $repeatLabel""")
                             out("  sta  $base,y")
                             return true
                         }
-                        TODO("address-of array element ${addrOf.position}")
+                        return false     // the generic code computes the element's address
                     } else if(addrOf.dereference!=null) {
                         throw AssemblyError("write &dereference, makes no sense at ${addrOf.position}")
                     } else {
@@ -2379,7 +2379,7 @@ $repeatLabel""")
                         out("  lda  $base,y")
                         return true
                     }
-                    TODO("address-of array element ${addrOf.position}")
+                    return false     // the generic code computes the element's address
                 } else if(addrOf.dereference!=null) {
                     if(pointerGen.readByteByAddressOfDereference(addrOf, constOffset))
                         return true
@@ -2434,7 +2434,7 @@ $repeatLabel""")
                 val constOffset = (ptrAndIndex.second as? PtNumber)?.number?.toInt()
                 if(addrOf!=null && constOffset!=null) {
                     if(addrOf.isFromArrayElement) {
-                        TODO("address-of array element ${addrOf.position}")
+                        return false     // the generic code computes the element's address
                     } else if(addrOf.dereference!=null) {
                         throw AssemblyError("write &dereference, makes no sense at ${addrOf.position}")
                     } else {
@@ -2471,7 +2471,7 @@ $repeatLabel""")
                 val constOffset = (ptrAndIndex.second as? PtNumber)?.number?.toInt()
                 if(addrOf!=null && constOffset!=null) {
                     if(addrOf.isFromArrayElement) {
-                        TODO("address-of array element ${addrOf.position}")
+                        return false     // the generic code computes the element's address
                     } else if(addrOf.dereference!=null) {
                         TODO("read &dereference ${addrOf.position}")
                     } else {

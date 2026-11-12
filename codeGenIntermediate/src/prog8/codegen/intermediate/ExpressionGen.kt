@@ -1350,7 +1350,9 @@ internal class ExpressionGen(private val codeGen: IRCodeGen) {
             val bankReg = if (target?.type == StNodeType.SUBROUTINE || target?.type == StNodeType.EXTSUB) {
                 // generate a call to the bank subroutine with the call ID as argument
                 val bankFcall = PtFunctionCall(varBank.name, false, false, arrayOf(DataType.UBYTE), varBank.position)
+                // the call-site IDs are keyed by the unprefixed name, and the 6502 targets prefix the symbols
                 val callId = codeGen.extsubCallSiteIds[fcall.name]
+                    ?: codeGen.extsubCallSiteIds[fcall.name.split('.').joinToString(".") { it.removePrefix("p8b_").removePrefix("p8s_") }]
                 if (callId != null) {
                     bankFcall.add(PtNumber(BaseDataType.UBYTE, callId.toDouble(), varBank.position))
                 }
