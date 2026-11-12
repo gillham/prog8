@@ -614,6 +614,25 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
                         val add = BinaryExpression(tgt, "+", right, addressOf.position)
                         return listOf(AstReplaceNode(addressOf, add, parent))
                     }
+                    val indexExpr = addressOf.arrayIndex!!.indexExpr
+                    if(decl!=null && decl.datatype.isPointer && options.compTarget.pointerType.isUnsignedWord && indexExpr.inferType(program).getOrUndef().let { it.isLong || it.isQuad }) {
+                        // &ptrvar[longidx] with 16-bit pointers: only the low word of the index can count, as when reading ptrvar[longidx]
+                        return listOf(AstReplaceNode(indexExpr, TypecastExpression(indexExpr, DataType.UWORD, true, indexExpr.position), addressOf.arrayIndex!!))
+                    }
+                }
+            } else {
+                val deref = addressOf.dereference
+                if(deref!=null && deref.inferType(program).getOrUndef().let { it.isPointer || it.isUnsignedWord }) {
+                    // &ptr.field[idx]  -->  ptr.field + idx      (the index as wide as a pointer, a signed one keeping its sign)
+                    val indexExpr = addressOf.arrayIndex!!.indexExpr
+                    val indexType = options.compTarget.pointerType
+                    val actualType = indexExpr.inferType(program).getOrUndef()
+                    val castType = if(actualType.isSigned) {
+                        if(indexType.isUnsignedWord) indexType else DataType.LONG
+                    } else if(actualType.isLong && !indexType.isUnsignedWord) actualType else indexType
+                    val right = if(actualType == castType) indexExpr else TypecastExpression(indexExpr, castType, true, indexExpr.position)
+                    val add = BinaryExpression(deref, "+", right, addressOf.position)
+                    return listOf(AstReplaceNode(addressOf, add, parent))
                 }
             }
         }

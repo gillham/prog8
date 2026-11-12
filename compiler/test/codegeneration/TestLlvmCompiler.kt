@@ -1453,9 +1453,10 @@ main {
         }
     }
 
-    test("the multi-value return, repeat and struct field index programs also pass on the virtual machine") {
+    test("the multi-value return, repeat, struct field index and field address programs also pass on the virtual machine") {
         val vmDir = outputDir.resolve("vm-ircodegen").createDirectories()
-        for (name in listOf("multi-value returns with a call in the first value or a float value, and repeat counts above 65536", "struct pointer field indexes beyond 64 KiB and negative ones")) {
+        for (name in listOf("multi-value returns with a call in the first value or a float value, and repeat counts above 65536", "struct pointer field indexes beyond 64 KiB and negative ones",
+                "the address of an indexed pointer field, with a variable, constant, long and negative index")) {
             for (optimize in listOf(false, true)) {
                 val result = compileText(VMTarget(), optimize, programs.getValue(name), vmDir).shouldNotBeNull()
                 val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
@@ -2927,6 +2928,48 @@ private val quadProgramsForTheVm = listOf(
 
 /** Complete programs that exit with 0, or with the number of the first check that fails. @shared inputs can't be constant folded. */
 private val programs = mapOf(
+    "the address of an indexed pointer field, with a variable, constant, long and negative index" to $$"""
+main {
+    struct Buf {
+        ^^ubyte data
+        ^^uword words
+    }
+
+    ubyte[] storage = [10, 11, 12, 13, 14, 15, 16, 17]
+    uword[] @nosplit wstorage = [1000, 1001, 1002, 1003, 1004]
+    ubyte[16] space
+
+    sub start() {
+        sys.exit(check())
+    }
+
+    sub check() -> ubyte {
+        ^^Buf b = &space
+        b.data = &storage
+        b.words = &wstorage
+        long @shared from = 3
+        ubyte @shared i = 3
+        word @shared w = -1
+        ^^ubyte direct = b.data
+        ^^ubyte p = &b.data[from]
+        if p^^ != 13 or &direct[from] != p or b.data + from != p
+            return 1
+        p = &b.data[2]
+        if p^^ != 12
+            return 2
+        ^^uword q = &b.words[i]
+        if q^^ != 1003
+            return 3
+        q = &b.words[2]
+        if q^^ != 1002
+            return 4
+        b.words = &wstorage[2]
+        q = &b.words[w]
+        if q^^ != 1001
+            return 5
+        return 0
+    }
+}""",
     "multi-value returns with a call in the first value or a float value, and repeat counts above 65536" to $$"""
 %import floats
 main {

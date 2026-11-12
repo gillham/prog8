@@ -497,3 +497,23 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Branch: fixed; when the called routine returns its values in the same registers, which is always so for a
   regular subroutine, there is nothing to move, and otherwise all values are read before any is stored, the first
   one last.
+
+**U70. The address of an indexed pointer field, `&p.field[index]`, is wrong, or an internal error**
+- Where: the front end leaves `&p.field[index]` as an address-of with both a dereference and an index, which the
+  code generators take as the address of the field (IR) or don't handle (a constant index: a NullPointerException
+  in `codeGenIntermediate/ExpressionGen.kt`). On the 6502 targets `&ptrvar[i]` with a long index is an internal
+  error ("source dt size must be less or equal to target dt size ... srcdt=long targetdt=uword").
+- Repro: with `struct Buf { ^^ubyte data }` and `long from = 3`, `&b.data[from]` is not the address of
+  `b.data[3]` (virtual, qemu68k, llvm); `&b.data[3]` crashes the compiler; `&direct[from]` with `^^ubyte direct`
+  crashes on cx16.
+- Branch: fixed in `compiler/astprocessing/VariousCleanups.kt`: `&p.field[index]` becomes `p.field + index`
+  (pointer arithmetic, scaled by the element size), with the index as wide as a pointer and a signed index keeping
+  its sign; with 16-bit pointers a long index into a pointer variable is cast to `uword`, as when reading
+  `ptrvar[index]`.
+
+**U71. The 6502 code generator reads `@(&p)` of a pointer variable in zeropage as the byte it points to**
+- Where: `codeGenCpu6502/assignment/AssignmentAsmGen.kt`, a memory read whose address is an address-of: for a
+  zeropage variable it loads `(p),0`, which is the byte at the address that `p` holds, not `p`'s own first byte;
+  and it did so for an element address `@(&p[i])` too, leaving out the index.
+- Repro: `^^ubyte @zp p = &storage + 1` and `@(&p) == lsb(p)` is false on cx16 (true with `-newcodegen`).
+- Branch: fixed; the shortcut is gone, and the generic code computes the address.

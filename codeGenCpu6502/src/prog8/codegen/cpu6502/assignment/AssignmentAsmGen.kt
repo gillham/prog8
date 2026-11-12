@@ -558,13 +558,8 @@ internal class AssignmentAsmGen(
             return
         }
         else if(address is PtAddressOf) {
-            if(address.identifier!=null) {
-                if(asmgen.isZpVar(address.identifier!!)) {
-                    asmgen.loadIndirectByte(asmgen.asmVariableName(address.identifier!!), 0u)
-                    assignRegisterByte(target, CpuRegister.A, false, true)
-                    return
-                }
-            } else if(address.dereference!=null) {
+            // @(&variable) is the variable's own first byte, also when it is a pointer in zeropage: the generic code below
+            if(address.identifier==null && address.dereference!=null) {
                 val (zpPtrVar, offset) = pointergen.deref(address.dereference!!, false)
                 asmgen.loadIndirectByte(zpPtrVar, offset)
                 assignRegisterByte(target, CpuRegister.A, false, true)

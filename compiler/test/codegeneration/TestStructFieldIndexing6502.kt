@@ -215,4 +215,77 @@ class TestStructFieldIndexing6502 : FunSpec({
             machine.assertMemory(0x0201, 45)
         }
     }
+
+    test("the address of an indexed pointer field, with a variable, constant, long and negative index") {
+        for(newCodegen in listOf(false, true)) {
+            for(optimize in listOf(false, true)) {
+                val machine = compileText(Cx16Target(), optimize, $$"""
+                    %option no_sysinit
+                    %launcher none
+                    %address $1000
+
+                    main {
+                        &ubyte poweroff = $f203
+                        &ubyte[6] results = $0200
+
+                        struct Buf {
+                            ^^ubyte data
+                            ^^uword words
+                        }
+                        ubyte[] storage = [10, 11, 12, 13, 14, 15, 16, 17]
+                        uword[] @nosplit wstorage = [1000, 1001, 1002, 1003, 1004]
+                        ubyte[16] space
+
+                        sub start() {
+                            ^^Buf b = &space
+                            b.data = &storage
+                            b.words = &wstorage
+                            long @shared from = 3
+                            ubyte @shared i = 3
+                            word @shared w = -1
+                            ^^ubyte direct = b.data
+                            results[0] = @(&b.data[from])
+                            results[1] = @(&direct[from])
+                            results[2] = @(&b.data[2])
+                            ^^uword q = &b.words[i]
+                            results[3] = lsb(q^^)
+                            b.words = &wstorage[2]
+                            q = &b.words[w]
+                            results[4] = lsb(q^^)
+                            results[5] = @(&b.data[i])
+                            poweroff = 1
+                        }
+                    }
+                """.trimIndent(), outputDir, newCodegen = newCodegen)!!.simulate()
+                listOf(13, 13, 12, 1003 and 255, 1001 and 255, 13).forEachIndexed { index, value ->
+                    machine.assertMemory(0x0200 + index, value)
+                }
+            }
+        }
+    }
+
+    test("@(&p) of a pointer variable in zeropage is the variable's own first byte, not the byte it points to") {
+        for(optimize in listOf(false, true)) {
+            val machine = compileText(Cx16Target(), optimize, $$"""
+                %option no_sysinit
+                %launcher none
+                %address $1000
+
+                main {
+                    &ubyte poweroff = $f203
+                    &ubyte[2] results = $0200
+                    ubyte[] storage = [10, 11, 12]
+
+                    sub start() {
+                        ^^ubyte @zp p = &storage + 1
+                        results[0] = @(&p) == lsb(p) as ubyte
+                        results[1] = @(&p + 1) == msb(p) as ubyte
+                        poweroff = 1
+                    }
+                }
+            """.trimIndent(), outputDir)!!.simulate()
+            machine.assertMemory(0x0200, 1)
+            machine.assertMemory(0x0201, 1)
+        }
+    }
 })
