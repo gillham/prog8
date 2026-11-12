@@ -1915,30 +1915,38 @@ class IRCodeGen(
                     else -> throw AssemblyError("unexpected subroutine type for multi-value return ${ret.position}")
                 }
                 
-                // Move each return value from the called function's return registers to our return registers
-                calledReturnRegs.zip(returnRegs).forEachIndexed { index, (fromRegTo, toRegTo) ->
-                    val (fromReg, fromType) = fromRegTo
-                    val (toReg, toType) = toRegTo
-                    require(fromType == toType) { "return type mismatch at position $index" }
-
-                    if(fromType.isFloat) {
-                        // For float returns, use FAC1/FAC2
-                        val tempFpReg = registers.next(IRDataType.FLOAT)
-                        when(fromReg.registerOrPair) {
-                            RegisterOrPair.FAC1 -> addInstr(result, IRInstructions.unary(Opcode.LOADHFACZERO, IRDataType.FLOAT, tempFpReg), null)
-                            RegisterOrPair.FAC2 -> addInstr(result, IRInstructions.unary(Opcode.LOADHFACONE, IRDataType.FLOAT, tempFpReg), null)
-                            else -> throw AssemblyError("unexpected FP return register $fromReg")
+                // the values are already in our return registers when the called function returns them in the same ones
+                if(calledReturnRegs != returnRegs) {
+                    // load all of them before any store, which could clobber another (A in AY), and store the first last
+                    val loaded = calledReturnRegs.zip(returnRegs).mapIndexed { index, (fromRegTo, toRegTo) ->
+                        val (fromReg, fromType) = fromRegTo
+                        val (toReg, toType) = toRegTo
+                        require(fromType == toType) { "return type mismatch at position $index" }
+                        if(fromType.isFloat) {
+                            // For float returns, use FAC1/FAC2
+                            val tempFpReg = registers.next(IRDataType.FLOAT)
+                            when(fromReg.registerOrPair) {
+                                RegisterOrPair.FAC1 -> addInstr(result, IRInstructions.unary(Opcode.LOADHFACZERO, IRDataType.FLOAT, tempFpReg), null)
+                                RegisterOrPair.FAC2 -> addInstr(result, IRInstructions.unary(Opcode.LOADHFACONE, IRDataType.FLOAT, tempFpReg), null)
+                                else -> throw AssemblyError("unexpected FP return register $fromReg")
+                            }
+                            Triple(toRegTo, -1, tempFpReg)
+                        } else {
+                            val tempReg = registers.next(irType(fromType))
+                            result += loadFromCpuRegister(fromReg, fromType, tempReg)
+                            Triple(toRegTo, tempReg, -1)
                         }
-                        when(toReg.registerOrPair) {
-                            RegisterOrPair.FAC1 -> addInstr(result, storeHwFac(Opcode.STOREHFACZERO, tempFpReg), null)
-                            RegisterOrPair.FAC2 -> addInstr(result, storeHwFac(Opcode.STOREHFACONE, tempFpReg), null)
-                            else -> throw AssemblyError("unexpected FP return register $toReg")
-                        }
-                    } else {
-                        // For non-float returns, load from source to temp IR register, then store to destination
-                        val tempReg = registers.next(irType(fromType))
-                        result += loadFromCpuRegister(fromReg, fromType, tempReg)
-                        result += setCpuRegister(toReg, irType(toType), tempReg, -1)
+                    }
+                    for((toRegTo, tempReg, tempFpReg) in loaded.drop(1) + loaded.first()) {
+                        val (toReg, toType) = toRegTo
+                        if(toType.isFloat) {
+                            when(toReg.registerOrPair) {
+                                RegisterOrPair.FAC1 -> addInstr(result, storeHwFac(Opcode.STOREHFACZERO, tempFpReg), null)
+                                RegisterOrPair.FAC2 -> addInstr(result, storeHwFac(Opcode.STOREHFACONE, tempFpReg), null)
+                                else -> throw AssemblyError("unexpected FP return register $toReg")
+                            }
+                        } else
+                            result += setCpuRegister(toReg, irType(toType), tempReg, -1)
                     }
                 }
                 addInstr(result, IRInstructions.returnVoid(), null)

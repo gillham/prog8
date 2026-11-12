@@ -487,3 +487,13 @@ Keeping the list: add new items at the end with the next number, and remove an i
   `CSI 1;1;<rows>;<columns> SPACE r` on its input; and a `size_changed()` that compares with the size last found.
 - Branch: llvm32/64 give the terminal's size (`ioctl(TIOCGWINSZ)`, the Windows console window) and have
   `txt.size_changed()`, through syscall 219 and `prog8_termsize()` in `hosted-keys.c`; the Amiga is as on `master`.
+
+**U69. `-newcodegen`: a subroutine that returns the values of a multi-value call loses the first one**
+- Where: `codeGenIntermediate/IRCodeGen.kt`, a `return` of a multi-value call (`return pair(n + 1)`): it moves
+  each value from the called routine's return register to its own, one after the other, so the first one is put
+  back in A (`storehr.b ...,s0`) before the second is read, and on the 6502 that read goes through A.
+- Repro: `sub passing(ubyte n) -> ubyte, uword { return pair(n + 1) }` with `-target cx16 -newcodegen`: the
+  first value is wrong (3 instead of 14); the VM's registers don't clobber each other, so it is right there.
+- Branch: fixed; when the called routine returns its values in the same registers, which is always so for a
+  regular subroutine, there is nothing to move, and otherwise all values are read before any is stored, the first
+  one last.

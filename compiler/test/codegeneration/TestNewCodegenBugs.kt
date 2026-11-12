@@ -474,4 +474,36 @@ class TestNewCodegenBugs : FunSpec({
         asm.any { it == "p8b_main.p8v_longs  .fill  12" } shouldBe true
         asm.any { it == "p8b_main.p8v_fl  .fill  10" } shouldBe true
     }
+
+    test("a subroutine that returns the values of a multi-value call keeps the first one") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            main {
+                ubyte counter = 3
+                sub pair(ubyte n) -> ubyte, uword {
+                    return counter + n, counter * (300 as uword)
+                }
+                sub passing(ubyte n) -> ubyte, uword {
+                    return pair(n + 1)
+                }
+                sub start() {
+                    ubyte a
+                    uword b
+                    a, b = passing(10)
+                    @($0340) = a
+                    @($0341) = lsb(b)
+                    @($0342) = msb(b)
+                }
+            }
+        """.trimIndent()
+        for (newCodegen in listOf(true, false)) {
+            for (optimize in listOf(false, true)) {
+                val machine = compileText(C64Target(), optimize, src, outputDir, newCodegen = newCodegen, writeAssembly = true)!!.simulate()
+                machine.assertMemory(0x340, 14)
+                machine.assertMemory(0x341, 900 and 255)
+                machine.assertMemory(0x342, 900 shr 8)
+            }
+        }
+    }
 })
