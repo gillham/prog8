@@ -258,6 +258,11 @@ A recursive subroutine that has only stack slots works; for one that keeps stati
 calls share, the compiler gives a warning that names those variables (not the arrays and strings that hold
 literals, which are static on every target).
 
+String literals other than a ``str`` variable's initial value are constant, as on every target (identical ones share
+one copy), and the llvm targets put them in read-only data. Writing into one, for instance with ``poke`` through a
+pointer to it, crashes a hosted program with a memory protection fault; on wasm and bare-metal targets it may change
+the literal silently, for every place that uses it. Copy the literal into a ``str`` variable to change it.
+
 The ``examples/llvm`` directory has programs that use what these targets offer: input from a pipe with
 ``txt.eof()``, the command line, files and directories, recursion, ``uquad`` arithmetic, and calls of C library
 functions through ``extsub``.

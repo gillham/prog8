@@ -47,6 +47,7 @@ EXCLUDED = {
     "examples/swirl-float.p8": "animates forever",
     "examples/llvm/clib.p8": "prints the time",
     "examples/llvm/ls.p8": "lists the directory it runs in, which differs per build",
+    "examples/test.p8": "upstream's scratch program, which writes into a string literal (read-only on llvm64)",
 }
 VARIANTS = [("llvm64", True), ("llvm64", False), ("virtual", True), ("virtual", False)]
 
