@@ -526,3 +526,16 @@ Keeping the list: add new items at the end with the next number, and remove an i
   0 with `-noopt`; the same with `ubyte x = 255` (never written, so a constant) and `one(x)`. Every target.
 - Branch: fixed; a call whose inlined value is a constant that doesn't fit the return type isn't inlined, so it
   gives the same value as with `-noopt`. Other calls are inlined as before (`one(3)` becomes 4).
+
+**U73. `-newcodegen`: a byte result in A is lost when it is assigned together with a status flag result**
+- Where: `codeGenIntermediate/AssignmentGen.kt`, a multi-value assignment from an asmsub with one status flag and
+  register results: the flag is extracted first (for the 68000, which can't save its flags), with
+  `load.b rX,#0` and `roxl.b rX`, and only then is A read (`loadhr.b ...,s0`); on the 6502 that `load` is `lda #0`,
+  so A is gone. The test "status flag return does not clobber an A register return value" checked for exactly this
+  order, by the shape of the code only.
+- Repro: `pos, found = strings.find(sbuf, 'z')` (`-> ubyte @A, bool @Pc`) with `-target cx16 -newcodegen` gives
+  `pos` the value of `found` (1 or 0) instead of the position; the strings test of the C64 benchmark gets a wrong
+  checksum for that reason.
+- Branch: fixed; on the 6502 targets the register results are read first, with PUSHST/POPST (`php`/`plp`) around
+  them, and then the flag, which is the order the IR code generator already used for more than one flag. The 68000
+  keeps the flag-first order.

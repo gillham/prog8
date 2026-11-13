@@ -192,9 +192,8 @@ class TestNewCodegenBugs : FunSpec({
 
     test("status flag return does not clobber an A register return value") {
         // Regression test: in a multi-assign returning both a status flag and a byte in A,
-        // the flag extraction (which uses A as scratch) used to destroy the byte return.
-        // The single flag is now extracted first, before anything can clobber the
-        // status bits, so no PUSHST/POPST (php/plp on 6502) is needed.
+        // the flag extraction (which uses A as scratch) destroys the byte return when it comes first.
+        // On the 6502 the A result is read first, with the flags kept by PUSHST/POPST (php/plp).
         val src = $$"""
             %option no_sysinit
             %launcher none
@@ -225,15 +224,15 @@ class TestNewCodegenBugs : FunSpec({
         val start = asm.indexOf("; ---- Subroutine: p8b_main.p8s_start")
         val end = asm.indexOf("; ---- Subroutine:", start + 1).let { if (it < 0) asm.length else it }
         val lines = asm.substring(start, end).lines().map { it.trim() }
-        // the flag extraction (lda #0) must happen before the register read (loadhr),
-        // and no php/plp pair is needed anymore
+        // the register read (loadhr) must happen before the flag extraction (lda #0), between php and plp
         val loadhrIdx = lines.indexOfFirst { it.startsWith("; loadhr.b") }
         val flagLdaIdx = lines.indexOfFirst { it == "lda  #0" }
+        val phpIdx = lines.indexOfFirst { it == "php" }
+        val plpIdx = lines.indexOfFirst { it == "plp" }
         loadhrIdx shouldBeGreaterThan -1
         flagLdaIdx shouldBeGreaterThan -1
-        (flagLdaIdx < loadhrIdx) shouldBe true
-        lines.count { it == "php" } shouldBe 0
-        lines.count { it == "plp" } shouldBe 0
+        (phpIdx in 0 until loadhrIdx) shouldBe true
+        (plpIdx in loadhrIdx until flagLdaIdx) shouldBe true
     }
 
     test("legacy 6502 word @AX/@AY return saves A across status flag extraction") {
@@ -503,6 +502,53 @@ class TestNewCodegenBugs : FunSpec({
                 machine.assertMemory(0x340, 14)
                 machine.assertMemory(0x341, 900 and 255)
                 machine.assertMemory(0x342, 900 shr 8)
+            }
+        }
+    }
+
+    test("an asmsub's result in A and a status flag, assigned together, both arrive") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            main {
+                asmsub with_carry() -> ubyte @A, bool @Pc {
+                    %asm {{
+                        lda  #37
+                        sec
+                        rts
+                    }}
+                }
+                asmsub with_zero() -> ubyte @Y, bool @Pz {
+                    %asm {{
+                        ldy  #0
+                        rts
+                    }}
+                }
+                asmsub with_negative() -> ubyte @A, bool @Pn {
+                    %asm {{
+                        lda  #200
+                        rts
+                    }}
+                }
+                sub start() {
+                    ubyte value
+                    bool flag
+                    value, flag = with_carry()
+                    @($0340) = value
+                    @($0341) = flag as ubyte
+                    value, flag = with_zero()
+                    @($0342) = value
+                    @($0343) = flag as ubyte
+                    value, flag = with_negative()
+                    @($0344) = value
+                    @($0345) = flag as ubyte
+                }
+            }
+        """.trimIndent()
+        for (newCodegen in listOf(true, false)) {
+            for (optimize in listOf(false, true)) {
+                val machine = compileText(C64Target(), optimize, src, outputDir, newCodegen = newCodegen, writeAssembly = true)!!.simulate()
+                listOf(37, 1, 0, 1, 200, 1).forEachIndexed { i, value -> machine.assertMemory(0x340 + i, value) }
             }
         }
     }

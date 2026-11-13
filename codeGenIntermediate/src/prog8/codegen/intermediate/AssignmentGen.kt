@@ -83,7 +83,9 @@ internal class AssignmentGen(private val codeGen: IRCodeGen, private val exprGen
                     val hasStatusFlags = flagPairs.any { !isVoidTarget(it) }
                     val hasOtherResults = otherPairs.any { !isVoidTarget(it) }
                     val numFlags = flagPairs.count { !isVoidTarget(it) }
-                    if (hasStatusFlags && hasOtherResults && numFlags == 1) {
+                    // the flag extraction loads its register with A on the 6502, which would clobber an A result
+                    val flagFirstClobbersA = codeGen.options.compTarget.cpu in arrayOf(CpuType.CPU6502, CpuType.CPU65C02)
+                    if (hasStatusFlags && hasOtherResults && numFlags == 1 && !flagFirstClobbersA) {
                         // A single status flag is extracted first, before anything can
                         // clobber the CPU status bits - no PUSHST/POPST needed. This is
                         // also the only way to do it on the 68000, which cannot save or
