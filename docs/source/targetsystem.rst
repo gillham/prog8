@@ -255,7 +255,8 @@ A scalar variable or parameter of a subroutine that only that subroutine uses, n
 stack slot of each call instead of static storage, so LLVM can keep it in a register. ``@dirty`` and ``@shared``
 variables, arrays, strings, and variables that another subroutine (such as a nested one) uses stay static.
 A recursive subroutine that has only stack slots works; for one that keeps static storage, which its recursive
-calls share, the compiler gives a warning that names those variables.
+calls share, the compiler gives a warning that names those variables (not the arrays and strings that hold
+literals, which are static on every target).
 
 The ``examples/llvm`` directory has programs that use what these targets offer: input from a pipe with
 ``txt.eof()``, the command line, files and directories, recursion, ``uquad`` arithmetic, and calls of C library

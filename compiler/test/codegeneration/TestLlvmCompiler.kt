@@ -1350,6 +1350,9 @@ main {
         scratch[0] = depth
         if depth == 0
             return 1
+        uword wide = depth
+        if wide == 1 or wide == 2 or wide == 3 or wide == 5 or wide == 9
+            calls--
         return walk(depth - 1) + scratch[0]
     }
 }"""

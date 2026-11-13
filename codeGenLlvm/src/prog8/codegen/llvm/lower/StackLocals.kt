@@ -28,10 +28,14 @@ internal class StackLocals(private val program: IRProgram) {
         val recursive = recursiveSubroutines()
         if (recursive.isEmpty())
             return emptyMap()
-        return program.st.allVariables().filter { it.name !in owners }
+        return program.st.allVariables().filter { it.name !in owners && !isLiteralStorage(it) }
             .mapNotNull { variable -> ownerOf(variable.name)?.takeIf { it in recursive }?.let { subroutines.getValue(it) to variable } }
             .groupBy({ it.first }, { it.second })
     }
+
+    /** The array or string the compiler made for a literal, also for `x in [...]` from `x == a or x == b ...`. */
+    private fun isLiteralStorage(variable: IRStStaticVariable) =
+        (variable.dt.isArray || variable.dt.isString) && variable.name.substringAfterLast('.').startsWith("auto_heap_value_")
 
     private fun promotable(): Map<String, String> {
         val candidates = program.st.allVariables()
