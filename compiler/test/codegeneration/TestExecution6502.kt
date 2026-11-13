@@ -1372,4 +1372,78 @@ class TestExecution6502 : FunSpec({
             }
         }
     }
+    test("sqrt of a long: the asm optimizer doesn't remove a line that two of its rules both remove") {
+        val src = $$"""
+            %option no_sysinit
+            %zeropage basicsafe
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                &uword[4] @nosplit results = $0400
+
+                sub start() {
+                    long @shared a = 1000000
+                    long @shared b = 65536
+                    long @shared c = 16
+                    long @shared d = 250000
+                    results[0] = sqrt(a)
+                    results[1] = sqrt(b)
+                    results[2] = sqrt(c)
+                    results[3] = sqrt(d)
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+        for(optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate(maxCycles = 500000L)
+                listOf(1000, 256, 4, 500).forEachIndexed { index, value ->
+                    withClue("result $index") { machine.assertMemory(0x0400 + index*2, value and 255) }
+                    withClue("result $index msb") { machine.assertMemory(0x0401 + index*2, value shr 8) }
+                }
+            }
+        }
+    }
+
+    test("the difference of the addresses of two array elements with variable indexes") {
+        val src = $$"""
+            %option no_sysinit
+            %zeropage basicsafe
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                &uword[4] @nosplit results = $0400
+                ubyte[] bytes = [10, 20, 30, 40, 50]
+                uword[] @nosplit words = [1, 2, 3, 4, 5]
+
+                sub start() {
+                    ubyte @shared i = 1
+                    uword @shared base = 1000
+                    results[0] = (&bytes[i + 2] - &bytes[i]) as uword
+                    results[1] = (&words[i + 2] - &words[i]) as uword
+                    results[2] = (&bytes[i] - &bytes[i + 3]) as uword
+                    results[3] = base + &bytes[i + 1] - &bytes[0]
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+        for(target in listOf(C64Target(), C128Target(), PETTarget())) {
+            withClue(target.name) {
+                compileText(target, true, src, outputDir) shouldNotBe null
+            }
+        }
+        for(optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+                listOf(2, 4, 65533, 1002).forEachIndexed { index, value ->
+                    withClue("result $index") { machine.assertMemory(0x0400 + index*2, value and 255) }
+                    withClue("result $index msb") { machine.assertMemory(0x0401 + index*2, value shr 8) }
+                }
+            }
+        }
+    }
 })

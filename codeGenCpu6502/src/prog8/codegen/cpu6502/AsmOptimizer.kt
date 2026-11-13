@@ -88,7 +88,9 @@ private fun getLinesBy(pretrimmed: MutableList<String>, originalLines: MutableLi
         .windowed(windowSize, partialWindows = false)
 
 private fun apply(modifications: List<Modification>, lines: MutableList<String>, pretrimmed: MutableList<String>) {
-    for (modification in modifications.sortedBy { it.lineIndex }.reversed()) {
+    // two passes may modify the same line: act on it once, or a removal takes out the next line too
+    val oncePerLine = modifications.groupBy { it.lineIndex }.values.map { mods -> mods.firstOrNull { it.remove } ?: mods.first() }
+    for (modification in oncePerLine.sortedBy { it.lineIndex }.reversed()) {
         if(modification.remove) {
             if(modification.removeLabel)
                 lines.removeAt(modification.lineIndex)

@@ -991,10 +991,9 @@ internal class BinaryOpAssignmentsGen(
 
             when (right) {
                 is PtAddressOf -> {
-                    if(right.isFromArrayElement) {
-                        TODO("address-of array element at ${right.position}")
-                    } else if(right.dereference!=null) {
-                        TODO("read &dereference ${right.position}")
+                    if(right.isFromArrayElement || right.dereference!=null) {
+                        doAddOrSubWordExpr()
+                        return true
                     } else {
                         var symbol = asmgen.asmVariableName(right.identifier!!)
                         if(right.identifier!!.type.isSplitWordArray(program.memsizer)) {

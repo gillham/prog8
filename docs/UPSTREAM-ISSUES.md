@@ -539,3 +539,20 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Branch: fixed; on the 6502 targets the register results are read first, with PUSHST/POPST (`php`/`plp`) around
   them, and then the flag, which is the order the IR code generator already used for more than one flag. The 68000
   keeps the flag-first order.
+
+**U74. The 6502 asm optimizer removes the line after one that two of its rules both remove**
+- Where: `codeGenCpu6502/AsmOptimizer.kt`, `apply()`: the modifications of one pass are applied by line index,
+  and when two rules remove the same line (in `optimizeStoreLoadSame`, `lda X` + `sta X` + `lda X` removes the
+  last `lda X` both as the load after a store of the same address and as the reload of a value just stored), the
+  second `removeAt` takes out the next line instead.
+- Repro: `long res` and `res = (res >> 1) + bit_pos` loses the `asl a` that puts the sign bit in carry before
+  the `ror` chain; for that reason `sqrt()` of a long (`prog8_lib.sqrt_long`) gives 768, 480, 7 and 384 for
+  1000000, 65536, 16 and 250000 on cx16 and c64 (right with `-noopt`).
+- Branch: fixed; `apply()` acts on each line once, a removal taking precedence.
+
+**U75. The 6502 code generator crashes on the difference of two array element addresses**
+- Where: `codeGenCpu6502/assignment/BinaryOpAssignmentsGen.kt`, `optimizedPlusMinExpr`: a word `+` or `-` with
+  an address-of an array element (or of a dereference) on the right is a `TODO`.
+- Repro: `(&bytes[i + 2] - &bytes[i]) as uword` with a variable `i` is an internal error ("An operation is not
+  implemented: address-of array element") on cx16 and c64.
+- Branch: fixed; that operand goes to the generic word add/subtract code.
