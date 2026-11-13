@@ -905,9 +905,13 @@ floats
     On the X16, make sure rom bank 4 is still active before doing floating point operations (it's the bank that contains the fp routines).
     On the C64, you have to make sure the Basic ROM is still banked in (same reason).
     On the ``qemu68k``, ``amiga500`` and ``amiga1200`` targets, floating point support requires a 68020 or better CPU with an 68881/68882 FPU.
+    Every float operation, including the ``floats`` module's own ``print()`` and ``parse()``, is emitted as a direct FPU instruction,
+    so a program that uses floats warns at compile time and crashes with an illegal instruction when run without an FPU.
+    Use a 68020+ CPU with an 68881/68882 coprocessor, or an emulator configured with one.
+    AmigaOS provides software floating-point libraries (``mathieee*.library``) that need no FPU, but Prog8 does not use them.
     For ``amiga500`` programs that use floats, the compiler automatically assembles with ``-m68020 -m68881``; the ``amiga1200`` target is
-    already 68020 and is always assembled with ``-m68881``.
-    Such programs will not run on an Amiga 500/600 or 1200 without an FP coprocessor or a suitable upgraded/emulated CPU configuration.
+    already 68020 and is always assembled with ``-m68020 -m68881`` (this only enables assembling FPU instructions - a program
+    that does not use floats still runs without an FPU).
 
 Provides definitions for the ROM/Kernal subroutines and utility routines dealing with floating point variables.
 
@@ -921,7 +925,7 @@ Provides definitions for the ROM/Kernal subroutines and utility routines dealing
     float const for Euler's number, 2.718281828459045...
 
 ``EPSILON``
-    float const for the smallest representable floating point value (about 2.94e-39 on CBM machines, 4.9e-324 on the virtual target)
+    float const for the smallest representable floating point value (about 2.94e-39 on CBM machines, 1.4e-45 on m68k targets, 4.9e-324 on the virtual target)
 
 ``atan (x)``
     Arctangent.
@@ -1573,20 +1577,7 @@ psg  (cx16 only)
 .. index:: pair: Libraries; psg
 
 Available for the Cx16 target.
-**Note: New code should probably use the psg2 module instead!**
-Contains a simple abstraction for the Vera's PSG (programmable sound generator) to play simple waveforms.
-It includes an interrupt handler routine for handling automatic ASR volume envelopes as well.
-
-Read the :source:`psg source code <compiler/res/prog8lib/cx16/psg.p8>` to see what's in there.
-
-
-psg2  (cx16 only)
-^^^^^^^^^^^^^^^^^
-.. index:: pair: Libraries; psg
-
-Available for the Cx16 target.
 Contains an abstraction for the Vera's PSG (programmable sound generator) to play simple waveforms.
-It has better consistent envelope timings than the older ``psg`` module, and easier access to all voice parameters if desired.
 It includes an interrupt handler routine for handling automatic ASR volume envelopes as well.
 
 Envelope timing (one tick = one call to ``update()``):
@@ -1633,7 +1624,7 @@ Channel constants: ``LEFT``, ``RIGHT``, ``BOTH``, ``DISABLED``
 
 See the :source:`examples/cx16/bdmusic.p8` program for ideas how to use it.
 
-Read the :source:`psg2 source code <compiler/res/prog8lib/cx16/psg2.p8>` to see everything that's in there.
+Read the :source:`psg source code <compiler/res/prog8lib/cx16/psg.p8>` to see everything that's in there.
 
 
 vera (C64 + Vera64X)
@@ -1652,7 +1643,7 @@ vera_psg (C64 + Vera64X)
 ^^^^^^^^^^^^^^^^^^^^^^^^
 .. index:: pair: Libraries; vera_psg
 
-Available for the C64 target when using the Vera64X board. This module has the same API as ``psg2`` above, including its voice parameters, ASR envelopes, and ``update()`` routine. It accesses the PSG through the C64 ``vera`` module.
+Available for the C64 target when using the Vera64X board. This module has the same API as ``psg`` above, including its voice parameters, ASR envelopes, and ``update()`` routine. It accesses the PSG through the C64 ``vera`` module.
 
 Install ``vera_psg.update`` as the C64 IRQ handler with ``sys.set_irq(&vera_psg.update)`` to advance envelopes and apply voice changes regularly. The handler chains to the KERNAL IRQ, keeping the jiffy clock available for ``sys.wait``.
 

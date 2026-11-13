@@ -43,7 +43,9 @@ reading every upstream commit.
    (`git worktree add --detach <dir> origin/master`) and run the repro of every item in
    `docs/UPSTREAM-ISSUES.md` with that compiler. An item whose repro passes is fixed upstream: remove it there,
    decide between upstream's fix and the branch's (step 4), and list it under "Bugs fixed". Update the commit that
-   the header of `UPSTREAM-ISSUES.md` names as checked. Remove the worktree afterwards.
+   the header of `UPSTREAM-ISSUES.md` names as checked. Remove the worktree afterwards. When no incoming commit
+   changes code that an item names (only docs, examples, or libraries and targets no item is about), say so in the
+   entry instead of running the repros.
 
 7. **Test.** The full `gradle build` (not `-Plight`), then `scripts/llvm-opt-check.py`; the Windows suite and
    `scripts/llvm-remote-check.py` before the push when the merge touched code generation.
@@ -93,6 +95,53 @@ under a heading says that it was looked at. One line for each change, with the c
 ```
 
 ## Entries
+
+## master 31bba5147 .. e13ac65c7, merged 2026-11-13
+
+### Language and grammar
+nothing
+
+### Builtin functions
+nothing
+
+### Library
+- cx16: the deprecated `psg` module is gone, and `psg2` is renamed to `psg`; `import psg2` no longer resolves, and
+  code that used the old `psg` API has to move to the new one (f82c8f87a)
+- c64 `vera_psg` keeps the API of the new `psg` (only its comments changed) (f82c8f87a)
+- Amiga `blitter`: `masked_blit` takes a `ubyte shift @D5` as its last argument, and there is a new
+  `erase(long mask @A0, long dst @A1, uword width_words @D0, uword height @D1, uword mask_mod @D2,
+  uword dst_mod @D3, ubyte shift @D4)` (e13ac65c7)
+- m68k `floats.EPSILON` is 1.401298464e-45, the smallest single-precision value (5bfeb173d)
+- comments only: c64 and cx16 `cbm.STROUT`, `cbm.RDTIM`, `cx16.mouse_get` and some cx16 `floats` ROM routines
+  (1e7d3b26f)
+
+### IR
+nothing
+
+### Errors and warnings
+- a program that uses floats gets the warning that it needs a 68020 and an FPU on amiga1200 too, not only on
+  amiga500 (5bfeb173d)
+- the Amiga targets name Copperline instead of FS-UAE as the `-emu` emulator in their message (5bfeb173d)
+
+### Command line
+nothing
+
+### Conventions of 6502 programs
+nothing
+
+### Bugs fixed
+- nothing in `docs/UPSTREAM-ISSUES.md`: no incoming commit changes code that an item is about
+
+### LLVM branch only
+- conflicts in the syntax files: the branch's keyword lists (with the quad builtins, and without the module names
+  `psg`/`psg2` that it had already taken out of the builtin lists) are kept; the Notepad++ module lists get
+  upstream's `psg2` to `psg`
+- conflicts in the symbol dumps (the version header only): every dump regenerated with `make symboldumps`; the Amiga
+  dumps now show the branch's quad signatures of the builtin functions, where they were upstream's text before
+
+### Nothing for p8p8
+- m68k documentation, the `/review-p8` agent command, and the cx16 examples moved to the new `psg` (dd2d1eed5,
+  1e7d3b26f, f82c8f87a)
 
 ## master d0391a3db .. 31bba5147, merged 2026-11-12
 
