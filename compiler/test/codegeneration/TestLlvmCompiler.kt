@@ -1362,6 +1362,31 @@ main {
             listOf("recursive subroutine 'walk' keeps 'scratch', 'calls' in static storage, which its recursive calls share")
     }
 
+    test("a long loop counter gives the warning that it could be slow on llvm16 only") {
+        val src = """
+%zeropage basicsafe
+main {
+    sub start() {
+        long @shared total
+        long @shared n = 100000
+        long i
+        for i in 0 to n
+            total++
+        repeat n
+            total++
+        repeat 70000
+            total++
+    }
+}"""
+        for ((target, warnings) in listOf(LlvmTarget() to 0, LlvmTarget(4) to 0, LlvmTarget(2, LlvmTripleProfile.resolve("mos-sim")) to 3)) {
+            withClue(target.cpu) {
+                val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
+                compileText(target, false, src, outputDir, errors = errors, writeAssembly = false).shouldNotBeNull()
+                errors.warnings.count { "long counter could be very slow" in it } shouldBe warnings
+            }
+        }
+    }
+
     test("native inline assembly, also as the body of an asmsub, is a compilation error") {
         val src = """
 main {

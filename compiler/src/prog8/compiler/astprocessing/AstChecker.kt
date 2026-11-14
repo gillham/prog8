@@ -24,6 +24,7 @@ internal class AstChecker(private val program: Program,
 ) : IAstVisitor {
 
     private val quadsSupported = options.compTarget.cpu.isLlvm || options.compTarget.cpu.isVirtual
+    private val longCountersAreFast = options.compTarget.cpu.is68k || options.compTarget.cpu == CpuType.LLVM32 || options.compTarget.cpu == CpuType.LLVM64
 
     private fun checkQuadSupported(dt: DataType, position: Position) {
         val usesQuad = dt.isQuad || dt.isQuadArray || (dt.isPointer && dt.sub?.isQuad==true) || (dt.isPointerArray && dt.pointeeSub?.isQuad==true)
@@ -433,7 +434,7 @@ internal class AstChecker(private val program: Program,
                     }
 
                     BaseDataType.LONG -> {
-                        if(!options.compTarget.cpu.is68k)
+                        if(!longCountersAreFast)
                             errors.warn("for loop using a long counter could be very slow", forLoop.position)
                     }
 
@@ -909,12 +910,12 @@ internal class AstChecker(private val program: Program,
         if (iterations != null) {
             require(floor(iterations.number)==iterations.number)
             if (iterations.number.toInt() > 65536) 
-                if(!options.compTarget.cpu.is68k)
+                if(!longCountersAreFast)
                     errors.warn("repeat using a long counter could be very slow", iterations.position)
         }
         
         if(repeatLoop.iterations?.inferType(program)?.isLong==true) {
-            if(!options.compTarget.cpu.is68k)
+            if(!longCountersAreFast)
                 errors.warn("repeat using a long counter could be very slow", repeatLoop.iterations!!.position)
         }
 
