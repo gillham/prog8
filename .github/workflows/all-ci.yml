@@ -1,7 +1,6 @@
 name: Build and Test the Prog8 compiler
 
 on:
-  push:
   workflow_dispatch:
 
 jobs:
