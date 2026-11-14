@@ -96,7 +96,73 @@ under a heading says that it was looked at. One line for each change, with the c
 
 ## Entries
 
+## master e13ac65c7 .. de17e7953, merged 2026-11-14
+
+### Language and grammar
+nothing
+
+### Builtin functions
+nothing
+
+### Library
+- `lineclip`: the 6502 and generic `frac` (used by `lineclip.clip`) does its 32/16 division with one quotient
+  register instead of two; the results are the same (0d0b565d2)
+- m68k `lineclip`: `frac` is an inline asmsub with `muls.w`/`divs.w` (0d0b565d2)
+
+### IR
+- nothing in the file format; there is a new allocation hint `MUST_SPILL` for the m68k register allocator, which
+  isn't written to `.p8ir` files (0d0b565d2)
+
+### Errors and warnings
+- the info "a large number of return values incurs a substantial value copying overhead" is no longer given for
+  subroutines in library modules (70c4921a3)
+- the m68k register allocation statistics and the "(N instructions in M chunks, R registers)" line of the IR writer
+  are not printed when 64tass/vasm output is quiet (`asmQuiet`) (70c4921a3)
+
+### Command line
+nothing
+
+### Conventions of 6502 programs
+nothing
+
+### Bugs fixed
+- 6502: an if expression assigned to a byte or bool target whose type differs from the expression's, both of
+  them byte or bool types, crashed the code generator (`Failed requirement` in `IfExpressionAsmGen`) (77ad14c13)
+- m68k: multi-value returns were corrupted by the caller's moves and the callee's epilogue, and a multi-value
+  return with floats crashed the compiler or clobbered fp0; int and float vregs could share a frame slot
+  (0d0b565d2, fec84d50b)
+- U57 (a subroutine that returns a float with other values crashes the IR code generator) passes on `master` now,
+  fixed by fec84d50b; removed from `docs/UPSTREAM-ISSUES.md`
+- U17 (the VM crashes at the end of the input) passes on `master` too, fixed by 7a23ccb6d, which an earlier merge
+  had already brought in; removed from `docs/UPSTREAM-ISSUES.md`. The branch keeps its own version of that code,
+  which ends the program with exit status 1
+- checked on `master` at de17e7953: U1-U49 with their repros, and U58, U69 and U73, whose code this merge
+  changed; all of them except U17 and U57 still fail. No incoming commit changes code the other items are about
+
+### LLVM branch only
+- conflict in `IRCodeGen.kt`, the translation of a multi-value `return`: the branch's fixes of U58 (all values
+  evaluated before any is stored, the first stored last) and U69 (no moves when the called routine returns in the
+  same registers, otherwise all loaded before any store) are kept, with upstream's float path through
+  `loadFromCpuRegister`/`setCpuRegister` and its rule that a float store into fp0 comes after all others; the
+  m68k hardware store of `setCpuRegister` is upstream's
+- conflict in `IfExpressionAsmGen.kt`: the requirement allows both upstream's byte/bool case and the branch's
+  arrays (U9)
+- conflict in `examples/textelite.p8`: upstream's `pointer` types in `soup()` taken; it builds for virtual,
+  llvm32, llvm64, c64 and cx16
+- conflict in `docs/source/todo.rst`: upstream moved "Won't do's or deferred" to the end; the branch's two items
+  there (the optimizer on llvm, the static locals of llvm subroutines) moved with it
+- conflict in `TestCompilerOnExamples.kt`: the sizes the merged compiler builds (bsieve and the cx16 pcmaudio
+  examples keep the branch's, `pointers/sorting` and `sortedlist` changed upstream), plus the branch's virtual
+  `textelite` entry
+
+### Nothing for p8p8
+- cleanups of the amiga, c64, cx16, pointers and other examples, `libraries.rst` saying syslib is always
+  imported, a todo item about faster small divisions, and the kotest and mordant updates (fd1d4378b, 1d746f2ab,
+  de17e7953, 72b432040)
+
 ## master 31bba5147 .. e13ac65c7, merged 2026-11-13
+
+Merge commit `7325812c1`.
 
 ### Language and grammar
 nothing

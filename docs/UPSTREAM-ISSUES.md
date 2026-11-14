@@ -2,7 +2,7 @@
 
 Bugs found while working on the `llvm` branch that are also on `master` and have nothing to do with the llvm targets
 or quad support. Each repro was checked on a compiler built from `master` at `8bcd17674`, the virtual and cx16 targets,
-and all of them still fail on `master` at `c530aaf32`.
+and all of them still fail on `master` at `de17e7953`.
 "Branch" says whether `llvm` already has a fix that could be sent upstream.
 
 Keeping the list: add new items at the end with the next number, and remove an item once its repro passes on `master`.
@@ -108,11 +108,6 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Repro: reading a file with a 300 character line and then a short one: two `f_readline` calls give 255 and 255.
 - Branch: fixed, `contains` uses `find`'s bool, and `f_readline` returns `size, status` like the cx16 and c64
   versions.
-
-**U17. The VM crashes at the end of the input**
-- Repro: `printf 'ab\n' | prog8c -vm prog.p8ir` for a program calling `txt.input_chars` twice:
-  `kotlin.io.ReadAfterEOFException` with a stack trace.
-- Branch: fixed, `readlnOrNull()`, ending the program with exit status 1.
 
 **U18. The VM and llvm silently accept status branches whose flags are undefined**
 - On the IR only comparisons set the status flags (and shifts, rotates and `set_carry`/`clear_carry` the carry), so
@@ -381,13 +376,6 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Where: `codeGenIntermediate/IRCodeGen.kt`, `translate(repeat: PtRepeatLoop)`: `require(constRepeats in 1..65536)`.
 - Repro: `repeat 70000 count++` on virtual or qemu68k; `-check` passes.
 - Branch: fixed; a larger constant count uses the counted loop of a non-constant count.
-
-**U57. A subroutine that returns a float with other values crashes the IR code generator**
-- Where: `codeGenIntermediate/IRCodeGen.kt`, `setCpuRegister`: for a calling-convention slot it always stores the
-  integer register, which is -1 for a float ("register number out of range: -1"). The m68k back end then also
-  emitted `fmove.s fp2,fp0` for the store into the slot, which the assembler rejects (`InstrLoadStore.kt`, STOREHR).
-- Repro: `sub f(ubyte x) -> bool, float { return true, 1.5 }` and `ok, v = f(1)` on virtual or qemu68k.
-- Branch: fixed in both places.
 
 **U58. A multi-value return loses its later values when the first one calls a subroutine that returns several**
 - Where: `codeGenIntermediate/IRCodeGen.kt`, the translation of a `return` with several values: it stores the

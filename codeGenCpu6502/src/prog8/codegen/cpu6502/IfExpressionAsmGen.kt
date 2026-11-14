@@ -12,6 +12,7 @@ internal class IfExpressionAsmGen(private val asmgen: AsmGen6502Internal, privat
     internal fun assignIfExpression(target: AsmAssignTarget, expr: PtIfExpression) {
         // an if expression of arrays, as in a return value, gives the address of the chosen array
         require(target.datatype==expr.type ||
+                target.datatype.isByteOrBool && expr.type.isByteOrBool ||
                 target.datatype.isUnsignedWord && (expr.type.isString || expr.type.isPointer || expr.type.isArray) ||
                 target.datatype.isPointer && (expr.type.isUnsignedWord || expr.type.isPointer || expr.type.isString || expr.type.isArray))
         val falseLabel = asmgen.makeLabel("ifexpr_false")

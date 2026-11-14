@@ -2,6 +2,7 @@
 %import conv
 %import diskio
 %import strings
+%import math
 %zeropage basicsafe
 
 ; Prog8 adaptation of the Text-Elite galaxy system trading simulation engine.
@@ -684,12 +685,9 @@ galaxy {
         seed[2] = temp
     }
 
-    sub twist(uword x) -> uword {
-        ubyte xh = msb(x)
-        ubyte xl = lsb(x)
-        xh <<= 1        ; make sure carry flag is not used on first shift!
-        rol(xl)
-        return mkword(xh, xl)
+    inline sub twist(uword x) -> uword {
+        rol2(x)
+        return x
     }
 }
 
@@ -819,14 +817,8 @@ planet {
     sub distance(ubyte px, ubyte py) -> ubyte {
         uword ax
         uword ay
-        if px>x
-            ax=px-x
-        else
-            ax=x-px
-        if py>y
-            ay=py-y
-        else
-            ay=y-py
+        ax = math.diff(px, x)
+        ay = math.diff(py, y)
         ay /= 2
         ubyte d = sqrt(ax*ax + ay*ay)
         if d>63
@@ -836,11 +828,11 @@ planet {
 
     sub soup() -> str {
         str planet_result = " " * 160
-        ^^ubyte[6] source_stack
+        pointer[6] source_stack
         ubyte stack_ptr = 0
         str start_source = "\x8F is \x97."
-        ^^ubyte source_ptr = &start_source
-        ^^ubyte result_ptr = &planet_result
+        pointer source_ptr = &start_source
+        pointer result_ptr = &planet_result
 
         reset_rnd()
         recursive_soup()
