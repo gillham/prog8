@@ -1446,4 +1446,83 @@ class TestExecution6502 : FunSpec({
             }
         }
     }
+
+    test("a signed byte index into an address variable or a pointer is sign extended") {
+        val src = $$"""
+            %option no_sysinit
+            %zeropage basicsafe
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                &ubyte[4] results = $0400
+                ubyte[12] arr = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+
+                sub start() {
+                    uword @shared ptr = &arr + 6
+                    ^^ubyte @shared typed = &arr + 6
+                    byte @shared b = -2
+                    byte @shared c = 3
+                    results[0] = ptr[b]
+                    results[1] = typed[b]
+                    results[2] = ptr[c]
+                    results[3] = @(ptr + (b as uword))
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+        for(optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+                listOf(14, 14, 19, 14).forEachIndexed { index, value ->
+                    withClue("result $index") { machine.assertMemory(0x0400 + index, value) }
+                }
+            }
+        }
+    }
+
+    test("a str assigned to a long is its address on the 6502 targets too") {
+        val src = $$"""
+            %option no_sysinit
+            %zeropage basicsafe
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                &ubyte[4] results = $0400
+                str name = "abc"
+
+                sub start() {
+                    long first = name
+                    long @shared second = -1
+                    second = name
+                    long fromsub = address()
+                    long expected = &name
+                    results[0] = (first == expected) as ubyte
+                    results[1] = (second == expected) as ubyte
+                    results[2] = (fromsub == expected) as ubyte
+                    results[3] = (expected > 0 and expected < 65536) as ubyte
+                    poweroff = 1
+                }
+
+                sub address() -> long {
+                    return name
+                }
+            }
+        """.trimIndent()
+        for(target in listOf(C64Target(), C128Target(), PETTarget())) {
+            withClue(target.name) {
+                compileText(target, true, src, outputDir) shouldNotBe null
+            }
+        }
+        for(optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+                for(index in 0..3)
+                    withClue("result $index") { machine.assertMemory(0x0400 + index, 1) }
+            }
+        }
+    }
 })

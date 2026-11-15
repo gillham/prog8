@@ -1165,8 +1165,8 @@ internal class BinaryOpAssignmentsGen(
                 is PtTypeCast -> {
                     val castedValue = right.value
                     if(right.type.isWord && castedValue.type.isByte && castedValue is PtIdentifier) {
-                        if(right.type.isSigned) {
-                            // we need to sign extend, do this via temporary word variable
+                        if(castedValue.type.isSigned) {
+                            // we need to sign extend (also for a cast to uword), do this via temporary word variable
                             asmgen.assignExpressionToVariable(right, "P8ZP_SCRATCH_W1", DataType.WORD)
                             assignmentAsmGen.assignExpressionToRegister(left, RegisterOrPair.AY, left.type.isSigned)
                             if(expr.operator=="+") {

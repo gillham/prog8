@@ -34,12 +34,14 @@ internal class BeforeAsmTypecastCleaner(val program: Program,
             return listOf(AstReplaceNode(typecast, typecast.expression, parent))
 
         if(sourceDt.isPassByRef) {
-            if(typecast.type.isUnsignedWord || program.target.POINTER_MEM_SIZE > 2u && typecast.type.isLong || typecast.type == program.target.pointerType) {
+            // a str is assignable to a long on every target; with 16-bit addresses the long gets the address zero extended
+            val strToWiderLong = sourceDt.isString && typecast.type.isLong && program.target.POINTER_MEM_SIZE <= 2u
+            if(typecast.type.isUnsignedWord || (program.target.POINTER_MEM_SIZE > 2u || strToWiderLong) && typecast.type.isLong || typecast.type == program.target.pointerType) {
                 val identifier = typecast.expression as? IdentifierReference
                 if (identifier != null) {
                     return if (identifier.isSubroutineParameter()) {
                         listOf(AstReplaceNode(typecast, typecast.expression, parent))
-                    } else if (program.target.POINTER_MEM_SIZE > 4u && typecast.type != program.target.pointerType) {
+                    } else if (program.target.POINTER_MEM_SIZE > 4u && typecast.type != program.target.pointerType || strToWiderLong) {
                         // the address is a uquad there: the explicit cast to a smaller integer stays, to truncate it
                         listOf(AstReplaceNode(typecast.expression,
                             AddressOf(identifier, null, null, false, false,typecast.position), typecast))

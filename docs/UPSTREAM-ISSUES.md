@@ -544,3 +544,26 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Repro: `(&bytes[i + 2] - &bytes[i]) as uword` with a variable `i` is an internal error ("An operation is not
   implemented: address-of array element") on cx16 and c64.
 - Branch: fixed; that operand goes to the generic word add/subtract code.
+
+**U76. A signed byte index into an address variable or a pointer reads 256 bytes too far on 6502**
+- Where: `codeGenCpu6502/assignment/BinaryOpAssignmentsGen.kt`, `optimizedPlusMinExpr`: `ptr[b]` with a signed
+  `byte b` becomes `@(ptr + (b as uword))`, and the word add of a byte variable cast to a word only sign extends when
+  the type of the cast is signed; a cast to `uword` of a signed byte is added as an unsigned byte (`adc` / `bcc` /
+  `iny`, no `dey`).
+- Repro: `uword ptr = &arr + 6`, `byte b = -2` and `txt.print_ub(ptr[b])` prints whatever is at `arr + 260` instead of
+  `arr[4]` on c64 and cx16, also with `-noopt`; the same with a `^^ubyte` pointer and with `@(ptr + (b as uword))`.
+  The VM sign extends. The checker's "variable array indexing can't be performed with signed variables" doesn't see
+  this index, as it has become a memory read by then.
+- Branch: fixed; the sign of the byte being cast decides. That also makes a `ubyte` cast to `word` take the short
+  unsigned add instead of a sign extension through a scratch word, which it didn't need: the gfx examples are 9 to 41
+  bytes smaller.
+
+**U77. A `str` can't be assigned to a `long` on the 6502 targets**
+- Where: `compiler/astprocessing/BeforeAsmTypecastCleaner.kt`: a cast of a pass-by-reference value to `long` is only
+  accepted when pointers are wider than 2 bytes, otherwise "cannot cast pass-by-reference value to type long (only to
+  UWORD)". `variables.rst` (8562414a4) and the "Won't do" item about `STR` to `LONG` in `todo.rst` say it works on
+  all targets.
+- Repro: `str name = "abc"` and `long first = name` or `second = name` on c64 or cx16; virtual accepts both.
+- Branch: fixed; on targets with 16-bit addresses the long gets the address of the string, zero extended. A `str`
+  subroutine parameter assigned to a long is still rejected, with "cannot use a pointer as a long, a pointer is an
+  unsigned word", as before.
