@@ -36,6 +36,76 @@ internal class AssignmentAsmGen(
         translateNormalAssignment(assign, assignment.definingISub())
     }
 
+    internal fun tryTranslateMemoryStorePair(first: PtAssignment, second: PtAssignment): Boolean {
+        if(first.multiTarget || second.multiTarget)
+            return false
+        val firstTarget = first.target
+        val secondTarget = second.target
+        if(firstTarget.memory==null || secondTarget.memory==null ||
+                !isSimpleByteValue(second.value))
+            return false
+
+        val firstAddress = numericBaseAndWordIndex(firstTarget.memory!!.address) ?: return false
+        val secondAddress = numericBaseAndWordIndex(secondTarget.memory!!.address) ?: return false
+        if(firstAddress.second.name != secondAddress.second.name ||
+                firstAddress.second.type != secondAddress.second.type ||
+                // Small constants are more likely pointer-field offsets than numeric bases.
+                firstAddress.first < 0x100 || secondAddress.first < 0x100 ||
+                firstAddress.first == secondAddress.first)
+            return false
+
+        val delta = (secondAddress.first - firstAddress.first) and 0xffff
+        val firstBaseOnLeft = (firstTarget.memory!!.address as? PtBinaryExpression)?.left is PtNumber
+        asmgen.outputSourceLine(first)
+        translate(first)
+        asmgen.outputSourceLine(second)
+        val deltaLow = delta and 0xff
+        val deltaHigh = delta shr 8 and 0xff
+        if(deltaLow==0) {
+            asmgen.out("""
+                lda  P8ZP_SCRATCH_W2+1
+                clc
+                adc  #${deltaHigh.toHex()}
+                sta  P8ZP_SCRATCH_W2+1""")
+        } else {
+            asmgen.out("""
+                clc
+                lda  P8ZP_SCRATCH_W2
+                adc  #${deltaLow.toHex()}
+                sta  P8ZP_SCRATCH_W2
+                lda  P8ZP_SCRATCH_W2+1
+                adc  #${deltaHigh.toHex()}
+                sta  P8ZP_SCRATCH_W2+1""")
+        }
+        assignExpressionToRegister(second.value, RegisterOrPair.A, false)
+        // Y holds the base low byte on the fast path; 65C02 sta (zp) leaves it undefined.
+        if(firstBaseOnLeft && asmgen.isTargetCpu(CpuType.CPU65C02))
+            asmgen.out("  ldy  #0")
+        asmgen.out("  sta  (P8ZP_SCRATCH_W2),y")
+        return true
+    }
+
+    private fun numericBaseAndWordIndex(address: PtExpression): Pair<Int, PtIdentifier>? {
+        val expression = address as? PtBinaryExpression ?: return null
+        if(expression.operator!="+")
+            return null
+        val (base, index) = when {
+            expression.left is PtNumber -> expression.left as PtNumber to expression.right
+            expression.right is PtNumber -> expression.right as PtNumber to expression.left
+            else -> return null
+        }
+        val baseValue = base.asConstInteger() ?: return null
+        if(baseValue !in 0..0xffff)
+            return null
+        val identifier = index as? PtIdentifier ?: return null
+        if(!identifier.type.isUnsignedWord)
+            return null
+        return baseValue to identifier
+    }
+
+    private fun isSimpleByteValue(value: PtExpression): Boolean =
+        value is PtNumber || value is PtBool || value is PtIdentifier && value.type.isByteOrBool
+
     fun translate(augmentedAssign: PtAugmentedAssign) {
         val target = AsmAssignTarget.fromAstAssignment(augmentedAssign.target, augmentedAssign.definingISub(), asmgen)
         val source = AsmAssignSource.fromAstSource(augmentedAssign.value, program, asmgen).adjustSignedUnsigned(target)
@@ -592,6 +662,16 @@ internal class AssignmentAsmGen(
                         return
                     }
                 }
+
+                val numericBase = result.first as? PtNumber
+                val byteIndex = result.second as? PtIdentifier
+                // Keep zero-page bases on the pointer path; zp,X wraps within page 0.
+                if(numericBase!=null && numericBase.number.toUInt() >= 0x100u && byteIndex!=null) {
+                    val indexName = asmgen.asmVariableName(byteIndex)
+                    asmgen.out("  ldx  $indexName |  lda  ${numericBase.number.toHex()},x")
+                    assignRegisterByte(target, CpuRegister.A, false, true)
+                    return
+                }
             }
 
             if(asmgen.tryOptimizedPointerAccessWithA(address, false)) {
@@ -651,7 +731,8 @@ internal class AssignmentAsmGen(
         // addresses for which storeByteInAToAddressExpression can reload a constant byte
         // itself (after computing the pointer), avoiding a tax/txa round-trip through X
         return address is PtBinaryExpression && address.operator=="+" &&
-                address.left is PtIdentifier && address.right.type.isUnsignedWord &&
+                (address.left is PtIdentifier || address.left is PtNumber) &&
+                address.right.type.isUnsignedWord &&
                 (address.right is PtIdentifier || address.right is PtNumber)
     }
 
@@ -728,9 +809,11 @@ internal class AssignmentAsmGen(
 //              // does this ever occur? we could optimize it too, but it seems like a pathological case
 //          }
         }
-        if(saveA) asmgen.out("  pha")
+        if(byteValue==null && saveA) asmgen.out("  pha")
         assignExpressionToVariable(address, "P8ZP_SCRATCH_W2", DataType.UWORD)
-        if(saveA) asmgen.out("  pla")
+        if(byteValue!=null) {
+            asmgen.out("  lda  #${byteValue.toHex()}")
+        } else if(saveA) asmgen.out("  pla")
         asmgen.storeAIntoZpPointerVar("P8ZP_SCRATCH_W2", false)
     }
 

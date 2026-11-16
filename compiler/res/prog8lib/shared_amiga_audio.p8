@@ -409,14 +409,18 @@ audio {
 
     asmsub clock() -> long @D0 {
         ; return the Audio/Color clock, used for Period calculations to get the correct frequency
+        ; PAL/NTSC comes from ExecBase's VBlankFrequency (50=PAL, 60=NTSC),
+        ; always reachable via address 4. Never read GfxBase+$DC for this:
+        ; that byte is the high byte of NormalDPMX (dots-per-meter), which
+        ; has nothing to do with the video standard.
         %asm {{
-            move.l  sys.GfxBase, a6
-            btst.b  #0, $dc(a6)
-            bne.s   .ntsc
-            move.l  #3546895, d0        ; PAL
-            rts
-.ntsc:
+            move.l  4.w,a6
+            cmpi.b  #50,$212(a6)
+            beq.s   .pal
             move.l  #3579545, d0        ; NTSC
+            rts
+.pal:
+            move.l  #3546895, d0        ; PAL
             rts
         }}
     }
@@ -425,9 +429,9 @@ audio {
         ; Calls the device's BeginIO vector directly, instead of exec DoIO/SendIO,
         ; because those clear io_Flags which would wipe ADIOF_PERVOL and friends.
         %asm {{
-            move.l  d6,-(sp)            ; OS calls do not preserve d6
-            move.l  20(a1), a6          ; a6 = io_Device (offset 20 in IORequest)
-            jsr     -30(a6)             ; device BeginIO vector
+            move.l  d6,-(sp)                            ; OS calls do not preserve d6
+            move.l  audio.IOAudio.p8v_Device(a1),a6     ; a6 = io_Device
+            jsr     -30(a6)                             ; device BeginIO vector
             move.l  (sp)+,d6
             rts
         }}

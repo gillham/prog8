@@ -2,7 +2,7 @@
 
 Bugs found while working on the `llvm` branch that are also on `master` and have nothing to do with the llvm targets
 or quad support. Each repro was checked on a compiler built from `master` at `8bcd17674`, the virtual and cx16 targets,
-and all of them still fail on `master` at `de17e7953`.
+and all of them still fail on `master` at `8f50c2ed1`.
 "Branch" says whether `llvm` already has a fix that could be sent upstream.
 
 Keeping the list: add new items at the end with the next number, and remove an item once its repro passes on `master`.

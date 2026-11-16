@@ -96,7 +96,81 @@ under a heading says that it was looked at. One line for each change, with the c
 
 ## Entries
 
+## master de17e7953 .. 8f50c2ed1, merged 2026-11-16
+
+### Language and grammar
+nothing
+
+### Builtin functions
+nothing
+
+### Library
+- `strings`, edge cases (b9fae1820): `split` stops at trailing whitespace instead of looping forever; `rstrip` and
+  `rtrim` of a string of only whitespace give an empty string; `next_token` skips leading and repeated delimiters,
+  so it no longer returns empty tokens; `findstr` with an empty needle gives 0, found; on the VM `left`, `right`
+  and `slice` with length 0, and `find`, `find_eol` and `rfind` of an empty string, no longer run a loop of 256;
+  6502 `nappend` with a maximum below the target's length returns that length, and `ncopy` with a maximum of 0
+  gives an empty string. `libraries.rst` now documents `find_eol` and `findstr`
+- Amiga `custom`: CIA timer and time-of-day routines `timer_start`, `timer_stop`, `timer_value`, `timer_flag`,
+  `tod_read`, `tod_write`, `tod_alarm_set`, `tod_alarm_enable`, with the constants `CIA::A`/`B`, `TIMER::A`/`B` and
+  `CIAICRF_ALRM` (93bab5be7)
+- Amiga: new module `mobs` with the structs `Mob`, `Bob`, `Sprite` and position, distance and collision helpers
+  (7f22c9167, 1c4238d18, 973e18010)
+- Amiga `blitter`: new `draw_bob(^^mobs.Bob bob @A0, ^^pointer planes @A1, uword row_bytes @D0)`, and the last
+  parameter of `copy_rect` is a `bool descending` instead of a `ubyte` (d9fe4718d); `playfield.flip_copper`
+  (d9fe4718d); `waitvsync` fixed (8d89a41d6)
+
+### IR
+nothing
+
+### Errors and warnings
+- new 6502 warning "this store may rebuild a scratch pointer (many cpu cycles); consider a zero-page uword base
+  with a byte index, or a fixed-address page array" for a memory write `@(base + offset)` that isn't one of the
+  cheap forms, outside library modules; `-ignorefootguns` turns it off (5ae359154, b75793215)
+- a struct field that is itself a struct instance gives "no support for nested structs at 'name'" instead of
+  "invalid struct field type" (d9fe4718d)
+
+### Command line
+nothing
+
+### Conventions of 6502 programs
+- nothing new; 6502 code generation reuses a pointer over adjacent memory stores, keeps loads over indexed stores,
+  and needs no stack saves for stores to a constant base plus a byte index (7f743cba1, 5feeadf4c, 80a055508,
+  52bde28ed, with a 65C02 fix in b75793215)
+
+### Bugs fixed
+- inlining a subroutine that dereferences a pointer parameter (`p.field`) kept the parameter's name in the inlined
+  expression, so two calls with different arguments were taken as the same value (656899ab6)
+- m68k: the square of a long used `mulu.l`, which the 68000 doesn't have (7f22c9167)
+- the `strings` edge cases above
+- checked on `master` at 8f50c2ed1: all repros of `bugs/check.py`, and U66, U71, U74 and U76 in x16emu, whose code
+  this merge changed; none passes
+
+### LLVM branch only
+- `next_token` of the llvm16, llvm32 and llvm64 `strings` modules (which don't use the shared one) gets upstream's
+  fix; the other `strings` edge cases already worked there. A program with all of them prints the same on
+  virtual, llvm64, llvm32 and llvm16 (mos-sim)
+- `math.ctzl`, `reversel` and `popcount` of a long, which the reworded long docs point to, exist on virtual and
+  m68k only; the llvm targets lack them, like the 6502 targets
+- `variables.rst`, upstream's new note on `pointer` and `long`: llvm32 added to the 32-bit targets, and llvm64's
+  8-byte pointer
+- conflict in `AstChecker.kt`, struct fields: upstream's nested-struct message, with the branch's
+  `checkQuadSupported`
+- conflict in the `prog8-coder` skill: the branch's quad types and llvm pointer sizes, with upstream's text on
+  long
+- conflict in `TestExecution6502.kt` (an import) and in the symbol dumps (version header): dumps regenerated
+- conflict in `TestCompilerOnExamples.kt`: the sizes the merged compiler builds; each differs from upstream's by
+  the branch's own code, as the asm shows (U32, U76, the VM `txt.eof`, the branch's `memcmp`)
+
+### Nothing for p8p8
+- m68k struct sizes and offsets are `rs` blocks in the .asm instead of computed `equ` values (973e18010)
+- the long docs and skills, `ideas/` notes, amiga examples (`beachballs`, `hwtimers`, `penrose-triangle-os`
+  renamed to `penrose-triangle`), the vasm/vlink version note in `compiling.rst`, a stray binary `amiga2/3d`, and
+  expected sizes (28a708996, 93bab5be7, 7f22c9167, d9fe4718d, b75793215, 8f50c2ed1)
+
 ## master e13ac65c7 .. de17e7953, merged 2026-11-14
+
+Merge commit `f054e064e`.
 
 ### Language and grammar
 nothing

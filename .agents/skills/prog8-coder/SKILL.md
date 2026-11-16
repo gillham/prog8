@@ -19,6 +19,11 @@ skill covers `.p8` source and `.p8ir` intermediate representation for the
   Custom target configuration files can also be passed to `-target`.
 - `%import modulename` imports a module without aliases. Use its defined prefix,
   such as `%import textio` followed by `txt.print(...)`.
+- Symbols are public by default and reachable from anywhere via their full dotted
+  (qualified) name, e.g. `main.worker.counter` or `main.NUM_BALLS`. Unlike most
+  languages, a dotted name is resolved from the global namespace, not relative to
+  the current scope; unqualified names do relative lookup. Use `private` (or
+  `%option private_symbols`) to hide symbols.
 - `sys` is always available and needs no import.
 - `.p8ir` is target-independent IR and can be run with
   `prog8c -vm program.p8ir`.
@@ -63,7 +68,9 @@ runtime values unless its documented argument constraints say otherwise.
 - Math: `abs`, `clamp(value, min, max)`, `divmod` (one division, two results),
   `gcd`, `max`, `min`, `sgn`, `sqrt`.
 - Bytes and words: `lsb`, `lsw`, `msb`, `msw`, `lmh` (low/mid/high bytes of a
-  long), `mkword`, `mklong`, `mklong2`.
+  long) extract bytes, while `mkword(msb, lsb)`, `mklong(msb, b2, b1, lsb)` and
+  `mklong2(msw, lsw)` assemble a value from its bytes - most significant part
+  first, unlike the lsb-first convention of many other 8-bit toolchains.
 - Bit rotation: `rol`, `rol2`, `ror`, `ror2`.
 - Other: `len`, `offsetof(Struct.field)`, `peek`/`peekw`/`peekl`/`peekp`,
   `peekbool`, `cmp` (result via CPU flags; prefer `sgn(x - y)` when a value is
@@ -77,6 +84,16 @@ runtime values unless its documented argument constraints say otherwise.
 - `pointer` is target-sized: 16-bit on 6502 targets, 32-bit on `amiga500`,
   `amiga1200`, `qemu68k`, `virtual`, and `llvm32`, and 64-bit on `llvm64`.
   Use it for portable addresses, not `uword` or `long` chosen by assumption.
+  On 32-bit targets it is 4 bytes, like `long`; prefer it over `long` for
+  addresses, and use `long` for non-address 32-bit values.
+- There is no unsigned long type: `long` is signed for relational compares,
+  `/`, `%`, `>>`, float conversion, signed math builtins, and decimal printing.
+  Storage, `+`, `-`, `++`/`--`, `+=`/`-=`, equality, bitwise operators, `<<`,
+  and the low 32 bits of `*` are bit-identical for signed and unsigned values,
+  so a `long` works as an unsigned 32-bit accumulator or bit container.
+  Use `conv.str_ulhex` / `txt.print_ulhex` for unsigned hex output, and
+  `math.mul32`, `log2l`, `popcount(long)`, `ctzl`, `reversel`, `crc32` for bit
+  work. Long `%` is rejected on 6502 targets.
 - M68000 targets are big-endian and use 32-bit pointers. Load the `m68k-coder`
   skill for assembly details.
 - `float` requires `%import floats`.

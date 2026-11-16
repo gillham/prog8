@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA3-llvm.1 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit fde81bb8 in branch llvm
+Prerelease version from git commit 1e3a51f1 in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 LLVM version by Claude Code and Andrew Gillham (gillham@roadsign.com)
 Report issues with this version at https://github.com/gillham/prog8/issues
@@ -647,7 +647,8 @@ blitter  {
     const uword  MINTERM_OR
     const uword  MINTERM_SET
     area_fill  (long src @A0, uword width_words @D0, uword height @D1, uword mod @D2)
-    copy_rect  (long src @A0, long dst @A1, uword width_words @D0, uword height @D1, uword src_mod @D2, uword dst_mod @D3, uword minterm @D4, ubyte descending @D5)
+    copy_rect  (long src @A0, long dst @A1, uword width_words @D0, uword height @D1, uword src_mod @D2, uword dst_mod @D3, uword minterm @D4, bool descending @D5)
+    draw_bob  (^^mobs.Bob bob @A0, ^^long planes @A1, uword row_bytes @D0)
     erase  (long mask @A0, long dst @A1, uword width_words @D0, uword height @D1, uword mask_mod @D2, uword dst_mod @D3, ubyte shift @D4)
     fill_rect  (long dst @A0, uword width_words @D0, uword height @D1, uword pattern @D2, uword modulo @D3)
     horiz_line  (long dst @A1, uword x1 @D0, uword x2 @D2, uword y @D1, uword pattern @D3, bool erase @D5)
@@ -964,6 +965,8 @@ custom  {
     const ubyte  CHIPSET::AGA
     const ubyte  CHIPSET::ECS
     const ubyte  CHIPSET::OCS
+    const ubyte  CIA::A
+    const ubyte  CIA::B
     &ubyte  CIAA_CRA
     &ubyte  CIAA_CRB
     &ubyte  CIAA_DDRA
@@ -994,6 +997,7 @@ custom  {
     &ubyte  CIAB_TODHI
     &ubyte  CIAB_TODLOW
     &ubyte  CIAB_TODMID
+    const ubyte  CIAICRF_ALRM
     &uword  CLXCON
     &uword  CLXDAT
     &uword  COLOR00
@@ -1326,6 +1330,8 @@ custom  {
     &uword  STRHOR
     &uword  STRLONG
     &uword  STRVBL
+    const ubyte  TIMER::A
+    const ubyte  TIMER::B
     &uword  VBSTOP
     &uword  VBSTRT
     &uword  VHPOSR
@@ -1365,6 +1371,14 @@ custom  {
     set_aga_color  (ubyte color_index @D0, long rgb24 @D1)
     set_color  (ubyte index, long rgb24)
     set_ocs_color  (ubyte index, long rgb24)
+    timer_flag  (ubyte cia @D0, ubyte timer @D1) -> bool @Pz
+    timer_start  (ubyte cia @D0, ubyte timer @D1, uword reload @D2, bool continuous @D3)
+    timer_stop  (ubyte cia @D0, ubyte timer @D1)
+    timer_value  (ubyte cia @D0, ubyte timer @D1) -> uword @D0
+    tod_alarm_enable  (ubyte cia @D0, bool enable @D1)
+    tod_alarm_set  (ubyte cia @D0, long count @D1)
+    tod_read  (ubyte cia @D0) -> long @D0
+    tod_write  (ubyte cia @D0, long count @D1)
     waitvsync  ()
 }
 
@@ -5502,6 +5516,36 @@ math  {
 }
 
 
+LIBRARY MODULE NAME: mobs
+-------------------------
+
+mobs  {
+    struct Bob
+    struct Mob
+    struct Sprite
+    bottom  (^^mobs.Mob m) -> word
+    center_x  (^^mobs.Mob m) -> word
+    center_y  (^^mobs.Mob m) -> word
+    chebyshev_distance  (^^mobs.Mob a, ^^mobs.Mob b) -> uword
+    collides  (^^mobs.Mob a @A0, ^^mobs.Mob b @A1) -> bool @Pz
+    collides_circle  (^^mobs.Mob a, ^^mobs.Mob b) -> bool
+    contains_circle  (^^mobs.Mob m, word px, word py) -> bool
+    contains_point  (^^mobs.Mob m @A0, word px @D0, word py @D1) -> bool @Pz
+    delta  (^^mobs.Mob a, ^^mobs.Mob b) -> word, word
+    delta_x  (^^mobs.Mob a, ^^mobs.Mob b) -> word
+    delta_y  (^^mobs.Mob a, ^^mobs.Mob b) -> word
+    direction_to  (^^mobs.Mob a @A0, ^^mobs.Mob b @A1) -> ubyte @D0
+    distance  (^^mobs.Mob a, ^^mobs.Mob b) -> uword
+    distance_sq  (^^mobs.Mob a, ^^mobs.Mob b) -> long
+    intersection_box  (^^mobs.Mob a, ^^mobs.Mob b) -> word, word, word, word
+    left  (^^mobs.Mob m) -> word
+    manhattan_distance  (^^mobs.Mob a, ^^mobs.Mob b) -> uword
+    right  (^^mobs.Mob m) -> word
+    top  (^^mobs.Mob m) -> word
+    union_box  (^^mobs.Mob a, ^^mobs.Mob b) -> word, word, word, word
+}
+
+
 LIBRARY MODULE NAME: playfield
 ------------------------------
 
@@ -5515,6 +5559,7 @@ playfield  {
     destroy  ()
     destroy_backplane  ()
     flip  ()
+    flip_copper  (^^uword copper, uword base)
     patch_copper  (^^uword copper, uword base)
     patch_copper_at  (^^uword copper, uword base, uword xpix, uword yline) -> ubyte
     scroll_to  (uword xpix, uword yline) -> ubyte

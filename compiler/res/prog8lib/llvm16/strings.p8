@@ -414,21 +414,39 @@ strings {
         else
             last_token_source = source
 
-        if last_token_source^^ == 0
+        ^^ubyte scan = last_token_source
+        ^^ubyte dptr
+
+        ; skip leading delimiter characters
+        while scan^^ != 0 {
+            dptr = delimiters
+            while dptr^^ != 0 {
+                if scan^^ == dptr^^
+                    break
+                dptr += 1
+            }
+            if dptr^^ == 0
+                break
+            scan += 1
+        }
+        last_token_source = scan
+        if scan^^ == 0
             return 0
 
-        while last_token_source^^ != 0 {
-            ^^ubyte dptr = delimiters
+        source = scan
+        while scan^^ != 0 {
+            dptr = delimiters
             while dptr^^ != 0 {
-                if last_token_source^^ == dptr^^ {
-                    last_token_source^^ = 0
-                    last_token_source += 1
+                if scan^^ == dptr^^ {
+                    scan^^ = 0
+                    last_token_source = scan + 1
                     return source
                 }
                 dptr += 1
             }
-            last_token_source += 1
+            scan += 1
         }
+        last_token_source = scan
         return source
     }
     ^^ubyte last_token_source

@@ -694,6 +694,14 @@ Routines to convert strings to numbers or vice versa.
 - numbers to strings, in various formats (binary, hex, decimal)
 - strings in decimal, hex and binary format into numbers (bytes, words, longs)
 
+``str_ulhex(long value) -> str``
+    Format the 32 bits of the value as 8 hexadecimal digits, without a sign.
+    Use this to display a ``long`` as an unsigned 32-bit quantity. There is no
+    unsigned decimal formatter; ``str_l`` prints the same value as signed decimal.
+
+``str_l(long value) -> str``
+    Format the value as signed decimal, with a minus sign when negative.
+
 Read the :source:`conv source code <compiler/res/prog8lib/conv.p8>`
 to see what's in there.
 
@@ -1931,6 +1939,8 @@ manipulation
 
 ``nappend (string, suffix, maxlength) -> ubyte length``
     Appends the suffix string to the other string, up to the given maximum length of the combined string.
+    It is assumed the target string buffer is large enough to contain the result (which includes a terminating 0 byte),
+    so it must be at least ``maxlength+1`` bytes long.
     Returns the length of the combined string.
 
 ``ncopy (from, to, maxlength) -> ubyte length``
@@ -1994,6 +2004,17 @@ searching
     You can consider this a safer way of checking if a character occurs
     in a string than using an `in` containment check - because this find routine
     properly stops at the first 0-byte string terminator it encounters in case the string was modified.
+
+``find_eol (string) -> ubyte index, bool found``
+    Locates the first End Of Line character in the string, and a boolean (in Carry flag)
+    to say if it was found at all. If no line ending is found, index 255 (and false) is returned.
+    This is a convenience function that treats both CR (13) and LF (10) as a possible line ending.
+
+``findstr (haystack, needle) -> ubyte index``
+    Searches for the ``needle`` string in the ``haystack`` string.
+    If found, returns the index in haystack where the needle first occurs, with the Carry flag set.
+    If the needle doesn't occur, returns 255 (an invalid index) with the Carry flag clear.
+    An empty needle is considered to be found at index 0.
 
 ``pattern_match (string, pattern) -> bool`` (not on Virtual target)
     Returns true if the string matches the pattern, false if not.
@@ -2234,6 +2255,10 @@ dealing with text-based input and output (to the screen). Such as
 - scrolling the text on the screen
 - placing individual characters on the screen
 - convert petscii to screencode characters
+
+For 32-bit values, ``print_ulhex`` prints the value as 8 hexadecimal digits (with an
+optional ``$`` prefix), treating the ``long`` as an unsigned 32-bit quantity. ``print_l``
+prints the same value as signed decimal. There is no unsigned decimal printer.
 
 All routines work with Screencode character encoding, except ``print``, ``chrout`` and ``input_chars``, these work with PETSCII encoding instead.
 

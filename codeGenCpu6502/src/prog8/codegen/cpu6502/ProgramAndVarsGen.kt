@@ -329,7 +329,7 @@ internal class ProgramAndVarsGen(
 
         val initializers = blockVariableInitializers.getValue(block)
         val notInitializers = block.children.filterNot { it in initializers }
-        notInitializers.forEach { asmgen.translate(it) }
+        asmgen.translateStatements(notInitializers)
 
         // generate subroutine to initialize block-level (global) variables
         if (initializers.isNotEmpty()) {
@@ -545,7 +545,7 @@ internal class ProgramAndVarsGen(
 
         // asmsub with most likely just an inline asm in it
         asmgen.out("${sub.name}\t$asmStartScope")
-        sub.children.forEach { asmgen.translate(it) }
+        asmgen.translateStatements(sub.children)
         asmgen.out("  $asmEndScope")
     }
 
@@ -623,7 +623,7 @@ internal class ProgramAndVarsGen(
         }
 
         asmgen.out("; statements")
-        sub.children.forEach { asmgen.translate(it) }
+        asmgen.translateStatements(sub.children)
 
         asmgen.out("; variables")
         asmgen.out("    .section BSS_NOCLEAR")      // these extra vars are initialized before use

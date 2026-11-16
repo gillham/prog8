@@ -871,6 +871,301 @@ class TestExecution6502 : FunSpec({
         }
     }
 
+    test("constant address plus byte index uses absolute indexed access") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                const uword low_base = 248
+                &ubyte poweroff = $f203
+                &ubyte result = $3000
+
+                sub start() {
+                    ubyte @shared index = 7
+                    ubyte @shared low_index = 16
+
+                    @(1024 + index) = $2a
+                    result = @(1024 + index)
+                    @(low_base + low_index) = $55
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for (optimize in listOf(false, true)) {
+            val compileResult = compileText(C64Target(), optimize, src, outputDir, writeAssembly=true)!!
+            val asmFile = compileResult.compilationOptions.outputDir.resolve(compileResult.compilerAst.name + ".asm")
+            val lines = Files.readAllLines(asmFile).map { it.trim() }
+            val start = lines.indexOfFirst { it.startsWith("p8s_start") && it.endsWith(".proc") }
+            start shouldNotBe -1
+            val end = lines.drop(start + 1).indexOf(".pend")
+            end shouldNotBe -1
+            val subroutine = lines.subList(start + 1, start + 1 + end)
+
+            subroutine.count { it.startsWith("sta") && it.contains("0400") && it.endsWith(",x") } shouldBe 1
+            subroutine.count { it.startsWith("lda") && it.contains("0400") && it.endsWith(",x") } shouldBe 1
+
+            val machine = compileResult.simulate()
+            machine.assertMemory(0x0407, 0x2a)
+            machine.assertMemory(0x3000, 0x2a)
+            machine.assertMemory(0x0108, 0x55)
+        }
+    }
+
+    test("constant stores to a numeric base reload after pointer setup") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+
+                sub start() {
+                    uword @shared index = 7
+                    @(1024 + index) = $2a
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for (optimize in listOf(false, true)) {
+            val compileResult = compileText(C64Target(), optimize, src, outputDir, writeAssembly=true)!!
+            val asmFile = compileResult.compilationOptions.outputDir.resolve(compileResult.compilerAst.name + ".asm")
+            val lines = Files.readAllLines(asmFile).map { it.trim() }
+            val start = lines.indexOfFirst { it.startsWith("p8s_start") && it.endsWith(".proc") }
+            start shouldNotBe -1
+            val end = lines.drop(start + 1).indexOf(".pend")
+            end shouldNotBe -1
+            val subroutine = lines.subList(start + 1, start + 1 + end)
+
+            val pointerHighStore = subroutine.indexOfFirst {
+                (it.startsWith("sta") || it.startsWith("sty")) && it.contains("P8ZP_SCRATCH_W2+1")
+            }
+            val constantLoad = subroutine.indexOf($$"lda  #$2a")
+            val indirectStore = subroutine.indexOfFirst { it.startsWith("sta") && it.contains("(P8ZP_SCRATCH_W2),y") }
+            pointerHighStore shouldNotBe -1
+            constantLoad shouldNotBe -1
+            indirectStore shouldNotBe -1
+            (pointerHighStore < constantLoad && constantLoad < indirectStore) shouldBe true
+            subroutine.count { it == "pha" || it == "pla" } shouldBe 0
+
+            val machine = compileResult.simulate()
+            machine.assertMemory(0x0407, 0x2a)
+        }
+    }
+
+    test("adjacent numeric-base stores share a word-indexed address") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+
+                sub start() {
+                    uword @shared offset = 7
+                    ubyte @shared screen_char = $2a
+                    ubyte @shared screen_colour = $55
+                    @(1024 + offset) = screen_char
+                    @(55296 + offset) = screen_colour
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for (optimize in listOf(false, true)) {
+            val compileResult = compileText(C64Target(), optimize, src, outputDir, writeAssembly=true)!!
+            val asmFile = compileResult.compilationOptions.outputDir.resolve(compileResult.compilerAst.name + ".asm")
+            val lines = Files.readAllLines(asmFile).map { it.trim() }
+            val start = lines.indexOfFirst { it.startsWith("p8s_start") && it.endsWith(".proc") }
+            start shouldNotBe -1
+            val end = lines.drop(start + 1).indexOf(".pend")
+            end shouldNotBe -1
+            val subroutine = lines.subList(start + 1, start + 1 + end)
+
+            subroutine.count {
+                (it.startsWith("lda") || it.startsWith("adc")) && it.contains("p8v_offset")
+            } shouldBe 2
+            val stores = subroutine.indices.filter {
+                subroutine[it].startsWith("sta") && subroutine[it].contains("(P8ZP_SCRATCH_W2),y")
+            }
+            stores.size shouldBe 2
+            val baseAdjustment = subroutine.indexOfFirst { it.startsWith("adc") && it.contains($$"#$d4") }
+            baseAdjustment shouldNotBe -1
+            (stores[0] < baseAdjustment && baseAdjustment < stores[1]) shouldBe true
+
+            val machine = compileResult.simulate()
+            machine.assertMemory(0x0407, 0x2a)
+            machine.assertMemory(0xd807, 0x55)
+        }
+    }
+
+    test("adjacent numeric-base stores use a full pointer adjustment when low bytes differ") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+
+                sub start() {
+                    uword @shared offset = 7
+                    @(1026 + offset) = $2a
+                    @(1285 + offset) = $55
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        val compileResult = compileText(C64Target(), true, src, outputDir, writeAssembly=true)!!
+        val asmFile = compileResult.compilationOptions.outputDir.resolve(compileResult.compilerAst.name + ".asm")
+        val lines = Files.readAllLines(asmFile).map { it.trim() }
+        val start = lines.indexOfFirst { it.startsWith("p8s_start") && it.endsWith(".proc") }
+        start shouldNotBe -1
+        val end = lines.drop(start + 1).indexOf(".pend")
+        end shouldNotBe -1
+        val subroutine = lines.subList(start + 1, start + 1 + end)
+
+        val stores = subroutine.indices.filter {
+            subroutine[it].startsWith("sta") && subroutine[it].contains("(P8ZP_SCRATCH_W2),y")
+        }
+        stores.size shouldBe 2
+        val lowAdjustment = subroutine.indexOfFirst { it.startsWith("adc") && it.contains("#3") }
+        val highAdjustment = subroutine.indexOfFirst { it.startsWith("adc") && it.contains("#1") }
+        lowAdjustment shouldNotBe -1
+        highAdjustment shouldNotBe -1
+        (stores[0] < lowAdjustment && lowAdjustment < highAdjustment && highAdjustment < stores[1]) shouldBe true
+
+        val machine = compileResult.simulate()
+        machine.assertMemory(0x0409, 0x2a)
+        machine.assertMemory(0x050c, 0x55)
+    }
+
+    test("numeric-base stores separated by a call rebuild the address") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                ubyte @shared touched = 0
+
+                sub touch(ubyte a, ubyte b) {
+                    touched = a + b
+                }
+
+                sub start() {
+                    uword @shared offset = 7
+                    @(1024 + offset) = $2a
+                    touch(1, 2)
+                    @(55296 + offset) = $55
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        val compileResult = compileText(C64Target(), true, src, outputDir, writeAssembly=true)!!
+        val asmFile = compileResult.compilationOptions.outputDir.resolve(compileResult.compilerAst.name + ".asm")
+        val lines = Files.readAllLines(asmFile).map { it.trim() }
+        val start = lines.indexOfFirst { it.startsWith("p8s_start") && it.endsWith(".proc") }
+        start shouldNotBe -1
+        val end = lines.drop(start + 1).indexOf(".pend")
+        end shouldNotBe -1
+        val subroutine = lines.subList(start + 1, start + 1 + end)
+
+        subroutine.count {
+            (it.startsWith("lda") || it.startsWith("adc")) && it.contains("p8v_offset")
+        } shouldBe 4
+        subroutine.any { it.startsWith("jsr") && it.contains("p8s_touch") } shouldBe true
+
+        val machine = compileResult.simulate()
+        machine.assertMemory(0x0407, 0x2a)
+        machine.assertMemory(0xd807, 0x55)
+    }
+
+    test("same constant and index loads are reused for fixed-address array stores") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte[256] page0 = $0400
+                &ubyte[256] page1 = $0500
+                &ubyte poweroff = $f203
+
+                sub start() {
+                    ubyte @shared index = 7
+                    page0[index] = $20
+                    page1[index] = $20
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for (optimize in listOf(false, true)) {
+            val compileResult = compileText(C64Target(), optimize, src, outputDir, writeAssembly=true)!!
+            val asmFile = compileResult.compilationOptions.outputDir.resolve(compileResult.compilerAst.name + ".asm")
+            val lines = Files.readAllLines(asmFile).map { it.trim() }
+            val start = lines.indexOfFirst { it.startsWith("p8s_start") && it.endsWith(".proc") }
+            start shouldNotBe -1
+            val end = lines.drop(start + 1).indexOf(".pend")
+            end shouldNotBe -1
+            val subroutine = lines.subList(start + 1, start + 1 + end)
+
+            val indexLoads = subroutine.count { it.startsWith("ldy") && it.contains("p8v_index") }
+            val constantLoads = subroutine.count { it == $$"lda  #$20" }
+            val page0Store = subroutine.indexOfFirst { it.startsWith("sta") && it.contains("p8v_page0,y") }
+            val page1Store = subroutine.indexOfFirst { it.startsWith("sta") && it.contains("p8v_page1,y") }
+            indexLoads shouldBe if (optimize) 1 else 2
+            constantLoads shouldBe if (optimize) 1 else 2
+            page0Store shouldNotBe -1
+            page1Store shouldNotBe -1
+            (page0Store < page1Store) shouldBe true
+
+            val machine = compileResult.simulate()
+            machine.assertMemory(0x0407, 0x20)
+            machine.assertMemory(0x0507, 0x20)
+        }
+    }
+
+    test("adjacent numeric-base stores on 65C02 with optimizations disabled") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+
+                sub start() {
+                    uword @shared offset = 7
+                    ubyte @shared col = $55
+                    @(1024 + offset) = $2a
+                    @(1280 + offset) = col
+                    @(1026 + offset) = $2b
+                    @(1285 + offset) = col
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for (optimize in listOf(false, true)) {
+            val compileResult = compileText(Cx16Target(), optimize, src, outputDir)!!
+            val machine = compileResult.simulate()
+            machine.assertMemory(0x0407, 0x2a)
+            machine.assertMemory(0x0507, 0x55)
+            machine.assertMemory(0x0409, 0x2b)
+            machine.assertMemory(0x050c, 0x55)
+        }
+    }
+
     test("union zero-init via memory, write byte and read overlapping word") {
         val src = $$"""
             %option no_sysinit

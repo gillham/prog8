@@ -17,29 +17,9 @@ in vasm mot syntax only; do not target or reference Dragonball/ColdFire.
 
 ## Shared object metadata
 
-Keep movable-object metadata separate from renderer-specific image data. `Mob`
-lives in the lightweight `amiga_objects` types module imported by `sprites` and
-`blitter`; it contains no bitmap pointers and requires no OS libraries.
-
-```prog8
-struct Mob {
-    uword id
-    word x_pos
-    word y_pos
-    word origin_x
-    word origin_y
-    uword width
-    uword height
-    uword state
-}
-
-```
-
-`x_pos`/`y_pos` are the screen coordinates of the image's top-left; the
-client-selected anchor is at `(x_pos + origin_x, y_pos + origin_y)`. Width is
-the exact pixel width and height is in rows. `Mob.state` is a client-defined
-state identifier, independent of rendering. Client code owns animation timing
-and frame selection; image/frame pointers stay in each renderer-specific object.
+Implemented: the `mobs` module (`amiga500`/`amiga1200`, `%import mobs`) holds
+`Mob`, `Bob`, `Sprite` and the integer-only geometry helpers. See the library
+reference for the struct layouts and routine list.
 
 ## Sprite Helper Library
 
@@ -337,127 +317,23 @@ m68k targets have no `sys.set_irq` helpers, see `targetsystem.rst`).
 - `playfield.waitvsync` stays the polling fallback; document when the IRQ
   version pays off (frame time too tight to spin on the beam).
 
-## CIA timer IRQ helpers
+## CIA timer interrupt helpers
 
-Same gap one layer down: `custom` exposes the CIA registers
-(`CIAA_TALO/TAHI/CRA/ICR`, same for CIA-B) so hand-rolled setup is possible,
-and `lowlevel-timer.p8` covers the OS path via `lowlevel.library`, but no
-bare-metal helper or example exists.
+Interrupt-driven CIA timer support, the part that needs design decisions
+rather than register pokes:
 
-- Load latch (TALO/TAHI), force-load and start mode via CRA/CRB, enable via
-  ICR with bit 7 set.
 - Route to CPU levels 2 (CIA-A) / 6 (CIA-B) through `INTENA` PORTS/EXTER,
   install the handler via `custom.cpuVBR`, acknowledge by *reading* ICR,
   return with `rte`, restore on exit.
 - Keep the handler minimal (tick counter / frame flag), like the VERTB one.
-
-### TOD (Time of Day) clock support
-
-Both CIAs have a 24-bit BCD TOD clock (hours:minutes:seconds.tenths) driven
-by the power line frequency (50 Hz PAL / 60 Hz NTSC, divided to 10 Hz).
-Registers (named as in ``custom``): `CIAA_TODLOW/MID/HI` ($bfe801/$bfe901/$bfea01)
-and `CIAB_TODLOW/MID/HI` ($bfd800/$bfd900/$bfda00). CIA-A sits on the odd byte
-lane, CIA-B on the even one, hence the different low address bit.
-
-Helpers to provide:
-- `cia.tod_read(cia) -> (hours, minutes, seconds, tenths)` — read all 3 bytes
-  with latch (read TODHI first to latch, then TODMID, then TODLOW). Returns BCD
-  values; caller converts to binary if needed.
-- `cia.tod_write(cia, h, m, s, t)` — set the time. Write TODHI first (stops
-  clock), then TODMID, then TODLOW (restarts clock).
-- `cia.tod_alarm(cia, h, m, s, t)` — set the alarm register. When TOD matches,
-  triggers an interrupt on the CIA's CPU level (level 2 for CIA-A, level 6 for
-  CIA-B).
-- `cia.tod_alarm_enable(cia, bool)` — enable/disable the alarm interrupt via
-  ICR (bit 4 = TOD alarm).
-
-Notes:
-- TOD counts up (increments every 0.1s), rolls over at 23:59:59.9.
-- Accuracy is power-line dependent (±0.1%), not crystal. Good for game timing,
-  not for precision measurement.
-- No date storage — only time-of-day. Date is maintained in software.
-- CIA-A TOD is typically used by the OS for the system clock. After
-  `grab_system()`, it's free to use. CIA-B TOD is often used for disk timing.
-- Reading TODHI latches all three bytes for a consistent snapshot. Not reading
-  TODHI first gives inconsistent (torn) reads.
-- Writing TODHI stops the clock; writing TODLOW restarts it. The set sequence
-  must be HI -> MID -> LOW.
-
-## BOB helpers (extensions to shared_amiga_blitter.p8)
-
-`shared_amiga_blitter.p8` IS the blitter library. These are additions to it,
-not a separate module.
-
-### BOB data descriptors
-
-Use Prog8 `snake_case` names, following the Amiga `graphics.BitMap` concepts.
-All BOB data is uncompressed, planar, and in CHIP RAM. Within each frame, store
-each color plane contiguously in plane-major order. The mask, when present, is
-stored separately from the color data, matching the Amiga `ImageData` and
-`ImageShadow` convention. Plane 0 is the least-significant bit of the palette
-index. The descriptor itself need not be in CHIP RAM.
-
-Rows use one fixed format, so the descriptor does not store row or frame
-strides. `width` preserves the exact image width in pixels. Derive
-`width_words = ceil(width / 16)` for blitter operations, matching the Amiga BOB
-convention. `row_words = width_words + 1`; the extra final word of
-every color and mask row is a zero guard word for soft blits. Thus
-`row_bytes = row_words * 2` and `plane_bytes = height * row_bytes`. The mask
-uses the same row format as the color planes; its bits can mark unused pixels
-in the final image word as transparent. Rows are left-justified: the leftmost
-pixel is bit 15 of the first word; unused low bits in a partial final word are
-zero, followed by the guard word.
-
-`Bob` references the shared `Mob` and stores BOB-specific image metadata and
-pointers:
-
-```prog8
-struct Bob {
-    ^^amiga_objects.Mob mob
-    uword depth
-    pointer data
-    pointer mask
-}
-```
-
-`mob` is required. `data` points to plane 0 of the currently selected frame, and
-`mask` points to that frame's separate mask or is null for an opaque BOB. Color
-plane `p` starts at `data + p * plane_bytes`. Client code owns animation timing
-and frame selection, updating `data` and `mask` before drawing. The multi-plane
-BOB draw helper accepts a full `^^Bob` so it can read both the Mob metadata and
-the image pointers; it does not mutate either.
-
-Sprite sheets are input assets, not a runtime BOB layout. Extracting and
-repacking their cells into the required plane-major frames is the responsibility
-of the client or its asset converter; the blitter library does not convert them.
-
-### BOB animation lifecycle (why masked_blit alone is not enough)
-
-A *moving* BOB needs three primitives per frame, in this order:
-
-1. **Erase** the BOB at its old position — restore the saved background:
-   `copy_rect(savebuf, dst, W, H, 0, dst_mod, MINTERM_A_ONLY)` (or
-   `masked_blit(savebuf, 0, dst, W, H, 0, 0, dst_mod, old_shift, MINTERM_A_ONLY)`
-   if the BOB was soft-scrolled and the save buffer is W+1 words wide).
-2. **Save** the background at the new position into the save buffer:
-   `copy_rect(dst_new, savebuf, W, H, dst_mod, 0, MINTERM_A_ONLY)` (W+1 words
-   for soft-scroll).
-3. **Draw** the BOB at the new position:
-   `masked_blit(bob, mask, dst_new, W, H, src_mod, src_mod, dst_mod, shift, MINTERM_MASKED)`.
-
-The save buffer must be BOB-sized (W words, or W+1 for soft-scroll) and live
-in chip RAM. With multiple BOBs, erase in reverse draw order (back to front)
-to avoid one BOB erasing another's pixels; the main program owns the save
-buffers and the old/new position state — the helpers stay stateless.
-
-This is why the library deliberately stops at primitives: a "move_bob" helper
-would have to own save buffers, positions, and frame ordering, which is
-game-specific. The three-primitive sequence above is the standard Amiga BOB
-pattern and composes cleanly with the existing `copy_rect`/`masked_blit`.
-
-- do we need a routine to clear the BOB as well or can we use masked blit for that too efficiently maybe? -> use `fill_rect` with pattern $0000 for a region, or `copy_rect` (save/restore background) for erase; no dedicated clear-BOB routine.
-- what else is missing to easily handle BOBS? -> the existing primitives (copy_rect, masked_blit, clear_plane, fill_rect) cover save/restore, draw and erase. Collision detection stays CPU/hardware (CLXCON/CLXDAT), not a blitter job.
-- `blitter.wait()` already exists in `shared_amiga_blitter.p8` (busy-waits on
-  DMACONR bit 6). No new helper needed — just reuse/alias it.
-
-
+- Decide the callback shape: a Prog8 `sub` pointer called from the stub (needs
+  a register contract the stub upholds), a bare address of hand-written asm, or
+  an `exec.Interrupt`-like node the user fills in.
+- Decide the OS story: `cia.resource/AddICRVector` and `RemICRVector` are not
+  wrapped anywhere in the library (only `ptplayer` calls them from inline asm),
+  while `timer.device` claims CIA-A Timer A and Timer B for its microhertz unit
+  and the 50/60 Hz tick. Direct ICR writes while the OS runs are explicitly
+  discouraged, so this helper can only be bare-metal until someone wraps
+  `cia.resource`.
+- Name it once it exists: something like `cia.timer_irq`, kept separate from
+  the polling helpers.

@@ -186,10 +186,68 @@ modules. Import them the same way as any other library::
     with a divisor of 1 and returns zero.
     Poll mouse deltas once per frame because each hardware counter is 8-bit.
 
+    Both CIA TOD counters are reachable through ``tod_read(cia)``,
+    ``tod_write(cia, count)``, ``tod_alarm_set(cia, count)`` and
+    ``tod_alarm_enable(cia, bool)``, where ``cia`` is ``custom.CIA::A`` or
+    ``custom.CIA::B``. A TOD is a 24-bit binary *event* counter, not a clock:
+    CIA-A counts 50/60 Hz events (mains tick, or VSync on later machines) and
+    CIA-B counts horizontal sync at about 15.7 kHz, which makes it a line
+    counter rather than a time of day. ``tod_read`` returns the raw count, keeps
+    the latched HI, MID, LOW read order for you and wraps at ``$ffffff``; there
+    is no hours/minutes/seconds decoding anywhere. Reading is harmless while the
+    OS runs, but writing reloads and therefore disturbs a counter the OS owns:
+    ``timer.device`` drives its system tick from CIA-A and ``graphics.library``
+    uses CIA-B as its video beam follower, so ``tod_write`` and
+    ``tod_alarm_set`` belong after ``custom.grab_system()``. Timed waits under
+    the OS should use ``timer.device`` (``timer``) or ``ReadEClock`` instead.
+    ``tod_alarm_set`` loads the alarm register and ``tod_alarm_enable`` masks
+    the resulting interrupt (ICR bit 2, ``custom.CIAICRF_ALRM``); with the mask
+    off the alarm flag can still be polled from ``CIAA_ICR``/``CIAB_ICR``,
+    since reading an ICR acknowledges it.
+
+    The two 16-bit interval timers of each CIA are reachable through
+    ``timer_start(cia, timer, reload, continuous)``, ``timer_stop(cia, timer)``,
+    ``timer_value(cia, timer)`` and ``timer_flag(cia, timer)``, with ``timer``
+    one of ``custom.TIMER::A`` or ``custom.TIMER::B``. They count the ~7 MHz
+    ø2 clock (7.09 MHz PAL, 7.16 MHz NTSC) down from the loaded value: 65535
+    ticks is about 9.2 ms, so they are for short precise waits and cycle-level
+    measurement, not for long delays. One-shot mode stops after the underflow,
+    continuous mode reloads and runs again. ``timer_value`` returns what is
+    left of the count, so elapsed cycles are the loaded value minus that.
+    These are polling helpers only: ``timer_flag`` tests (and acknowledges)
+    the underflow flag by reading the CIA ICR, and Prog8 cannot install a CIA
+    interrupt handler yet, so nothing here hooks one up. Like ``tod_write``,
+    they poke registers the OS owns, so use them after ``grab_system()``.
+    ``PBON`` is always left off, which keeps the timers from driving the
+    CIA port B pins.
+
+``mobs``
+    Shared movable-object descriptor types for the Amiga bare-metal helpers:
+    ``mobs.Mob`` (id, x/y position, anchor offsets, width, height, collision
+    radius, state), ``mobs.Bob`` (a ``Mob`` plus bitplane depth, data and mask
+    pointers) and ``mobs.Sprite`` (a ``Mob`` plus a data pointer, with
+    AGA-specific fields still to be added). Pure data, no OS or library
+    dependencies; ``blitter`` and ``sprites`` build on top of ``Mob``. Client
+    code owns animation timing, frame selection and positions.
+    Geometry helpers are integer-only and read the anchor and box fields:
+    ``collides(a, b)`` and ``contains_point(m, px, py)`` are origin-aware AABB
+    tests, each with a fast path when the origin is (0, 0).
+    ``collides_circle(a, b)`` and ``contains_circle(m, px, py)`` use the
+    ``radius`` field (0 falls back to the AABB tests). ``left()``, ``top()``,
+    ``right()``, ``bottom()``, ``center_x()`` and ``center_y()`` give the
+    origin-adjusted box edges without retyping the origin adds.
+    ``delta(a, b)`` returns the signed displacement, ``direction_to(a, b)`` a
+    0-23 compass direction (N=0, clockwise; an 8-way facing derives as
+    ``((d+1)/3) & 7``), ``manhattan_distance()`` and ``chebyshev_distance()``
+    replace the square root with adds/compares, and ``union_box()`` /
+    ``intersection_box()`` combine two boxes into left/top/right/bottom.
+
 ``blitter``
     Bare-metal blitter programming, no OS calls: ``copy_rect()`` and
     ``fill_rect()`` (use pattern ``$0000`` to clear or ``$ffff`` to fill),
-    ``masked_blit()`` and mask-based ``erase()`` for BOBs, and the line drawer
+    ``masked_blit()`` and mask-based ``erase()`` for BOBs, ``draw_bob()`` for a
+    whole ``mobs.Bob`` (one masked blit per plane, position, shift and source
+    plane stride derived from the Mob), and the line drawer
     (``line_init()``, ``line_draw()``, ``line_color()``).
     The module is designed for traditional non-interleaved planar screens, with
     independently allocated contiguous bitplanes. The rectangle and BOB primitives
@@ -199,8 +257,9 @@ modules. Import them the same way as any other library::
     screens can reduce the number of setups by treating planes as additional blit
     rows, but require matching interleaved source data and repeated masks, reduce
     the maximum blit height by the plane count, and still need the per-plane DMA.
-    ``masked_blit()`` clips shifted pixels at the BOB's original right edge, but
-    neither it nor ``erase()`` clips against screen or bitmap edges. The caller must
+    ``masked_blit()`` uses the Jones trick (shifted blits are one word wider,
+    no guard word stored), but neither it nor ``erase()`` clips against screen
+    or bitmap edges. The caller must
     keep every destination word valid. Clip top or bottom by adjusting row pointers
     and height, and clip right by reducing ``width_words`` and recomputing all modulos.
     Direct left clipping is only word-aligned: advance the source and mask, reduce
@@ -232,8 +291,10 @@ modules. Import them the same way as any other library::
     ``patch_copper_at()`` patches scrolled plane addresses into a copper
     list. ``waitvsync()`` aliases the frame pacer. For double buffering,
     ``create_backplane()`` allocates a matching second buffer, ``flip()`` swaps
-    the two, and ``clear_backplane()``/``destroy_backplane()`` manage it
-    (see ``examples/amiga/3d.p8``). Kickstart 1.3 compatible
+    the two (or ``flip_copper()`` to wait, swap and re-patch a copper list in
+    one call), and ``clear_backplane()``/
+    ``destroy_backplane()`` manage it (see ``examples/amiga/3d.p8`` and the
+    double-buffered BOB recipe in :ref:`amiga-bobs`). Kickstart 1.3 compatible
     (the ``AllocBitMap`` fast path is only
     used on 3.0+). See ``examples/amiga/custominputs.p8`` for
     the equivalent manual setup (raw copper words and ``AllocMem`` bitplanes).
@@ -302,7 +363,7 @@ modules. Import them the same way as any other library::
     ``imsg_poll()``/``imsg_reply()`` in animation loops. ``imsg_wait()`` blocks
     until a message arrives. The ``rastport`` and ``window`` variables expose the
     handles for direct library calls and IDCMP message handling. See
-    ``examples/amiga/penrose-triangle-os.p8`` for a polling loop. Kickstart 1.3
+    ``examples/amiga/penrose-triangle.p8`` for a polling loop. Kickstart 1.3
     compatible.
 
 Manual additions and tweaks
@@ -377,11 +438,12 @@ additions:
   assembled with ``-m68000`` normally, and with ``-m68020 -m68881`` when floats are used, so such
   a program will not run on a stock Amiga 500. The amiga1200 target is always assembled with
   ``-m68020 -m68881``, but that only enables assembling FPU instructions: a program that does not
-  use floats still runs on a stock Amiga 1200 without an FPU.
+  use floats still runs on a stock Amiga 1200 without an FPU. The qemu68k target always emulates
+  an FPU, so floats are available there without extra hardware.
   Every float operation, including ``print()`` and ``parse()``, is a direct FPU instruction, so a
   program using floats warns at compile time and crashes with an illegal instruction when run
   without an FPU. AmigaOS ships software floating-point libraries (``mathieee*.library``) that
-  need no FPU, but Prog8 does not use them at thist time.
+  need no FPU, but Prog8 does not use them at this time.
 - ``lists`` - on amiga500/amiga1200 it wraps ``exec.library`` and uses the real
   Exec ``MinList``/``MinNode``/``Node`` layouts.
 - ``math`` - ``mul32`` compiles to a single m68k multiply instruction.

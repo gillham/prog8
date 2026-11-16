@@ -2877,9 +2877,85 @@ internal class AstChecker(private val program: Program,
         return false
     }
 
+    private fun warnSlowMemoryStore(memwrite: DirectMemoryWrite) {
+        if(options.ignoreFootguns || !options.compTarget.cpu.is6502 || memwrite.definingModule.isLibrary)
+            return
+        val address = memwrite.addressExpression as? BinaryExpression ?: return
+        if(address.operator!="+")
+            return
+
+        val left = address.left
+        val right = address.right
+        val rightValue = right.constValue(program)
+        if(rightValue!=null) {
+            if(left.constValue(program)!=null)
+                return
+            val base = rightValue.number.toLong()
+            // A zero-page cursor plus a byte offset, and the reversed P4 form, are cheap.
+            val leftPointer = left as? IdentifierReference
+            if(leftPointer!=null && isDefinitelyInZeropage(leftPointer) && base in 0L..0xffL)
+                return
+            if(base in 0x100L..0xffffL) {
+                val byteIndex = when(left) {
+                    is IdentifierReference -> left.takeIf { it.inferType(program).getOrUndef().isUnsignedByte }
+                    is TypecastExpression -> (left.expression as? IdentifierReference)?.takeIf {
+                        it.inferType(program).getOrUndef().isUnsignedByte
+                    }
+                    else -> null
+                }
+                if(byteIndex!=null)
+                    return
+            }
+        }
+
+        val rightType = right.inferType(program).getOrUndef()
+        val offsetIsByte = when(right) {
+            is TypecastExpression -> right.expression.inferType(program).getOrUndef().isUnsignedByte
+            else -> rightType.isUnsignedByte
+        }
+        val leftIdentifier = left as? IdentifierReference
+        val leftType = left.inferType(program).getOrUndef()
+        val leftIsPointerIdentifier = leftIdentifier!=null && (leftType.isUnsignedWord || leftType.isPointer)
+
+        if(leftIsPointerIdentifier) {
+            if(offsetIsByte && isDefinitelyInZeropage(leftIdentifier))
+                return
+            errors.warn("this store may rebuild a scratch pointer (many cpu cycles); consider a zero-page uword base with a byte index, or a fixed-address page array", memwrite.position)
+            return
+        }
+
+        val baseValue = left.constValue(program)?.number?.toLong()
+        val byteIndexIdentifier = when (right) {
+            is IdentifierReference -> right.takeIf { offsetIsByte }
+            is TypecastExpression -> (right.expression as? IdentifierReference)?.takeIf {
+                offsetIsByte && it.inferType(program).getOrUndef().isUnsignedByte
+            }
+            else -> null
+        }
+        val p4FastAddress = baseValue!=null && baseValue in 0x100L..0xffffL &&
+                offsetIsByte && byteIndexIdentifier!=null
+        if(p4FastAddress)
+            return
+
+        errors.warn("this store may rebuild a scratch pointer (many cpu cycles); consider a zero-page uword base with a byte index, or a fixed-address page array", memwrite.position)
+    }
+
+    private fun isDefinitelyInZeropage(identifier: IdentifierReference): Boolean {
+        val decl = identifier.targetVarDecl() ?: return false
+        if(decl.zeropage == ZeropageWish.REQUIRE_ZEROPAGE)
+            return true
+        if(decl.type == VarDeclType.MEMORY) {
+            val address = decl.value?.constValue(program)?.number?.toLong()
+            return address!=null && address in 0L..0xffL
+        }
+        return false
+    }
+
     override fun visit(memwrite: DirectMemoryWrite) {
         if(!allowedMemoryAccessAddressExpression(memwrite.addressExpression, program))
             errors.err("invalid address type for memory access", memwrite.position)
+        else
+            warnSlowMemoryStore(memwrite)
 
         val pointervar = memwrite.addressExpression as? IdentifierReference
         if(pointervar!=null)
@@ -2935,8 +3011,12 @@ internal class AstChecker(private val program: Program,
         }
 
         struct.fields.forEach { field ->
-            if(!validFieldType(field))
-                errors.err("invalid struct field type at '${field.name}'", struct.position)
+            if(!validFieldType(field)) {
+                if(field.type.isStructInstance)
+                    errors.err("no support for nested structs at '${field.name}'", struct.position)
+                else
+                    errors.err("invalid struct field type at '${field.name}'", struct.position)
+            }
             checkQuadSupported(field.type, struct.position)
             if(field.isArray) {
                 val size = field.constSize()
