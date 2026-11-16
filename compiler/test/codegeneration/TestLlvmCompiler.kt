@@ -6659,6 +6659,40 @@ private const val keyboardOutput = "0\n65 66\n10:hello worl\n90 0\n"
 private const val cpmKeyboardOutput = "65\n66 104\n10:ello world\n90 26\n"
 
 private val outputPrograms = mapOf(
+    "the address of an element of an array field through a struct pointer" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+%option no_sysinit
+
+main {
+    struct Map {
+        uword rows
+        ubyte[4] flags
+        uword[3] words
+    }
+    ubyte[16] storage
+
+    sub start() {
+        ^^Map m = &storage
+        ubyte i
+        for i in 0 to 3
+            m.flags[i] = i + 1
+        m.words[2] = 1234
+        ubyte @shared two = 2
+        ^^ubyte p = &m.flags[2]
+        ^^ubyte q = &m.flags[two]
+        ^^uword w = &m.words[two]
+        txt.print_ub(p[0])
+        txt.spc()
+        txt.print_ub(p[1])
+        txt.spc()
+        txt.print_ub(q[1])
+        txt.spc()
+        txt.print_uw(w^^)
+        txt.nl()
+    }
+}""", "3 4 4 1234\n"),
+
     "for loops over a str parameter, with a local and a qualified loop variable" to OutputProgram("""
 %import textio
 %zeropage basicsafe

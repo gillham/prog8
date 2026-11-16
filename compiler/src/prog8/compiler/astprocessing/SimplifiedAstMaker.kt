@@ -880,10 +880,12 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
         return choice
     }
 
-    private fun transform(src: AddressOf): PtAddressOf {
+    private fun transform(src: AddressOf): PtExpression {
         var inferredType = src.inferType(program).getOrUndef()
         if(inferredType.base == BaseDataType.UWORD)
             inferredType = addrType
+        if(src.dereference!=null && src.arrayIndex!=null)
+            return addressOfDereferencedArrayElement(src.dereference!!, src.arrayIndex!!.indexExpr, inferredType, src.typed, src.position)
         val addr = PtAddressOf(inferredType, src.typed, src.position, src.msb)
         if(src.identifier!=null)
             addr.add(transform(src.identifier!!))
@@ -892,6 +894,35 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
         if (src.dereference!=null)
             addr.add(transformExpression(src.dereference!!))
         return addr
+    }
+
+    // &ptr.field[index], with an array field: the code generators only take the address of an element of an array variable
+    private fun addressOfDereferencedArrayElement(deref: PtrDereference, index: Expression, type: DataType, typed: Boolean, position: Position): PtExpression {
+        val arrayAddress = PtAddressOf(type, typed, position)
+        arrayAddress.add(transformExpression(deref))
+        val elementSize = program.target.memorySize(deref.inferType(program).getOrUndef().elementType(), null)
+        val constIndex = index.constValue(program)
+        val offset: PtExpression = if(constIndex!=null) {
+            val total = constIndex.number * elementSize
+            if(total==0.0)
+                return arrayAddress
+            PtNumber(addrType.base, total, position)
+        } else {
+            val indexAddr = PtTypeCast(addrType, true, position)
+            indexAddr.add(transformExpression(index))
+            if(elementSize==1)
+                indexAddr
+            else {
+                val scaled = PtBinaryExpression("*", addrType, position)
+                scaled.add(indexAddr)
+                scaled.add(PtNumber(addrType.base, elementSize.toDouble(), position))
+                scaled
+            }
+        }
+        val sum = PtBinaryExpression("+", type, position)
+        sum.add(arrayAddress)
+        sum.add(offset)
+        return sum
     }
 
     private fun transform(srcArr: ArrayIndexedExpression): PtArrayIndexer {

@@ -579,3 +579,12 @@ Keeping the list: add new items at the end with the next number, and remove an i
   overwrites `after`. A compile from source is not affected, as the IR code generator keeps the zeros. In the qemu68k
   `textelite`, built from a .p8ir file, `goatsoup_seed` overlaps `planet.name`.
 - Branch: fixed; the array gets `dcb.b` with its size in bytes.
+
+**U79. The address of an element of an array field through a struct pointer crashes the compiler**
+- Where: `compiler/astprocessing/SimplifiedAstMaker.kt`, `transform(AddressOf)`: `&m.flags[i]` is an `AddressOf` with
+  a dereference and an array index; the index becomes the first child of the `PtAddressOf` and the dereference the
+  second, and the code generators expect an identifier there (`ExpressionGen.translate(PtAddressOf)` on the IR
+  targets: `NullPointerException`).
+- Repro: `struct Map { uword rows  ubyte[4] flags }`, `^^Map m = &storage` and `^^ubyte p = &m.flags[2]`: "internal
+  error" on virtual, cx16 and qemu68k, also with `-noopt`. Reading and writing `m.flags[i]` and taking `&m.flags` work.
+- Branch: fixed; it becomes the address of the array field plus the index times the element size.

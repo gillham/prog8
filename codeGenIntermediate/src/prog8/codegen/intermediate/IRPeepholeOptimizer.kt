@@ -542,9 +542,11 @@ jump p8_label_gen_2
                         changed = true
                     }
 
-                    if(!changed && idx < chunk.instructions.size-1) {
+                    if(!changed && imm!=null && idx < chunk.instructions.size-1) {
                         val nextInstr = chunk.instructions[idx+1]
-                        if(nextInstr.dest?.register==ins.dest?.register) {
+                        // a quad immediate has no integerValue
+                        val nextImmOk = nextInstr.opcode !in setOf(Opcode.ADD, Opcode.SUB) || nextInstr.immediate?.integerValue!=null
+                        if(nextImmOk && nextInstr.dest?.register==ins.dest?.register) {
                             when (nextInstr.opcode) {
                                 Opcode.INC -> {
                                     // INC after ADD or SUB

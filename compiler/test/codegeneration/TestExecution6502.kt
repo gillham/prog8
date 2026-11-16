@@ -1820,4 +1820,49 @@ class TestExecution6502 : FunSpec({
             }
         }
     }
+
+    test("the address of an element of an array field through a struct pointer") {
+        val src = $$"""
+            %option no_sysinit
+            %zeropage basicsafe
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                &ubyte[4] results = $0400
+                struct Map {
+                    uword rows
+                    ubyte[4] flags
+                    uword[3] words
+                }
+                ubyte[16] storage
+
+                sub start() {
+                    ^^Map m = &storage
+                    ubyte i
+                    for i in 0 to 3
+                        m.flags[i] = i + 1
+                    m.words[2] = 1234
+                    ubyte @shared two = 2
+                    ^^ubyte p = &m.flags[2]
+                    ^^ubyte q = &m.flags[two]
+                    ^^uword w = &m.words[two]
+                    results[0] = p[0]
+                    results[1] = p[1]
+                    results[2] = q[1]
+                    results[3] = lsb(w^^)
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+        for(optimize in listOf(false, true)) {
+            withClue("optimize=$optimize") {
+                val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+                listOf(3, 4, 4, 1234 and 255).forEachIndexed { index, value ->
+                    withClue("result $index") { machine.assertMemory(0x0400 + index, value) }
+                }
+            }
+        }
+    }
 })
