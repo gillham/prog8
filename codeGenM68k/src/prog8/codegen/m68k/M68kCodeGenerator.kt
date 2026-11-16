@@ -22,12 +22,29 @@ class M68kCodeGenerator(val retainSSA: Boolean): ICodeGeneratorBackend {
 
         val irCodeGen = IRCodeGen(program, symbolTable, options, errors, retainSSA)
         val irProgram = irCodeGen.generate()
-        val prepareTiming = CompilationTimings.mark()
-        var virtualRegisterTypes = irCodeGen.registerTypes().entries.associate { (num, type) ->
+        val virtualRegisterTypes = irCodeGen.registerTypes().entries.associate { (num, type) ->
             val register: VirtualRegister = if (type == IRDataType.FLOAT) VirtualRegister.float(num.value) else VirtualRegister.int(num.value)
             register to type
         }
         irProgram.verifyRegisterTypes(virtualRegisterTypes)
+        return lower(irProgram, virtualRegisterTypes, options, errors, layoutFrames = true)
+    }
+
+    /** Builds a program from a parsed .p8ir file: frames are laid out here unless the file already has them. */
+    fun generateFromIR(irProgram: IRProgram, errors: IErrorReporter): IAssemblyProgram? {
+        val types = irProgram.registersUsed(permissive = true).regsTypes
+        val alreadyFramed = irProgram.allSubs().any { it.hasFrame || it.frameVregSlots.isNotEmpty() }
+        return try {
+            lower(irProgram, types, irProgram.options, errors, layoutFrames = !alreadyFramed)
+        } catch (x: RuntimeException) {
+            errors.err("m68k code generation failed: ${x.message}", prog8.code.core.Position.DUMMY)
+            null
+        }
+    }
+
+    private fun lower(irProgram: IRProgram, types: Map<VirtualRegister, IRDataType>, options: CompilationOptions, errors: IErrorReporter, layoutFrames: Boolean): IAssemblyProgram {
+        var virtualRegisterTypes = types
+        val prepareTiming = CompilationTimings.mark()
 
         // Per-subroutine vreg reuse: renumbering rebuilds the type map; the program-wide check no longer applies.
         renumberVregsPerSubroutine(irProgram)?.let {
@@ -35,7 +52,7 @@ class M68kCodeGenerator(val retainSSA: Boolean): ICodeGeneratorBackend {
         }
         CompilationTimings.record("vreg numbering", prepareTiming)
 
-        if (options.compTarget.supportsStackFrames) {
+        if (layoutFrames && options.compTarget.supportsStackFrames) {
             CompilationTimings.measure("frame layout") {
                 // Use the pre-promotion allocation as a pressure baseline. M9 may add several
                 // long-lived vregs to a subroutine; candidates that cross calls are only admitted

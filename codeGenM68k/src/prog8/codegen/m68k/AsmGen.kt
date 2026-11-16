@@ -1834,6 +1834,13 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                     else -> TODO("initialization value for dt $dt variable ${v.name}")
                 }
             }
+            dt.isArray && init == null && v.length != null -> {
+                // the .p8ir reader turns an all-zero array initializer into none
+                val elemSize = if (dt.isByteArray || dt.isBoolArray) 1 else target.memorySize(dt.elementType().base)
+                emitLine("align  ${if (elemSize >= 4) 4 else 2}")
+                emitRaw("$label:")
+                emitLine("dcb.b  ${v.length!!.toInt() * elemSize},0", v.name)
+            }
             else -> {
                 emitRaw("$label:")
                 emitLine("dc.b  0", v.name)

@@ -353,7 +353,9 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Branch: `prog8c -target cx16 program.p8ir` builds the program with the new 6502 code generator, and with the llvm
   code generator for the llvm targets (`compileIrFile` in `compiler/Compiler.kt`, `generateFromIR` in both back ends;
   see `docs/source/compiling.rst`). The changes to shared code are small: the dispatch in `CompilerMain`, the split
-  of `New6502CodeGenerator.generate()`, and `CompilationOptions.floats` became a `var`.
+  of `New6502CodeGenerator.generate()`, and `CompilationOptions.floats` became a `var`. The m68k targets build the
+  same way: `M68kCodeGenerator.generateFromIR` lays out the stack frames of a file without them, so the IR can keep
+  locals and parameters static.
 
 **U54. A constant index above 65535 through a struct pointer field crashes the compiler**
 - Where: `compiler/astprocessing/VariousCleanups.kt`, the rewrite `ptr.field[index] --> peek(ptr.field + index)`,
@@ -567,3 +569,13 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Branch: fixed; on targets with 16-bit addresses the long gets the address of the string, zero extended. A `str`
   subroutine parameter assigned to a long is still rejected, with "cannot use a pointer as a long, a pointer is an
   unsigned word", as before.
+
+**U78. An all-zero array read from a .p8ir file gets one byte on m68k**
+- Where: `intermediate/IRFileReader.kt`, `parseInitValue`, turns an array initializer of only zeros into no
+  initializer, and `codeGenM68k/AsmGen.kt`, `emitInitializedVariable`, writes such an array as a single `dc.b 0` instead
+  of its whole size. The new 6502 code generator fills in the zeros.
+- Repro: `ubyte[4] zeros = [0, 0, 0, 0]` followed by `ubyte after = 7`, compiled with `-target qemu68k`, and the .p8ir
+  file given to `prog8-m68kgen` (the `codeGenM68k` program): the .asm has `dc.b 0` for `zeros`, so `zeros[3] = 99`
+  overwrites `after`. A compile from source is not affected, as the IR code generator keeps the zeros. In the qemu68k
+  `textelite`, built from a .p8ir file, `goatsoup_seed` overlaps `planet.name`.
+- Branch: fixed; the array gets `dcb.b` with its size in bytes.

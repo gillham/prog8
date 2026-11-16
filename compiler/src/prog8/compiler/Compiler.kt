@@ -1023,8 +1023,8 @@ class IrFileArguments(val outputDir: Path,
 class IrFileResult(val options: CompilationOptions, val outputs: OutputFiles)
 
 /**
- * Builds the program of a .p8ir file with the IR based back end of its target, the new 6502 code generator or an llvm
- * target: the back half of a compilation, for IR that another tool wrote. The options are the file's, except those
+ * Builds the program of a .p8ir file with the IR based back end of its target, the new 6502, m68k or llvm code
+ * generator: the back half of a compilation, for IR that another tool wrote. The options are the file's, except those
  * in [args]; the register types aren't verified, as the file doesn't have the code generator's map of them.
  */
 fun compileIrFile(irFile: Path, expectedTarget: String?, args: IrFileArguments, errors: IErrorReporter): IrFileResult? =
@@ -1074,9 +1074,10 @@ private fun buildIrFile(irFile: Path, expectedTarget: String?, args: IrFileArgum
     val backend = when {
         target.cpu==CpuType.CPU6502 || target.cpu==CpuType.CPU65C02 -> { p: prog8.intermediate.IRProgram -> prog8.codegen.new6502.New6502CodeGenerator(true).generateFromIR(p, errors) }
         target.cpu.isLlvm -> { p: prog8.intermediate.IRProgram -> prog8.codegen.llvm.LlvmCodeGenerator(true).generateFromIR(p, errors) }
+        target.cpu.is68k -> { p: prog8.intermediate.IRProgram -> prog8.codegen.m68k.M68kCodeGenerator(true).generateFromIR(p, errors) }
         else -> {
             val hint = if(target is VMTarget) ": run it with -vm" else ""
-            errors.err("a .p8ir file can only be built for the 6502 targets and the llvm targets, not ${target.name}$hint", position)
+            errors.err("a .p8ir file can only be built for the 6502, m68k and llvm targets, not ${target.name}$hint", position)
             errors.report()
             return null
         }

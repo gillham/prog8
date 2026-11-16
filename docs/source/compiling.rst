@@ -434,9 +434,9 @@ One or more .p8 module files
 
 **Building a .p8ir file.** Given a single ``.p8ir`` file instead of a Prog8 source file (and no ``-vm``), ``prog8c``
 runs only the back half of a compilation: it reads the IR and builds the program with the IR based code generator of
-the target that the file names, the new 6502 code generator (as with ``-newcodegen``) for the 6502 targets, or the
-llvm code generator for the llvm targets. Another tool can write the IR this way and leave the code generation to
-``prog8c``::
+the target that the file names, the new 6502 code generator (as with ``-newcodegen``) for the 6502 targets, the m68k
+code generator for the m68k targets, or the llvm code generator for the llvm targets. Another tool can write the IR
+this way and leave the code generation to ``prog8c``::
 
     prog8c -target cx16 -out build program.p8ir         # build/program.asm and build/program.prg
     prog8c -target cx16 -emu program.p8ir               # and start the emulator
@@ -448,6 +448,12 @@ is given, it must be the file's target. The output files are named after the pro
 ``-o`` names them. ``-emu`` and ``-emu2`` start the program as usual. A ``.p8ir`` file for the
 virtual target is an error: run it with ``-vm``. The register types aren't verified, as the file doesn't have the code
 generator's map of them, and the floats routines are set up when the file has the ``floats`` library's block.
+For the m68k targets the IR can keep subroutine locals and parameters in static variables, as the virtual target's
+IR does: ``prog8c`` then lays out the stack frames itself, as when it compiles the source. A file that already has
+frames (``FRAMESIZE``, ``INCOMING``, ``frame:`` operands), such as one ``prog8c`` wrote, keeps them. Arguments and
+results of an asmsub or extsub call need their register slots (``@s10`` to ``@s17`` for ``D0`` to ``D7``, ``@s18``
+to ``@s24`` for ``A0`` to ``A6``, ``@s25`` to ``@s32`` for ``FP0`` to ``FP7``), and a subroutine that returns values
+in registers stores them (``storehr``) after computing all of them, just before its ``return``.
 A program built from its own ``.p8ir`` file this way works the same, though variables can end up at other addresses.
 
 ``-vmtrace``
