@@ -1796,6 +1796,11 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
                             }
                         }
                     }
+                } else if(dt.isFloatArray) {
+                    val values = init.elements.map { (it as IRStSymbolicReference.Numeric).value.toString() }
+                    emitLine("align  4")
+                    emitRaw("$label:")
+                    emitChunkedDc("dc.s", values, v.name)
                 } else {
                     val elemDt = dt.elementType()
                     val elemSize = if(elemDt.isByte || elemDt.isBool) 1 else if(elemDt.isLong) 4 else {

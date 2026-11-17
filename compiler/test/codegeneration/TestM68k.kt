@@ -1,5 +1,6 @@
 package prog8tests.codegeneration
 
+import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.ints.shouldBeGreaterThan
@@ -827,6 +828,55 @@ chip {
             if(!optimize)   // the optimizer inlines helper
                 lines.any { it == "jsr  p8b_main.p8s_helper" } shouldBe true
             lines.count { it.matches(Regex("(bsr|bra)(\\.[bswl])?\\s+p8b_(chip\\.p8s_bump|main\\.p8s_helper)")) } shouldBe 0
+        }
+    }
+
+    test("rol2 and ror2 rotate, in is true for a character in a string, float casts truncate, float arrays are floats") {
+        val src = """
+%import floats
+main {
+    ubyte @shared b = $81
+    uword @shared w = $8001
+    float[3] table = [1.5, -2.25, 100.0]
+    float @shared f = 123.75
+    ubyte @shared result
+    uword @shared uw
+    word @shared sw
+    byte @shared sb
+    long @shared sl
+    sub start() {
+        rol2(b)
+        ror2(w)
+        if b in "hxl"
+            result = 1
+        result = f as ubyte
+        uw = f as uword
+        sw = f as word
+        sb = f as byte
+        sl = f as long
+        f = table[1]
+    }
+}"""
+        for(optimize in listOf(false, true)) {
+            val result = compileText(Qemu68kTarget(), optimize, src, outputDir, writeAssembly = true, assemble = false)
+            result shouldNotBe null
+            val rawLines = result!!.compilationOptions.outputDir.resolve("${result.compilerAst.name}.asm").toFile().readLines()
+            val lines = rawLines.map { it.substringBefore(';').trim() }
+            val start = lines.indexOf("p8b_main.p8s_start:")
+            val code = lines.subList(start, rawLines.indexOf("; End of subroutine: p8b_main.p8s_start"))
+            withClue("optimize=$optimize") {
+                code.any { it.startsWith("rol.b") } shouldBe true
+                code.any { it.startsWith("ror.w") } shouldBe true
+                code.count { it.startsWith("roxl") || it.startsWith("roxr") } shouldBe 0
+                // the done label of the string containment is not followed by the not-found result
+                code.indices.filter { code[it].matches(Regex("\\.sc_done_\\d+:")) }.forEach {
+                    code[it + 1].startsWith("move.b  #0") shouldBe false
+                }
+                val conversions = code.indices.filter { code[it].matches(Regex("fmove\\.[bwl]\\s+fp\\d,d\\d")) }
+                conversions.size shouldBe 5
+                conversions.forEach { code.subList(maxOf(0, it - 3), it).any { l -> l.startsWith("fintrz") } shouldBe true }
+                lines[lines.indexOf("p8b_main.p8v_table:") + 1] shouldBe "dc.s  1.5,-2.25,100.0"
+            }
         }
     }
 })

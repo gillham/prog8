@@ -176,6 +176,7 @@ private fun AsmGen.translateSyscallStringContains(site: CallSite) {
     val resultReg = site.resultRegister(0).intNumber
 
     val labelLoop = makeLabel(".sc_loop")
+    val labelNotFound = makeLabel(".sc_notfound")
     val labelFound = makeLabel(".sc_found")
     val labelDone = makeLabel(".sc_done")
 
@@ -183,15 +184,16 @@ private fun AsmGen.translateSyscallStringContains(site: CallSite) {
     emitLine("move.l  ${operand(regStr)}, $SCRATCH_A0")
     emitRaw("$labelLoop:")
     emitLine("move.b  ($SCRATCH_A0)+, $SCRATCH_D1")
-    emitLine("beq  $labelDone       ; reached null terminator -> not found")
+    emitLine("beq  $labelNotFound       ; reached null terminator -> not found")
     emitLine("cmp.b  $SCRATCH_D0, $SCRATCH_D1")
     emitLine("beq  $labelFound")
     emitLine("bra  $labelLoop")
+    emitRaw("$labelNotFound:")
+    emitByteConstantToRegister(0, resultReg)
+    emitLine("bra  $labelDone")
     emitRaw("$labelFound:")
     emitByteConstantToRegister(1, resultReg)
-    emitLine("bra  $labelDone")
     emitRaw("$labelDone:")
-    emitByteConstantToRegister(0, resultReg)
 }
 
 private fun AsmGen.translateSyscallClamp(site: CallSite, dt: IRDataType, signed: Boolean) {

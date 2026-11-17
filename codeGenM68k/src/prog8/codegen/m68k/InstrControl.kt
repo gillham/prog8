@@ -621,6 +621,7 @@ internal fun AsmGen.translateControl(insn: IRInstruction, forwardedImmediateCall
             val dstReg = insn.requireIntDest().intNumber
             val fpSrc = insn.requireFloatSourceA().floatNumber
             emitFmoveFloat(floatOperand(fpSrc), FP_ACC)
+            emitLine("fintrz  $FP_ACC, $FP_ACC")      // casts truncate; fmove alone rounds to nearest
             emitLine("moveq  #0, $SCRATCH_D0")
             invalidateD0Cache()
             emitLine("fmove.b  $FP_ACC, $SCRATCH_D0")
@@ -631,6 +632,7 @@ internal fun AsmGen.translateControl(insn: IRInstruction, forwardedImmediateCall
             val dstReg = insn.requireIntDest().intNumber
             val fpSrc = insn.requireFloatSourceA().floatNumber
             emitFmoveFloat(floatOperand(fpSrc), FP_ACC)
+            emitLine("fintrz  $FP_ACC, $FP_ACC")      // casts truncate; fmove alone rounds to nearest
             invalidateD0Cache()
             emitLine("fmove.b  $FP_ACC, $SCRATCH_D0")
             emitStoreD0(dstReg, IRDataType.BYTE)
@@ -640,6 +642,7 @@ internal fun AsmGen.translateControl(insn: IRInstruction, forwardedImmediateCall
             val dstReg = insn.requireIntDest().intNumber
             val fpSrc = insn.requireFloatSourceA().floatNumber
             emitFmoveFloat(floatOperand(fpSrc), FP_ACC)
+            emitLine("fintrz  $FP_ACC, $FP_ACC")      // casts truncate; fmove alone rounds to nearest
             invalidateD0Cache()
             emitLine("fmove.w  $FP_ACC, $SCRATCH_D0")
             emitStoreD0(dstReg, IRDataType.WORD)
@@ -649,6 +652,7 @@ internal fun AsmGen.translateControl(insn: IRInstruction, forwardedImmediateCall
             val dstReg = insn.requireIntDest().intNumber
             val fpSrc = insn.requireFloatSourceA().floatNumber
             emitFmoveFloat(floatOperand(fpSrc), FP_ACC)
+            emitLine("fintrz  $FP_ACC, $FP_ACC")      // casts truncate; fmove alone rounds to nearest
             invalidateD0Cache()
             emitLine("fmove.w  $FP_ACC, $SCRATCH_D0")
             emitStoreD0(dstReg, IRDataType.WORD)
@@ -658,6 +662,7 @@ internal fun AsmGen.translateControl(insn: IRInstruction, forwardedImmediateCall
             val dstReg = insn.requireIntDest().intNumber
             val fpSrc = insn.requireFloatSourceA().floatNumber
             emitFmoveFloat(floatOperand(fpSrc), FP_ACC)
+            emitLine("fintrz  $FP_ACC, $FP_ACC")      // casts truncate; fmove alone rounds to nearest
             invalidateD0Cache()
             emitLine("fmove.l  $FP_ACC, $SCRATCH_D0")
             emitStoreD0(dstReg, IRDataType.LONG)

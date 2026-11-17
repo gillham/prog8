@@ -277,9 +277,9 @@ lsl         reg1                             - shift reg1 left by 1 bits + set C
 lsrm                     address             - shift memory right by 1 bits + set Carry to shifted bit
 asrm                     address             - shift memory right by 1 bits (signed) + set Carry to shifted bit
 lslm                     address             - shift memory left by 1 bits + set Carry to shifted bit
-ror         reg1                             - rotate reg1 right by 1 bits, not using carry (logical rotate, inject 0 into MSB) + set Carry to shifted bit
+ror         reg1                             - rotate reg1 right by 1 bits, not using carry (bit 0 wraps around into the MSB) + set Carry to shifted bit
 roxr        reg1                             - rotate reg1 right by 1 bits, using carry (inject carry into MSB) + set Carry to shifted bit  (maps to 6502 ror; M68k uses X as rotate-carry)
-rol         reg1                             - rotate reg1 left by 1 bits, not using carry (logical rotate, inject 0 into LSB) + set Carry to shifted bit
+rol         reg1                             - rotate reg1 left by 1 bits, not using carry (the MSB wraps around into bit 0) + set Carry to shifted bit
 roxl        reg1                             - rotate reg1 left by 1 bits, using carry (inject carry into LSB) + set Carry to shifted bit  (maps to 6502 rol; M68k uses X as rotate-carry)
 rorm                     address             - rotate memory right by 1 bits, not using carry (logical rotate) + set Carry to shifted bit
 roxrm                    address             - rotate memory right by 1 bits, using carry + set Carry to shifted bit    (maps to 6502 ror; M68k uses X as rotate-carry)

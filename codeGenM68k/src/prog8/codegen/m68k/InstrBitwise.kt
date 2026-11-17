@@ -231,10 +231,14 @@ private fun AsmGen.invertMemory(target: String, type: IRDataType) {
 
 // === Shift/rotate size helpers ===
 
-private fun AsmGen.shiftOpcode(isLeft: Boolean, isArithmetic: Boolean, isRotate: Boolean = false): String {
+private fun AsmGen.shiftOpcode(isLeft: Boolean, isArithmetic: Boolean, isRotate: Boolean = false, throughCarry: Boolean = true): String {
     if (isRotate) {
-        // Always use roxl/roxr (never rol/ror). X is managed as rotate-carry.
-        return if (isLeft) "roxl" else "roxr"
+        // ROXL/ROXR rotate through X, which is the rotate-carry; ROL/ROR wrap the bit around
+        return if (throughCarry) {
+            if (isLeft) "roxl" else "roxr"
+        } else {
+            if (isLeft) "rol" else "ror"
+        }
     }
     return if (isLeft) {
         "lsl"
@@ -316,19 +320,15 @@ private fun AsmGen.shiftRegister(reg: Int, count: Int, type: IRDataType, isArith
 }
 
 private fun AsmGen.memoryShiftRotate(target: String, count: Int, type: IRDataType, isArithmetic: Boolean, isLeft: Boolean, isRotate: Boolean, throughCarry: Boolean) {
-    // For logical rotates (ROL/ROR), clear X before roxl/roxr so the injected bit is 0, not the carry.
-    if (isRotate && !throughCarry) {
-        emitLine($$"andi  #$ef, ccr")
-    }
     // On 68k, shift/rotate can operate directly on memory (.w size, count must be 1)
     if (type == IRDataType.WORD && count == 1) {
-        val op = shiftOpcode(isLeft, isArithmetic, isRotate)
+        val op = shiftOpcode(isLeft, isArithmetic, isRotate, throughCarry)
         emitMemoryWordShiftOrRotate(op, target)
         invalidateD0CacheForAddress(target)
         return
     }
     val s = dtSuffix(type)
-    val op = shiftOpcode(isLeft, isArithmetic, isRotate)
+    val op = shiftOpcode(isLeft, isArithmetic, isRotate, throughCarry)
     emitLoadD0FromAddress(target, type)
     emitLine("$op$s  #$count, $SCRATCH_D0")
     emitStoreD0ToAddress(target, type)
@@ -399,48 +399,33 @@ private fun AsmGen.shiftMemoryLeftVar(target: String, countReg: Int, type: IRDat
 
 // === Rotates ===
 // On M68k, X (extend/CCR bit 4) serves as the "carry for rotates" while C is used for comparisons:
-// ROL/ROR (logical) = clear X + roxl/roxr, ROXL/ROXR = roxl/roxr directly, and CLC/SEC manage
+// ROL/ROR = rol/ror (the bit wraps around), ROXL/ROXR = roxl/roxr, and CLC/SEC manage
 // both C+X to keep them in sync.
 
 private fun AsmGen.rotateLeft(reg: Int, type: IRDataType) {
-    // IR ROL: logical rotate left (inject 0 into LSB)
-    directDataDst(reg, type)?.let { d ->
-        emitLine($$"andi  #$ef, ccr")       // clear X (and leave C alone)
-        emitLine("roxl${dtSuffix(type)}  #1, $d")
-        invalidateD0CacheForSlot(reg)
-        return
-    }
-    if (type == IRDataType.WORD) {
-        emitLine($$"andi  #$ef, ccr")       // clear X (and leave C alone)
-        emitMemoryWordShiftOrRotate("roxl", operand(reg))
-        invalidateD0CacheForSlot(reg)
-        return
-    }
-    val s = dtSuffix(type)
-    emitLoadD0(reg, type)
-    emitLine($$"andi  #$ef, ccr")       // clear X (and leave C alone)
-    emitLine("roxl$s  #1, $SCRATCH_D0")           // rotate through X: X=0 -> bit 0 gets 0
-    emitStoreD0(reg, type)
+    // IR ROL: rotate left, the high bit wraps around into bit 0 (and into C)
+    rotate(reg, type, "rol")
 }
 
 private fun AsmGen.rotateRight(reg: Int, type: IRDataType) {
-    // IR ROR: logical rotate right (inject 0 into MSB)
+    // IR ROR: rotate right, bit 0 wraps around into the high bit (and into C)
+    rotate(reg, type, "ror")
+}
+
+private fun AsmGen.rotate(reg: Int, type: IRDataType, op: String) {
     directDataDst(reg, type)?.let { d ->
-        emitLine($$"andi  #$ef, ccr")       // clear X (and leave C alone)
-        emitLine("roxr${dtSuffix(type)}  #1, $d")
+        emitLine("$op${dtSuffix(type)}  #1, $d")
         invalidateD0CacheForSlot(reg)
         return
     }
     if (type == IRDataType.WORD) {
-        emitLine($$"andi  #$ef, ccr")       // clear X (and leave C alone)
-        emitMemoryWordShiftOrRotate("roxr", operand(reg))
+        emitMemoryWordShiftOrRotate(op, operand(reg))
         invalidateD0CacheForSlot(reg)
         return
     }
     val s = dtSuffix(type)
     emitLoadD0(reg, type)
-    emitLine($$"andi  #$ef, ccr")       // clear X (and leave C alone)
-    emitLine("roxr$s  #1, $SCRATCH_D0")           // rotate through X: X=0 -> MSB gets 0
+    emitLine("$op$s  #1, $SCRATCH_D0")
     emitStoreD0(reg, type)
 }
 

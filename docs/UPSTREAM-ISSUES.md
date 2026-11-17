@@ -606,3 +606,50 @@ Keeping the list: add new items at the end with the next number, and remove an i
   and amiga1200, also with `-noopt`. The same for a call from the CHIP ram code to `txt.print` or another block.
 - Branch: fixed; when a program has a CHIP ram block, a `bsr` or `bra` to a label in another section becomes `jsr` or
   `jmp`.
+
+**U82. `rol2` and `ror2` shift instead of rotate on the m68k targets**
+- Where: `codeGenM68k/InstrBitwise.kt`, `memoryShiftRotate`, `rotateLeft` and `rotateRight`: the IR `ROL`/`ROR`/`ROLM`/
+  `RORM` clear X and then use `roxl`/`roxr`, so a 0 comes in where the bit that falls out should wrap around. The IR
+  description in `intermediate/IRInstructions.kt` said "inject 0" too; the VM and `libraries.rst` rotate.
+- Repro: `ubyte @shared b = $81` and `rol2(b)` gives 2 instead of 3; `ror2` of a `uword` `$8001` gives 16384 instead of
+  49152; on qemu68k, also with `-noopt`, for variables and for subroutine parameters.
+- Branch: fixed; `rol` and `ror`, and the IR description says the bit wraps around.
+
+**U83. `ubyte in "string"` is always false on the m68k targets**
+- Where: `codeGenM68k/InstrSyscall.kt`, `translateSyscallStringContains`: the "not found" result 0 is stored after the
+  done label, so it also overwrites the 1 of the found path.
+- Repro: `sub membership(ubyte v) { if v in "hxl" txt.chrout('y') else txt.chrout('n') }` prints n for 'h', 'x' and
+  'l' on qemu68k, also with `-noopt`.
+- Branch: fixed; the not-found path stores 0 and branches past the found path.
+
+**U84. A float cast to an integer rounds on the m68k targets**
+- Where: `codeGenM68k/InstrControl.kt`, `FTOUB`, `FTOSB`, `FTOUW`, `FTOSW` and `FTOSL`: a plain `fmove` to a data
+  register rounds to nearest; `variables.rst` (`f = 56.777`, `f as ubyte` is 56), the VM and the llvm targets truncate.
+- Repro: `float @shared f = 123.75` and `f as ubyte` (or `uword`, `word`, `byte`, `long`) gives 124 instead of 123, and
+  -123.75 gives -124, on qemu68k, also with `-noopt`.
+- Branch: fixed; `fintrz` before the move.
+
+**U85. A float array initializer is stored as integers on the m68k targets**
+- Where: `codeGenM68k/AsmGen.kt`, `emitInitializedVariable`: an array with 4-byte elements gets `dc.l` and every value
+  goes through `toInt()`, float arrays included.
+- Repro: `float[3] table = [1.5, -2.25, 100.0]` is `dc.l 1,-2,100` in the .asm and prints 0.0, NaN and 0.0 on qemu68k,
+  also with `-noopt`. A float scalar is right (`dc.s`).
+- Branch: fixed; float arrays are `dc.s`.
+
+**U86. A multi-value return can lose a value on the m68k targets when the first target is kept in a register**
+- Where: `codeGenIntermediate/StackFrameLayout.kt` (promotion of a local with at least `M9_PROMOTION_MIN_REFS` (6)
+  references to a vreg) and `codeGenM68k/RegisterAllocator.kt`: the vregs that read the return registers are
+  `MUST_SPILL` (`AssignmentGen.assignCpuRegister`), but the promotion adds a copy into a new vreg without that hint,
+  and the allocator doesn't count the return registers that are not read yet as busy, so that vreg can get one of them.
+- Repro: `sub three() -> uword, ubyte, ubyte { counter++  return 1, 2, 3 }` and `b, x, y = three()` with `b` used 6
+  times: `y` prints 1 instead of 3 on qemu68k, also with `-noopt` (`move.w d0,d2` before d2 is stored).
+- Branch: not fixed yet.
+
+**U87. A float temporary can share its register number with a promoted float parameter on the m68k targets**
+- Where: `codeGenIntermediate/StackFrameLayout.kt`, `apply()`: the first number for promoted vregs comes from
+  `program.registersUsed().regsTypes`, which has no float registers (`setRegType` returns early for floats in
+  `intermediate/IRInstructions.kt`), while `codeGenM68k/VregRenumber.kt` numbers a subroutine's float registers after
+  its int ones; the promoted parameter and the first float temporary both become the same `fr` register.
+- Repro: `sub comparing(float a, float b)` with 6 references to each parameter and `if a > b a else b`: wrong
+  comparisons and 1.5 instead of 2.5 on qemu68k when optimized; with `-noopt` the numbers happen not to meet.
+- Branch: not fixed yet.
