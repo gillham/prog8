@@ -643,7 +643,8 @@ Keeping the list: add new items at the end with the next number, and remove an i
   and the allocator doesn't count the return registers that are not read yet as busy, so that vreg can get one of them.
 - Repro: `sub three() -> uword, ubyte, ubyte { counter++  return 1, 2, 3 }` and `b, x, y = three()` with `b` used 6
   times: `y` prints 1 instead of 3 on qemu68k, also with `-noopt` (`move.w d0,d2` before d2 is stored).
-- Branch: not fixed yet.
+- Branch: fixed; the allocator keeps a pool register that holds a call result away from the vregs defined before
+  the `LOADHR` that reads it.
 
 **U87. A float temporary can share its register number with a promoted float parameter on the m68k targets**
 - Where: `codeGenIntermediate/StackFrameLayout.kt`, `apply()`: the first number for promoted vregs comes from
@@ -652,4 +653,4 @@ Keeping the list: add new items at the end with the next number, and remove an i
   its int ones; the promoted parameter and the first float temporary both become the same `fr` register.
 - Repro: `sub comparing(float a, float b)` with 6 references to each parameter and `if a > b a else b`: wrong
   comparisons and 1.5 instead of 2.5 on qemu68k when optimized; with `-noopt` the numbers happen not to meet.
-- Branch: not fixed yet.
+- Branch: fixed; the numbers for promoted vregs start after the float registers too.

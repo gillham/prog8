@@ -90,7 +90,14 @@ class StackFrameLayout(
         val subLabels = allSubs.map { it.label }.toSet()
 
         val usedRegs = program.registersUsed()
-        nextPromotedVreg = (usedRegs.regsTypes.keys.maxOfOrNull { it.number.value } ?: 0) + 1
+        // regsTypes has no float registers, and a promoted float vreg must not take a float temporary's number
+        var maxFloatReg = 0
+        program.forEachInstruction { ins ->
+            for (ra in ins.registerAccesses)
+                if (ra.register.isFloat && ra.register.num < RESERVED_VREG_RANGE_START && ra.register.num > maxFloatReg)
+                    maxFloatReg = ra.register.num
+        }
+        nextPromotedVreg = maxOf(usedRegs.regsTypes.keys.maxOfOrNull { it.number.value } ?: 0, maxFloatReg) + 1
 
         val referencedIn = mutableMapOf<String, MutableSet<String>>()
         val addressTaken = mutableSetOf<String>()

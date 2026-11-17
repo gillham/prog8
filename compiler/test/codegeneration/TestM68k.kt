@@ -879,4 +879,75 @@ main {
             }
         }
     }
+
+    test("a return register of a multi-value call is not reused before it is read") {
+        val src = """
+%import textio
+main {
+    ubyte @shared counter
+    sub three() -> uword, ubyte, ubyte {
+        counter++
+        return 1, 2, 3
+    }
+    sub start() {
+        uword b
+        ubyte x
+        ubyte y
+        b, x, y = three()
+        txt.print_ub(y)
+        txt.print_uw(b)
+        txt.print_uw(b)
+        txt.print_uw(b)
+        txt.print_uw(b)
+        txt.print_uw(b)
+    }
+}"""
+        for(optimize in listOf(false, true)) {
+            val result = compileText(Qemu68kTarget(), optimize, src, outputDir, writeAssembly = true, assemble = false)
+            result shouldNotBe null
+            val lines = result!!.compilationOptions.outputDir.resolve("${result.compilerAst.name}.asm").toFile().readLines()
+                .map { it.substringBefore(';').trim() }
+            val call = lines.indexOf("bsr  p8b_main.p8s_three")
+            val firstRead = (call + 1 until lines.size).first { "d2," in lines[it] }
+            withClue("optimize=$optimize") {
+                lines.subList(call + 1, firstRead).count { it.matches(Regex(".*,d2")) } shouldBe 0
+            }
+        }
+    }
+
+    test("a promoted float parameter doesn't share its register number with a float temporary") {
+        val src = """
+%import textio
+%import floats
+main {
+    sub start() {
+        compare(1.5, 2.5)
+    }
+    sub compare(float a, float b) {
+        txt.print_bool(a < b)
+        txt.print_bool(a <= b)
+        txt.print_bool(a > b)
+        txt.print_bool(a >= b)
+        txt.print_bool(a == b)
+        floats.print(a)
+        floats.print(b)
+    }
+}"""
+        for(optimize in listOf(false, true)) {
+            val result = compileText(Qemu68kTarget(), optimize, src, outputDir, writeAssembly = true, assemble = false)
+            result shouldNotBe null
+            val ir = result!!.compilationOptions.outputDir.resolve("${result.compilerAst.name}.p8ir").toFile().readText()
+            val sub = ir.substring(ir.indexOf("<SUB NAME=\"p8b_main.p8s_compare\""), ir.indexOf("</SUB>", ir.indexOf("<SUB NAME=\"p8b_main.p8s_compare\"")))
+                .lines().map { it.trim() }
+            val paramLoad = Regex("""loadm\.f (fr\d+)\.f,\[frame:\d+]""")
+            val promoted = sub.mapNotNull { paramLoad.matchEntire(it)?.groupValues?.get(1) }.toSet()
+            withClue("optimize=$optimize") {
+                promoted.size shouldBe 2
+                // the parameters are never assigned, so nothing else may write their vregs
+                val writes = sub.filter { !paramLoad.matches(it) && !it.startsWith("store") }
+                    .mapNotNull { Regex("""^\w+\.f (fr\d+)\.f,""").find(it)?.groupValues?.get(1) }
+                writes.filter { it in promoted } shouldBe emptyList()
+            }
+        }
+    }
 })

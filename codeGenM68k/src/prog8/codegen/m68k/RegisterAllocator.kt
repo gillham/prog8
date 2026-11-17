@@ -443,6 +443,29 @@ class M68kRegisterAllocator(val program: IRProgram) {
         }
         if (subCallEffects.isNotEmpty()) callSiteEffects[sub] = subCallEffects
 
+        // A pool register holding a call result stays busy until its LOADHR reads it: a vreg defined
+        // in between (such as a promoted local's copy of an earlier result) must not be colored into it.
+        for (chunk in chunks) {
+            val pending = mutableSetOf<String>()
+            for (ins in chunk.instructions) {
+                if (ins.opcode == Opcode.LOADHR)
+                    ins.hardwareSlot?.slot?.let { pending.remove(M68kRegisterConvention.fixedRegister(it)) }
+                if (pending.isNotEmpty()) {
+                    for (ra in ins.registerAccesses)
+                        if (ra.direction == OperandDirection.DEF || ra.direction == OperandDirection.USE_DEF)
+                            forbiddenByVreg.getOrPut(ra.register) { mutableSetOf() }.addAll(pending)
+                }
+                ins.callSite?.let { cs ->
+                    for (r in cs.results) {
+                        if (r.destination != null) continue
+                        val slot = (r.location as? CallLocation.HardwareRegister)?.slot ?: continue
+                        val fixed = M68kRegisterConvention.fixedRegister(slot)
+                        if (fixed in allocatablePool) pending.add(fixed)
+                    }
+                }
+            }
+        }
+
         val forwarded = forwardedCallArgVregs(chunks)
         // Greedy coloring per class, highest degree first
         val ordered = vregs.filter { it !in forwarded && it !in mustSpill }.sortedByDescending { interference[it]!!.size }
