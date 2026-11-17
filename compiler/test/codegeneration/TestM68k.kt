@@ -797,4 +797,36 @@ main {
         instanceSection.count { it.startsWith("dc.l") } shouldBe 1
         instanceSection.any { "string_3" in it } shouldBe true
     }
+
+    test("calls between amiga CHIP ram code and normal code are absolute, as a bsr can't cross sections") {
+        val src = """
+main {
+    sub start() {
+        chip.counter = 1000
+        chip.bump()
+    }
+    sub helper() {
+        chip.counter++
+    }
+}
+chip {
+    %option amiga_chipram
+    uword counter
+
+    sub bump() {
+        counter += 5
+        main.helper()
+    }
+}"""
+        for(optimize in listOf(false, true)) {
+            val result = compileText(Amiga500Target(), optimize, src, outputDir, writeAssembly = true, assemble = false)
+            result shouldNotBe null
+            val lines = result!!.compilationOptions.outputDir.resolve("${result.compilerAst.name}.asm").toFile().readLines()
+                .map { it.substringBefore(';').trim() }
+            lines.any { it == "jsr  p8b_chip.p8s_bump" || it == "jmp  p8b_chip.p8s_bump" } shouldBe true
+            if(!optimize)   // the optimizer inlines helper
+                lines.any { it == "jsr  p8b_main.p8s_helper" } shouldBe true
+            lines.count { it.matches(Regex("(bsr|bra)(\\.[bswl])?\\s+p8b_(chip\\.p8s_bump|main\\.p8s_helper)")) } shouldBe 0
+        }
+    }
 })

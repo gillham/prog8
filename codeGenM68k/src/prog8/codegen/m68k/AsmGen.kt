@@ -998,12 +998,19 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
         val options = program.options
         val asmFile = OutputFiles.of(options, program.name).asm()
         try {
+            val crossesSections = program.blocks.any { it.options.amigaChipram } && target.name in setOf("amiga500", "amiga1200")
             if (options.optimize) {
                 CompilationTimings.measure("asm optimize") {
                     val asmLines = output.toString().lines().toMutableList()
                     optimizeAssembly(asmLines, program.options.compTarget.cpu)
+                    if (crossesSections)
+                        absoluteCallsAcrossSections(asmLines)
                     asmFile.toFile().writeText(asmLines.joinToString("\n") + "\n")
                 }
+            } else if (crossesSections) {
+                val asmLines = output.toString().lines().toMutableList()
+                absoluteCallsAcrossSections(asmLines)
+                asmFile.toFile().writeText(asmLines.joinToString("\n") + "\n")
             } else {
                 // write the unmodified code
                 asmFile.toFile().writeText(output.toString())
@@ -1679,6 +1686,29 @@ internal class AsmGen(val program: IRProgram, internal val target: ICompilationT
 
         if (normalVars.isNotEmpty() || dataFloatConstants.isNotEmpty() || normalStructs.isNotEmpty()) {
             emitRaw("    section  .text,code  ; back to code section")
+        }
+    }
+
+    /** A pc-relative bsr or bra can't reach a label in another section (hunk), such as amiga CHIP ram code: those become jsr and jmp. */
+    private fun absoluteCallsAcrossSections(lines: MutableList<String>) {
+        val sectionPattern = Regex("""^\s*section\s+([^,\s]+)""", RegexOption.IGNORE_CASE)
+        val labelPattern = Regex("""^([A-Za-z_][\w.]*):""")
+        val branchPattern = Regex("""^(\s*)(bsr|bra)(\.[bswl])?(\s+)([A-Za-z_][\w.]*)(\s*(;.*)?)$""")
+        val sectionOfLabel = mutableMapOf<String, String>()
+        var section = ""
+        for (line in lines) {
+            sectionPattern.find(line)?.let { section = it.groupValues[1] }
+            labelPattern.find(line)?.let { sectionOfLabel[it.groupValues[1]] = section }
+        }
+        section = ""
+        for ((index, line) in lines.withIndex()) {
+            sectionPattern.find(line)?.let { section = it.groupValues[1] }
+            val branch = branchPattern.matchEntire(line) ?: continue
+            val targetSection = sectionOfLabel[branch.groupValues[5]] ?: continue
+            if (targetSection != section) {
+                val absolute = if (branch.groupValues[2] == "bsr") "jsr" else "jmp"
+                lines[index] = branch.groupValues[1] + absolute + "  " + branch.groupValues[5] + branch.groupValues[6]
+            }
         }
     }
 

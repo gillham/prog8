@@ -588,3 +588,21 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Repro: `struct Map { uword rows  ubyte[4] flags }`, `^^Map m = &storage` and `^^ubyte p = &m.flags[2]`: "internal
   error" on virtual, cx16 and qemu68k, also with `-noopt`. Reading and writing `m.flags[i]` and taking `&m.flags` work.
 - Branch: fixed; it becomes the address of the array field plus the index times the element size.
+
+**U80. `sys.memcopy` on qemu68k copies one byte too few between differently aligned addresses**
+- Where: `compiler/res/prog8lib/qemu68k/syslib.p8`, `memcopy`: the byte loop for a source and a target at different
+  offsets from a multiple of four (`.bytes`) starts with an extra `subq.l #1,d2`.
+- Repro: `sys.memcopy(&source, &target + offset, count)` with a count of 3 that the compiler doesn't know copies 2
+  bytes for an offset of 1, 2 or 3; with a count of 1 the counter passes zero and the copy doesn't end. A constant
+  count is copied inline and is right. The Amiga targets use exec's `CopyMem` and are not affected.
+- Branch: fixed; the extra instruction is gone.
+
+**U81. A call between Amiga CHIP ram code and other code does not assemble**
+- Where: `codeGenM68k/AsmGen.kt`: the subroutines of a block with `%option amiga_chipram` are in the section `code_c`,
+  and calls into or out of them are `bsr` (or `bra` after the tail call optimization), which can't reach another
+  section (hunk).
+- Repro: `chip { %option amiga_chipram  uword counter  sub bump() { counter += 5 } }` and `chip.bump()` from `main`:
+  "error 3005 ... reloc type pc, size 16, mask 0xffffffff (symbol p8b_chip.p8s_bump + 0) not supported" on amiga500
+  and amiga1200, also with `-noopt`. The same for a call from the CHIP ram code to `txt.print` or another block.
+- Branch: fixed; when a program has a CHIP ram block, a `bsr` or `bra` to a label in another section becomes `jsr` or
+  `jmp`.

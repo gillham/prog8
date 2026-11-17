@@ -458,7 +458,6 @@ sys {
             rts
 
 .bytes:
-            subq.l   #1,d2
 .loop_b:
             move.b   (a0)+,(a1)+
             subq.l   #1,d2
