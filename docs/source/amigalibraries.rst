@@ -223,12 +223,12 @@ modules. Import them the same way as any other library::
 
 ``mobs``
     Shared movable-object descriptor types for the Amiga bare-metal helpers:
-    ``mobs.Mob`` (id, x/y position, anchor offsets, width, height, collision
-    radius, state), ``mobs.Bob`` (a ``Mob`` plus bitplane depth, data and mask
-    pointers) and ``mobs.Sprite`` (a ``Mob`` plus a data pointer, with
-    AGA-specific fields still to be added). Pure data, no OS or library
-    dependencies; ``blitter`` and ``sprites`` build on top of ``Mob``. Client
-    code owns animation timing, frame selection and positions.
+    ``mobs.Mob`` (x/y position, anchor offsets, width, height and collision
+    radius), ``mobs.Bob`` (a ``Mob`` plus bitplane depth, data and mask pointers,
+    id and state) and ``mobs.Sprite`` (a ``Mob`` plus a data pointer, hardware
+    slot, id and state). Pure data, no OS or library dependencies; ``blitter``
+    and ``sprites`` build on top of ``Mob``. Client code owns animation timing,
+    frame selection and positions.
     Geometry helpers are integer-only and read the anchor and box fields:
     ``collides(a, b)`` and ``contains_point(m, px, py)`` are origin-aware AABB
     tests, each with a fast path when the origin is (0, 0).
@@ -241,6 +241,27 @@ modules. Import them the same way as any other library::
     ``((d+1)/3) & 7``), ``manhattan_distance()`` and ``chebyshev_distance()``
     replace the square root with adds/compares, and ``union_box()`` /
     ``intersection_box()`` combine two boxes into left/top/right/bottom.
+
+``sprites``
+    Bare-metal OCS/ECS hardware-sprite helpers for ``mobs.Sprite`` descriptors:
+    ``init()``, ``pos()``, ``enable()``, ``disable()``, ``hide()``,
+    ``set_priority(pairs_in_front)``, ``set_colors(pair, c1, c2, c3)``,
+    ``set_colors16(colors)`` and ``attach(odd_sprite, on)``.
+    The priority argument ranges from 0 (playfield in
+    front) to 4 (all sprite pairs in front). Pair order is fixed, so this selects
+    a leading number of pairs rather than arbitrary pairs; use the
+    ``sprites.Priority`` enum values. In single-playfield
+    mode it writes the count to BPLCON2 bits 5-3. ``disable()`` stops all sprite
+    DMA, while ``hide(sprite)`` hides one channel. ``copper.base_list()`` leaves
+    BPLCON2 unchanged; a Copper list can add a MOVE if priority should change
+    by scanline.
+    ``set_colors(pair, c1, c2, c3)`` sets the three visible 12-bit colours of a
+    4-colour pair; colour 0 stays transparent. ``set_colors16(colors)`` writes all
+    16 colours of the single shared attached-sprite bank (COLOR16-31).
+    ``attach(odd_sprite, on)`` sets the attach bit in an odd channel's control
+    word so it pairs with the preceding even channel as one 16-colour sprite;
+    ``pos()`` preserves that bit when it rewrites the control word. Colours are
+    12-bit ``$0RGB`` values for OCS/ECS; AGA palette banks are not handled.
 
 ``blitter``
     Bare-metal blitter programming, no OS calls: ``copy_rect()`` and
@@ -306,12 +327,14 @@ modules. Import them the same way as any other library::
     rebuilding; ``wait()``/``skip()`` hide the instruction encoding,
     ``attach_planes()`` emits ``BPLxPT`` slots for ``playfield.patch_copper()``,
     and ``base_list(display, depth)`` adds those slots plus the common display
-    registers from a ``custom.compute_display()`` result. It returns the base
+    registers from a ``custom.compute_display()`` result. It leaves BPLCON2
+    unchanged so callers own sprite/playfield priority. It returns the base
     slot index for ``playfield.patch_copper()`` or ``set_planes()``. Select the
     display mode with ``DISPLAY_*`` flags when computing the display. The helper
     assumes ``copper.init()`` has been called on a chip-RAM buffer and does not
     enable DMA. It returns ``$ffff`` for a null display, invalid depth, or when
-    the plane-pointer slots do not fit. Later register MOVE overflows increment
+    the plane-pointer slots do not fit.
+    Later register MOVE overflows increment
     ``overflows`` but do not change the returned base, so reserve space for the
     complete prefix and the caller's additions. The caller still adds DMA
     setup, colors and any extra copper instructions before ``copper.end()``.
@@ -322,7 +345,7 @@ modules. Import them the same way as any other library::
     sequence behind a single slot handle.
     Emissions beyond capacity are dropped and counted in ``overflows``.
 
-``text``
+``gfxtext``
     Bare-metal 8x8 text renderer: ``init()`` caches pitch, depth and plane
     pointers, ``char()`` draws one glyph and ``print()`` draws a string with
     LF handling and reverse video (bit 7 of the character byte). CPU-only, no
@@ -375,7 +398,7 @@ tweaks exist on top of that.
 Hand-maintained modules (not generated from the NDK)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- ``custom``, ``blitter``, ``copper``, ``playfield``, ``text``, ``sound``,
+- ``custom``, ``blitter``, ``copper``, ``playfield``, ``gfxtext``, ``sound``,
   ``ptplayer``, ``easygfx`` - the bare-metal hardware modules.
 - ``audio``, ``timer``, ``trackdisk`` - thin ``audio.device`` / ``timer.device`` /
   ``trackdisk.device`` wrappers.

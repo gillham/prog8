@@ -3672,7 +3672,6 @@ main {
         zero.number shouldBe 0.0
     }
 
-
     test("parenthesized pointer field access desugars same as unparenthesized") {
         val src="""
 main {
@@ -4210,6 +4209,7 @@ main {
         val machine = result.simulate()
         machine.assertMemory(0x02, 0x02)
     }
+    
     test("pointer-to-pointer struct field deref still double-derefs on 6502") {
         val src = $$"""
             %option no_sysinit
@@ -4237,6 +4237,7 @@ main {
         val machine = result.simulate()
         machine.assertMemory(0x02, 0x00)  // low byte of $3000
     }
+    
     test("chain-1 derefLast write stores through followed pointer on 6502") {
         val src = $$"""
             %option no_sysinit
@@ -4262,5 +4263,38 @@ main {
         val result = compileText(C64Target(), false, src, outputDir)!!
         val machine = result.simulate()
         machine.assertMemory(0x02, 0x78)  // low byte of $5678
+    }
+    
+    test("address of a fixed-address variable is stored as a full 32-bit pointer (IR)") {
+        val src = $$"""
+            main {
+                &uword highreg = $dff1a0
+                sub start() {
+                    ^^uword p = &highreg
+                    p[0] = 1
+                }
+            }""".trimIndent()
+        val out = tempdir().toPath()
+        compileText(VMTarget(), false, src, out, writeAssembly = true, assemble = true)!!
+        val ir = out.toFile().listFiles()!!.single { it.name.endsWith(".p8ir") }.readText()
+        ir.contains($$"#$00dff1a0") shouldBe true
+        ir.contains($$"#$f1a0") shouldBe false
+    }
+    
+    test("address of a fixed-address variable is stored as a full 32-bit pointer (qemu68k)") {
+        val src = $$"""
+            main {
+                &uword highreg = $dff1a0
+                sub start() {
+                    ^^uword p = &highreg
+                    p[0] = 1
+                }
+            }""".trimIndent()
+        val out = tempdir().toPath()
+        compileText(Qemu68kTarget(), false, src, out, writeAssembly = true, assemble = false)!!
+        val asm = out.toFile().listFiles()!!.single { it.name.endsWith(".asm") }.readText()
+        val lines = asm.lines().map { it.trim() }
+        lines.any { it.contains("#14676384") } shouldBe true
+        lines.any { it.contains("#61856") } shouldBe false
     }
 })

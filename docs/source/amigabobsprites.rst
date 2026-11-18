@@ -20,7 +20,6 @@ the object's anchor; ``origin_x`` and ``origin_y`` offset the image's top-left
 from it::
 
     struct Mob {
-        uword id
         word x_pos
         word y_pos
         word origin_x
@@ -28,13 +27,11 @@ from it::
         uword width
         uword height
         uword radius
-        uword state
     }
 
 The object's top-left is ``(x_pos + origin_x, y_pos + origin_y)``. With an
-origin of ``(0, 0)``, the anchor is the top-left corner. The library leaves
-``id`` and ``state`` to the client. A ``radius`` of zero makes the circle
-collision helpers use the Mob's rectangular bounds instead.
+origin of ``(0, 0)``, the anchor is the top-left corner. A ``radius`` of zero
+makes the circle collision helpers use the Mob's rectangular bounds instead.
 
 Position and size live in the ``Mob`` because the renderers and the geometry
 helpers read them. Everything only game logic touches - velocity, timers,
@@ -49,11 +46,16 @@ from renderer-specific image data::
         uword depth
         pointer data
         pointer mask
+        uword id
+        uword state
     }
 
     struct Sprite {
         ^^mobs.Mob mob
         pointer data
+        uword slot
+        uword id
+        uword state
     }
 
 ``Bob.data`` points to plane 0 of the current frame. ``Bob.mask`` points to the
@@ -88,8 +90,8 @@ Playfield graphics cannot cover them, and a channel cannot be repositioned more
 than once on a scanline.
 
 Both use the bare-metal ``custom`` register layer and work without AmigaOS.
-``blitter`` provides BOB drawing; a sprite helper module is not yet available
-(see `Library support`_).
+``blitter`` provides BOB drawing and the ``sprites`` module (see below) provides
+hardware-sprite helpers.
 
 .. _amiga-bobs:
 
@@ -101,10 +103,10 @@ BOBs
 BOB data layout
 ~~~~~~~~~~~~~~~
 
-A BOB is stored plane-major: all rows of plane 0, then all rows of plane 1, and
-so on. Plane 0 contains the least significant colour bit, and the BOB's
-``depth`` gives the number of planes. Rows are left-justified, with the
-leftmost pixel in bit 15 of the first word.
+A BOB stores complete bitplanes consecutively: all rows of plane 0, then all
+rows of plane 1, and so on. Plane 0 contains the least significant colour bit,
+and the BOB's ``depth`` gives the number of planes. Each row is left-justified,
+with the leftmost pixel in bit 15 of the first word.
 
 Rows are tightly packed; no guard word is needed. With
 ``width_words = ceil(width / 16)``:
@@ -113,6 +115,9 @@ Rows are tightly packed; no guard word is needed. With
 * ``row_bytes   = row_words * 2``
 * ``plane_bytes = height * row_bytes``
 * plane ``p`` starts at ``data + p * plane_bytes``
+
+The width may end partway through the last word; that final word is still
+stored, with pixels beyond the BOB's width unused.
 
 Store the mask separately from the colour planes, using the same row format.
 A mask bit of 1 draws the corresponding BOB pixel; a 0 leaves the background
@@ -125,6 +130,13 @@ A 20 pixel wide, 2 line BOB with 2 planes has ``width_words`` 2, ``row_words`` 2
     data:     plane 0                 plane 1
     row 0:    [ w0 ][ w1 ]            [ w0 ][ w1 ]
     row 1:    [ w0 ][ w1 ]            [ w0 ][ w1 ]
+
+Worked example: ``examples/amiga/beachballs.p8`` draws a 32x32 ball with 4
+planes. Two words cover one row (32 pixels), so one plane is
+``32 * 4 = 128`` bytes and the planes are ``512`` bytes in ``ball.bin``,
+plus a ``128``-byte mask in ``ball_mask.bin``. Both files are pulled in with
+``%asmbinary`` under ``%align 4``; ``Bob.data`` points at plane 0 and
+``Bob.mask`` at the mask.
 
 Drawing a BOB
 ~~~~~~~~~~~~~
@@ -285,36 +297,70 @@ Hardware sprites
 
 .. index:: single: Amiga; hardware sprite
 
-Sprites are overlaid by the display hardware, so they cost nothing per frame
-beyond keeping their data and pointers current. The restrictions are real:
-eight channels, 16 pixels wide each in OCS/ECS, and a colour set shared by a
-pair of channels.
+Sprites are composited by the display hardware without redrawing their pixels
+in software. The hardware has eight DMA channels. On OCS/ECS, each channel is
+16 pixels wide, and adjacent channels share a colour set.
 
-Sprite data structure
-~~~~~~~~~~~~~~~~~~~~~
+Sprite data layout
+~~~~~~~~~~~~~~~~~~~
 
-A sprite is described by a list of words in chip RAM, pointed to by
-``custom.SPRnPTH`` and ``custom.SPRnPTL``:
+A sprite channel reads one contiguous block in chip RAM, pointed to by
+``custom.SPRxPTH``/``SPRxPTL``. The block has three parts: a header holding
+the position/control words, the image words, and a zero terminator the same
+size as the header::
 
-* two control words: the position word and the control word;
-* per display line, the image words: two for the OCS 2-plane format, four for
-  the AGA 4-plane format;
-* a zero word terminates the list.
+    header:     POS word first, CTL word further in, zero padding around
+    data:       each line's DATA chunks followed by its DATB chunks
+    terminator: all zero words, same size as the header
 
-The position word holds the vertical start (bits 15-8, low eight bits) and the
-high bits of the horizontal position (bits 7-0). The control word holds the
-vertical stop (bits 15-8), the attach bit (bit 7), the ninth bit of the vertical
-start (bit 2), the ninth bit of the vertical stop (bit 1) and the lowest
-horizontal bit (bit 0). The vertical stop is the line *after* the last line of
-the sprite, so ``VSTOP - VSTART`` is the sprite height.
+Let ``N`` be width/16 (1, 2 or 4). Every channel supplies two bitplanes:
+DATA is the low colour bit and DATB the high bit. A single channel therefore
+shows four values, including transparent zero. Attaching an even channel to
+the following odd channel adds two more bits: the even channel supplies bits
+0-1 and the odd channel bits 2-3. Words are big-endian; bit 15 is the leftmost
+pixel of each 16-pixel chunk.
 
-Within a line the words are stored low bitplane first. Bit 15 of a data word is
-the leftmost pixel, so the words of the 2-plane format are the low and the high
-colour bit of the same 16 pixels.
+=========  =  =======  ===  ===  ===========  ==========
+Width      N  Header   POS  CTL  Data starts  Words/line
+=========  =  =======  ===  ===  ===========  ==========
+16 pixels  1  2 words  +0   +2   +4           2
+32 pixels  2  4 words  +0   +4   +8           4
+64 pixels  4  8 words  +0   +8   +16          8
+=========  =  =======  ===  ===  ===========  ==========
 
-The list has to be rebuilt whenever the sprite's height changes; moving a
-sprite only changes its position word, and switching a frame only changes the
-pointer.
+Offsets are bytes. The header is ``POS``, then ``N-1`` zero words, then
+``CTL`` and ``N-1`` zero words. For 64 pixels that is
+``POS,0,0,0, CTL,0,0,0``. Each data line is grouped by plane: all ``N`` DATA
+words left to right, followed by all ``N`` DATB words. A 64-pixel line is::
+
+    DATA:  A0, A1, A2, A3
+    DATB:  B0, B1, B2, B3
+
+Here A0/B0 are the two bitplane words for the leftmost 16 pixels, A1/B1 for
+the next 16, and so on. Do not interleave each chunk's two words as
+``A0,B0,A1,B1,...``; that scrambles wider sprites. With one chunk per line
+(16 pixels), the two orders happen to be identical.
+
+The header and terminator each contain ``2N`` words; each image line also
+contains ``2N`` words. Thus a channel occupies
+``2N * (height + 2)`` words in total.
+
+The POS word holds VSTART (low 8 bits) and HSTART>>1. The CTL word holds
+VSTOP (low 8 bits) plus: bit 7 is ATTACH (odd channel of an attached pair
+only), bit 2 is VSTART bit 8, bit 1 is VSTOP bit 8, bit 0 is HSTART bit 0.
+AGA adds VSTART/VSTOP bit 9 at bits 6/5 and 35 ns fine-position bits at 4/3;
+leave those zero for lores sprites. VSTOP is the first line *after* the
+sprite, so height is ``VSTOP - VSTART``; on AGA keep VSTART/VSTOP the same
+parity. An attached pair uses an even slot plus the following odd slot at
+the same position and size, with the attach bit set; ``pos()`` and
+``aga_pos()`` preserve the bit when they rewrite CTL.
+
+Sprite DMA advances the channel pointer as it reads. Reload the start pointer
+before the next frame's DMA fetch; the ``pos()`` and ``aga_pos()`` helpers do
+this while updating the position. The AGA addendum specifies pointer alignment
+of 2 bytes for 16-pixel sprites, 4 for 32-pixel sprites, and 16 for 64-pixel
+sprites. Prog8's ``@align64`` exceeds those requirements; see
+``examples/amiga/beachballs-sprites64.p8`` for a 64x64 channel block.
 
 Sprite colours
 ~~~~~~~~~~~~~~
@@ -330,9 +376,9 @@ channels.
 Animating and multiplexing sprites
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Repositioning a sprite is a write to its position word, so an object can move
-every frame without touching pixel data. Animation is a matter of pointing
-``custom.SPRnPTH``/``PTL`` at another list of the same height.
+Repositioning a sprite updates its position/control words, so an object can
+move every frame without changing pixel data. Animation can use another list
+of the same height, with its pointer reloaded before the next use.
 
 Multiplexing reuses one channel for several objects per frame: the list is
 retriggered further down the screen, and the hardware overlays the same channel
@@ -353,36 +399,80 @@ That is free and pixel exact, unlike the rectangle tests in ``mobs``.
 AGA sprite modes
 ~~~~~~~~~~~~~~~~
 
-AGA extends the same sprite hardware:
+On AGA, sprite channels stay 2 planes each; 16 colours still need an attached
+pair, but the pair can be 16, 32 or 64 pixels wide and use any 16-colour bank.
+The width is a global display mode selected by ``custom.FMODE`` bits 3-2 and
+applies to all eight channels; it cannot be mixed per sprite. It must be set
+before sprite DMA is enabled (``FMODE`` defaults to the 16-pixel OCS mode).
+The sprite data and control-word layout grow with the width (see the table
+above), and wide sprite data must be aligned to the fetch width
+(``@align64`` covers the 16-byte multiple a 64-pixel pointer needs).
 
-* 4 planes per sprite, so 16 colours instead of 4, still 16 pixels wide, four
-  words per line;
-* 32 or 64 pixel wide sprites through the width bits in the control word, with
-  the matching number of words per line;
-* ``custom.FMODE`` bits 0-1 select the sprite DMA fetch width (16, 32 or 64
-  bits). It has to be high enough for the widest sprite in use; until an AGA
-  register is written, sprites stay in the 16-pixel OCS compatible mode;
-* ``custom.BPLCON4`` selects the palette bank: bits 0-3 for the even channels
-  (0, 2, 4, 6) and bits 4-7 for the odd ones (1, 3, 5, 7), each bank being 16
-  consecutive colours. A single 16-colour sprite uses its bank; an attached pair
-  uses both banks at once for 256 colours.
+``custom.BPLCON4`` selects the palette bank: bits 7-4 (ESPRM) for even
+channels (0, 2, 4, 6), bits 3-0 (OSPRM) for odd channels (1, 3, 5, 7), each
+selecting 16 consecutive colours. An attached pair uses the odd-sprite OSPRM
+field for all 16 pens.
 
 .. caution::
-    Fetch width and data layout must agree. A sprite whose width bits ask for
-    64 pixels while ``FMODE`` still fetches 16 bits per access, or whose data
-    structure stores fewer words than its width needs, shows a garbled or
-    truncated sprite.
+    ``FMODE`` and the sprite data layout must agree. A 64-pixel sprite while
+    ``FMODE`` still fetches 16 bits, or a data block with too few words, shows a
+    garbled or truncated sprite.
+
+.. note::
+    The ``sprites`` module now provides AGA helpers prefixed ``aga_``:
+    ``aga_set_width()``, ``aga_init()``, ``aga_pos()``, ``aga_hide()``,
+    ``aga_init_attached()``, ``aga_pos_attached()``, ``aga_set_resolution()``
+    ``aga_set_bank()`` and ``aga_set_colors16()``. The latter loads 16
+    ``$00RRGGBB`` colors into COLOR16-31 on AGA. Call ``aga_set_width()`` before
+    any wide sprite use.
+
+Sprite vs BOB data layout
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+BOBs and sprites both store 16-pixel words with bit 15 leftmost, but their
+bitplane ordering differs:
+
+* **BOB:** stores a complete plane at a time (all rows of plane 0, then all
+  rows of plane 1, and so on). Its transparency mask is a separate,
+  tightly-packed bitmap in the same row format.
+* **Sprite:** stores one scanline at a time. For each line, store all DATA
+  words left-to-right, then all DATB words left-to-right. A sprite channel
+  also has its POS/CTL header and zero terminator; see the width table above.
 
 Library support
 ~~~~~~~~~~~~~~~
 
-``mobs.Sprite`` already has the shape of a sprite descriptor (a ``Mob`` plus the
-chip RAM data pointer), so the metadata and geometry helpers can be shared with
-BOBs. A ``sprites`` helper module for position/control packing, pointer updates
-and the AGA modes does not exist yet. Until it does, program the registers
-directly through ``custom.SPRnPOS``, ``custom.SPRnCTL``, ``custom.SPRnDATA``,
-``custom.SPRnDATB`` and ``custom.SPRnPTH``/``PTL``, and use
-``custom.detect_chipset()`` to find out whether the AGA fields are usable.
+The ``sprites`` module provides bare-metal OCS/ECS ``init()``, ``pos()``,
+``enable()``, ``disable()``, ``hide()``, ``set_priority(pairs_in_front)``,
+``set_colors(pair, c1, c2, c3)``, ``set_colors16(colors)`` and
+``attach(odd_sprite, on)`` helpers for ``mobs.Sprite`` descriptors.
+``disable()`` stops sprite DMA globally; ``hide(sprite)`` hides one sprite
+while DMA remains enabled.
+``pairs_in_front`` ranges from 0 (playfield in
+front) to 4 (all sprite pairs in front). The hardware orders pairs 0/1, 2/3,
+4/5 and 6/7, so only a leading number of pairs can be placed ahead of the
+playfield. On a single playfield, the helper writes this value to BPLCON2
+bits 5-3. Use the ``sprites.Priority`` enum for the argument. Set ``sprite.mob``,
+``sprite.data`` and ``sprite.slot`` first;
+``init(sprite)`` selects the assigned hardware channel, and ``pos(sprite)``
+packs the linked Mob's position and height into the data header while reloading
+that channel's pointer. ``hide(sprite)`` terminates its data header; another
+``pos(sprite)`` writes the position header again and shows it.
+``copper.base_list()`` leaves BPLCON2 alone. Set priority with the CPU helper
+or add a BPLCON2 MOVE to the Copper list if priority should change by scanline.
+
+For colours, ``set_colors(pair, c1, c2, c3)`` writes the three visible 12-bit
+``$0RGB`` values of a 4-colour pair (colour 0 stays transparent). For 16-colour
+attached sprites, ``attach(odd_sprite, true)`` sets the attach bit in the odd
+channel's control word (call it after ``init()``), and ``set_colors16(colors)``
+writes 12-bit ``$0RGB`` colours to COLOR16-31. On AGA, use
+``aga_set_colors16(colors)`` with 16 ``$00RRGGBB`` long values for full 24-bit
+colors. ``pos()`` keeps the attach bit when it rewrites the control word, so a
+single ``pos()`` works for attached and normal sprites. AGA palette banks are
+selected with ``aga_set_bank()``. AGA width and resolution helpers are available
+as ``aga_*`` (see above). See ``examples/amiga/beachballs-sprites.p8`` for
+4-colour, ``examples/amiga/beachballs-sprites16.p8`` for 16-colour attached
+sprites and ``examples/amiga/beachballs-sprites64.p8`` for AGA 64-pixel sprites.
 
 .. seealso::
     ``examples/amiga/agabobs.p8`` demonstrates BOBs on an AGA planar playfield.

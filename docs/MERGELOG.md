@@ -96,7 +96,64 @@ under a heading says that it was looked at. One line for each change, with the c
 
 ## Entries
 
+## master 8f50c2ed1 .. df16719e7, merged 2026-11-18
+
+### Language and grammar
+nothing
+
+### Builtin functions
+nothing
+
+### Library
+- Amiga: new module `sprites` for hardware sprites: OCS (`enable`, `disable`, `hide`, `attach`, positions), ECS
+  16-color attached sprites, and AGA 16/32/64 pixel wide sprites (`aga_init`, `aga_pos`, `aga_set_width`,
+  `aga_set_colors16` and more), with the constants `AgaWidth`, `Priority`, `SPRITE_H_OFFSET` and `SPRITE_V_OFFSET`
+  (eb0e28cc8, a59929fa9, f462a2287, 7ea43f659, 39fee2d0f)
+- Amiga: the module `text` is renamed `gfxtext` (`init`, `char`, `print`); `%import text` no longer resolves
+  (1cd473608)
+- Amiga `copper`, `custom`, `mobs` and `playfield`: small changes for the sprites (eb0e28cc8)
+- `petgfx` (c64, c128, pet32, and now cx16): drawing modes `Mode::Draw`/`Erase`/`Xor` with `draw_mode()`,
+  `erase_mode()`, `xor_mode()` and the variable `mode`, `clear_screen()`, and `line` in any direction; it reads the
+  screen with `txt.getchr()` instead of `cbm.Screen` (631579e75)
+
+### IR
+- nothing in the format; a constant assigned to a pointer is no longer cut to 16 bits on targets with wider
+  pointers (a59929fa9)
+
+### Errors and warnings
+nothing
+
+### Command line
+nothing
+
+### Conventions of 6502 programs
+nothing
+
+### Bugs fixed
+- IR: a pointer constant above 65535 was cut to 16 bits in an assignment on the m68k and virtual targets (a59929fa9;
+  the branch had the same fix)
+- m68k: an explicit alignment (`@align64`, `@alignpage`, `@alignword`) of a variable or array was ignored
+  (16c34f9fb)
+- checked on `master` at df16719e7: all repros of `bugs/check.py`, and U85 in qemu, whose code this merge changed;
+  none passes
+
+### LLVM branch only
+- conflict in `AssignmentGen.kt`: upstream's version of the same pointer constant fix taken
+- the branch's new m68k data paths (U78: an all-zero array from a .p8ir file, U85: float arrays) respect an explicit
+  alignment too, as upstream's do now
+- conflict in `TestPointers.kt`: the branch's two tests kept next to upstream's new one
+- conflict in the language server's module list: the branch's `fileio` and `trs80`, upstream's `gfxtext`
+- conflict in the symbol dumps: regenerated
+- conflict in `TestCompilerOnExamples.kt`: the pet32 sizes are upstream's plus the 55 bytes of the branch's U49 fix
+
+### Nothing for p8p8
+- Amiga sprite examples (`beachballs-sprites`, `-sprites16`, `-sprites64`), `scripts/amiga-bobspriteconv.py`, the
+  `petswirl` example moved to `examples/petswirl.p8` for all CBM targets, docs, skills and `ideas/` notes
+  (eb0e28cc8, 39fee2d0f, df16719e7)
+
 ## master de17e7953 .. 8f50c2ed1, merged 2026-11-16
+
+Merge commit `431ce7eab`.
 
 ### Language and grammar
 nothing

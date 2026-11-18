@@ -21,9 +21,10 @@
 %import mobs
 %import prog8_lib
 %import sorting
+%import sprites
 %import strings
 %import syslib
-%import text
+%import gfxtext
 %import textio
 %import wavfile
 %import exec

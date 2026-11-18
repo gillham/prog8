@@ -156,7 +156,7 @@ class TestCompilerOnExamplesC64: FunSpec({
             ExampleSizes("fileselector", c64SizeOptimized=3519, c64SizeUnoptimized=4577),
             ExampleSizes("library/main", c64SizeOptimized=319, c64SizeUnoptimized=1102),
             ExampleSizes("multiplexer", c64SizeOptimized=1980, c64SizeUnoptimized=3323),
-            ExampleSizes("petswirl", c64SizeOptimized=1121, c64SizeUnoptimized=2435),
+            ExampleSizes("petswirl", c64SizeOptimized=1103, c64SizeUnoptimized=2420),
             ExampleSizes("plasma", c64SizeOptimized=1532, c64SizeUnoptimized=3081),
             ExampleSizes("rasterbars", c64SizeOptimized=776, c64SizeUnoptimized=2319),
             ExampleSizes("simplemultiplexer", c64SizeOptimized=924, c64SizeUnoptimized=986),
@@ -239,6 +239,7 @@ class TestCompilerOnExamplesCx16: FunSpec({
             ExampleSizes("mandelbrot", cx16SizeOptimized=1120, cx16SizeUnoptimized=1434),
             ExampleSizes("multi-irq-new", cx16SizeOptimized=1078, cx16SizeUnoptimized=1527),
             ExampleSizes("multi-irq-old", cx16SizeOptimized=967, cx16SizeUnoptimized=1418),
+            ExampleSizes("petswirl", cx16SizeOptimized=1123, cx16SizeUnoptimized=2717),
             ExampleSizes("plasma", cx16SizeOptimized=1579, cx16SizeUnoptimized=3424),
             ExampleSizes("rasterbars", cx16SizeOptimized=1200, cx16SizeUnoptimized=3112),
             ExampleSizes("serialdownload", cx16SizeOptimized=2891, cx16SizeUnoptimized=4026),
@@ -376,7 +377,7 @@ class TestCompilerOnExamplesPET32: FunSpec({
     val onlyPET32 = cartesianProduct(
         listOf(
             ExampleSizes("boingball", pet32SizeOptimized=1545, pet32SizeUnoptimized=1601),
-            ExampleSizes("petswirl", pet32SizeOptimized=1135, pet32SizeUnoptimized=2449),
+            ExampleSizes("petswirl", pet32SizeOptimized=1119, pet32SizeUnoptimized=2436),
             ExampleSizes("music", pet32SizeOptimized=876, pet32SizeUnoptimized=925),
         ),
         listOf(false, true)
