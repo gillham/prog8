@@ -226,7 +226,7 @@ internal class ProgramAndVarsGen(
 
     // c128: the program may extend above $3fff, where bank 15 (the KERNAL's default) has the BASIC ROM
     private fun c128BankOutBasic() {
-        if(compTarget.name == C128Target.NAME)
+        if(compTarget.name == C128Target.NAME && options.loadAddress < 0x4000u)
             asmgen.out($$"  lda  #$0e |  sta  $ff00   ; bank out the BASIC ROM, before using anything above $3fff")
     }
 

@@ -270,6 +270,9 @@ Keeping the list: add new items at the end with the next number, and remove an i
   `cleanup_at_exit` and `sys.reset_system` also select bank 15 (`$ff00 = 0`) under their own code.
 - Branch: fixed; the entry code banks the BASIC ROM out first (`$ff00 = $0e`), the library routines use `$0e`, and
   `cleanup_at_exit` returns through a tail in the entry code that selects bank 15 below $4000.
+  A program loaded at $4000 or above (ROM or cartridge code) leaves `$ff00` alone at entry and exit, as banking out
+  there would put RAM in place of the running code. The first version of this fix also wrote `$0e` at entry there,
+  which broke cartridge code at $8000.
 
 **U43. On c128, `%zeropage basicsafe` and `kernalsafe` put variables at $92 and $a4, which the KERNAL changes**
 - Repro: `bugs/u43_c128_basicsafe_zp92.p8`: variables at `146` and `164` in the .asm (`master` a4b59f6b3).

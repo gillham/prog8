@@ -1270,4 +1270,25 @@ main {
             lines.subList(cleanup, cleanupEnd).count { it == "lda  #0" } shouldBe 0
         }
     }
+
+    test($$"c128 code loaded at $4000 or above, such as a cartridge, doesn't switch banks at entry and exit") {
+        val src = $$"""
+%zeropage basicsafe
+%option no_sysinit
+%launcher none
+%address $8000
+main {
+    sub start() {
+        @($0400) = 1
+    }
+}"""
+        val result = compileText(C128Target(), false, src, outputDir, writeAssembly = true)!!
+        val lines = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".asm").readText()
+            .lines().map { it.substringBefore(';').trim() }
+        val entry = lines.indexOf("prog8_program_start")
+        val firstCall = lines.withIndex().first { it.index > entry && it.value.startsWith("jsr") }.index
+        lines.subList(entry, firstCall).count { it == $$"sta  $ff00" } shouldBe 0
+        val exitTail = lines.indexOf("prog8_c128_exit")
+        lines[exitTail+1] shouldBe "rts"
+    }
 })
