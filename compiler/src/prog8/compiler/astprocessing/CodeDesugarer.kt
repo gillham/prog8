@@ -457,7 +457,6 @@ _after:
         // This must be done FIRST, before any other array transformations
         if(arrayIndexedExpression.nestedArray != null) {
             val nested = arrayIndexedExpression.nestedArray!!
-            val outerIndex = arrayIndexedExpression.indexer.indexExpr
 
             // Check for 3D+ indexing
             if(nested.nestedArray != null) {
@@ -479,24 +478,7 @@ _after:
                 return noModifications
             }
 
-            val numCols = targetVarDecl.matrixNumCols ?: return noModifications
-            if(numCols.constValue(program)==null)
-                return noModifications    // not a constant (yet); AstChecker will report it
-            val innerIndex = nested.indexer.indexExpr
-
-            // Calculate: row * numCols + col
-            val rowTimesCols = BinaryExpression(innerIndex, "*", numCols.copy(), arrayIndexedExpression.position)
-            val flatIndex = BinaryExpression(rowTimesCols, "+", outerIndex.copy(), arrayIndexedExpression.position)
-
-            // Create flattened ArrayIndexedExpression
-            val flatArrayIndex = ArrayIndex(flatIndex, arrayIndexedExpression.position)
-            val desugared = ArrayIndexedExpression(
-                nested.plainarrayvar?.copy(),
-                null,  // No more nesting
-                nested.pointerderef?.copy(),
-                flatArrayIndex,
-                arrayIndexedExpression.position
-            )
+            val desugared = flatten2DArrayIndex(arrayIndexedExpression) ?: return noModifications
             return listOf(AstReplaceNode(arrayIndexedExpression, desugared, parent))
         }
 
@@ -1556,35 +1538,34 @@ _after:
 
         if(deref.chain.last().second!=null && deref.derefLast && deref.chain.dropLast(1).all { it.second==null } ) {
 
+            // z[i]^^ as a value -->  peekX(z[i])
+            fun peekIndexedPointer(dt: DataType): Expression {
+                val (peekFunc, cast) =
+                    if(dt.isBool) "peekbool" to null
+                    else if (dt.isUnsignedByte) "peek" to null
+                    else if (dt.isSignedByte) "peek" to DataType.BYTE
+                    else if (dt.isUnsignedWord) "peekw" to null
+                    else if (dt.isSignedWord) "peekw" to DataType.WORD
+                    else if (dt.isLong) "peekl" to null
+                    else if (dt.isSignedQuad) "peekq" to null
+                    else if (dt.isUnsignedQuad) "peekq" to DataType.UQUAD
+                    else if (dt.isFloat) "peekf" to null
+                    else throw FatalAstException("can only deref a numeric or boolean pointer here")
+                val indexer = deref.chain.last().second!!
+                val identifier = IdentifierReference(deref.chain.map { it.first }, deref.position)
+                val indexed = ArrayIndexedExpression(identifier, null, null, indexer, deref.position)
+                val peekIdent = IdentifierReference(listOf(peekFunc), deref.position)
+                val peekCall = FunctionCallExpression(peekIdent, mutableListOf(indexed), deref.position)
+                return if(cast==null) peekCall else TypecastExpression(peekCall, cast, true, deref.position)
+            }
+
             // parent could be Assigment directly, or a binexpr chained pointer expression (with '.' operator)
             if(parent is Assignment) {
                 val dt = deref.inferType(program).getOrUndef()
                 if(dt.isNumericOrBool) {
                     if (parent.value isSameAs deref) {
                         // get rid of ArrayIndexedPtrDereference in the assignment value
-                        // x = z[i]^^ -->  x = peekX(z[i])
-                        val (peekFunc, cast) =
-                            if(dt.isBool) "peekbool" to null
-                            else if (dt.isUnsignedByte) "peek" to null
-                            else if (dt.isSignedByte) "peek" to DataType.BYTE
-                            else if (dt.isUnsignedWord) "peekw" to null
-                            else if (dt.isSignedWord) "peekw" to DataType.WORD
-                            else if (dt.isLong) "peekl" to null
-                            else if (dt.isSignedQuad) "peekq" to null
-                            else if (dt.isUnsignedQuad) "peekq" to DataType.UQUAD
-                            else if (dt.isFloat) "peekf" to null
-                            else throw FatalAstException("can only deref a numeric or boolean pointer here")
-                        val indexer = deref.chain.last().second!!
-                        val identifier = IdentifierReference(deref.chain.map { it.first }, deref.position)
-                        val indexed = ArrayIndexedExpression(identifier, null, null, indexer, deref.position)
-                        val peekIdent = IdentifierReference(listOf(peekFunc), deref.position)
-                        val peekCall = FunctionCallExpression(peekIdent, mutableListOf(indexed), deref.position)
-                        if(cast==null)
-                            return listOf(AstReplaceNode(parent.value, peekCall, parent))
-                        else {
-                            val casted = TypecastExpression(peekCall, cast, true, deref.position)
-                            return listOf(AstReplaceNode(parent.value, casted, parent))
-                        }
+                        return listOf(AstReplaceNode(parent.value, peekIndexedPointer(dt), parent))
                     }
                 }
             } else if(parent is BinaryExpression && parent.operator==".") {
@@ -1631,7 +1612,10 @@ _after:
                 }
             }
             else {
-                TODO("cannot translate $deref here ${deref.position}")
+                val dt = deref.inferType(program).getOrUndef()
+                if(dt.isNumericOrBool)
+                    return listOf(AstReplaceNode(deref, peekIndexedPointer(dt), parent))
+                errors.err("cannot dereference this indexed pointer here", deref.position)
             }
         }
 
@@ -1854,7 +1838,7 @@ _after:
                     }
                 }
 
-                val sourceIdx = assignment.value as? ArrayIndexedExpression
+                val sourceIdx = (assignment.value as? ArrayIndexedExpression)?.let { flatten2DArrayIndex(it) ?: it }
                 if(sourceIdx!=null) {
                     val idxType = sourceIdx.inferType(program)
                     if(idxType.isStructInstance) {
@@ -1869,7 +1853,7 @@ _after:
                             return listOf(AstReplaceNode(assignment, memcopy, parent))
                         }
                         // points[1] = points[2]  -->  memcopy(&points[2], &points[1], sizeof(struct))
-                        val targetIdx = assignment.target.arrayindexed
+                        val targetIdx = assignment.target.arrayindexed?.let { flatten2DArrayIndex(it) ?: it }
                         if(targetIdx!=null) {
                             val tIdxType = targetIdx.inferType(program)
                             if(tIdxType.isStructInstance && tIdxType == idxType) {
@@ -2004,10 +1988,39 @@ _after:
         return noModifications
     }
 
+    /** matrix[row][col] -> matrix[row * numCols + col], or null if [expr] is not a valid 2D array access (yet). */
+    private fun flatten2DArrayIndex(expr: ArrayIndexedExpression): ArrayIndexedExpression? {
+        val nested = expr.nestedArray ?: return null
+        if(nested.nestedArray != null)
+            return null
+        val targetVarDecl = nested.plainarrayvar?.targetStatement(program.builtinFunctions) as? VarDecl ?: return null
+        if(!targetVarDecl.is2DArray)
+            return null
+        val numCols = targetVarDecl.matrixNumCols ?: return null
+        if(numCols.constValue(program)==null)
+            return null    // not a constant (yet); AstChecker will report it
+        val rowTimesCols = BinaryExpression(nested.indexer.indexExpr.copy(), "*", numCols.copy(), expr.position)
+        val flatIndex = BinaryExpression(rowTimesCols, "+", expr.indexer.indexExpr.copy(), expr.position)
+        val flat = ArrayIndexedExpression(
+            nested.plainarrayvar?.copy(),
+            null,
+            nested.pointerderef?.copy(),
+            ArrayIndex(flatIndex, expr.position),
+            expr.position
+        )
+        flat.linkParents(expr.parent)
+        return flat
+    }
+
     private fun addressOfStructInstance(base: Expression, addressDt: DataType): Expression {
+        if(base is ArrayIndexedExpression && base.nestedArray!=null) {
+            val flat = flatten2DArrayIndex(base)
+            if(flat!=null)
+                return addressOfStructInstance(flat, addressDt)
+        }
         val addr = when(base) {
             is IdentifierReference -> AddressOf(base.copy(), null, null, false, true, base.position)
-            is ArrayIndexedExpression -> AddressOf(
+            is ArrayIndexedExpression if base.nestedArray==null -> AddressOf(
                 base.plainarrayvar?.copy(), base.indexer.copy(), null, false, true, base.position)
             is TypecastExpression -> return addressOfStructInstance(base.expression, addressDt)
             else -> {

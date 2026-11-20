@@ -3,6 +3,7 @@ package prog8.compiler
 import prog8.ast.Module
 import prog8.ast.Node
 import prog8.ast.Program
+import prog8.ast.findParentNode
 import prog8.ast.expressions.*
 import prog8.ast.statements.*
 import prog8.ast.walk.IAstVisitor
@@ -34,8 +35,8 @@ class CallGraph(private val program: Program) : IAstVisitor {
         val used = mutableSetOf<Block>()
 
         allIdentifiersAndTargets.forEach {
-            val target = it.second.definingBlock
-            used.add(target)
+            // builtin function placeholders in a module-level %assert are not inside a block
+            ((it.second as? Block) ?: findParentNode<Block>(it.second))?.let { block -> used.add(block) }
         }
 
         // warning: it's possible that we still have a faulty program without

@@ -272,7 +272,8 @@ Keeping the list: add new items at the end with the next number, and remove an i
   `cleanup_at_exit` returns through a tail in the entry code that selects bank 15 below $4000.
   A program loaded at $4000 or above (ROM or cartridge code) leaves `$ff00` alone at entry and exit, as banking out
   there would put RAM in place of the running code. The first version of this fix also wrote `$0e` at entry there,
-  which broke cartridge code at $8000.
+  which broke cartridge code at $8000. For `%output library` the tail comes after the program code, as the jump table
+  has to follow the `jmp` to `start` directly.
 
 **U43. On c128, `%zeropage basicsafe` and `kernalsafe` put variables at $92 and $a4, which the KERNAL changes**
 - Repro: `bugs/u43_c128_basicsafe_zp92.p8`: variables at `146` and `164` in the .asm (`master` a4b59f6b3).
@@ -657,3 +658,165 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Repro: `sub comparing(float a, float b)` with 6 references to each parameter and `if a > b a else b`: wrong
   comparisons and 1.5 instead of 2.5 on qemu68k when optimized; with `-noopt` the numbers happen not to meet.
 - Branch: fixed; the numbers for promoted vregs start after the float registers too.
+
+**U88. The IR peephole optimizer puts the result of a register add with an immediate in the wrong register**
+- Where: `codeGenIntermediate/IRPeepholeOptimizer.kt`, `optimizeImmediateLoad`, commutative case: `load rB,#imm` /
+  `addr rB,rA` becomes `add rA,#imm`, so the sum lands in rA (which it also clobbers) while the code after it reads rB.
+  The same goes for `MULR` and `MULSR`.
+- Repro: `bugs/u88_ir_peephole_commutative_immediate.p8`: `&row[i] as uword` of a memory-mapped `&ubyte[40] row = $0428`
+  prints `$0000` instead of `$042b` on virtual; right with `-noopt`. The llvm16 targets print the address of `row[10]`.
+
+**U89. A long constant in a bitwise operation with a byte operand is narrowed to a byte**
+- Where: `compiler/astprocessing/TypecastsAdder.kt`, the "negative operand for bitwise operator" rewrite: a negative
+  constant becomes the 2's complement in the type of the *other* operand, also when that type is narrower.
+- Repro: `bugs/u89_xor_long_constant_narrowed.p8`: `long a = $ffffffff ^ ($ff << shift)` with a ubyte shift becomes
+  `((255 << shift) ^ 255) as long` and prints `$000000ff` instead of `$ffffffff` on virtual, also with `-noopt`.
+  `-1 ^ ubyte` gives the same, which may be intended; for a constant of type long the other operand should be widened.
+
+**U90. On c64 and c128 the virtual registers share zero page bytes with `P8ZP_SCRATCH_PTR`**
+- Where: `codeCore/target/zp/C64Zeropage.kt` (registers from $04, `SCRATCH_PTR = $04` since 23b9a2792) and
+  `C128Zeropage.kt` (registers from $0a, `SCRATCH_PTR = $0b`: r0H and r1L), with `%zeropage kernalsafe` or `full`.
+- Repro: `bugs/u90_c64_r0_shares_scratch_ptr.p8`: `cx16.r0 = 1234`, `ror(@(&arr + i))`, `txt.print_uw(cx16.r0)` prints
+  the address of `arr[2]` on c64: the ror keeps its pointer in `P8ZP_SCRATCH_PTR`. On the branch the memcmp of U35
+  uses `P8ZP_SCRATCH_PTR` too, so it changes r0 (c64) or r0H/r1L (c128). `&cx16.r0` is 4 as a value but `$cfe0` in a
+  constant expression.
+
+**U91. `long in longarray` doesn't assemble on c64, c128 and pet32**
+- Where: `prog8lib/prog8_lib.asm`, `containment_longarray`: `lda (P8ZP_SCRATCH_PTR)` is a 65C02 addressing mode.
+- Repro: `bugs/u91_long_in_array_6502.p8` for c64: "no indirect addressing mode for opcode 'lda'"; cx16 builds it.
+
+**U92. `lmh()` of a long gives the low byte as the high byte on the m68k targets**
+- Repro: `bugs/u92_m68k_lmh_high_byte.p8`: `l, m, h = lmh($123456)` prints `563456` on qemu68k instead of `123456`.
+
+**U93. A `defer` inside a `defer` is accepted and never runs**
+- Repro: `bugs/u93_defer_inside_defer.p8` prints `body outer` on virtual (and llvm64); it should print
+  `body outer inner`, or be a compile error.
+
+**U94. `private` is not checked for an indexed read or a variable of a private subroutine**
+- Repro: `bugs/u94_private_indexed_read.p8`: `other.table[1]` and `other.hidden.inner` compile, while `&other.table`,
+  `other.table[2] = 5` and `other.hidden()` are refused as the docs say.
+
+**U95. An array of `^^ubyte` can't be given string literals when pointers are wider than 2 bytes**
+- Repro: `bugs/u95_pointer_array_of_strings.p8`: `^^ubyte[3] names = ["one", "two", "three"]` on virtual: "value has
+  incompatible type (long[]) for the variable (^^ubyte[])"; cx16 compiles it, and `^^ubyte p = "two"` is accepted.
+
+**U96. An enum member with a value lower than the one before it keeps counting up**
+- Repro: `bugs/u96_enum_lower_explicit_value.p8`: `enum E { A = 5, B = 3, C }` prints `5 6` for B and C instead of `3 4`.
+
+**U97. `c128.banks()` and `c128.getbanks()` don't assemble**
+- Where: `prog8lib/c128/syslib.p8`: the inlined asm uses `MMUCR` without the block name.
+- Repro: `bugs/u97_c128_banks_mmucr.p8`: "not defined symbol 'MMUCR'".
+
+**U98. `%option no_symbol_prefixing` in block `main` doesn't assemble**
+- Repro: `bugs/u98_no_symbol_prefixing_main.p8` for cx16: "not defined symbol 'p8b_main'".
+
+**U99. A 2D array of struct instances crashes the compiler**
+- Repro: `bugs/u99_array_2d_of_structs.p8`: `P[2][2] ps` and `ps[1][1].a = 3`: FatalAstException "invalid addressof"
+  (`AddressOf.inferType` from `VariousCleanups`).
+- Branch: fixed; `CodeDesugarer` flattens the 2D index also for a struct field access and a whole-element copy, which
+  run before the general flattening.
+
+**U100. An array initialised from a range with a variable step crashes the compiler**
+- Repro: `bugs/u100_array_from_range_variable_step.p8`: `ubyte[] arr = 0 to 10 step s`: InternalCompilerException
+  "range expressions in vardecls should have been converted into array values" (`AstChecker`).
+- Branch: fixed; a range used as an array initializer must have constant from, to and step values (checker error).
+
+**U101. An asmsub with a long parameter in `@R0` and a long result in `@R0R1` crashes the 6502 code generator**
+- Repro: `bugs/u101_asmsub_long_r0_returns_r0r1.p8`: "source dt size must be less or equal to target dt size"
+  (`AsmAssignment.kt`).
+- Branch: fixed; a long parameter or return value in a single register is a checker error asking for a register pair
+  such as R0R1, also for a normal subroutine parameter.
+
+**U102. `%assert` at module level crashes the compiler**
+- Repro: `bugs/u102_assert_module_level.p8`: NullPointerException in `Node.getDefiningBlock` from `CallGraph`.
+- Branch: fixed; `CallGraph.usedBlocks` skips identifier targets that are not inside a block.
+
+**U103. The address of an element of a const typed pointer with a variable index crashes the 6502 code generator**
+- Repro: `bugs/u103_const_pointer_variable_index.p8`: `const ^^ubyte bytes = $2000`, `&bytes[i]`: "addressOf of a
+  constant should have been rewritten to a simple addition expression" (`AssignmentAsmGen`).
+- Branch: fixed; `VariousCleanups` rewrites `&constptr[i]` to the constant address plus the index also for a const
+  pointer.
+
+**U104. Array elements as targets of a multi-value assignment crash the compiler**
+- Repro: `bugs/u104_multi_assign_array_elements.p8`: `wa[1], ba[0] = multi()`: NullPointerException in `Inliner.after`.
+- Branch: fixed; the Inliner copies each target of the multi-value assignment instead of rebuilding it from its
+  identifier.
+
+**U105. `pokebowl` crashes the 6502 code generator**
+- Repro: `bugs/u105_pokebowl.p8`: `pokebowl(&mem, bb)`: AssemblyError "sizeof must have been replaced with a constant".
+- Branch: fixed; the 6502 builtin dispatch handles `pokebowl` like `pokebool`.
+
+**U106. `repeat` with a negative count crashes the compiler**
+- Repro: `bugs/u106_repeat_negative.p8`: `repeat -1`: AssemblyError "invalid number of iterations" (cx16),
+  "repeat count out of range 1..65536" (virtual). An error message with the position is expected.
+- Branch: fixed; a negative constant repeat count is a checker error.
+
+**U107. `xor` of a bool with itself crashes the compiler**
+- Repro: `bugs/u107_xor_same_operand.p8`: `t xor t`: IllegalArgumentException "use PtBool instead" (`PtNumber`).
+- Branch: fixed; the folds to zero in `ExpressionOptimizers` make a `PtBool` false for a bool result.
+
+**U108. `%zpallowed` with one argument crashes the compiler**
+- Repro: `bugs/u108_zpallowed_one_argument.p8`: IndexOutOfBoundsException in `AstChecker`.
+- Branch: fixed; `%zpallowed` and `%zpreserved` with one argument give the existing "requires two addresses" error only.
+
+**U109. String comparisons with a pointer and a virtual register crash the IR code generator**
+- Repro: `bugs/u109_kotlin_testpointers_628.p8` (the program of the test "string comparisons still calling string
+  compare routine" in `TestPointers.kt`, which only runs it with `writeAssembly = false`): "register r10 given multiple
+  types! WORD and LONG" on virtual.
+- Branch: fixed; a uword operand is zero-extended to the address type before the string compare syscall.
+
+**U110. An array of structs with long fields crashes the 6502 code generator**
+- Repro: `bugs/u110_array_of_structs_of_longs.p8`: `things[1].a` with `struct E8 { long a  long b }`:
+  NotImplementedError "read long" (`AssignmentAsmGen`).
+- Branch: fixed; the 6502 code generator reads a long field through the struct element pointer.
+
+**U111. Dereferencing an element of an array of typed pointers crashes the compiler**
+- Repro: `bugs/u111_deref_indexed_pointer_array.p8`: `values[3]^^` with `^^word[10] values`: NotImplementedError
+  "cannot translate ArrayIndexedPtrDereference" (`CodeDesugarer`).
+- Branch: fixed; `z[i]^^` becomes a `peekX(z[i])` call wherever it is used as a value; a non-numeric element type is an
+  error.
+
+**U112. `swap` of a variable and an array element crashes the 6502 code generator**
+- Repro: `bugs/u112_swap_variable_and_element.p8`: `swap(ub, arr[1])`: NotImplementedError "swap bytes not supported
+  yet for these expressions".
+- Branch: fixed; the 6502 swap falls back to a temporary variable for every combination it has no special code for.
+
+**U113. `%` on floats crashes the code generators instead of being a compile error**
+- Repro: `bugs/u113_float_remainder.p8`: `f % 2.0`: NotImplementedError "float expression operator %" (cx16),
+  "floating-point modulo not supported" (virtual). The docs say `%` is for integers only.
+- Branch: fixed; `%` with a float operand is a checker error that points to `floats.mod()`.
+
+**U114. A variable-step for loop over longs on 6502 stops with a stack trace**
+- Repro: `bugs/u114_kotlin_testvariablestepforloops_379.p8` (from `TestVariableStepForLoops.kt`): AssemblyError
+  "variable-step for loops over long ranges are not supported by the legacy 6502 code generator" with a stack trace.
+  `TestVariableStepForLoops6502` expects this limitation; it should be an error message with the source position.
+- Branch: fixed; a checker error for 6502 targets (without `-newcodegen`).
+
+**U115. A one-line `%ir` block with two instructions crashes the IR parser**
+- Repro: `bugs/u115_kotlin_testprog8parser_1137.p8` (from `TestProg8Parser.kt`, which uses `writeAssembly = false`):
+  `%ir {{ load.b r0.b,#1.b return }}` on virtual: IRParseException "LOAD: immediate operand needs an explicit type".
+- Branch: fixed; a line of inline IR with several instructions is split into one line per instruction, and invalid
+  inline IR is a compile error with the position of the `%ir` block.
+
+**U116. `-varshigh` on a target without high ram stops with a stack trace**
+- Repro: `bugs/u116_pet32_varshigh.p8` with `-target pet32 -varshigh 1`: AssemblyError "current compilation target
+  hasn't got the high ram area properly defined" from `ProgramAndVarsGen.footer`, where an error message is expected.
+- Branch: fixed; `-varshigh` on a 6502 target without high ram is an error message, like `-varsgolden`.
+
+**U117. A target configuration file with an unknown `cpu` crashes the compiler**
+- Repro: `examples/customtarget/targetconfigs/atari.properties` with `cpu = z99`: IllegalArgumentException "No enum
+  constant prog8.code.core.CpuType.CPUZ99". An unknown `output_type` or `encoding` was reported to do the same.
+- Branch: fixed; an unknown `cpu`, `output_type` or `encoding` (and a missing or invalid property) is an error message
+  that names the key and the valid values.
+
+**U118. `extsub @bank 256` is accepted**
+- Repro: `bugs/u118_extsub_bank_256.p8` compiles without an error; the docs give 0-255 as the range.
+
+**U119. technical.rst mentions a `**` operator that doesn't exist**
+- Where: `docs/source/technical.rst`, the BASIC ROM float routines list ("only needed if the program uses them or the
+  ``**`` operator"); the grammar has no `**`.
+
+**U120. `swap` with an element whose index is the other operand uses the new index**
+- Repro: `bugs/u120_swap_dependent_index.p8`: `i = 1`, `swap(i, arr[i])` sets `i` to `arr[1]` (20) and then writes the
+  old `i` into `arr[20]`, past the end of the array, instead of into `arr[1]`; virtual prints `20 20 30 40` where
+  `20 1 30 40` is expected. The 6502 code generator does the same.

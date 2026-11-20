@@ -592,7 +592,11 @@ internal class VariousCleanups(val program: Program, val errors: IErrorReporter,
         if(addressOf.arrayIndex!=null) {
             val tgt = addressOf.identifier
             if(tgt!=null) {
-                val constAddress = tgt.constValue(program)
+                val constDecl = tgt.targetVarDecl()
+                // const pointers are limited to element size 1, so no index scaling is needed
+                val constAddress = if(constDecl?.type==VarDeclType.CONST && constDecl.datatype.isPointer)
+                    constDecl.value?.constValue(program)?.let { NumericLiteral(program.target.pointerBaseType, it.number, tgt.position) }
+                else tgt.constValue(program)
                 if (constAddress != null && constAddress.type.isInteger) {
                     // &constant[idx]  -->  constant + idx
                     val indexExpr = addressOf.arrayIndex!!.indexExpr

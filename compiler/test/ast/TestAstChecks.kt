@@ -2368,4 +2368,96 @@ main {
         errors.errors.size shouldBe 0
         errors.warnings.none { "dangerous location for %align" in it } shouldBe true
     }
+    test("range with a variable step as array initializer gives an error") {
+        val text = """
+            main {
+                sub start() {
+                    ubyte @shared s = 2
+                    ubyte[] arr = 0 to 10 step s
+                    cx16.r0L = arr[1]
+                }
+            }
+            """
+        val errors = ErrorReporterForTests()
+        compileText(Cx16Target(), false, text, outputDir, errors = errors, writeAssembly = false) shouldBe null
+        errors.errors.single() shouldContain "range used as array initializer must have constant from, to and step values"
+    }
+
+    test("long register parameter or return value needs a register pair") {
+        val text = """
+            main {
+                asmsub f(long l @R0) -> long @R2 {
+                    %asm {{
+                        rts
+                    }}
+                }
+                asmsub g(long l @R0R1) -> long @R2R3 {
+                    %asm {{
+                        rts
+                    }}
+                }
+                sub h(long l @R4) {
+                    cx16.r0++
+                }
+                sub start() {
+                    long @shared v = f(5)
+                    v = g(5)
+                }
+            }
+            """
+        val errors = ErrorReporterForTests()
+        compileText(Cx16Target(), false, text, outputDir, errors = errors, writeAssembly = false) shouldBe null
+        errors.errors.count { "long parameter 'l' needs a combined register pair" in it } shouldBe 2
+        errors.errors.count { "long return type #1 needs a combined register pair" in it } shouldBe 1
+    }
+
+    test("negative constant repeat count gives an error") {
+        val text = """
+            main {
+                sub start() {
+                    repeat -1 {
+                        cx16.r0L++
+                    }
+                    repeat 0 {
+                        cx16.r0L++
+                    }
+                }
+            }
+            """
+        val errors = ErrorReporterForTests()
+        compileText(Cx16Target(), false, text, outputDir, errors = errors, writeAssembly = false) shouldBe null
+        errors.errors.single() shouldContain ":4:29: repeat count can't be negative"
+    }
+
+    test("zpallowed and zpreserved need two addresses") {
+        for(directive in listOf("%zpallowed", "%zpreserved")) {
+            val text = """
+                $directive 34
+                main {
+                    sub start() {
+                    }
+                }
+                """
+            val errors = ErrorReporterForTests()
+            compileText(Cx16Target(), false, text, outputDir, errors = errors, writeAssembly = false) shouldBe null
+            errors.errors.single() shouldContain "requires two addresses (start, end)"
+        }
+    }
+
+    test("remainder on floats gives an error") {
+        val text = """
+            %option enable_floats
+            main {
+                sub start() {
+                    float @shared f = 7.5
+                    float @shared g = f % 2.0
+                    f %= 2.0
+                }
+            }
+            """
+        val errors = ErrorReporterForTests()
+        compileText(Cx16Target(), false, text, outputDir, errors = errors, writeAssembly = false) shouldBe null
+        errors.errors.size shouldBe 2
+        errors.errors.all { "remainder (%) requires integer operands" in it } shouldBe true
+    }
 })

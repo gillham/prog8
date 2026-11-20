@@ -1159,6 +1159,18 @@ main {
 }"""
 
         compileText(VMTarget(),  false, irSrc, outputDir, writeAssembly = false) shouldNotBe null
+        compileText(VMTarget(),  false, irSrc, outputDir, writeAssembly = true) shouldNotBe null
+    }
+
+    test("invalid inline IR code gives an error") {
+        val src="""
+main {
+    sub start () { derp() }
+    asmsub derp() { %ir {{ load.b r0.b,#1.b foo return }} }
+}"""
+        val errors = ErrorReporterForTests()
+        compileText(VMTarget(),  false, src, outputDir, errors = errors, writeAssembly = true) shouldBe null
+        errors.errors.single() shouldContain "invalid IR code"
     }
 
     test("underscores for numeric groupings") {

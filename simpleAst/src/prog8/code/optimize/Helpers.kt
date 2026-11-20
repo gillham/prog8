@@ -4,6 +4,7 @@ import prog8.code.ast.*
 import prog8.code.core.BaseDataType
 import prog8.code.core.Cx16VirtualRegisters
 import prog8.code.core.DataType
+import prog8.code.core.Position
 import prog8.code.core.RegisterOrPair
 
 /**
@@ -40,6 +41,9 @@ internal object Helpers {
         }
         return false   // there are no identifiers directly corresponding to cpu registers
     }
+
+    fun zeroOf(type: DataType, position: Position): PtExpression =
+        if(type.isBool) PtBool(false, position) else PtNumber(type.base, 0.0, position)
 
     /**
      * Check if expr2 is the negation of expr1 (i.e., expr2 == not(expr1))

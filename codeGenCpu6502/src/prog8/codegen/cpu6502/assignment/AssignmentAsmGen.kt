@@ -878,9 +878,7 @@ internal class AssignmentAsmGen(
                             asmgen.loadIndirectFloat(zpPtrVar, offset)
                             asmgen.assignRegister(RegisterOrPair.FAC1, assign.target)
                         }
-                        dt.isLong -> {
-                            TODO("read long ${value.position}")
-                        }
+                        dt.isLong -> pointergen.assignIndirectLong(zpPtrVar, offset, assign.target)
                         else -> throw AssemblyError("unsupported dereference type $dt ${value.position}")
                     }
                 }

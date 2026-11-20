@@ -1419,7 +1419,19 @@ $repeatLabel""")
     }
 
     private fun translate(swap: PtSwap) {
-        // TODO only supports a select few combinations of swappable arguments
+
+        fun swapViaTempVar() {
+            val scope = swap.definingISub()
+            val dt = if(swap.target1.type.isPointer) DataType.UWORD else swap.target1.type
+            val tempvar = createTempVarReused(dt.base, false, swap)
+            val value1 = swap.target1.children.single() as PtExpression
+            val value2 = swap.target2.children.single() as PtExpression
+            assignExpressionToVariable(value1, tempvar, dt)
+            translateNormalAssignment(AsmAssignment(AsmAssignSource.fromAstSource(value2, program, this),
+                listOf(AsmAssignTarget.fromAstAssignment(swap.target1, scope, this)), program.memsizer, swap.position), scope)
+            translateNormalAssignment(AsmAssignment(AsmAssignSource(SourceStorageKind.VARIABLE, program, this, dt, variableAsmName = tempvar),
+                listOf(AsmAssignTarget.fromAstAssignment(swap.target2, scope, this)), program.memsizer, swap.position), scope)
+        }
 
         fun swapByte() {
             if(swap.target1.identifier!=null && swap.target2.identifier!=null) {
@@ -1431,7 +1443,9 @@ $repeatLabel""")
                     sta  $varname2
                     sty  $varname1""")
             }
-            else if(swap.target1.memory!=null && swap.target2.memory!=null) {
+            else if(swap.target1.memory!=null && swap.target2.memory!=null
+                    && swap.target1.memory!!.address.let { it is PtNumber || it is PtIdentifier }
+                    && swap.target2.memory!!.address.let { it is PtNumber || it is PtIdentifier }) {
                 var var1ZpPtrVar = ""
                 var var2ZpPtrVar = ""
                 val v1 = swap.target1.memory!!
@@ -1468,7 +1482,7 @@ $repeatLabel""")
                         }
 
                         else -> {
-                            TODO("swap bytes not supported for this expression. Use a simpler expression, or even just a temporary variable and assignments for now. ${v1.position}")
+                            throw AssemblyError("weird address ${v1.position}")
                         }
                     }
                     when (v2.address) {
@@ -1484,7 +1498,7 @@ $repeatLabel""")
                         }
 
                         else -> {
-                            TODO("swap bytes not supported for this expression. Use a simpler expression, or even just a temporary variable and assignments for now. ${v2.position}")
+                            throw AssemblyError("weird address ${v2.position}")
                         }
                     }
 
@@ -1505,7 +1519,7 @@ $repeatLabel""")
                 throw AssemblyError("swap bytes pointer dereference should have been replaced by swap memorybytes ${swap.position}")
             }
             else if(swap.target1.array?.variable?.type?.isPointer==true || swap.target2.array?.variable?.type?.isPointer==true) {
-                TODO("swap bytes expressions not supported yet for these expressions. Use a simpler expression, or even just a temporary variable and assignments for now. ${swap.position}")
+                swapViaTempVar()
             }
             else if(swap.target1.array?.pointerderef==null && swap.target1.array?.index?.isSimple()==true && swap.target2.array?.pointerderef==null && swap.target2.array?.index?.isSimple()==true) {
                 loadScaledArrayIndexIntoRegister(swap.target1.array!!, CpuRegister.X)
@@ -1524,10 +1538,10 @@ $repeatLabel""")
                 val offset1 = simpleOffsetIndexer(swap.target1.array!!)
                 val offset2 = simpleOffsetIndexer(swap.target2.array!!)
                 if(offset1==null || offset2==null)
-                    TODO("swap bytes not supported yet for nontrivial indexed[] expressions. Use a simpler index expression, or even just temporary variable and assignments for now. ${swap.position}")
+                    swapViaTempVar()
                 else {
                     val arrayname1 = asmVariableName(swap.target1.array!!.variable!!.name)
-                    val arrayname2 = asmVariableName(swap.target1.array!!.variable!!.name)
+                    val arrayname2 = asmVariableName(swap.target2.array!!.variable!!.name)
                     val offsetname1 = asmVariableName(offset1.first)
                     val offsetname2 = asmVariableName(offset2.first)
                     val op1 = offset1.second
@@ -1544,7 +1558,7 @@ $repeatLabel""")
                 }
             }
             else {
-                TODO("swap bytes not supported yet for these expressions. Use a simpler expression, or even just temporary variable and assignments for now. ${swap.position}")
+                swapViaTempVar()
             }
         }
 
@@ -1594,7 +1608,7 @@ $repeatLabel""")
                 }
             }
             else if(swap.target1.array?.variable?.type?.isPointer==true || swap.target2.array?.variable?.type?.isPointer==true) {
-                TODO("swap words expressions not supported yet for these expressions. Use a simpler expression, or even just a temporary variable and assignments for now. ${swap.position}")
+                swapViaTempVar()
             }
             else if(swap.target1.array?.pointerderef==null && swap.target1.array?.index?.isSimple()==true && swap.target2.array?.pointerderef==null && swap.target2.array?.index?.isSimple()==true) {
                 val v1 = swap.target1.array!!
@@ -1619,7 +1633,7 @@ $repeatLabel""")
                         pla
                         sta  ${varname2}_msb,y""")
                 } else if(v1.splitWords || v2.splitWords) {
-                    TODO("swap words expressions not supported yet for 1 @split and 1 normal word array. Make them both the same, or use a temporary variable and assignments for now. ${swap.position}")
+                    swapViaTempVar()
                 } else {
                     out("""
                         lda  $varname1,x
@@ -1642,7 +1656,7 @@ $repeatLabel""")
                 val offset1 = simpleOffsetIndexer(v1)
                 val offset2 = simpleOffsetIndexer(v2)
                 if(offset1==null || offset2==null)
-                    TODO("swap words not supported yet for nontrivial indexed[] expressions. Use a simpler index expression, or even just temporary variable and assignments for now. ${swap.position}")
+                    swapViaTempVar()
                 else {
                     val arrayname1 = asmVariableName(v1.variable!!.name)
                     val arrayname2 = asmVariableName(v2.variable!!.name)
@@ -1691,7 +1705,7 @@ $repeatLabel""")
                 }
             }
             else {
-                TODO("swap words expressions not supported yet for these expressions. Use a simpler expression, or even just a temporary variable and assignments for now. ${swap.position}")
+                swapViaTempVar()
             }
         }
 
@@ -1726,7 +1740,7 @@ $repeatLabel""")
                 out("  lda  $zpVar2 |  ldy  $zpVar2+1 |  jsr  prog8_lib.swap_longs")
             }
             else if(swap.target1.array?.variable?.type?.isPointer==true || swap.target2.array?.variable?.type?.isPointer==true) {
-                TODO("swap longs expressions not supported yet for these expressions. Use a simpler expression, or even just a temporary variable and assignments for now. ${swap.position}")
+                swapViaTempVar()
             }
             else if(swap.target1.array?.pointerderef==null && swap.target1.array?.index?.isSimple()==true && swap.target2.array?.pointerderef==null && swap.target2.array?.index?.isSimple()==true) {
                 val v1 = swap.target1.array!!
@@ -1755,7 +1769,7 @@ $repeatLabel""")
                 val offset1 = simpleOffsetIndexer(v1)
                 val offset2 = simpleOffsetIndexer(v2)
                 if(offset1==null || offset2==null)
-                    TODO("swap longs not supported yet for nontrivial indexed[] expressions. Use a simpler expression, or even just temporary variable and assignments for now. ${swap.position}")
+                    swapViaTempVar()
                 else {
                     val arrayname1 = asmVariableName(v1.variable!!.name)
                     val arrayname2 = asmVariableName(v2.variable!!.name)
@@ -1787,7 +1801,7 @@ $repeatLabel""")
                 }
             }
             else {
-                TODO("swap longs expressions not supported yet for these expressions. Use a simpler expression, or even just a temporary variable and assignments for now. ${swap.position}")
+                swapViaTempVar()
             }
         }
 
@@ -1804,7 +1818,7 @@ $repeatLabel""")
                     ldy  #>$varname2
                     jsr  floats.swap_floats""")
             }
-            else if(swap.target1.pointerDeref!=null || swap.target2.pointerDeref!=null) {
+            else if(swap.target1.pointerDeref!=null && swap.target2.pointerDeref!=null) {
                 val (zpVar, offset) = pointerGen.deref(swap.target1.pointerDeref!!, true)
                 require(offset == 0.toUByte())
                 out("  lda  $zpVar |  ldy  $zpVar+1 |  sta  P8ZP_SCRATCH_W1 |  sty  P8ZP_SCRATCH_W1+1")
@@ -1813,7 +1827,7 @@ $repeatLabel""")
                 out("  lda  $zpVar2 |  ldy  $zpVar2+1 |  jsr  floats.swap_floats")
             }
             else if(swap.target1.array?.variable?.type?.isPointer==true || swap.target2.array?.variable?.type?.isPointer==true) {
-                TODO("swap floats expressions not supported yet for these expressions. Use a simpler expression, or even just a temporary variable and assignments for now. ${swap.position}")
+                swapViaTempVar()
             }
             else if(swap.target1.array?.pointerderef==null && swap.target1.array?.index?.isSimple()==true && swap.target2.array?.pointerderef==null && swap.target2.array?.index?.isSimple()==true) {
                 val v1 = swap.target1.array!!
@@ -1842,7 +1856,7 @@ $repeatLabel""")
                 val offset1 = simpleOffsetIndexer(v1)
                 val offset2 = simpleOffsetIndexer(v2)
                 if(offset1==null || offset2==null)
-                    TODO("swap floats not supported yet for nontrivial indexed[] expressions. Use a simpler expression, or even just temporary variable and assignments for now. ${swap.position}")
+                    swapViaTempVar()
                 else {
                     require(options.compTarget.FLOAT_MEM_SIZE == 5u)
                     val arrayname1 = asmVariableName(v1.variable!!.name)
@@ -1879,7 +1893,7 @@ $repeatLabel""")
                 }
             }
             else {
-                TODO("swap floats expressions not supported yet for these expressions. Use a simpler expression, or even just a temporary variable and assignments for now. ${swap.position}")
+                swapViaTempVar()
             }
         }
 

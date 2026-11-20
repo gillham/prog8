@@ -96,7 +96,7 @@ import prog8.codegen.cpu6502.assignment.*
             "pokemon" -> funcPokemon(fcall)
             "peek" -> throw AssemblyError("peek() should have been replaced by @()  ${fcall.position}")
             "poke" -> throw AssemblyError("poke() should have been replaced by @()  ${fcall.position}")
-            "pokebool" -> funcPokeBool(fcall)
+            "pokebool", "pokebowl" -> funcPokeBool(fcall)
             "rsave" -> funcRsave()
             "rrestore" -> funcRrestore()
             "cmp" -> funcCmp(fcall)

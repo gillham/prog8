@@ -104,12 +104,12 @@ class ConfigFileTarget(
             val props = Properties()
             props.load(configfile.inputStream())
 
+            fun invalidValue(key: String, value: String, valid: List<String>): Nothing =
+                throw IllegalArgumentException("invalid value '$value' for '$key' in target config file $configfile, expected one of: ${valid.joinToString(", ")}")
+
             val cpuString = props.getString("cpu").uppercase()
-            val cpuType = try {
-                CpuType.valueOf(cpuString)
-            } catch (_: IllegalArgumentException) {
-                CpuType.valueOf("CPU$cpuString")
-            }
+            val cpuType = CpuType.entries.firstOrNull { it.name==cpuString || it.name=="CPU$cpuString" }
+                ?: invalidValue("cpu", props.getString("cpu"), CpuType.entries.map { it.name.removePrefix("CPU").lowercase() })
             val ioAddresses = parseAddressRanges("io_regions", props)
             // The m68k has no zero page, so the zeropage settings below don't apply to an m68k
             // target and are not required in its config file.
@@ -130,7 +130,8 @@ class ConfigFileTarget(
             val assemblerOptionsStr = props.getProperty("assembler_options", "").trim()
             val pointerSize = parsePointerSize(props)
             val outputTypeString = props.getProperty("output_type", "PRG")
-            val defaultOutputType = OutputType.valueOf(outputTypeString.uppercase())
+            val defaultOutputType = OutputType.entries.firstOrNull { it.name==outputTypeString.uppercase() }
+                ?: invalidValue("output_type", outputTypeString, OutputType.entries.map { it.name.lowercase() })
             val launcherString = props.getProperty("launcher", "BASIC")
             val defaultLauncherType = try {
                 CbmPrgLauncherType.valueOf(launcherString.uppercase())
@@ -139,11 +140,14 @@ class ConfigFileTarget(
             }
 
             val varsAddress = props.getProperty("vars_address")?.let { parseInt(it) }
+            val encodingString = props.getString("encoding")
+            val encoding = Encoding.entries.firstOrNull { it.prefix==encodingString }
+                ?: invalidValue("encoding", encodingString, Encoding.entries.map { it.prefix })
 
             return ConfigFileTarget(
                 configfile.nameWithoutExtension,
                 props.getProperty("supports_banked_calls", "false").toBoolean(),
-                Encoding.entries.first { it.prefix==props.getString("encoding") },
+                encoding,
                 cpuType,
                 props.getProperty("supports_stack_frames", cpuType.is68k.toString()).toBoolean(),
                 props.getInteger("load_address"),

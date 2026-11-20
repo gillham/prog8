@@ -37,6 +37,9 @@ internal class ProgramAndVarsGen(
 
         if(errors.noErrors())  {
             program.allBlocks().forEach { block2asm(it) }
+            // a library's jump table must follow its first jmp directly, so its exit tail goes here
+            if(options.output == OutputType.LIBRARY && compTarget.name == C128Target.NAME)
+                c128ExitTail()
 
             // the global list of all floating point constants for the whole program
             asmgen.out("; global float constants")
@@ -109,8 +112,6 @@ internal class ProgramAndVarsGen(
             asmgen.out("* = ${options.loadAddress.toHex()}")
             asmgen.out("prog8_program_start\t; start of program label")
             asmgen.out("    jmp  p8b_main.p8s_start")
-            if(compTarget.name == C128Target.NAME)
-                c128ExitTail()
             // note: the jmp above has 2 effects:
             // 1. it prevents 64tass from stripping away all procs as unused code
             // 2. it functions as the first entrypoint of the library, required anyway, to run the variable initialization/bss clear bootstrap code.

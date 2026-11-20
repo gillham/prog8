@@ -1,6 +1,5 @@
 package prog8tests.codegeneration
 
-import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
@@ -13,11 +12,11 @@ import io.kotest.matchers.types.instanceOf
 import io.kotest.matchers.types.shouldBeInstanceOf
 import prog8.code.StNodeType
 import prog8.code.ast.*
-import prog8.code.core.AssemblyError
 import prog8.code.core.BaseDataType
 import prog8.code.core.DataType
 import prog8.code.target.*
 import prog8tests.helpers.*
+import kotlin.io.path.readBytes
 import kotlin.io.path.readText
 
 class TestVariousCodeGen: FunSpec({
@@ -529,9 +528,9 @@ main {
             }
         """.trimIndent()
 
-        shouldThrow<AssemblyError> {
-            compileText(C64Target(), false, src, outputDir, writeAssembly = true)
-        }
+        val errors = ErrorReporterForTests()
+        compileText(C64Target(), false, src, outputDir, writeAssembly = true, errors = errors) shouldBe null
+        errors.errors.single() shouldContain "not supported on 6502 targets"
     }
 
     test("multiple status flags return values from asmsub") {
@@ -1290,5 +1289,25 @@ main {
         lines.subList(entry, firstCall).count { it == $$"sta  $ff00" } shouldBe 0
         val exitTail = lines.indexOf("prog8_c128_exit")
         lines[exitTail+1] shouldBe "rts"
+    }
+
+    test("c128 library jump table directly follows the jmp to start") {
+        for(address in listOf($$"$2000", $$"$4000")) {
+            val src = $$"""
+%output library
+%address $$address
+main {
+    %jmptable ( main.f )
+    sub start() {
+    }
+    sub f() {
+        cx16.r0++
+    }
+}"""
+            val result = compileText(C128Target(), false, src, outputDir, writeAssembly = true)!!
+            val bytes = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".bin").readBytes()
+            bytes[2] shouldBe 0x4c.toByte()
+            bytes[5] shouldBe 0x4c.toByte()
+        }
     }
 })

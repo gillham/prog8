@@ -1865,4 +1865,185 @@ class TestExecution6502 : FunSpec({
             }
         }
     }
+    test("pokebowl with a bool variable") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                ubyte[4] mem
+                sub start() {
+                    bool @shared bb = true
+                    bool @shared bf = false
+                    mem[2] = 99
+                    pokebowl(&mem, bb)
+                    pokebowl(&mem+2, bf)
+                    pokebowl($3002, bb)
+                    @($3000) = mem[0]
+                    @($3001) = mem[2]
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for(optimize in listOf(false, true)) {
+            val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+            machine.assertMemory(0x3000, 1)
+            machine.assertMemory(0x3001, 0)
+            machine.assertMemory(0x3002, 1)
+        }
+    }
+
+    test("read long fields of struct array elements") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                &long result1 = $3000
+                &long result2 = $3004
+                struct E8 { long a  long b }
+                E8[3] things
+                sub start() {
+                    things[1].a = $12345678
+                    things[1].b = -2
+                    things[2].a = 5
+                    @($3008) = lsb(things[2].a)
+                    @($3009) = lsb(things[1].a)
+                    result1 = things[1].a
+                    result2 = things[1].b
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for(optimize in listOf(false, true)) {
+            val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+            machine.assertMemory(0x3000, 0x78)
+            machine.assertMemory(0x3001, 0x56)
+            machine.assertMemory(0x3002, 0x34)
+            machine.assertMemory(0x3003, 0x12)
+            machine.assertMemory(0x3004, 0xfe)
+            machine.assertMemory(0x3005, 0xff)
+            machine.assertMemory(0x3006, 0xff)
+            machine.assertMemory(0x3007, 0xff)
+            machine.assertMemory(0x3008, 5)
+            machine.assertMemory(0x3009, 0x78)
+        }
+    }
+
+    test("dereference an element of a pointer array as a value") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                &word wresult = $3000
+                &long lresult = $3002
+                &byte bresult = $3006
+                ^^word[10] values
+                ^^long[4] lvalues
+                ^^byte[4] bvalues
+                word @shared number = -5
+                long @shared lnumber = -100000
+                byte @shared bnumber = -3
+                sub start() {
+                    ubyte @shared idx = 2
+                    values[3] = &number
+                    lvalues[idx] = &lnumber
+                    bvalues[1] = &bnumber
+                    wresult = store(values[3]^^)
+                    lresult = lvalues[idx]^^
+                    bresult = bvalues[1]^^ + 0
+                    poweroff = 1
+                }
+                sub store(word w) -> word {
+                    return w
+                }
+            }
+        """.trimIndent()
+
+        for(optimize in listOf(false, true)) {
+            val machine = compileText(Cx16Target(), optimize, src, outputDir)!!.simulate()
+            machine.assertMemory(0x3000, 0xfb)
+            machine.assertMemory(0x3001, 0xff)
+            // -100000 = $fffe7960
+            machine.assertMemory(0x3002, 0x60)
+            machine.assertMemory(0x3003, 0x79)
+            machine.assertMemory(0x3004, 0xfe)
+            machine.assertMemory(0x3005, 0xff)
+            machine.assertMemory(0x3006, 0xfd)
+        }
+    }
+
+    test("swap a variable with an array element or memory") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                ubyte[4] arr = [1, 2, 3, 4]
+                uword[3] warr = [$1111, $2222, $3333]
+                uword[3] @nosplit nwarr = [$4444, $5555, $6666]
+                long[3] larr = [10, 20, 30]
+                sub start() {
+                    ubyte @shared ub = 9
+                    ubyte @shared ub2 = 7
+                    ubyte @shared idx = 2
+                    uword @shared w = $abcd
+                    long @shared l = -1
+                    uword @shared addr = $3010
+                    @($3011) = 42
+                    swap(ub, arr[1])
+                    swap(arr[idx], ub2)
+                    swap(w, warr[idx])
+                    swap(warr[0], nwarr[1])
+                    swap(larr[1], l)
+                    swap(@(addr+1), arr[3])
+                    @($3000) = ub
+                    @($3001) = arr[1]
+                    @($3002) = ub2
+                    @($3003) = arr[2]
+                    pokew($3004, w)
+                    pokew($3006, warr[2])
+                    pokew($3008, warr[0])
+                    pokew($300a, nwarr[1])
+                    @($300c) = lsb(l)
+                    @($300d) = lsb(larr[1])
+                    @($300e) = msb(larr[1] as uword)
+                    @($300f) = arr[3]
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for(target in listOf(Cx16Target(), C64Target())) for(optimize in listOf(false, true)) {
+            val machine = compileText(target, optimize, src, outputDir)!!.simulate()
+            machine.assertMemory(0x3000, 2)
+            machine.assertMemory(0x3001, 9)
+            machine.assertMemory(0x3002, 3)
+            machine.assertMemory(0x3003, 7)
+            machine.assertMemory(0x3004, 0x33)
+            machine.assertMemory(0x3005, 0x33)
+            machine.assertMemory(0x3006, 0xcd)
+            machine.assertMemory(0x3007, 0xab)
+            machine.assertMemory(0x3008, 0x55)
+            machine.assertMemory(0x3009, 0x55)
+            machine.assertMemory(0x300a, 0x11)
+            machine.assertMemory(0x300b, 0x11)
+            machine.assertMemory(0x300c, 20)
+            machine.assertMemory(0x300d, 0xff)
+            machine.assertMemory(0x300e, 0xff)
+            machine.assertMemory(0x300f, 42)
+            machine.assertMemory(0x3011, 4)
+        }
+    }
 })

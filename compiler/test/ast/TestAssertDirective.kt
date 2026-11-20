@@ -43,6 +43,23 @@ class TestAssertDirective: FunSpec({
         errors.errors.size shouldBe 0
     }
 
+    test("module level assert using sizeof with optimizations") {
+        val ok = """
+            %assert sizeof(long) == 4, "long"
+            main {
+                sub start() {
+                    ubyte @shared x = 1
+                }
+            }
+        """
+        val errors = ErrorReporterForTests()
+        compileText(Cx16Target(), true, ok, outputDir, writeAssembly = false, errors=errors) shouldNotBe null
+        errors.errors.size shouldBe 0
+        val errors2 = ErrorReporterForTests()
+        compileText(Cx16Target(), true, ok.replace("== 4", "== 3"), outputDir, writeAssembly = false, errors=errors2) shouldBe null
+        errors2.errors.single() shouldContain "assertion failed: long"
+    }
+
     test("assert with false constant expression fails") {
         val text = """
             main {

@@ -463,6 +463,17 @@ main {
         errors.errors[2] shouldContain "15:9: cannot write to this memory mapped string or array (possibly located in ROM"
     }
 
+    test("varshigh on a target without high ram gives an error instead of a crash") {
+        val src="""
+main {
+    sub start() {
+        ubyte @shared x = 1
+    }
+}"""
+        val errors=ErrorReporterForTests()
+        compileText(PETTarget(), false, src, outputDir, errors=errors, writeAssembly = true, varshigh=1) shouldBe null
+    }
+
     test("long addresses not supported in memread and memwrite for 6502") {
         val src = """
 main {

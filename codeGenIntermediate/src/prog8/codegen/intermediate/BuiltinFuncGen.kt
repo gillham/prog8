@@ -324,11 +324,28 @@ internal class BuiltinFuncGen(private val codeGen: IRCodeGen, private val exprGe
         val right = exprGen.translateExpression(call.args[1])
         addToResult(result, left, left.resultReg, -1)
         addToResult(result, right, right.resultReg, -1)
-        val resultReg = codeGen.registers.next(IRDataType.BYTE)
         // with 8-byte pointers an address can be in a uquad register, whose type a LONG parameter would conflict with
         val addressDt = if(codeGen.options.compTarget.POINTER_MEM_SIZE > 4u) IRDataType.POINTER else codeGen.addressDt
-        result += codeGen.makeSyscall(IMSyscall.COMPARE_STRINGS, listOf(addressDt to left.resultReg, addressDt to right.resultReg), IRDataType.BYTE to resultReg)
+        val leftReg = widenToAddress(result, left, addressDt)
+        val rightReg = widenToAddress(result, right, addressDt)
+        val resultReg = codeGen.registers.next(IRDataType.BYTE)
+        result += codeGen.makeSyscall(IMSyscall.COMPARE_STRINGS, listOf(addressDt to leftReg, addressDt to rightReg), IRDataType.BYTE to resultReg)
         return ExpressionCodeResult(result, IRDataType.BYTE, resultReg, -1)
+    }
+
+    // a uword operand (such as cx16.r0) must be zero-extended where addresses are wider
+    private fun widenToAddress(result: MutableList<IRCodeChunkBase>, tr: ExpressionCodeResult, addressDt: IRDataType): Int {
+        if(tr.dt!=IRDataType.WORD || addressDt==IRDataType.WORD)
+            return tr.resultReg
+        val addressIntDt = codeGen.irType(codeGen.options.compTarget.pointerType)
+        val widened = codeGen.registers.next(addressIntDt)
+        val op = if(addressIntDt==IRDataType.QUAD) Opcode.EXTQ else Opcode.EXT
+        addInstr(result, IRInstructions.binary(op, IRDataType.WORD, widened, tr.resultReg), null)
+        if(addressDt==addressIntDt)
+            return widened
+        val addressReg = codeGen.registers.next(addressDt)
+        addInstr(result, IRInstructions.move(addressDt, addressReg, widened), null)
+        return addressReg
     }
 
     private fun funcCmp(call: PtFunctionCall): ExpressionCodeResult {

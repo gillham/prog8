@@ -134,6 +134,30 @@ fun parseIRCodeLine(line: String): ParsedIRLine {
 }
 
 
+/** Splits a line holding several IR instructions, such as `load.b r0.b,#1.b return`, into one line per instruction. */
+fun splitIRCodeLine(line: String): List<String> {
+    fun parses(text: String) = try {
+        parseIRCodeLine(text)
+        true
+    } catch (_: IRParseException) {
+        false
+    } catch (_: IllegalArgumentException) {
+        false
+    }
+
+    if(line.isBlank() || parses(line))
+        return listOf(line)
+    val tokens = line.trim().split(Regex("""\s+"""))
+    val result = mutableListOf<String>()
+    var start = 0
+    while(start < tokens.size) {
+        val end = (start+1..tokens.size).firstOrNull { parses(tokens.subList(start, it).joinToString(" ")) } ?: return listOf(line)
+        result += tokens.subList(start, end).joinToString(" ")
+        start = end
+    }
+    return result
+}
+
 internal const val NO_REGISTER = "-"    // placeholder for the register of a parameter/return value of an external routine
 
 internal fun parseRegisterOrStatusflag(sourceregs: String): RegisterOrStatusflag {

@@ -1,12 +1,10 @@
 package prog8tests.codegeneration
 
-import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
-import prog8.code.core.AssemblyError
 import prog8.code.target.Cx16Target
 import prog8tests.helpers.ErrorReporterForTests
 import prog8tests.helpers.compileText
@@ -486,12 +484,8 @@ class TestVariableStepForLoops6502: FunSpec({
                 }
             }
         """.trimIndent()
-        val errors = ErrorReporterForTests(throwExceptionAtReportIfErrors = false, keepMessagesAfterReporting = true)
-        val failure = shouldThrow<AssemblyError> {
-            compileText(Cx16Target(), false, src, outputDir, errors = errors)
-        }
-        (failure.message ?: errors.printedErrors.joinToString("\n")) shouldContain
-            "variable-step for loops over long ranges are not supported"
-        errors.printedErrors shouldBe listOf("\ninternal error")
+        val errors = ErrorReporterForTests()
+        compileText(Cx16Target(), false, src, outputDir, errors = errors) shouldBe null
+        errors.errors.single() shouldContain "variable-step for loops over long ranges are not supported"
     }
 })

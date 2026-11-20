@@ -682,6 +682,52 @@ main {
         assertIsStringCompare(r2v)
     }
 
+    test("string comparisons with uword and pointer operands compile and run on the VM") {
+        val src=$$"""
+%zeropage basicsafe
+main {
+    str s1 = "hello"
+    str s3 = "wob"
+    ^^ubyte @shared ubyteptr
+
+    sub start() {
+        cx16.r0 = &s1 as uword
+        ubyteptr = &s3
+        @($4400) = (s1=="wob") as ubyte
+        @($4401) = ("wob"=="s1") as ubyte
+        @($4402) = ("hello"==cx16.r0) as ubyte
+        @($4403) = (cx16.r0=="wob") as ubyte
+        @($4404) = ("wob"==ubyteptr) as ubyte
+        @($4405) = (ubyteptr=="hello") as ubyte
+        cx16.r0 = &s3 as uword
+        @($4406) = ("wob"==cx16.r0) as ubyte
+        @($4407) = (cx16.r0=="hello") as ubyte
+        @($4408) = (compare1("hello")) as ubyte
+        @($4409) = (compare1("wob")) as ubyte
+        @($440a) = (compare2("hello")) as ubyte
+        @($440b) = (compare2("x")) as ubyte
+    }
+
+    sub compare1(str s2) -> bool {
+        return s1==s2
+    }
+
+    sub compare2(str s2) -> bool {
+        return s2==s1
+    }
+}"""
+        for(optimize in listOf(false, true)) {
+            val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+            val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+            VmRunner().runAndTestProgram(virtfile.readText(), true) { vm ->
+                val results = (0..11).map { vm.memory.getUB(0x4400u + it.toUInt()).toInt() }
+                withClue("optimize=$optimize") {
+                    results shouldBe listOf(0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0)
+                }
+            }
+        }
+    }
+
     test("on 32 bits platforms, comparing a string against a long (untyped pointer) is a string compare") {
         val src="""
 main {
@@ -4296,5 +4342,51 @@ main {
         val lines = asm.lines().map { it.trim() }
         lines.any { it.contains("#14676384") } shouldBe true
         lines.any { it.contains("#61856") } shouldBe false
+    }
+
+    test("dereferenced pointer array element as a call argument (IR)") {
+        val src = $$"""
+main {
+    ^^word[10] values
+    ^^ubyte[4] bvalues
+    word @shared number = -5
+    ubyte @shared bnumber = 200
+    sub start() {
+        ubyte @shared idx = 1
+        values[3] = &number
+        bvalues[idx] = &bnumber
+        pokew($4400, ident(values[3]^^) as uword)
+        poke($4402, bvalues[idx]^^)
+    }
+    sub ident(word w) -> word {
+        return w
+    }
+}"""
+        for(optimize in listOf(false, true)) {
+            val result = compileText(VMTarget(), optimize, src, outputDir)!!
+            val virtfile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+            VmRunner().runAndTestProgram(virtfile.readText()) { vm ->
+                vm.memory.getUW(0x4400u).toInt() shouldBe 0xfffb
+                vm.memory.getUB(0x4402u).toInt() shouldBe 200
+            }
+        }
+    }
+
+    test("address of a const pointer element with a variable index") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            main {
+                const ^^ubyte bytes = $2000
+                &uword probe = $02
+                sub start() {
+                    ubyte @shared i = 3
+                    probe = &bytes[i]
+                }
+            }""".trimIndent()
+        val result = compileText(Cx16Target(), true, src, outputDir)!!
+        val machine = result.simulate()
+        machine.assertMemory(0x02, 0x03)
+        machine.assertMemory(0x03, 0x20)
     }
 })

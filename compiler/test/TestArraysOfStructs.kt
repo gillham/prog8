@@ -4,6 +4,7 @@ import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import prog8.code.core.BaseDataType
@@ -537,4 +538,39 @@ class TestArraysOfStructs: FunSpec({
         val lines = asmFile.readText().lines().map { it.trim().replace(Regex("\\s+"), " ") }
         lines.any { it == "p8b_main.p8s_handler .proc" } shouldBe true
     }
+
+    test("field writes and element copies in a 2D array of structs") {
+        val out = tempdir().toPath()
+        val src = """
+            main {
+                struct P { ubyte a  ubyte b }
+                P[2][3] ps
+                ubyte @shared r1, r2, r3, r4
+                sub start() {
+                    ubyte @shared row = 1
+                    ubyte @shared col = 2
+                    ps[1][1].a = 3
+                    ps[row][col].b = 7
+                    ps[0][1] = ps[1][1]
+                    r1 = ps[4].a
+                    r2 = ps[5].b
+                    r3 = ps[0][1].a
+                    r4 = ps[1][2].b
+                }
+            }
+        """
+        compileText(Cx16Target(), true, src, out, writeAssembly = true, assemble = false) shouldNotBe null
+        val result = compileText(VMTarget(), true, src, out, writeAssembly = true)!!
+        val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        val irContent = irFile.toFile().readText()
+        val irProgram = IRFileReader().read(irContent)
+        val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+        VmRunner().runAndTestProgram(irContent) { vm ->
+            vm.memory.getUB(allocations.getValue("main.r1")).toInt() shouldBe 3
+            vm.memory.getUB(allocations.getValue("main.r2")).toInt() shouldBe 7
+            vm.memory.getUB(allocations.getValue("main.r3")).toInt() shouldBe 3
+            vm.memory.getUB(allocations.getValue("main.r4")).toInt() shouldBe 7
+        }
+    }
+
 })

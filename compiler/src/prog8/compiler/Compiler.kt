@@ -93,7 +93,14 @@ fun compileProgram(args: CompilerArguments): CompilationResult? {
 
     val targetConfigFile = expandTilde(Path(args.compilationTarget))
     val compTarget = if(targetConfigFile.isRegularFile()) {
-        ConfigFileTarget.fromConfigFile(targetConfigFile)
+        try {
+            ConfigFileTarget.fromConfigFile(targetConfigFile)
+        } catch (x: Exception) {
+            if(x !is IllegalArgumentException && x !is NoSuchElementException && x !is java.io.IOException)
+                throw x
+            System.err.println("error: invalid target configuration: ${x.message}")
+            return null
+        }
     } else {
         getCompilationTargetByName(args.compilationTarget, args.llvmTriple, args.llvmCompileArgs, args.llvmLinkArgs, args.llvmClang, args.llvmOptLevel)
     }
@@ -101,6 +108,13 @@ fun compileProgram(args: CompilerArguments): CompilationResult? {
     if(args.varsGolden) {
         if(compTarget.BSSGOLDENRAM_END-compTarget.BSSGOLDENRAM_START==0u) {
             System.err.println("The current compilation target doesn't support Golden Ram.")
+            return null
+        }
+    }
+
+    if(args.varsHighBank!=null && compTarget.cpu.is6502) {
+        if(compTarget.BSSHIGHRAM_START==0u || compTarget.BSSHIGHRAM_END<=compTarget.BSSHIGHRAM_START) {
+            System.err.println("error: the current compilation target doesn't support high ram for variables (-varshigh)")
             return null
         }
     }

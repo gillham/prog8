@@ -1409,4 +1409,33 @@ main {
             vm.memory.getUB(0x4005u) shouldBe 7u
         }
     }
+
+    test("inlined multi-value assignment to array elements") {
+        val src = """
+main {
+    uword[2] wa
+    ubyte[2] ba
+    uword @shared resultW
+    ubyte @shared resultB
+    sub multi() -> uword, ubyte {
+        return 1000, 2
+    }
+    sub start() {
+        wa[1], ba[0] = multi()
+        resultW = wa[1]
+        resultB = ba[0]
+    }
+}"""
+        compileText(Cx16Target(), true, src, outputDir, writeAssembly = true, assemble = false) shouldNotBe null
+        val result = compileText(VMTarget(), true, src, outputDir)!!
+        val irFile = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir")
+        val irContent = irFile.readText()
+        val irProgram = IRFileReader().read(irContent)
+        val allocations = VmVariableAllocator(irProgram.st, irProgram.encoding, irProgram.options.compTarget).allocations
+        VmRunner().runAndTestProgram(irContent) { vm ->
+            vm.memory.getUW(allocations["main.resultW"]!!) shouldBe 1000u
+            vm.memory.getUB(allocations["main.resultB"]!!) shouldBe 2u
+        }
+    }
+
 })

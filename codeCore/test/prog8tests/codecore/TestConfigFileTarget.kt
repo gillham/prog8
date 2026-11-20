@@ -3,6 +3,7 @@ package prog8tests.codecore
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import prog8.code.core.BaseDataType
 import prog8.code.target.ConfigFileTarget
 import java.nio.file.Files
@@ -63,5 +64,10 @@ class TestConfigFileTarget: FunSpec({
         shouldThrow<IllegalArgumentException> {
             loadTarget("pointer_size = 3")
         }
+    }
+    test("config rejects unknown cpu, output type and encoding with a clear message") {
+        shouldThrow<IllegalArgumentException> { loadTarget("cpu = z99") }.message!! shouldContain "invalid value 'z99' for 'cpu'"
+        shouldThrow<IllegalArgumentException> { loadTarget("output_type = foo") }.message!! shouldContain "invalid value 'foo' for 'output_type'"
+        shouldThrow<IllegalArgumentException> { loadTarget("encoding = bar") }.message!! shouldContain "invalid value 'bar' for 'encoding'"
     }
 })

@@ -16,6 +16,9 @@ import prog8.code.sanitize
 import prog8.code.source.ImportFileSystem
 import prog8.code.source.SourceCode
 import prog8.compiler.builtinFunctionReturnTypes
+import prog8.intermediate.IRParseException
+import prog8.intermediate.parseIRCodeLine
+import prog8.intermediate.splitIRCodeLine
 import java.io.File
 import kotlin.io.path.Path
 import kotlin.io.path.isRegularFile
@@ -670,7 +673,20 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
     }
 
     private fun transform(srcNode: InlineAssembly): PtInlineAssembly {
-        val assembly = srcNode.assembly.trimEnd().trimStart('\r', '\n')
+        var assembly = srcNode.assembly.trimEnd().trimStart('\r', '\n')
+        if(srcNode.isIR) {
+            val lines = assembly.lines().flatMap { splitIRCodeLine(it) }
+            for(line in lines.filter { it.isNotBlank() }) {
+                try {
+                    parseIRCodeLine(line.trim())
+                } catch (x: Exception) {
+                    if(x !is IRParseException && x !is IllegalArgumentException)
+                        throw x
+                    errors.err("invalid IR code '${line.trim()}': ${x.message}", srcNode.position)
+                }
+            }
+            assembly = lines.joinToString("\n")
+        }
         return PtInlineAssembly(assembly, srcNode.isIR, srcNode.position)
     }
 

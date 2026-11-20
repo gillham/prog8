@@ -425,42 +425,46 @@ internal class PointerAssignmentsGen(private val asmgen: AsmGen6502Internal, pri
             asmgen.assignRegister(RegisterOrPair.FAC1, target)
         }
         else if(value.type.isLong) {
-            when(target.kind) {
-                TargetStorageKind.VARIABLE -> {
-                    asmgen.out("""
-                        ldy  #$offset
-                        lda  ($zpPtrVar),y
-                        sta  ${target.asmVarname}
-                        iny
-                        lda  ($zpPtrVar),y
-                        sta  ${target.asmVarname}+1
-                        iny
-                        lda  ($zpPtrVar),y
-                        sta  ${target.asmVarname}+2
-                        iny
-                        lda  ($zpPtrVar),y
-                        sta  ${target.asmVarname}+3""")
-                }
-                TargetStorageKind.REGISTER -> {
-                    require(target.register!! in CombinedLongRegisters)
-                    asmgen.loadIndirectLongIntoCombinedLongRegister(zpPtrVar, offset, target.register)
-                }
-                TargetStorageKind.POINTER -> {
-                    asmgen.loadIndirectLongIntoCombinedLongRegister(zpPtrVar, offset, RegisterOrPair.R14R15)
-                    asmgen.assignRegister(RegisterOrPair.R14R15, target)
-                }
-                TargetStorageKind.ARRAY -> {
-                    asmgen.loadIndirectLongIntoCombinedLongRegister(zpPtrVar, offset, RegisterOrPair.R14R15)
-                    asmgen.assignRegister(RegisterOrPair.R14R15, target)
-                }
-                else -> {
-                    asmgen.loadIndirectLongIntoCombinedLongRegister(zpPtrVar, offset, RegisterOrPair.R14R15)
-                    asmgen.assignRegister(RegisterOrPair.R14R15, target)
-                }
-            }
+            assignIndirectLong(zpPtrVar, offset, target)
         }
         else
             throw AssemblyError("weird dt ${value.type} in pointer deref assignment ${target.position}")
+    }
+
+    internal fun assignIndirectLong(zpPtrVar: String, offset: UByte, target: AsmAssignTarget) {
+        when(target.kind) {
+            TargetStorageKind.VARIABLE -> {
+                asmgen.out("""
+                    ldy  #$offset
+                    lda  ($zpPtrVar),y
+                    sta  ${target.asmVarname}
+                    iny
+                    lda  ($zpPtrVar),y
+                    sta  ${target.asmVarname}+1
+                    iny
+                    lda  ($zpPtrVar),y
+                    sta  ${target.asmVarname}+2
+                    iny
+                    lda  ($zpPtrVar),y
+                    sta  ${target.asmVarname}+3""")
+            }
+            TargetStorageKind.REGISTER -> {
+                require(target.register!! in CombinedLongRegisters)
+                asmgen.loadIndirectLongIntoCombinedLongRegister(zpPtrVar, offset, target.register)
+            }
+            TargetStorageKind.POINTER -> {
+                asmgen.loadIndirectLongIntoCombinedLongRegister(zpPtrVar, offset, RegisterOrPair.R14R15)
+                asmgen.assignRegister(RegisterOrPair.R14R15, target)
+            }
+            TargetStorageKind.ARRAY -> {
+                asmgen.loadIndirectLongIntoCombinedLongRegister(zpPtrVar, offset, RegisterOrPair.R14R15)
+                asmgen.assignRegister(RegisterOrPair.R14R15, target)
+            }
+            else -> {
+                asmgen.loadIndirectLongIntoCombinedLongRegister(zpPtrVar, offset, RegisterOrPair.R14R15)
+                asmgen.assignRegister(RegisterOrPair.R14R15, target)
+            }
+        }
     }
 
     internal fun inplaceModification(target: PtrTarget, operator: String, value: AsmAssignSource) {

@@ -1764,4 +1764,21 @@ main {
             }
         }
     }
+
+    test("x xor x on a bool folds to false instead of crashing") {
+        val src = """
+            main {
+                sub start() {
+                    bool @shared t = true
+                    bool @shared r = t xor t
+                    ubyte @shared u = 77
+                    ubyte @shared v = u ^ u
+                }
+            }"""
+        val result = compileText(Cx16Target(), true, src, outputDir, writeAssembly = true, assemble = false)!!
+        val assigns = result.codegenAst!!.entrypoint()!!.children.filterIsInstance<PtAssignment>()
+        val rValue = assigns.single { it.target.identifier?.name == "p8b_main.p8s_start.p8v_r" }.value
+        (rValue as PtBool).value shouldBe false
+    }
+
 })

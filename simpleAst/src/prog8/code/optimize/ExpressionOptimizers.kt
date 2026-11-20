@@ -97,14 +97,14 @@ internal object ExpressionOptimizers {
                     "*" -> {
                         // x * 0 -> 0 (for non-floats and without side effects)
                         if (rightConst == 0.0 && !node.type.isFloat && !node.left.hasSideEffects(options.compTarget)) {
-                            val zero = PtNumber(node.type.base, 0.0, node.position)
+                            val zero = Helpers.zeroOf(node.type, node.position)
                             val index = node.parent.children.indexOf(node)
                             node.parent.setChild(index, zero)
                             changes++
                         }
                         // 0 * x -> 0 (for non-floats and without side effects)
                         else if (leftConst == 0.0 && !node.type.isFloat && !node.right.hasSideEffects(options.compTarget)) {
-                            val zero = PtNumber(node.type.base, 0.0, node.position)
+                            val zero = Helpers.zeroOf(node.type, node.position)
                             val index = node.parent.children.indexOf(node)
                             node.parent.setChild(index, zero)
                             changes++
@@ -156,7 +156,7 @@ internal object ExpressionOptimizers {
                         // 0 / x -> 0 (when x is not zero - but we can't check that here safely)
                         // Only do this for integer types where division by zero is undefined anyway
                         if (leftConst == 0.0 && !node.type.isFloat) {
-                            val zero = PtNumber(node.type.base, 0.0, node.position)
+                            val zero = Helpers.zeroOf(node.type, node.position)
                             val index = node.parent.children.indexOf(node)
                             node.parent.setChild(index, zero)
                             changes++
@@ -165,7 +165,7 @@ internal object ExpressionOptimizers {
                     "xor" -> {
                         // x xor x -> 0 (without side effects)
                         if (left isSameAs right && !left.hasSideEffects(options.compTarget)) {
-                            val zero = PtNumber(node.type.base, 0.0, node.position)
+                            val zero = Helpers.zeroOf(node.type, node.position)
                             val index = node.parent.children.indexOf(node)
                             node.parent.setChild(index, zero)
                             changes++
@@ -174,14 +174,14 @@ internal object ExpressionOptimizers {
                     "&" -> {
                         // x & 0 -> 0
                         if (rightConst == 0.0) {
-                            val zero = PtNumber(node.type.base, 0.0, node.position)
+                            val zero = Helpers.zeroOf(node.type, node.position)
                             val index = node.parent.children.indexOf(node)
                             node.parent.setChild(index, zero)
                             changes++
                         }
                         // 0 & x -> 0
                         else if (leftConst == 0.0) {
-                            val zero = PtNumber(node.type.base, 0.0, node.position)
+                            val zero = Helpers.zeroOf(node.type, node.position)
                             val index = node.parent.children.indexOf(node)
                             node.parent.setChild(index, zero)
                             changes++
@@ -270,7 +270,7 @@ internal object ExpressionOptimizers {
                         }
                         // x ^ x -> 0 (idempotent, without side effects)
                         else if (left isSameAs right && !left.hasSideEffects(options.compTarget)) {
-                            val zero = PtNumber(node.type.base, 0.0, node.position)
+                            val zero = Helpers.zeroOf(node.type, node.position)
                             val index = node.parent.children.indexOf(node)
                             node.parent.setChild(index, zero)
                             changes++

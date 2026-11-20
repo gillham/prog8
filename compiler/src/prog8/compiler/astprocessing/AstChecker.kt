@@ -382,6 +382,12 @@ internal class AstChecker(private val program: Program,
             }
         }
 
+        val range = forLoop.iterable as? RangeExpression
+        if(range!=null && range.step.constValue(program)==null && !options.newCodegen &&
+            options.compTarget.cpu in arrayOf(CpuType.CPU6502, CpuType.CPU65C02) &&
+            forLoop.loopVar.targetVarDecl()?.datatype?.isLong==true)
+            errors.err("variable-step for loops over long ranges are not supported on 6502 targets", forLoop.position)
+
         val iterableDt = forLoop.iterable.inferType(program).getOrUndef()
         val isTypedForLoop = forLoop.loopVarType != null
 
@@ -764,6 +770,10 @@ internal class AstChecker(private val program: Program,
                         err("parameter '${param.first.name}' should be (u)word, str or a pointer")
                     }
                 }
+                else if(param.second.registerOrPair in Cx16VirtualRegisters) {
+                    if (param.first.type.isLong)
+                        errors.err("long parameter '${param.first.name}' needs a combined register pair such as R0R1", param.first.position)
+                }
                 else if(param.second.statusflag!=null) {
                     if (!param.first.type.isBool)
                         errors.err("parameter '${param.first.name}' should be of type bool", param.first.position)
@@ -777,6 +787,10 @@ internal class AstChecker(private val program: Program,
                 else if(pair.second.registerOrPair in arrayOf(RegisterOrPair.AX, RegisterOrPair.AY, RegisterOrPair.XY)) {
                     if (!pair.first.isWord && !pair.first.isString && !pair.first.isArray && pair.first!=DataType.pointer(BaseDataType.UBYTE))
                         err("return type #${index + 1} should be (u)word/address or ^^ubyte")
+                }
+                else if(pair.second.registerOrPair in Cx16VirtualRegisters) {
+                    if (pair.first.isLong)
+                        err("long return type #${index + 1} needs a combined register pair such as R0R1")
                 }
                 else if(pair.second.statusflag!=null) {
                     if (!pair.first.isBool)
@@ -860,6 +874,8 @@ internal class AstChecker(private val program: Program,
                     if(!p.type.isInteger && !p.type.isBool && !p.type.isPointer) {
                         errors.err("can only use register param when type is boolean, integer or pointer", p.position)
                     }
+                    else if(p.type.isLong && p.registerOrPair in Cx16VirtualRegisters)
+                        errors.err("long parameter '${p.name}' needs a combined register pair such as R0R1", p.position)
                 }
             }
 
@@ -909,7 +925,9 @@ internal class AstChecker(private val program: Program,
         val iterations = repeatLoop.iterations?.constValue(program)
         if (iterations != null) {
             require(floor(iterations.number)==iterations.number)
-            if (iterations.number.toInt() > 65536) 
+            if (iterations.number < 0)
+                errors.err("repeat count can't be negative", iterations.position)
+            else if (iterations.number.toInt() > 65536)
                 if(!longCountersAreFast)
                     errors.warn("repeat using a long counter could be very slow", iterations.position)
         }
@@ -1246,8 +1264,10 @@ internal class AstChecker(private val program: Program,
                     err("array variable is missing a size specification")
                     return
                 }
-                if(decl.value is RangeExpression)
-                    throw InternalCompilerException("range expressions in vardecls should have been converted into array values during constFolding  $decl")
+                if(decl.value is RangeExpression) {
+                    err("range used as array initializer must have constant from, to and step values")
+                    return
+                }
             }
 
             if(decl.datatype.isPointerArray && decl.datatype.pointeeSub==BaseDataType.STR)
@@ -1260,7 +1280,7 @@ internal class AstChecker(private val program: Program,
                     null -> {
                         // a vardecl without an initial value, don't bother with it
                     }
-                    is RangeExpression -> throw InternalCompilerException("range expression should have been converted to a true array value")
+                    is RangeExpression -> err("range used as array initializer must have constant from, to and step values")
                     is StringLiteral -> {
                         checkValueTypeAndRangeString(decl.datatype, decl.value as StringLiteral)
                     }
@@ -1594,7 +1614,7 @@ internal class AstChecker(private val program: Program,
                     err("this directive may only occur at module level")
                 if(directive.args.size!=2 || directive.args[0].int==null || directive.args[1].int==null)
                     err("requires two addresses (start, end)")
-                if(directive.args[0].int!! > 255u || directive.args[1].int!! > 255u)
+                else if(directive.args[0].int!! > 255u || directive.args[1].int!! > 255u)
                     err("start and end addresss must be in Zeropage so 0..255")
             }
             "%address" -> {
@@ -2083,6 +2103,8 @@ internal class AstChecker(private val program: Program,
                 val divisor = constvalRight?.number
                 if(divisor==0.0)
                     errors.err("division by zero", expr.right.position)
+                if(expr.operator=="%" && (leftDt.isFloat || rightDt.isFloat))
+                    errors.err("remainder (%) requires integer operands, use floats.mod() for floats", expr.position)
             }
             "in" -> throw FatalAstException("in expression should have been replaced by containmentcheck")
             "<<", ">>" -> {
