@@ -1,7 +1,40 @@
 TODO
 ====
 
-- Amiga: confirm the sprite horizontal screen offset: ``sprites.pos()`` adds 128 to the visible x coordinate, one less than the lores ``hstart`` of 129 (``$81``) used by ``custom.compute_display()``. Verify on the emulator whether this is intentional (sprites may overlap the left border) or a one-pixel misalignment, and align it with DIWSTRT if it is a bug.
+Struct instance support: problem summary and follow-ups
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Summary of the issues found while adapting ``agabobs``, ``multiplexer`` and ``sorting`` to direct
+struct instances, and while analyzing the code generated for a single struct-instance variable on
+every target. Details and further items live in the sections below.
+
+Open, with suggested fixes (code quality, not correctness):
+- Direct struct instances are not accessed optimally on any backend. The instance address is a
+  compile-time constant, yet the IR re-materializes it into a pointer register before every field
+  access (``load.l rN,#addr`` + ``loadi/storei [rN.p+off]``), which all backends lower as pointer
+  traffic: classic 6502 builds a zero-page pointer and uses ``(zp),y`` per field (9-13 instructions
+  where ``inc instance+2`` or ``lda instance+5`` would do), new6502 additionally round-trips the
+  register file and even adds ``#<0``/``#>0`` for offset 0, and m68k re-executes
+  ``movea.l #inst,a2`` per access. Suggested fix at the IR level: express direct-instance field
+  access as direct memory access (synthesized per-field labels at ``instance+offsetof``, or a
+  label+offset memory operand). Alternative: fold constant pointer registers to absolute addressing
+  in both 6502 backends, and reuse or drop the constant ``movea.l`` on m68k (overlaps with the
+  m68k pointer-reload item below).
+- Array-of-struct element addresses are rebuilt per field access on both 6502 backends (see the
+  Optimizations entry below). In source, hoisting ``^^T p = &&arr[i]`` avoids it; the idiom and the
+  swap-cost tradeoff are documented in ``structpointers.rst``.
+
+Inherent costs, documented rather than fixed:
+- Value-semantics swap: exchanging struct elements copies the data (floats go through the FAC),
+  versus swapping 2-byte pointer entries in a pointer array. ``sorting.p8`` therefore pays ~300
+  bytes even with pointer temporaries; under ``-newcodegen`` the adapted examples are not larger
+  than the pointer-array originals (sorting: 5081 vs 5090; multiplexer is smaller optimized).
+
+Related language gaps already listed below: ``swap()`` rejects struct elements, and declaring a struct
+instance from a struct type declared inside a subroutine crashes in
+``SymbolTableMaker.resolveStructForVariable``. Whole-struct-instance assignment by value is now
+supported (desugared to ``sys.memcopy``), including declaration initializers such as
+``Country tmp = countries[i]``.
+
 
 Future Things and Ideas
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -74,6 +107,7 @@ Optimizations
 - IR optimization: investigate restricted common-subexpression elimination within a single basic block for identical pure arithmetic expressions whose inputs are unchanged. Initially exclude memory reads, calls, and control-flow boundaries. The qemu68k maze BFS repeats ``idx +/- H`` to update ``cells``, ``pathdirs``, and ``solveQueue``; sharing that computed neighbor index could be a focused benchmark.
 - optimize the small integer division routines in ``compiler/res/prog8lib/math.asm`` (``divmod_b_asm``, ``divmod_ub_asm``, ``divmod_w_asm``, ``divmod_uw_asm``) using the constant-divisor reciprocal-multiply / fast-division tricks from https://forums.nesdev.org/viewtopic.php?t=11336 . Division by a known small constant (or a small variable divisor) can often be replaced by a multiply and a shift, which is much faster than the current subtractive loops. For the 68000 targets this is likely only relevant for the software 32-bit helpers in ``amiga500/m68k_prog8_longmath.asm``, since native ``DIVU``/``DIVS`` already cover small divisions; evaluate and adapt as warranted.
 - 6502 codegen: avoid rebuilding a 16-bit address in scratch on every access to ``@(const + expr)`` (26-29 cycles) and emit the cheap ``sta BASE,x`` / ``lda (zp),y`` forms instead. See ``ideas/betterpointers.md`` for the measurements and the ranked work items: P1, P4 and P9 are the cheap local wins, P7 is the one that removes the per-store rebuild. The plan is compiler-only and verified against the working tree (three items turned out to be partially implemented already).
+- 6502 codegen: reuse the computed element address of an array-of-struct-instances access within a basic block. Both backends currently re-emit ``lda idx / jsr prog8_math.mul_word_<size> / 16-bit add to scratch`` per field access (about 20 bytes per field); the ``sorting.p8`` example's bubble sort and dump loop pay roughly 400 extra bytes for this on the classic backend, where it is large relative to the compact per-access code. Hoisting a typed pointer ``^^T p = &&arr[i]`` in the source avoids it (see the cost note in ``structpointers.rst``).
 - language-level companion to the above, not implemented: named memory regions (``&ubyte[40][25] screen = $0400``) with a fixed base, a zero-page cursor contract and 2D indexing, so a hot memory access does not depend on whether a base variable happens to be placed in zero page. See ``ideas/memory-regions.md``, which lists the open design questions that must be answered before implementing it.
 
 
@@ -89,7 +123,6 @@ Won't do's or deferred
 - Deferred: support arrays-of-struct-instances as struct fields (e.g. ``struct Outer { Inner[4] inners }``). Currently rejected with an error.
 - Deferred: support ``&array[i].field`` syntax to take the address of a struct field in an array. Currently only ``&array[i] + offsetof(Struct.field)`` works; ``&array[i].field`` is parsed as a field access on the resulting pointer and rejected by the checker.
 - Deferred: support typed pointer arrays as struct fields, curretly requires untyped pointers arrays.
-- Deferred: support immediate struct instance variables (e.g. ``Enemy e``) instead of only ``^^Enemy`` pointers and ``Enemy[]`` arrays. Attempted Aug 2026 and rolled back — requires value-type IR (currently ``STRUCT_INSTANCE`` is pointer-only, see ``DataTypes.kt:22`` and ``IRCodeGen.kt:2332``; field access assumes ``^^Struct`` indirection). Far-off; use ``^^Enemy`` or ``Enemy[N]``.
 - Deferred: make a form of "manual generics" possible, see ``ideas/polymorphism.md``
 - Deferred: when implementing unsigned longs: remove the unsigned-long constant "hack" that lets unsigned long constants be used as values for signed longs without needing a cast (the ``Antlr2KotlinVisitor.kt:508``/``:548`` "TODO hack" comments, ``AstExpressions.kt:145`` "TODO should be ULONG, but we don't have that type yet", and ``AsmAssignment.kt:129`` ``TODO("unsigned long $pos")``)
 - Won't do: turn the Prog8 optimizer off by default on the llvm targets. Measured Oct 2026 with ``scripts/llvm-bench.py`` and ``scripts/llvm-opt-check.py`` on 8 benchmarks and 25 other programs: with clang ``-O2`` the machine code of an optimized and a ``-noopt`` build is identical or differs only in register choice, and the run times are equal within noise. The Prog8 optimizer only makes compiling 0.1 to 0.2 seconds faster there, but it is shared with all other targets, and running it on llvm keeps exercising it; ``llvm-opt-check.py`` is the safety net for its bugs.

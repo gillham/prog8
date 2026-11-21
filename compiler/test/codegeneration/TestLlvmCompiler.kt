@@ -1343,23 +1343,27 @@ main {
         return a + fib(n - 2)
     }
 
+    struct Point { ubyte x  ubyte y }
+
     sub walk(ubyte depth) -> uword {
         ubyte[4] scratch
         uword @dirty calls
+        Point here
         calls++
         scratch[0] = depth
+        here.x = depth
         if depth == 0
             return 1
         uword wide = depth
         if wide == 1 or wide == 2 or wide == 3 or wide == 5 or wide == 9
             calls--
-        return walk(depth - 1) + scratch[0]
+        return walk(depth - 1) + scratch[0] + here.x
     }
 }"""
         val errors = ErrorReporterForTests(keepMessagesAfterReporting = true)
         compileText(LlvmTarget(), false, src, outputDir, errors = errors).shouldNotBeNull()
         errors.warnings.filter { "recursive" in it }.map { it.substringAfter(": ") } shouldBe
-            listOf("recursive subroutine 'walk' keeps 'scratch', 'calls' in static storage, which its recursive calls share")
+            listOf("recursive subroutine 'walk' keeps 'scratch', 'calls', 'here' in static storage, which its recursive calls share")
     }
 
     test("a long loop counter gives the warning that it could be slow on llvm16 only") {
@@ -6659,6 +6663,51 @@ private const val keyboardOutput = "0\n65 66\n10:hello worl\n90 0\n"
 private const val cpmKeyboardOutput = "65\n66 104\n10:ello world\n90 26\n"
 
 private val outputPrograms = mapOf(
+    "direct struct variables: initializers, fields, copies, address-of in initializer data and a local struct type" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+%option no_sysinit
+main {
+    struct Point { ubyte x  uword y }
+    struct Node { ^^Node next  uword value }
+    struct Big { long l  float f  ^^Point pp }
+    Point global_point = [7, 1000]
+    Point g2 = Point:[2, 200]
+    Point target
+    Node first
+    Node second
+    Point p1 = [1, 11]
+    Point p2 = [2, 22]
+    ^^Point[] ptrs = [&&p1, &&p2]
+    Big big = [123456, 1.5, &&p2]
+    sub start() {
+        Point local_point = [3, 3000]
+        local_point.x = 9
+        global_point.y = 66
+        txt.print_ub(local_point.x) txt.spc() txt.print_uw(local_point.y) txt.spc() txt.print_uw(global_point.y) txt.spc() txt.print_uw(g2.y) txt.nl()
+        target = global_point
+        target.x = 99
+        txt.print_ub(global_point.x + target.x) txt.spc() txt.print_uw(target.y) txt.nl()
+        first.next = &second
+        second.value = 42
+        txt.print_uw(first.next.value) txt.spc()
+        first.next.value = 77
+        txt.print_uw(second.value) txt.nl()
+        txt.print_uw(ptrs[0].y) txt.spc() txt.print_uw(ptrs[1].y) txt.spc()
+        ^^Point pp = &p1
+        pp.y = 555
+        txt.print_uw(p1.y) txt.nl()
+        txt.print_l(big.l) txt.spc() txt.print_uw(big.pp.y) txt.spc()
+        big.l += 1
+        txt.print_l(big.l) txt.nl()
+        struct Inner { uword a  ubyte b }
+        Inner ii = [100, 20]
+        ii.a = 300
+        ii.b++
+        txt.print_uw(ii.a) txt.spc() txt.print_ub(ii.b) txt.nl()
+    }
+}""", "9 3000 66 200\n106 66\n42 77\n11 22 555\n123456 22 123457\n300 21\n"),
+
     "the address of an element of an array field through a struct pointer" to OutputProgram("""
 %import textio
 %zeropage basicsafe

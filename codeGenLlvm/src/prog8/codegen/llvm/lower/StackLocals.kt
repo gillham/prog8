@@ -1,5 +1,6 @@
 package prog8.codegen.llvm.lower
 
+import prog8.code.StStructInstanceBlockName
 import prog8.intermediate.CallTarget
 import prog8.intermediate.CodeReference
 import prog8.intermediate.IRInstruction
@@ -23,14 +24,22 @@ internal class StackLocals(private val program: IRProgram) {
     /** The variables that move to a stack slot, each with the label of its subroutine. */
     val owners: Map<String, String> = promotable()
 
-    /** The variables that a recursive subroutine keeps in static storage, which its recursive calls share, by subroutine. */
-    fun sharedByRecursion(): Map<IRSubroutine, List<IRStStaticVariable>> {
+    /** The names of the variables that a recursive subroutine keeps in static storage, which its recursive calls share, by subroutine. */
+    fun sharedByRecursion(): Map<IRSubroutine, List<String>> {
         val recursive = recursiveSubroutines()
         if (recursive.isEmpty())
             return emptyMap()
-        return program.st.allVariables().filter { it.name !in owners && !isLiteralStorage(it) }
-            .mapNotNull { variable -> ownerOf(variable.name)?.takeIf { it in recursive }?.let { subroutines.getValue(it) to variable } }
-            .groupBy({ it.first }, { it.second })
+        val variables = program.st.allVariables().filter { it.name !in owners && !isLiteralStorage(it) }
+            .mapNotNull { variable -> ownerOf(variable.name)?.takeIf { it in recursive }?.let { it to variable.name.removePrefix("$it.") } }
+        val instances = program.st.allStructInstances().mapNotNull { structInstanceOwner(it.name, recursive) }
+        return (variables + instances).groupBy({ subroutines.getValue(it.first) }, { it.second })
+    }
+
+    /** A direct struct variable is named `prog8_struct_instances.<scope with _ for .>_<name>`: the longest matching subroutine. */
+    private fun structInstanceOwner(name: String, candidates: Set<String>): Pair<String, String>? {
+        val flat = name.removePrefix("$StStructInstanceBlockName.").takeIf { it != name } ?: return null
+        val owner = candidates.filter { flat.startsWith(it.replace('.', '_') + "_") }.maxByOrNull { it.length } ?: return null
+        return owner to flat.removePrefix(owner.replace('.', '_') + "_")
     }
 
     /** The array or string the compiler made for a literal, also for `x in [...]` from `x == a or x == b ...`. */

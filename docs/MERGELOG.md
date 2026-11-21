@@ -96,6 +96,78 @@ under a heading says that it was looked at. One line for each change, with the c
 
 ## Entries
 
+## master df16719e7 .. 32f82e9e1, merged 2026-11-21
+
+### Language and grammar
+- direct struct variables, on every target: `Point p`, `Point p = [1, 2]`, `Point p = Point:[x=1, y=2]`, with
+  field access `p.x`, whole-struct copy `q = p` (a byte copy, `sys.memcopy` on IR targets), `&p` and `&&p`, also
+  in static initializer data (`^^Point[] ptrs = [&&p1, &&p2]`, a pointer field of another instance). They are
+  always static storage, also inside a subroutine, where the initializer is load-time data applied once; they
+  can't be subroutine parameters or return values, and `p = ptr^^` or `ptr^^ = p` is not supported
+  (e954d8b70, c1afe4856, 074bc2ce9, 684223990)
+- memory-mapped single struct instances: `&Point regs = $d000`, with no initializer (e92a79c88)
+- a struct type declared inside a subroutine can be used for a direct struct variable there (32f82e9e1)
+- an array literal of struct instances of one type infers as an array of that struct (e954d8b70)
+
+### Builtin functions
+- `sizeof` accepts a struct instance and returns `uword` instead of `ubyte` (e954d8b70, 1829191db)
+
+### Library
+- Amiga: new module `hwinfo` for bare-metal programs: `gather()` fills `ready`, `cpu` (enum `CPU`), `fpu`,
+  `VBR`, `videomode` (enum `VIDEO`), `chipset`, `kickVersion`, `floppyCount`, and the `MemRegion` arrays
+  `chipRegion`, `slowRegions`/`slowCount` and `fastRegions`/`fastCount` (bcb4feebf)
+- Amiga `sprites`: the AGA routines no longer read the write-only `BPLCON3`/`BPLCON4`; they keep a shadow of the
+  sprite resolution instead (c883b460a)
+
+### IR
+- nothing in the format; a direct struct variable is a struct instance named
+  `prog8_struct_instances.<scope with _ for .>_<name>` (for example `prog8_struct_instances.main_start_p`), and code
+  takes its address with `load` of that label, or of the fixed address for a memory-mapped one (e954d8b70,
+  074bc2ce9, 684223990)
+
+### Errors and warnings
+- gone: "struct instances cannot be declared directly ..." and "struct instances cannot be declared as
+  memory-mapped currently ..." (e954d8b70, c1afe4856, e92a79c88)
+- the m68k asmsub clobbers message says "registers it changes (D2-D6/A2-A4/FP2-FP7, and D7 or A5 when it uses
+  them)" (c883b460a)
+- no frame-address escape warning for a direct struct variable (e954d8b70)
+
+### Command line
+nothing
+
+### Conventions of 6502 programs
+- direct struct variables are in a block `prog8_struct_instances` (or its BSS variant when uninitialized or a
+  union); references use the `p8i_` prefix where the declaration has `p8v_` (c1afe4856)
+
+### Bugs fixed
+- the symbol prefixer crashed on a struct field access whose left side isn't an array element, in a block with
+  `no_symbol_prefixing` (19a8d45a0)
+- `&p` in static initializer data gave broken symbol references (074bc2ce9)
+- U64 (`-newcodegen` called `prog8_lib.multiply_bytes`) passes on `master` now, fixed by e92a79c88 the same way as
+  the branch; removed from `docs/UPSTREAM-ISSUES.md`
+- checked on `master` at 32f82e9e1: all repros of `bugs/check.py`; only U64 passes. The repros that need an
+  emulator (U31, U40, U49, U59, U62, U63, U66, U69, U71, U73, U74, U76, U80, U82-U87, U90, U92) give the same
+  .asm as on `master` at df16719e7
+
+### LLVM branch only
+- direct struct variables work on the llvm targets with no change: a test program gives the VM's output on
+  llvm64, llvm32 (wasm), llvm16 on mos-sim, Z80 and 6809, and is now in `TestLlvmCompiler`'s output programs
+- the llvm warning for a recursive subroutine that keeps static storage names its direct struct variables too
+  (their IR names carry no scope, so `StackLocals` matches the flattened subroutine name)
+- `structpointers.rst` and `variables.rst`: the llvm targets in upstream's notes on the untyped `&` and on where
+  locals live
+- conflict in `ExpressionGen.kt`: upstream removed the dead struct instance deref branch that the branch had
+  edited; upstream's version taken
+- conflict in `ArrayLiteral.inferType`: upstream's struct instance case before the branch's null pointer rule
+- conflict in the language server's module list: the branch's `fileio`, upstream's `hwinfo`
+- conflict in the symbol dumps: regenerated
+- conflict in `TestCompilerOnExamples.kt`: upstream's `fibonacci` sizes, the branch's `fractal-tree` (U76)
+
+### Nothing for p8p8
+- Amiga examples (beachballs, `rasters` removed), the m68k `D7` loop counter named and documented, the vasm/vlink
+  mirror links, `README.md`, review prompts, `todo.rst` items about struct instances, and docs (c883b460a,
+  1829191db, c7147fe3e)
+
 ## master 8f50c2ed1 .. df16719e7, merged 2026-11-18
 
 ### Language and grammar

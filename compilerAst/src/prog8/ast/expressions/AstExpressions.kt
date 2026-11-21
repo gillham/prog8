@@ -1508,6 +1508,11 @@ class ArrayLiteral(val type: InferredTypes.InferredType,     // inferred because
         if(datatypesInArray.any{ it.isUnknown })
             return InferredTypes.unknown()
         val dts = datatypesInArray.map { it.getOrUndef() }
+        if(dts.all { it.isStructInstance }) {
+            val unique = dts.toSet()
+            if(unique.size==1 && unique.single().subType!=null)
+                return InferredTypes.knownFor(DataType.arrayOfStructs(unique.single().subType!!))
+        }
         // a 0 among pointers is a null pointer, not a byte that makes it a byte array
         val pointerDts = dts.filterIndexed { index, _ -> (value[index] as? NumericLiteral)?.number != 0.0 }
         if(pointerDts.isNotEmpty() && pointerDts.all { it.isPointer }) {
@@ -1881,7 +1886,7 @@ data class IdentifierReference(val nameInSource: List<String>, override val posi
         }
         else {
             val vardecl = definingScope.lookup(nameInSource[0]) as? VarDecl
-            if (vardecl?.datatype?.isPointer != true)
+            if (vardecl?.datatype?.isPointer != true && vardecl?.datatype?.isStructInstance != true)
                 return DataType.UNDEFINED
             if(vardecl.datatype.subType==null) {
                 // Pointer to primitive type - return the pointer type itself
@@ -2533,7 +2538,7 @@ class StaticStructInitializer(var structname: IdentifierReference,
         return if(struct==null)
             InferredTypes.unknown()
         else
-            InferredTypes.knownFor(DataType.pointer(struct))
+            InferredTypes.knownFor(if(isPointer) DataType.pointer(struct) else DataType.structInstance(struct))
     }
 }
 

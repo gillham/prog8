@@ -2,7 +2,7 @@
 
 Bugs found while working on the `llvm` branch that are also on `master` and have nothing to do with the llvm targets
 or quad support. Each repro was checked on a compiler built from `master` at `8bcd17674`, the virtual and cx16 targets,
-and all of them still fail on `master` at `df16719e7`.
+and all of them still fail on `master` at `32f82e9e1`.
 "Branch" says whether `llvm` already has a fix that could be sent upstream.
 
 Keeping the list: add new items at the end with the next number, and remove an item once its repro passes on `master`.
@@ -438,14 +438,6 @@ Keeping the list: add new items at the end with the next number, and remove an i
   `examples/cx16/dynamicbanking` calls everything in bank 4.
 - Branch: fixed; the lookup also tries the unprefixed name, and the bank is patched in before the arguments are
   loaded. The dynamicbanking example prints the same with both code generators.
-
-**U64. `-newcodegen`: a variable index into an array of struct instances calls a routine that doesn't exist**
-- Where: `codeGenNew6502/InstrLoadStore.kt`, the scaling of an index register by an element size that is not a
-  power of two (`scaleIndexRegIfNeeded` and the pointer variant) calls `prog8_lib.multiply_bytes`; the routine is
-  `prog8_math.multiply_bytes`.
-- Repro: `Enemy[4] enemies` with a 5-byte struct and `enemies[i].xpos = i + 40` in a loop, `-target cx16
-  -newcodegen`: the assembler stops with "not defined symbol 'multiply_bytes'".
-- Branch: fixed.
 
 **U65. `sizeof()` of an array of struct instances is the size of one element**
 - Where: `compiler/BuiltinFunctions.kt`, `builtinSizeof`: it sizes the element type with the element count, and

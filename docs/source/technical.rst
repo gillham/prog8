@@ -281,13 +281,24 @@ intraprocedural register allocator, with values that live across calls placed in
 callee-saved registers and saved/restored by the subroutine's ``movem`` prologue and
 epilogue. Values that cannot stay in a register spill to slots appended to the ``A5``
 frame. ``D7``, ``A5`` and ``A6`` are reserved. Ordinary subroutine locals may therefore
-never be accessed directly from assembly; go through the frame instead.
+never be accessed directly from assembly; go through the frame instead. Generated code uses ``D7``
+as the down counter of counted ``repeat``/``for`` loops, saving and restoring it around nested
+loops and around calls in a loop body, so a call to a normal Prog8 subroutine can change ``D7``.
+Hand-written assembly that keeps a value there across such a call must save and restore it itself.
 
 Clean (non-``@dirty``) locals are zero-initialized on every call with a ``clr`` prologue, one
 store per element. This includes arrays, which on other targets are only cleared once at startup.
 A large clean local array is therefore costly; the compiler warns about framed arrays larger
 than 8 bytes. Add ``@dirty`` when you assign the array before use. A framed ``@dirty`` local
 has no static storage and is not zeroed at startup either, so its initial value is stack garbage.
+
+Variables with a non-numeric initializer (initializer-list arrays, strings, and direct struct
+variables) are never placed in a frame: they keep static storage, and their initializer is
+load-time data applied only once when the program starts. Such a variable keeps its value
+between calls of its subroutine. Static storage here means the variable lives in the program's
+data or BSS section (see :ref:`pointers` for the rules around direct struct variables).
+See :ref:`var_storage_per_call` in the variables chapter for a per-declaration overview table
+of this and the 6502-based behavior.
 
 Normal Prog8 subroutines use one all-stack argument convention with word-packed slots:
 

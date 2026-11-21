@@ -844,7 +844,7 @@ internal class AstChecker(private val program: Program,
 
             if(options.compTarget.cpu.is68k && subroutine.asmAddress == null && subroutine.asmClobbers.isNotEmpty()) {
                 err("an asmsub on m68k cannot declare clobbers(...): the subroutine itself must save/restore the " +
-                    "registers it uses (D2-D6/A2-A4/FP2-FP7) and must not destroy D7 or A5")
+                    "registers it changes (D2-D6/A2-A4/FP2-FP7, and D7 or A5 when it uses them)")
             }
 
             if(subroutine.statements.any{it !is InlineAssembly && !(it is Directive && (it.directive=="%asmbinary" || it.directive=="%asminclude"))})
@@ -1526,13 +1526,6 @@ internal class AstChecker(private val program: Program,
             } else if(decl.alignment>64u) {
                 errors.info("large alignment might waste a lot of memory (check Gaps in assembler output)", decl.position)
             }
-        }
-
-        if(decl.datatype.isStructInstance && decl.origin!=VarDeclOrigin.SUBROUTINEPARAM) {
-            if(decl.type==VarDeclType.MEMORY)
-                errors.err("struct instances cannot be declared as memory-mapped currently, use a pointer and memory allocation call or direct address assignment instead", decl.position)
-            else
-                errors.err("struct instances cannot be declared directly, use a pointer and memory allocation call or direct address assignment instead", decl.position)
         }
 
         if (decl.dirty) {
@@ -3376,6 +3369,7 @@ internal class AstChecker(private val program: Program,
                     || (options.compTarget.POINTER_MEM_SIZE>4u && (sourceDatatype.isPointer || sourceDatatype.isPassByRef))
             targetDatatype.isFloat -> sourceDatatype.isNumeric
             targetDatatype.isString -> sourceDatatype.isString
+            targetDatatype.isStructInstance -> sourceDatatype.isStructInstance && sourceDatatype==targetDatatype
             else -> false
         }
 

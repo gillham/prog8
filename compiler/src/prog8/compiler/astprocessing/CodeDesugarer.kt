@@ -1798,6 +1798,36 @@ _after:
                 // special case simple struct instance assignment via memory copy
                 val size = program.target.memorySize(sourceDt.getOrUndef(), null)
                 val structSizeNum = NumericLiteral.optimalInteger(size, assignment.position)
+                val sourceIdentifier = assignment.value as? IdentifierReference
+                if(sourceIdentifier!=null && assignment.target.identifier!=null) {
+                    // b = a  -->  memcopy(&a, &b, sizeof(struct))
+                    val source = AddressOf(sourceIdentifier.copy(), null, null, false, true, assignment.position)
+                    val target = AddressOf(assignment.target.identifier!!.copy(), null, null, false, true, assignment.position)
+                    val memcopy = FunctionCallStatement(IdentifierReference(listOf("sys", "memcopy"), assignment.position),
+                        mutableListOf(source, target, structSizeNum),
+                        false, assignment.position)
+                    return listOf(AstReplaceNode(assignment, memcopy, parent))
+                }
+                // named instance -> array element:  arr[i] = a  -->  memcopy(&a, &arr[i], sizeof(struct))
+                val namedSourceToArrayTarget = assignment.target.arrayindexed
+                if(sourceIdentifier!=null && namedSourceToArrayTarget!=null) {
+                    val target = AddressOf(namedSourceToArrayTarget.plainarrayvar!!.copy(), namedSourceToArrayTarget.indexer.copy(), null, false, true, assignment.position)
+                    val source = AddressOf(sourceIdentifier.copy(), null, null, false, true, assignment.position)
+                    val memcopy = FunctionCallStatement(IdentifierReference(listOf("sys", "memcopy"), assignment.position),
+                        mutableListOf(source, target, structSizeNum),
+                        false, assignment.position)
+                    return listOf(AstReplaceNode(assignment, memcopy, parent))
+                }
+                // named instance -> pointer deref:  ptr^^ = a  -->  memcopy(&a, ptr, sizeof(struct))
+                val namedSourceToPtrTarget = assignment.target.pointerDereference
+                if(sourceIdentifier!=null && namedSourceToPtrTarget!=null) {
+                    val targetPtr = IdentifierReference(namedSourceToPtrTarget.chain, assignment.position)
+                    val source = AddressOf(sourceIdentifier.copy(), null, null, false, true, assignment.position)
+                    val memcopy = FunctionCallStatement(IdentifierReference(listOf("sys", "memcopy"), assignment.position),
+                        mutableListOf(source, targetPtr, structSizeNum),
+                        false, assignment.position)
+                    return listOf(AstReplaceNode(assignment, memcopy, parent))
+                }
                 val deref = assignment.value as? PtrDereference
                 if(deref!=null) {
                     val sourcePtr = IdentifierReference(deref.chain, assignment.position)
@@ -1864,6 +1894,16 @@ _after:
                                     false, assignment.position)
                                 return listOf(AstReplaceNode(assignment, memcopy, parent))
                             }
+                        }
+                        // array element -> named instance:  tmp = points[i]  -->  memcopy(&points[i], &tmp, sizeof(struct))
+                        val namedTarget = assignment.target.identifier
+                        if(namedTarget!=null) {
+                            val source = AddressOf(sourceIdx.plainarrayvar!!.copy(), sourceIdx.indexer.copy(), null, false, true, assignment.position)
+                            val target = AddressOf(namedTarget.copy(), null, null, false, true, assignment.position)
+                            val memcopy = FunctionCallStatement(IdentifierReference(listOf("sys", "memcopy"), assignment.position),
+                                mutableListOf(source, target, structSizeNum),
+                                false, assignment.position)
+                            return listOf(AstReplaceNode(assignment, memcopy, parent))
                         }
                     }
                 }
@@ -1950,6 +1990,14 @@ _after:
         }
 
         if(parent is VarDecl) {
+            if(parent.datatype.isStructInstance && parent.value===array) {
+                val struct = parent.datatype.subType
+                    ?: throw FatalAstException("struct type not resolved for '${parent.name}'")
+                val initializer = StaticStructInitializer(
+                    IdentifierReference(struct.scopedNameString.split("."), array.position),
+                    array.value.toMutableList(), array.position, false)
+                return listOf(AstReplaceNode(array, initializer, parent))
+            }
             if(!parent.datatype.isArray) return noModifications
             val elemDt = parent.datatype.elementType()
             val isStructPointerElem = elemDt.isPointer && elemDt.subType!=null

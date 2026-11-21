@@ -219,19 +219,69 @@ The compiler evaluates the pointer expression exactly once and then stores the v
 
 
 .. note::
-    Structs are primarily supported as a *reference type* accessed through a pointer.
-    However, you can also declare an *array of struct instances* (see below), and a plain struct instance
-    can be used as an lvalue in a few specific assignment cases.
-    It is not yet possible to use a struct as a standalone value type, or to declare a single
-    memory-mapped struct instance (an *array* of struct instances can be memory-mapped, see below).
+    Structs can be accessed through a typed pointer, as an *array of struct instances*
+    (see below), or as a single direct struct variable.
+    A direct struct variable is declared as ``Point p`` and its fields are accessed with
+    ``p.x``. A direct struct variable can also be memory-mapped at a fixed address
+    (see below), just like an array of struct instances.
     The compiler replaces whole-struct assignments with a memory copy. You are allowed to write::
 
         ptr2^^ = ptr1^^
         ptr2^^ = ptr1[2]
         ptr2[2] = ptr1^^
         arr[i] = arr[j]           ; array of struct instances
+        p2 = p1                   ; direct struct variables
 
-    In the future more cases may be supported.
+    The source and target must be the same kind of struct storage; mixing forms such as
+    ``p = ptr^^`` or ``ptr^^ = p`` is not supported. The copy is a raw byte copy, so
+    pointer and string fields are copied by address (a shallow copy).
+
+    Direct struct variables are stored in static memory unless they are memory-mapped
+    to a fixed address. They cannot be subroutine parameters or return values.
+    ``sizeof(p)`` on a direct struct variable returns the storage size of its struct type.
+
+    Because the storage is static, a struct variable declared inside a subroutine
+    behaves differently from an ordinary local variable. Its initializer is emitted
+    as load-time data and is applied only once, when the program starts, and the
+    variable keeps its value between calls of the subroutine. This is exactly the
+    same behavior as a local array (or string) with an initializer list: variables
+    with a non-numeric initializer are never placed in the stack frame, so they are
+    not zeroed or re-initialized on every call. A struct variable that needs a fresh
+    value on every call must be initialized explicitly at the start of the
+    subroutine body.
+
+
+.. _structmemmap:
+
+Memory-mapped struct instance
+-----------------------------
+.. index:: pair: Structs; Memory-mapped instance
+
+A single struct instance can be placed at a fixed address with the ``&`` memory-mapped
+declaration form. This is useful to overlay a hardware register block or a memory area
+that is not owned by the program::
+
+    struct SpriteRegs {
+        ubyte x, y
+        ubyte color
+        ubyte pad
+    }
+
+    ; one SpriteRegs structure at $d000
+    &SpriteRegs sprite0 = $d000
+
+    sub start() {
+        sprite0.x = 100
+        sprite0.color = 7
+    }
+
+The instance has no compiler-owned storage, and its fields are laid out exactly as the
+struct declaration defines them (there is no alignment padding). The value after ``=`` is
+the address, not initialization data, so a memory-mapped instance cannot have field
+initializers. Field accesses, ``&sprite0`` (the instance address), and whole-struct copies
+such as ``copy = sprite0`` all use the fixed address. A memory-mapped instance can also be
+referenced from static initializer data, for example
+``^^SpriteRegs[2] ptrs = [&&sprite0, &&sprite0]``.
 
 
 .. _structarrays:
@@ -314,9 +364,29 @@ requires gaps.
     element instead, or use ``sys.memcopy`` if you need to pass a copy.
 
 .. note::
-    Arrays of struct instances are stored contiguously, so accessing fields with a variable index
-    is less efficient than accessing fields through a typed pointer. For performance-critical code,
-    prefer typed pointers to structs unless the contiguous array layout is required.
+    Arrays of struct instances are stored contiguously, and on the classic 6502 code generator
+    every field access with a variable index recomputes the element address in full
+    (``base + index * sizeof(struct)``), once per field. In a tight loop this adds up quickly:
+    reading three fields of ``enemies[i]`` rebuilds the address three times. Take the address of
+    the element once into a typed pointer and access the fields through it instead::
+
+        ^^Enemy enemy = &&enemies[i]
+        enemy^^.health += 10
+        enemy^^.elite = true
+
+    All 6502 backends currently recompute the element address for every field access. In the compact
+    classic codegen this repeated rebuild dominates the generated code size in field-heavy loops;
+    in the more verbose IR-based codegen, direct field access costs about the same as access through
+    a typed pointer, so the choice matters less there. The same applies to float fields: assigning a
+    float struct field copies the value through the floating-point accumulator, which costs more than
+    a plain word copy.
+
+.. note::
+    Exchanging two elements of an array of struct instances copies the whole struct value
+    (five bytes per float on 6502 targets), while exchanging two entries of an array of typed
+    pointers only swaps two 2-byte pointer values. If you only need to reorder elements, consider
+    sorting an array of typed pointers (or an index array) that references the struct instances
+    instead.
 
 .. note::
     Using structs instead of plain arrays usually results in more and less efficient code being generated.
@@ -382,7 +452,7 @@ Values must be written at runtime through the pointer::
 .. note::
     Unions, like structs, cannot yet be declared as a local instance - you always access
     a union through a typed pointer, as shown above. See the note in the structs section
-    for the current limitations around using structs (and now unions) as standalone values.
+    for the current limitations around using unions as standalone values.
 
 
 Static initialization of structs
@@ -508,6 +578,20 @@ Address-Of: untyped vs typed
 ``&`` still returns an untyped (uword) pointer, as it did in older Prog8 versions. This is for backward compatibility reasons so existing programs don't break.
 The new *double ampersand* operator ``&&`` returns a *typed* pointer to the value. The semantics are slightly different from the old untyped address-of operator, because adding or subtracting
 a number from a typed pointer uses *pointer arithmetic* that takes the size of the value that it points to into account.
+
+Address-of expressions can also appear in static initializer data, for example to put pointers
+to struct instances in a pointer array or in a pointer-typed struct field::
+
+    struct Point { uword x  uword y }
+    struct Holder { ^^Point pt  uword extra }
+    Point p1, p2
+    ^^Point[2] ptrs = [&&p1, &&p2]
+    Holder h = [&&p1, 99]
+
+The typed form works on every target. The untyped ``&`` only works there when its inferred
+address type happens to match the declared pointer type: on the 6502 targets and llvm16 that is the case
+(16-bit addresses), but on the m68k, virtual and llvm32 targets the 32-bit address is inferred as
+``long``, and on llvm64 the 64-bit address as ``uquad``, so use ``&&`` to get a properly typed pointer.
 
 
 Accessing struct definitions in Assembly code

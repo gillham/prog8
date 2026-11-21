@@ -50,16 +50,9 @@ fun prefixSymbols(program: PtProgram, options: CompilationOptions, st: SymbolTab
             }
             is PtIdentifier -> {
                 val pexpr = node.parent as? PtBinaryExpression
-                if(pexpr?.operator==".") {
-                    if(pexpr.left is PtArrayIndexer) {
-                        val arrayvar = (pexpr.left as PtArrayIndexer).variable!!
-                        if(arrayvar.type.subType!=null) {
-                            return
-                        } else
-                            throw AssemblyError("can only use deref expression on struct type")
-                    } else {
-                        TODO("handle other left operand ${pexpr.left} in dereferencing of struct fields ${node.position}")
-                    }
+                if(pexpr?.operator=="." && pexpr.right===node) {
+                    // struct field name, not a symbol reference - never prefix/lookup it
+                    return
                 }
                 var lookupName = node.name
                 if(node.type.isSplitWordArray(program.target) && (lookupName.endsWith("_lsb") || lookupName.endsWith("_msb"))) {
@@ -102,6 +95,11 @@ fun prefixSymbols(program: PtProgram, options: CompilationOptions, st: SymbolTab
             }
         }
         else if (node is PtIdentifier) {
+            val pexpr = node.parent as? PtBinaryExpression
+            if(pexpr?.operator=="." && pexpr.right===node) {
+                // struct field name, not a symbol reference - never prefix/lookup it
+                return
+            }
             var lookupName = node.name
             if(node.type.isSplitWordArray(program.target) && (lookupName.endsWith("_lsb") || lookupName.endsWith("_msb"))) {
                 lookupName = lookupName.dropLast(4)
@@ -230,6 +228,23 @@ fun PtVariable.prefixVariable(parent: PtNode, st: SymbolTable): PtVariable {
     if(value==null)
         return this
 
+    val callValue = value as? PtFunctionCall
+    if(callValue!=null && callValue.builtin && callValue.name=="prog8_lib_structalloc") {
+        // struct instance variable: its initializer is a prog8_lib_structalloc call whose
+        // arguments are not reachable via children, so collectRefs never visits them;
+        // prefix the address-of ones here.
+        callValue.children.forEachIndexed { idx, arg ->
+            if (arg is PtAddressOf && arg.definingBlock()?.options?.noSymbolPrefixing != true) {
+                val newAddr = PtAddressOf(arg.type, arg.typedResult, arg.position, arg.isMsbForSplitArray)
+                newAddr.add(arg.identifier!!.prefixIdentifier(newAddr, st))
+                if (arg.arrayIndexExpr != null)
+                    newAddr.add(arg.arrayIndexExpr!!)
+                callValue.setChild(idx, newAddr)
+            }
+        }
+        return this
+    }
+
     val arrayValue = value as? PtArray
     return if(arrayValue!=null && arrayValue.children.any { it !is PtNumber && it !is PtBool } ) {
         val newValue = PtArray(arrayValue.type, arrayValue.position)
@@ -242,7 +257,7 @@ fun PtVariable.prefixVariable(parent: PtNode, st: SymbolTable): PtVariable {
                     if(elt.definingBlock()?.options?.noSymbolPrefixing==true)
                         newValue.add(elt)
                     else {
-                        val newAddr = PtAddressOf(elt.type, false, elt.position)
+                        val newAddr = PtAddressOf(elt.type, elt.typedResult, elt.position, elt.isMsbForSplitArray)
                         newAddr.add(elt.identifier!!.prefixIdentifier(newAddr, st))
                         if (elt.arrayIndexExpr != null)
                             newAddr.add(elt.arrayIndexExpr!!)
@@ -258,7 +273,7 @@ fun PtVariable.prefixVariable(parent: PtNode, st: SymbolTable): PtVariable {
                         // collectRefs never visits them; prefix the address-of ones here.
                         elt.children.forEachIndexed { idx, arg ->
                             if (arg is PtAddressOf && arg.definingBlock()?.options?.noSymbolPrefixing != true) {
-                                val newAddr = PtAddressOf(arg.type, false, arg.position)
+                                val newAddr = PtAddressOf(arg.type, arg.typedResult, arg.position, arg.isMsbForSplitArray)
                                 newAddr.add(arg.identifier!!.prefixIdentifier(newAddr, st))
                                 if (arg.arrayIndexExpr != null)
                                     newAddr.add(arg.arrayIndexExpr!!)

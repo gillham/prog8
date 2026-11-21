@@ -1,6 +1,6 @@
 
 Prog8 compiler v14.0-BETA3-llvm.1 by Irmen de Jong (irmen@razorvine.net)
-Prerelease version from git commit a7076bf7 in branch llvm
+Prerelease version from git commit 7d839e4d in branch llvm
 This software is licensed under the GNU GPL 3.0, see https://www.gnu.org/licenses/gpl.html
 LLVM version by Claude Code and Andrew Gillham (gillham@roadsign.com)
 Report issues with this version at https://github.com/gillham/prog8/issues
@@ -68,7 +68,7 @@ rsave  ()
 setlsb  (word|uword|long variable, byte|ubyte value)
 setmsb  (word|uword|long variable, byte|ubyte value)
 sgn  (ubyte|byte|uword|word|long|float|quad|uquad value) -> byte
-sizeof  (ubyte|byte|uword|word|long|quad|uquad|float|bool|str|array|array_splitw|pointer|undefined object) -> ubyte
+sizeof  (ubyte|byte|uword|word|long|quad|uquad|float|bool|str|array|array_splitw|pointer|struct_instance|undefined object) -> uword
 sqrt  (ubyte|byte|uword|word|long|float|uquad value) -> undefined
 
 
