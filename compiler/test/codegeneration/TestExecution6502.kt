@@ -2046,4 +2046,51 @@ class TestExecution6502 : FunSpec({
             machine.assertMemory(0x3011, 4)
         }
     }
+
+    test("containment check in a range with a bound of a smaller type") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                sub start() {
+                    ubyte @shared ub = 5
+                    uword @shared uw = 300
+                    uword @shared v = 259
+                    word @shared sw = 259
+                    long @shared lg = 65541
+                    ubyte @shared result = 0
+                    if v in 0 to ub
+                        result |= 1
+                    if sw in 0 to ub
+                        result |= 2
+                    if lg in 0 to uw
+                        result |= 4
+                    v = 4
+                    sw = 5
+                    lg = 300
+                    if v in 0 to ub
+                        result |= 8
+                    if sw in ub downto 0
+                        result |= 16
+                    if lg in ub to uw
+                        result |= 32
+                    if 400 in 0 to ub
+                        result |= 64
+                    sw = -1
+                    if sw in 0 to ub
+                        result |= 128
+                    @($3000) = result
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for(target in listOf(Cx16Target(), C64Target())) for(optimize in listOf(false, true)) {
+            val machine = compileText(target, optimize, src, outputDir)!!.simulate()
+            machine.assertMemory(0x3000, 8 + 16 + 32)
+        }
+    }
 })

@@ -812,3 +812,41 @@ Keeping the list: add new items at the end with the next number, and remove an i
 - Repro: `bugs/u120_swap_dependent_index.p8`: `i = 1`, `swap(i, arr[i])` sets `i` to `arr[1]` (20) and then writes the
   old `i` into `arr[20]`, past the end of the array, instead of into `arr[1]`; virtual prints `20 20 30 40` where
   `20 1 30 40` is expected. The 6502 code generator does the same.
+
+**U121. An array of struct instances that is initialized with struct variables crashes the compiler or loses them**
+- Where: `CodeDesugarer.after(ArrayLiteral)`: it takes every name in the initializer for the variable the compiler made
+  for a nested array literal, so it casts that variable's value to an array literal and removes the variable.
+- Repro: `bugs/u121_array_of_struct_variables.p8`: `Point p` and `Point[2] arr = [p, q]`: NullPointerException. With
+  initializers for both, `p` and `q` are removed from the program and a use of `p.x` gives "undefined symbol: p.x"; a
+  `Point:[..]` initializer, one variable used twice, a memory-mapped variable, a variable of another type, an undefined
+  name and a pointer array of pointer variables crash too.
+- Branch: fixed; the element is a copy of the variable's initializer. It is an error when the variable has no constant
+  initializer, or is written or has its address taken anywhere (the array is initialized at load time).
+
+**U122. `x in low to high` with bounds of a smaller type than `x` crashes the compiler or compares only the low byte**
+- Where: `SimplifiedAstMaker`, `desugar(range)` of a containment check: `x` and the bounds keep their own types.
+- Repro: `bugs/u122_containment_in_narrower_range.p8`: a word in `0 to ub`: "source dt size must be less or equal to
+  target dt size" (6502), "register given multiple types" (IR targets); a long in `0 to uw`: "Failed requirement".
+  `uw in 0 to ub` compiles for 6502 when optimized but only looks at the low byte of `uw`: 259 is in `0 to 5`.
+- Branch: fixed; the value and both bounds are converted to their common type.
+
+**U123. A for loop over a range with an array as loop variable crashes the compiler**
+- Where: `ConstantFoldingOptimizer.after(ForLoop)`: `require(loopvar.datatype.isBasic)`.
+- Repro: `bugs/u123_for_loop_variable_is_array.p8`: `ubyte[3] a` and `for a in 0 to 3`: "Failed requirement". A string
+  or a struct variable does the same.
+- Branch: fixed; "incompatible range value type".
+
+**U124. A range with a string as bound crashes the compiler on 6502 targets**
+- Where: `RangeExpression.inferType` makes an array type with the string as element type.
+- Repro: `bugs/u124_for_range_to_string.p8`: `for i in 0 to "x"`: "split word array element type must be word". The
+  virtual and m68k targets give the error "range expression to value must be integer".
+- Branch: fixed; that error on every target.
+
+**U125. With `no_symbol_prefixing`, a symbol named `a` silently gives wrong code on 6502 targets**
+- Where: the 6502 code generator writes the accumulator as the operand (`ror a`, `inc a`), which 64tass takes for a
+  symbol `a` when one is in scope: with `a` at address $27, `ror a` becomes `ror $27`.
+- Repro: `bugs/u125_no_symbol_prefixing_variable_named_a.p8` for cx16: prints `144 2 5` instead of `51 1 5`, and a
+  variable `a` that isn't constant is overwritten. Parameters, constants, labels, subroutines and blocks named `a` are
+  symbols too; `A`, `x` and `y` are fine.
+- Branch: fixed with an error for such a name on 6502 targets; the parameters of `math.mul32` and `math.gcd` (which
+  have no accumulator shifts, so they work on `master`) are renamed for it.

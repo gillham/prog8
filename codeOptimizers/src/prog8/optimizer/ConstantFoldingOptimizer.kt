@@ -558,7 +558,7 @@ class ConstantFoldingOptimizer(private val program: Program, private val errors:
         val loopvar = forLoop.loopVar.targetVarDecl() ?: return noModifications
 
         val stepLiteral = iterableRange.step as? NumericLiteral
-        require(loopvar.datatype.isBasic)
+        if(!loopvar.datatype.isBasic) return noModifications   // the checker gives an error for it
         when(val loopvarSimpleDt = loopvar.datatype.base) {
             BaseDataType.UBYTE -> {
                 if(rangeFrom.type != BaseDataType.UBYTE) {

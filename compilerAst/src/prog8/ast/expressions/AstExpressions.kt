@@ -1649,6 +1649,7 @@ class RangeExpression(var from: Expression,
             fromDt istype DataType.UBYTE && toDt istype DataType.UBYTE -> InferredTypes.knownFor(DataType.arrayFor(BaseDataType.UBYTE, program.target))
             fromDt istype DataType.UWORD && toDt istype DataType.UWORD -> InferredTypes.knownFor(DataType.arrayFor(BaseDataType.UWORD, program.target))
             fromDt istype DataType.STR && toDt istype DataType.STR -> InferredTypes.knownFor(BaseDataType.STR)
+            fromDt.getOrUndef().isPassByRef || toDt.getOrUndef().isPassByRef -> InferredTypes.unknown()
             fromDt istype DataType.WORD || toDt istype DataType.WORD -> InferredTypes.knownFor(DataType.arrayFor(BaseDataType.WORD, program.target))
             fromDt istype DataType.BYTE || toDt istype DataType.BYTE -> InferredTypes.knownFor(DataType.arrayFor(BaseDataType.BYTE, program.target))
             else -> {

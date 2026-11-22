@@ -5,6 +5,7 @@ import prog8.ast.expressions.*
 import prog8.ast.statements.*
 import prog8.ast.walk.*
 import prog8.code.core.*
+import prog8.compiler.CallGraph
 
 
 internal class CodeDesugarer(val program: Program, private val target: ICompilationTarget, private val errors: IErrorReporter) : AstWalker() {
@@ -1989,6 +1990,35 @@ _after:
             return StaticStructInitializer(structname, array.value.toMutableList(), array.position, isPointer)
         }
 
+        // the array is initialized at load time, so it gets the variable's initial value
+        fun copyStructVariableInitializer(elt: IdentifierReference, variable: VarDecl, struct: StructDecl, array: ArrayLiteral): StaticStructInitializer? {
+            if(!variable.datatype.isStructInstance || variable.datatype.subType!==struct) {
+                errors.err("array element must be an initializer or a variable of struct ${struct.name}", elt.position)
+                return null
+            }
+            val value = variable.value
+            val initializer = when {
+                variable.type==VarDeclType.MEMORY -> null
+                value is ArrayLiteral -> convertArrayIntoStructInitializer(value, struct, false).copy()
+                value is StaticStructInitializer && !value.isPointer -> value.copy()
+                else -> null
+            }
+            // names in the initializer could mean something else in the array's scope
+            val values = if(initializer==null) emptyList() else initializer.args + initializer.namedArgs.map { it.second }
+            if(initializer==null || (variable.definingScope!==array.definingScope && values.any { it !is NumericLiteral })) {
+                errors.err("initialization value contains non-constant elements", elt.position)
+                return null
+            }
+            val changed = CallGraph(program).usages(variable).any {
+                it is InlineAssembly || it.parent is AssignTarget || it.parent is AddressOf
+            }
+            if(changed) {
+                errors.err("struct variable '${variable.name}' can be changed elsewhere, so it can't be an array initialization value", elt.position)
+                return null
+            }
+            return initializer
+        }
+
         if(parent is VarDecl) {
             if(parent.datatype.isStructInstance && parent.value===array) {
                 val struct = parent.datatype.subType
@@ -2009,12 +2039,24 @@ _after:
                 array.value.withIndex().forEach { (index, elt) ->
                     if(elt is ArrayLiteral) {
                         array.value[index] = convertArrayIntoStructInitializer(elt, struct, isStructPointerElem)
+                        array.value[index].linkParents(array)
                         changes = true
                     } else if(elt is IdentifierReference) {
-                        val arrayvar = elt.targetVarDecl()!!.value as ArrayLiteral
-                        array.value[index] = convertArrayIntoStructInitializer(arrayvar, struct, isStructPointerElem)
-                        allremovals += elt.targetVarDecl()!!
-                        changes = true
+                        val variable = elt.targetVarDecl()
+                        val arrayvar = variable?.value as? ArrayLiteral
+                        if(variable?.origin==VarDeclOrigin.ARRAYLITERAL && arrayvar!=null) {
+                            array.value[index] = convertArrayIntoStructInitializer(arrayvar, struct, isStructPointerElem)
+                            array.value[index].linkParents(array)
+                            allremovals += variable
+                            changes = true
+                        } else if(isStructInstanceElem && variable!=null) {
+                            val initializer = copyStructVariableInitializer(elt, variable, struct, array)
+                            if(initializer!=null) {
+                                array.value[index] = initializer
+                                initializer.linkParents(array)
+                                changes = true
+                            }
+                        }
                     }
                 }
 

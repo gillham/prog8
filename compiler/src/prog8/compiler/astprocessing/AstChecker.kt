@@ -533,7 +533,14 @@ internal class AstChecker(private val program: Program,
         throw FatalAstException("all Alias nodes should have been removed from the AST ${alias.position}")
     }
 
+    /** 64tass takes the a of `ror a` for a symbol with that name, when there is one, instead of for the accumulator. */
+    private fun checkAccumulatorName(name: String, block: Block, position: Position) {
+        if(name=="a" && options.compTarget.cpu.is6502 && "no_symbol_prefixing" in block.options())
+            errors.err("the name 'a' clashes with the accumulator in assembly code, it can't be used with no_symbol_prefixing on 6502 targets", position)
+    }
+
     override fun visit(block: Block) {
+        checkAccumulatorName(block.name, block, block.position)
         if(block.name.startsWith('_'))
             errors.err("identifiers cannot start with an underscore", block.position)
         if("::" in block.name)
@@ -578,6 +585,7 @@ internal class AstChecker(private val program: Program,
     }
 
     override fun visit(label: Label) {
+        checkAccumulatorName(label.name, label.definingBlock, label.position)
         if(label.name.startsWith('_'))
             errors.err("identifiers cannot start with an underscore", label.position)
         if("::" in label.name)
@@ -637,6 +645,7 @@ internal class AstChecker(private val program: Program,
     override fun visit(subroutine: Subroutine) {
         fun err(msg: String) = errors.err(msg, subroutine.position)
 
+        checkAccumulatorName(subroutine.name, subroutine.definingBlock, subroutine.position)
         if(subroutine.name.startsWith('_'))
             errors.err("identifiers cannot start with an underscore", subroutine.position)
         if("::" in subroutine.name)
@@ -1195,6 +1204,7 @@ internal class AstChecker(private val program: Program,
         if(decl.names.size>1)
             throw InternalCompilerException("vardecls with multiple names should have been converted into individual vardecls")
 
+        checkAccumulatorName(decl.name, decl.definingBlock, decl.position)
         if(decl.datatype.isPointer || decl.datatype.isStructInstance)
             checkPrivateTypeAccess(decl.datatype, decl.position, decl.definingBlock)
 

@@ -563,4 +563,62 @@ main {
         instance shouldNotBe null
         instance!!.structName shouldContain "Point"
     }
+
+    test("array of struct instances initialized with struct variables") {
+        val src = """
+%option no_sysinit
+main {
+    struct Point { uword x  uword y }
+    Point p = [1, 2]
+    Point q = Point:[3, 4]
+    Point[3] arr = [p, q, p]
+    uword @shared r1, r2, r3, r4
+    sub start() {
+        arr[2].x = 99
+        r1 = arr[0].x
+        r2 = arr[1].y
+        r3 = p.x
+        r4 = arr[2].x
+    }
+}
+"""
+        for(optimize in listOf(false, true)) {
+            runVm(src, optimize) { vm, allocations ->
+                vm.memory.getUW(allocations.getValue("main.r1")) shouldBe 1u
+                vm.memory.getUW(allocations.getValue("main.r2")) shouldBe 4u
+                vm.memory.getUW(allocations.getValue("main.r3")) shouldBe 1u
+                vm.memory.getUW(allocations.getValue("main.r4")) shouldBe 99u
+            }
+        }
+        compileText(C64Target(), true, src, outputDir, writeAssembly = true) shouldNotBe null
+    }
+
+    test("struct variables that can't be array initialization values") {
+        val cases = listOf(
+            Triple("Point p", "", "initialization value contains non-constant elements"),
+            Triple("&Point p = 12288", "", "initialization value contains non-constant elements"),
+            Triple("Point p = [1, 2]", "p.x = 9", "struct variable 'p' can be changed elsewhere"),
+            Triple("Point p = [1, 2]", "^^Point @shared pp = &&p", "struct variable 'p' can be changed elsewhere"),
+            Triple("ubyte @shared p = 3", "", "array element must be an initializer or a variable of struct"),
+            Triple("Other p = [1, 2]", "", "array element must be an initializer or a variable of struct"))
+        for((decl, use, message) in cases) {
+            val src = """
+main {
+    struct Point { uword x  uword y }
+    struct Other { uword x  uword y }
+    $decl
+    Point[1] arr = [p]
+    sub start() {
+        $use
+        cx16.r0 = arr[0].x
+    }
+}
+"""
+            withClue(decl + " / " + use) {
+                val errors = ErrorReporterForTests()
+                compileText(Cx16Target(), false, src, outputDir, errors = errors, writeAssembly = false) shouldBe null
+                errors.errors.single() shouldContain message
+            }
+        }
+    }
 })

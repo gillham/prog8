@@ -309,9 +309,9 @@ math {
         }}
     }
 
-    sub mul32(uword a, uword b) -> long {
-        ; return 32 bits result of a*b
-        cx16.r2 = a*b
+    sub mul32(uword value1, uword value2) -> long {
+        ; return 32 bits result of value1*value2
+        cx16.r2 = value1*value2
         return mklong2(mul16_last_upper(), cx16.r2)
     }
 
@@ -1042,14 +1042,14 @@ _no:
         }}
     }
 
-    sub gcd(uword @nozp a, uword @nozp b) -> uword {
+    sub gcd(uword @nozp value1, uword @nozp value2) -> uword {
         ; Calculate the Greatest Common Divisor of two 16-bit unsigned integers using the Binary GCD algorithm (Stein's algorithm). Clobbers R0,R1 !
 
         alias aa = cx16.r0
         alias bb = cx16.r1
 
-        aa=a
-        bb=b
+        aa=value1
+        bb=value2
 
         ; Handle the case where one number is zero
         if aa == 0  return bb

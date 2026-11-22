@@ -1216,20 +1216,28 @@ class SimplifiedAstMaker(private val program: Program, private val errors: IErro
 
     private fun transform(srcCheck: ContainmentCheck): PtExpression {
 
+        fun convertTo(dt: DataType, value: PtExpression): PtExpression = when {
+            value.type==dt -> value
+            value is PtNumber -> PtNumber(dt.base, value.number, value.position)
+            else -> PtTypeCast(dt, true, value.position).also { it.add(value) }
+        }
+
         fun desugar(range: RangeExpression): PtExpression {
-            require(range.from.inferType(program)==range.to.inferType(program))
             val expr = PtBinaryExpression("and", DataType.BOOL, srcCheck.position)
             val x1 = transformExpression(srcCheck.element)
             val x2 = transformExpression(srcCheck.element)
             val eltDt = srcCheck.element.inferType(program)
             if(eltDt.isInteger) {
+                val from = transformExpression(range.from)
+                val to = transformExpression(range.to)
+                val commonDt = listOf(from.type, to.type).fold(x1.type) { dt, other -> BinaryExpression.commonDatatype(dt, other, null, null).first }
                 val low = PtBinaryExpression("<=", DataType.BOOL, srcCheck.position)
-                low.add(transformExpression(range.from))
-                low.add(x1)
+                low.add(convertTo(commonDt, from))
+                low.add(convertTo(commonDt, x1))
                 expr.add(low)
                 val high = PtBinaryExpression("<=", DataType.BOOL, srcCheck.position)
-                high.add(x2)
-                high.add(transformExpression(range.to))
+                high.add(convertTo(commonDt, x2))
+                high.add(convertTo(commonDt, to))
                 expr.add(high)
             } else {
                 val low = PtBinaryExpression("<=", DataType.BOOL, srcCheck.position)

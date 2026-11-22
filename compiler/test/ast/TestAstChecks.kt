@@ -2460,4 +2460,73 @@ main {
         errors.errors.size shouldBe 2
         errors.errors.all { "remainder (%) requires integer operands" in it } shouldBe true
     }
+
+    test("range with a string or array bound gives an error") {
+        for(bound in listOf("\"x\"", "numbers")) {
+            val text = """
+                main {
+                    ubyte[3] @shared numbers
+                    sub start() {
+                        ubyte i
+                        for i in 0 to $bound
+                            cx16.r0++
+                    }
+                }
+                """
+            for(target in listOf(Cx16Target(), VMTarget())) {
+                val errors = ErrorReporterForTests()
+                compileText(target, false, text, outputDir, errors = errors, writeAssembly = false) shouldBe null
+                errors.errors.single() shouldContain "range expression to value must be integer"
+            }
+        }
+    }
+
+    test("for loop variable that is an array, string or struct gives an error") {
+        for(decl in listOf("ubyte[3] a", "str a = \"x\"", "Point a")) {
+            val text = """
+                main {
+                    struct Point { ubyte x }
+                    sub start() {
+                        $decl
+                        for a in 0 to 3
+                            cx16.r0++
+                    }
+                }
+                """
+            val errors = ErrorReporterForTests()
+            compileText(Cx16Target(), false, text, outputDir, errors = errors, writeAssembly = false) shouldBe null
+            errors.errors.any { "incompatible range value type" in it } shouldBe true
+        }
+    }
+
+    test("the name a can't be used with no_symbol_prefixing on 6502 targets") {
+        fun program(option: String, decl: String, use: String) = """
+            main {
+                sub start() {
+                    other.run(3)
+                }
+            }
+            other {
+                $option
+                $decl
+                sub run(ubyte value) {
+                    cx16.r0L = value
+                    $use
+                }
+            }
+            """
+        val option = "%option no_symbol_prefixing"
+        val names = listOf(
+            "ubyte @shared a" to "a++",
+            "const ubyte a = 3" to "cx16.r1L = a",
+            "sub a() { cx16.r1++ }" to "a()",
+            "" to "ubyte @shared a = 5")
+        for((decl, use) in names) {
+            val errors = ErrorReporterForTests()
+            compileText(Cx16Target(), false, program(option, decl, use), outputDir, errors = errors, writeAssembly = false) shouldBe null
+            errors.errors.single() shouldContain "the name 'a' clashes with the accumulator"
+            compileText(Cx16Target(), false, program("", decl, use), outputDir, writeAssembly = false) shouldNotBe null
+            compileText(VMTarget(), false, program(option, decl, use), outputDir, writeAssembly = false) shouldNotBe null
+        }
+    }
 })

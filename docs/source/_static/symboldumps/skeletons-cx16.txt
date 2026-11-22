@@ -618,7 +618,7 @@ math  {
     direction  (ubyte x1, ubyte y1, ubyte x2, ubyte y2) -> ubyte
     direction_qd  (ubyte quadrant @A, ubyte xdelta @X, ubyte ydelta @Y) -> ubyte @A
     direction_sc  (byte x1, byte y1, byte x2, byte y2) -> ubyte
-    gcd  (uword a, uword b) -> uword
+    gcd  (uword value1, uword value2) -> uword
     interpolate  (ubyte v @R0, ubyte inputMin @R1, ubyte inputMax @R2, ubyte outputMin @R3, ubyte outputMax @R4) clobbers (X,Y) -> ubyte @A
     interpolatef   alias for: floats.interpolate
     interpolatew  (uword v @R0, uword inputMin @R1, uword inputMax @R2, uword outputMin @R3, uword outputMax @R4) clobbers (A,X,Y) -> uword @R0
@@ -630,7 +630,7 @@ math  {
     log2l  (long value) -> ubyte
     log2w  (uword value @AY) -> ubyte @Y
     mul16_last_upper  () -> uword @AY
-    mul32  (uword a, uword b) -> long
+    mul32  (uword value1, uword value2) -> long
     popcount  (ubyte value @A) clobbers (X,Y) -> ubyte @A
     randrange  (ubyte n) -> ubyte
     randrange_rom  (ubyte n) -> ubyte
