@@ -472,7 +472,7 @@ jump p8_label_gen_2
                     changed = true
                     return@forEach
                 }
-                if(sameTarget) {
+                if(sameTarget && ins.type != IRDataType.FLOAT) {
                     val delta = arithmeticDelta(ins)
                     val nextDelta = arithmeticDelta(nextInstr)
                     if(delta != null && nextDelta != null) {

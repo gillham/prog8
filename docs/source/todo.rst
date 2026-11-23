@@ -1,41 +1,6 @@
 TODO
 ====
 
-Struct instance support: problem summary and follow-ups
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-Summary of the issues found while adapting ``agabobs``, ``multiplexer`` and ``sorting`` to direct
-struct instances, and while analyzing the code generated for a single struct-instance variable on
-every target. Details and further items live in the sections below.
-
-Open, with suggested fixes (code quality, not correctness):
-- Direct struct instances are not accessed optimally on any backend. The instance address is a
-  compile-time constant, yet the IR re-materializes it into a pointer register before every field
-  access (``load.l rN,#addr`` + ``loadi/storei [rN.p+off]``), which all backends lower as pointer
-  traffic: classic 6502 builds a zero-page pointer and uses ``(zp),y`` per field (9-13 instructions
-  where ``inc instance+2`` or ``lda instance+5`` would do), new6502 additionally round-trips the
-  register file and even adds ``#<0``/``#>0`` for offset 0, and m68k re-executes
-  ``movea.l #inst,a2`` per access. Suggested fix at the IR level: express direct-instance field
-  access as direct memory access (synthesized per-field labels at ``instance+offsetof``, or a
-  label+offset memory operand). Alternative: fold constant pointer registers to absolute addressing
-  in both 6502 backends, and reuse or drop the constant ``movea.l`` on m68k (overlaps with the
-  m68k pointer-reload item below).
-- Array-of-struct element addresses are rebuilt per field access on both 6502 backends (see the
-  Optimizations entry below). In source, hoisting ``^^T p = &&arr[i]`` avoids it; the idiom and the
-  swap-cost tradeoff are documented in ``structpointers.rst``.
-
-Inherent costs, documented rather than fixed:
-- Value-semantics swap: exchanging struct elements copies the data (floats go through the FAC),
-  versus swapping 2-byte pointer entries in a pointer array. ``sorting.p8`` therefore pays ~300
-  bytes even with pointer temporaries; under ``-newcodegen`` the adapted examples are not larger
-  than the pointer-array originals (sorting: 5081 vs 5090; multiplexer is smaller optimized).
-
-Related language gaps already listed below: ``swap()`` rejects struct elements, and declaring a struct
-instance from a struct type declared inside a subroutine crashes in
-``SymbolTableMaker.resolveStructForVariable``. Whole-struct-instance assignment by value is now
-supported (desugared to ``sys.memcopy``), including declaration initializers such as
-``Country tmp = countries[i]``.
-
-
 Future Things and Ideas
 ^^^^^^^^^^^^^^^^^^^^^^^
 - extend the ``-gendoc`` command to generate user reference documentation from Markdown docstrings; see ``ideas/markdown-docstrings-and-reference-docs.md`` for the plan.
@@ -93,7 +58,6 @@ Libraries
 ^^^^^^^^^
 - Add split-word array sorting routines to sorting module by adding copies of the existing non-split routines that are split-aware (split words are stored as separate lsb/msb arrays, so the split-aware routines must index into both halves).
 - add an IFF ANIM5 playback helper module for the Amiga targets (a separate concern from the bare-metal hardware helpers): in-memory IFF chunk walker (BMHD/CMAP/CAMG/BODY plus per-frame ANHD/DLTA), ByteRun1 decoder, op5 byte-vertical delta decoder (unvscomp-style), and a small double-buffer/interleave state machine with ANHD ``reltime`` pacing via vblank waits. CMAP loading is already covered by ``custom.load_iff_cmap()`` (bare metal) and ``graphics.load_iff_cmap()`` (Intuition screens). Usable both OS-friendly (drawing into a ``playfield``) and bare-metal (chip-RAM planes plus ``copper.set_planes`` for the flip). A working C reference implementation is in ``ideas/anim5player.c``: SDL2 + libiff, but structured the way an on-system player must work (two screens, page flip per frame, op5 deltas decoded on demand, no frame cache), so the decode loop and the double-buffer/interleave recipe can be ported from it directly.
-- implement the remaining Amiga bare-metal IRQ helpers; see ``ideas/amiga-baremetal-helpers.md`` for the design and status. Remaining: IRQ handler support, VERTB, CIA timers and TOD.
 
 Optimizations
 ^^^^^^^^^^^^^
@@ -103,12 +67,13 @@ Optimizations
 - Compilation speed: try to join multiple modifications in 1 result in the AST processors instead of returning it straight away every time
 - the remaining 6502-specific AST optimizations can't be removed: the old 6502 codegen is still the default backend (``-newcodegen`` is opt-in), so it still depends on them. Revisit once the IR-based 6502 codegen becomes the default.
 - m68k/Amiga dead-code elimination: vasm does not strip unreachable routines from the final HUNK output, and ``IRUnusedCodeRemover`` currently keeps assembly subroutines from library modules conservatively (see its TODO). Improve IR reachability analysis so imported library routines are retained only when reachable from program entry points, inline assembly references, address-taken symbols, or other live routines. Keep the existing conservative fallback for opaque assembly references, and add size-regression tests for examples such as ``lowlevel-timer``.
-- m68k/Amiga codegen: eliminate redundant pointer reloads in the IR. For example, ``wavc``'s ``read_le_word`` loads its ``addr`` argument twice because the optimizer rewrites the second ``loadm.p`` as ``loadm.l`` and existing CSE does not merge different types. See ``ideas/m68k-eliminate-double-pointer-reload.md`` for a plan.
+- m68k/Amiga codegen: eliminate redundant pointer reloads in the IR. For example, ``wavc``'s ``read_le_word`` loads its ``addr`` argument twice because the optimizer rewrites the second ``loadm.p`` as ``loadm.l`` and existing CSE does not merge different types. See the IR-peephole section in ``ideas/m68k-better-codegen.md`` for a plan.
 - IR optimization: investigate restricted common-subexpression elimination within a single basic block for identical pure arithmetic expressions whose inputs are unchanged. Initially exclude memory reads, calls, and control-flow boundaries. The qemu68k maze BFS repeats ``idx +/- H`` to update ``cells``, ``pathdirs``, and ``solveQueue``; sharing that computed neighbor index could be a focused benchmark.
 - optimize the small integer division routines in ``compiler/res/prog8lib/math.asm`` (``divmod_b_asm``, ``divmod_ub_asm``, ``divmod_w_asm``, ``divmod_uw_asm``) using the constant-divisor reciprocal-multiply / fast-division tricks from https://forums.nesdev.org/viewtopic.php?t=11336 . Division by a known small constant (or a small variable divisor) can often be replaced by a multiply and a shift, which is much faster than the current subtractive loops. For the 68000 targets this is likely only relevant for the software 32-bit helpers in ``amiga500/m68k_prog8_longmath.asm``, since native ``DIVU``/``DIVS`` already cover small divisions; evaluate and adapt as warranted.
-- 6502 codegen: avoid rebuilding a 16-bit address in scratch on every access to ``@(const + expr)`` (26-29 cycles) and emit the cheap ``sta BASE,x`` / ``lda (zp),y`` forms instead. See ``ideas/betterpointers.md`` for the measurements and the ranked work items: P1, P4 and P9 are the cheap local wins, P7 is the one that removes the per-store rebuild. The plan is compiler-only and verified against the working tree (three items turned out to be partially implemented already).
+- 6502 codegen: cheap memory stores for ``@(const + expr)`` style accesses, measured and ranked in ``ideas/betterpointers.md``. P1, P2, P3, P4 and P9 are implemented; still open are P5 (three byte arguments in A/X/Y), P6 (inline shift-add policy for ``*const``), P7a/P7b (address strength reduction within a loop and across calls, the general fix for the per-store rebuild), P8 (branch-chain compound conditions), P10 (page-boundary loop splitting) and P11 (6502 multi-parameter inlining, currently capped at one parameter).
 - 6502 codegen: reuse the computed element address of an array-of-struct-instances access within a basic block. Both backends currently re-emit ``lda idx / jsr prog8_math.mul_word_<size> / 16-bit add to scratch`` per field access (about 20 bytes per field); the ``sorting.p8`` example's bubble sort and dump loop pay roughly 400 extra bytes for this on the classic backend, where it is large relative to the compact per-access code. Hoisting a typed pointer ``^^T p = &&arr[i]`` in the source avoids it (see the cost note in ``structpointers.rst``).
-- language-level companion to the above, not implemented: named memory regions (``&ubyte[40][25] screen = $0400``) with a fixed base, a zero-page cursor contract and 2D indexing, so a hot memory access does not depend on whether a base variable happens to be placed in zero page. See ``ideas/memory-regions.md``, which lists the open design questions that must be answered before implementing it.
+- language-level companion to the above, not implemented: named memory regions (``&ubyte[40][25] screen = $0400``) with a fixed base, a zero-page cursor contract and 2D indexing, so a hot memory access does not depend on whether a base variable happens to be placed in zero page. See Appendix C in ``ideas/betterpointers.md``, which lists the open design questions that must be answered before implementing it.
+- Direct struct instances on the classic 6502 codegen: word augmented assignment (``+=``/``-=`` on word fields) and float augmented assignment still build a zp pointer instead of using absolute addressing.
 
 
 Dead Code Elimination bug in 64tass, for nested subroutines

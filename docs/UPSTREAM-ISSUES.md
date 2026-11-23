@@ -2,19 +2,12 @@
 
 Bugs found while working on the `llvm` branch that are also on `master` and have nothing to do with the llvm targets
 or quad support. Each repro was checked on a compiler built from `master` at `8bcd17674`, the virtual and cx16 targets,
-and all of them still fail on `master` at `32f82e9e1`.
+and all of them still fail on `master` at `a3850d7fd`.
 "Branch" says whether `llvm` already has a fix that could be sent upstream.
 
 Keeping the list: add new items at the end with the next number, and remove an item once its repro passes on `master`.
 
 ---
-
-**U1. An unused `%import lists` crashes the compiler**
-- Where: `codeGenIntermediate/IRUnusedCodeRemover.kt`, `pruneSymboltable`.
-- Repro: `%import lists` and an empty `main.start`, on virtual or cx16 with optimization:
-  `NullPointerException ... pruneSymboltable`. The check `variable.dt.subType!!.scopedNameString` runs for every
-  pointer variable, and a pointer to a basic type (`sys.die`'s `^^ubyte message`) has no `subType`.
-- Branch: fixed, `variable.dt.subType?.scopedNameString`.
 
 **U2. The inliner substitutes raw arguments, so a typed pointer keeps scaled pointer arithmetic**
 - Where: `codeOptimizers/Inliner.kt` (parameter substitution).
@@ -850,3 +843,30 @@ Keeping the list: add new items at the end with the next number, and remove an i
   symbols too; `A`, `x` and `y` are fine.
 - Branch: fixed with an error for such a name on 6502 targets; the parameters of `math.mul32` and `math.gcd` (which
   have no accumulator shifts, so they work on `master`) are renamed for it.
+
+**U126. Storing zero in a field of a direct struct variable crashes the IR targets**
+- Where: `AssignmentGen.translateRegularAssign`, the struct instance case from 5dcf746d9: `STOREZI` with a direct
+  address; the schema wants an indirect one.
+- Repro: `bugs/u126_struct_field_zero.p8`: `p.w = 0`: "STOREZI: needs INDIRECT memory reference, got DIRECT" (virtual,
+  m68k, `-newcodegen`). It worked at 32f82e9e1.
+- Branch: fixed, `STOREZM`.
+
+**U127. `p.ptr^^ = value` on a direct struct variable writes the pointer field, not what it points to**
+- Where: the direct field access from 5dcf746d9 and c9f874c55 doesn't look at `PtPointerDeref.derefLast`: the struct
+  instance cases in `AssignmentGen` and `ExpressionGen`, and `directStructInstanceFieldAddress` on 6502.
+- Repro: `bugs/u127_struct_field_deref.p8` on virtual: prints `11 44 false` instead of `55 44 true`; with `-noopt`, and
+  for a float, the compiler crashes. It worked at 32f82e9e1.
+- Branch: fixed; the direct access is for the field itself only.
+
+**U128. `swap` of struct variables in a nested scope crashes the compiler**
+- Where: `CodeDesugarer.after(Swap)` from 48a826db0: the temporary is declared in an anonymous scope, which only goes
+  well directly in a subroutine. It is called `swaptmp0`, which a program can use too, and an operand that is an element
+  of a pointer field gives a NullPointerException.
+- Repro: `bugs/u128_struct_swap_nested.p8`: `if i==1 swap(a, b)`: "there are leftover vardecls in the nested scope".
+- Branch: fixed; the temporary is declared in the subroutine as `prog8_swaptmp_N`, and such an element is an error.
+
+**U129. Adding or subtracting 2 to a float through a struct pointer crashes the IR optimizer**
+- Where: `IRPeepholeOptimizer.removeUselessArithmetic` joins two `inc.f` or `dec.f` into an `add.f` with an integer.
+- Repro: `bugs/u129_float_field_minus_two.p8`: `q.f -= 2.0`: "integer immediate can't have float type", only when
+  optimized.
+- Branch: fixed; float instructions are not joined.

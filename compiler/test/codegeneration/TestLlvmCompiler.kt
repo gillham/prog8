@@ -6708,6 +6708,65 @@ main {
     }
 }""", "9 3000 66 200\n106 66\n42 77\n11 22 555\n123456 22 123457\n300 21\n"),
 
+    "fields of direct struct variables: zero, in-place changes, values pointer fields point to, swaps in nested scopes" to OutputProgram("""
+%import textio
+%zeropage basicsafe
+%option no_sysinit
+main {
+    struct Node { ubyte val  word w  ^^Node next  ^^ubyte bp  ^^uword wp  bool flag  long l  ubyte[4] arr }
+    struct Pair { ubyte x  word y  long z }
+    Node p
+    Node q
+    Pair a = [1, -2, 100000]
+    Pair b = [3, -4, 200000]
+    ubyte[2] bytes = [11, 22]
+    uword[3] @nosplit words = [1000, 2000, 3000]
+    sub show(^^Pair pair) {
+        txt.print_ub(pair.x) txt.spc() txt.print_w(pair.y) txt.spc() txt.print_l(pair.z) txt.nl()
+    }
+    sub start() {
+        p.val = 250
+        p.w = -300
+        p.next = &&q
+        p.bp = &bytes
+        p.wp = &words
+        p.flag = true
+        p.l = 123456
+        q.val = 77
+        p.bp^^ = 55
+        p.bp^^ ++
+        p.wp^^ = 1234
+        p.wp^^ -= 5
+        txt.print_ub(bytes[0]) txt.spc() txt.print_uw(words[0]) txt.spc() txt.print_bool(p.bp == &bytes) txt.nl()
+        p.bp++
+        p.wp += 2
+        p.wp--
+        txt.print_ub(@(p.bp)) txt.spc() txt.print_uw(peekw(p.wp)) txt.nl()
+        p.val++
+        p.w -= 2
+        p.l += 2
+        p.l <<= 1
+        p.next.val++
+        p.arr[1] = 6
+        p.arr[1] += 3
+        p.flag = not p.flag
+        txt.print_ub(p.val) txt.spc() txt.print_w(p.w) txt.spc() txt.print_l(p.l) txt.spc() txt.print_ub(q.val) txt.spc()
+        txt.print_ub(p.arr[1]) txt.spc() txt.print_bool(p.flag) txt.nl()
+        p.val = 0
+        p.w = 0
+        p.l = 0
+        p.next = 0
+        txt.print_ub(p.val) txt.spc() txt.print_w(p.w) txt.spc() txt.print_l(p.l) txt.spc() txt.print_bool(p.next == 0) txt.nl()
+        repeat 3 {
+            swap(a, b)
+        }
+        show(&&a)
+        if p.val == 0
+            swap(b, a)
+        show(&&a)
+    }
+}""", "56 1229 true\n22 2000\n251 -302 246916 78 9 false\n0 0 0 true\n3 -4 200000\n1 -2 100000\n"),
+
     "the address of an element of an array field through a struct pointer" to OutputProgram("""
 %import textio
 %zeropage basicsafe

@@ -2093,4 +2093,92 @@ class TestExecution6502 : FunSpec({
             machine.assertMemory(0x3000, 8 + 16 + 32)
         }
     }
+
+    test("fields of a direct struct variable, and the values its pointer fields point to") {
+        val src = $$"""
+            %option no_sysinit
+            %launcher none
+            %address $1000
+
+            main {
+                &ubyte poweroff = $f203
+                struct Node {
+                    ubyte val
+                    word w
+                    ^^Node next
+                    ^^ubyte bp
+                    ^^uword wp
+                    bool flag
+                }
+                Node p
+                Node q
+                &Node mapped = $3100
+                ubyte[2] bytes = [11, 22]
+                uword[2] @nosplit words = [1000, 2000]
+                sub start() {
+                    ubyte @shared five = 5
+                    p.val = 250
+                    p.val++
+                    p.val += five
+                    p.w = -300
+                    p.w--
+                    p.next = &&q
+                    p.bp = &bytes
+                    p.wp = &words
+                    p.flag = true
+                    q.val = 77
+                    p.bp^^ = 55
+                    p.bp^^ ++
+                    p.bp^^ += five
+                    p.wp^^ = 1234
+                    p.wp^^ += 1
+                    p.wp^^ -= five
+                    p.next.val++
+                    mapped.val = 9
+                    mapped.w = 0
+                    mapped.w += 258
+                    @($3000) = p.val
+                    @($3001) = bytes[0]
+                    pokew($3002, words[0])
+                    @($3004) = q.val
+                    @($3005) = (p.bp == &bytes and p.wp == &words and p.flag) as ubyte
+                    @($3006) = @(p.bp)
+                    pokew($3007, p.w as uword)
+                    p.bp++
+                    @($3009) = @(p.bp)
+                    if p.val == 0
+                        swap(p, q)
+                    @($300a) = p.val
+                    @($300b) = q.next.val
+                    poweroff = 1
+                }
+            }
+        """.trimIndent()
+
+        for(target in listOf(C64Target(), Cx16Target())) {
+            for(optimize in listOf(false, true)) {
+                for(newCodegen in listOf(false, true)) {
+                    withClue("${target.name} optimize=$optimize newCodegen=$newCodegen") {
+                        val result = compileText(target, optimize, src, outputDir, writeAssembly = true, newCodegen = newCodegen)!!
+                        val machine = result.simulate()
+                        machine.assertMemory(0x3000, 0)
+                        machine.assertMemory(0x3001, 61)
+                        machine.assertMemory(0x3002, 206)
+                        machine.assertMemory(0x3003, 4)
+                        machine.assertMemory(0x3004, 78)
+                        machine.assertMemory(0x3005, 1)
+                        machine.assertMemory(0x3006, 61)
+                        machine.assertMemory(0x3007, 211)
+                        machine.assertMemory(0x3008, 254)
+                        machine.assertMemory(0x3009, 22)
+                        machine.assertMemory(0x300a, 78)
+                        machine.assertMemory(0x300b, 0)
+                        machine.assertMemory(0x3100, 9)
+                        machine.assertMemory(0x3101, 2)
+                        machine.assertMemory(0x3102, 1)
+                    }
+                }
+            }
+        }
+    }
 })

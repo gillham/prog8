@@ -6,6 +6,7 @@ import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 import prog8.code.StStructInstance
 import prog8.code.core.ICompilationTarget
 import prog8.code.target.Amiga500Target
@@ -28,8 +29,8 @@ class TestStructInstances : FunSpec({
 
     val outputDir = tempdir().toPath()
 
-    fun runVm(src: String, optimize: Boolean = false, check: (VirtualMachine, Map<String, UInt>) -> Unit) {
-        val result = compileText(VMTarget(), optimize, src, outputDir, writeAssembly = true)!!
+    fun runVm(src: String, optimize: Boolean = false, sourceDir: java.nio.file.Path = outputDir, check: (VirtualMachine, Map<String, UInt>) -> Unit) {
+        val result = compileText(VMTarget(), optimize, src, sourceDir, writeAssembly = true)!!
         val irContent = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".p8ir").readText()
         val irProgram = IRFileReader().read(irContent)
         irProgram.st.stripAllPrefixes()
@@ -129,6 +130,30 @@ main {
         }
     }
 
+    test("swap() on struct instances exchanges their values") {
+        val src = """
+%option no_sysinit
+main {
+    struct Point { uword x  ubyte y }
+    Point[2] pts = [[10, 20], [30, 40]]
+    uword @shared r1, r2, r3, r4
+    sub start() {
+        swap(pts[0], pts[1])
+        r1 = pts[0].x
+        r2 = pts[0].y as uword
+        r3 = pts[1].x
+        r4 = pts[1].y as uword
+    }
+}
+"""
+        runVm(src) { vm, allocations ->
+            vm.memory.getUW(allocations.getValue("main.r1")) shouldBe 30u
+            vm.memory.getUW(allocations.getValue("main.r2")) shouldBe 40u
+            vm.memory.getUW(allocations.getValue("main.r3")) shouldBe 10u
+            vm.memory.getUW(allocations.getValue("main.r4")) shouldBe 20u
+        }
+    }
+
     test("whole struct assignment copies by value") {
         val src = """
 %option no_sysinit
@@ -177,6 +202,128 @@ main {
             vm.memory.getUW(allocations.getValue("main.r2")) shouldBe 200u
             vm.memory.getUW(allocations.getValue("main.r3")) shouldBe 300u
         }
+    }
+
+    test("struct type declared in a separate block can be used for a direct instance") {
+        val src = """
+%option no_sysinit
+types {
+    struct Foo {
+        ubyte type
+        ubyte[5] value
+    }
+}
+
+main {
+    uword @shared r1
+    sub start() {
+        types.Foo var
+        var.type = 42
+        r1 = var.type as uword
+    }
+}
+"""
+        runVm(src) { vm, allocations ->
+            vm.memory.getUW(allocations.getValue("main.r1")) shouldBe 42u
+        }
+    }
+
+    test("struct type in an imported module can be used for a direct instance") {
+        val sourceDir = tempdir().toPath()
+        sourceDir.resolve("types.p8").toFile().writeText("""
+types {
+    struct Foo {
+        ubyte type
+        ubyte[5] value
+    }
+}
+""")
+        val src = """
+%import types
+%option no_sysinit
+main {
+    uword @shared r1
+    sub start() {
+        types.Foo var
+        var.type = 42
+        r1 = var.type as uword
+    }
+}
+"""
+        runVm(src, sourceDir = sourceDir) { vm, allocations ->
+            vm.memory.getUW(allocations.getValue("main.r1")) shouldBe 42u
+        }
+    }
+
+    test("array field of a direct struct instance keeps address semantics") {
+        val src = """
+%option no_sysinit
+main {
+    struct Foo { ubyte type  ubyte[5] value }
+    Foo inst
+    ubyte @shared r1, r2, r3
+    sub get(ubyte[] arr, ubyte i) -> ubyte {
+        return arr[i]
+    }
+    sub start() {
+        sys.memset(&inst, 6, 170)
+        inst.value[1] = 22
+        r1 = inst.value[1]
+        r2 = get(inst.value, 2)
+        inst.value[3] = 44
+        r3 = inst.value[3]
+    }
+}
+"""
+        runVm(src) { vm, allocations ->
+            vm.memory.getUB(allocations.getValue("main.r1")) shouldBe 22u
+            vm.memory.getUB(allocations.getValue("main.r2")) shouldBe 170u
+            vm.memory.getUB(allocations.getValue("main.r3")) shouldBe 44u
+        }
+    }
+
+    test("float augmented assignment with a float literal on a direct instance") {
+        val src = """
+%option no_sysinit, enable_floats
+%import floats
+main {
+    struct P { float w }
+    P p
+    uword @shared r1
+    sub start() {
+        p.w = 2.5
+        p.w += 1.0
+        r1 = (p.w * 10.0) as uword
+    }
+}
+"""
+        runVm(src) { vm, allocations ->
+            vm.memory.getUW(allocations.getValue("main.r1")) shouldBe 35u
+        }
+    }
+
+    test("compiling a struct program writes no stray debug output to stderr") {
+        val src = """
+%option no_sysinit
+main {
+    struct Point { uword x }
+    Point p
+    uword @shared r1
+    sub start() {
+        p.x = 42
+        r1 = p.x
+    }
+}
+"""
+        val captured = java.io.ByteArrayOutputStream()
+        val originalErr = System.err
+        System.setErr(java.io.PrintStream(captured))
+        try {
+            compileText(VMTarget(), false, src, outputDir, writeAssembly = true)
+        } finally {
+            System.setErr(originalErr)
+        }
+        captured.toString() shouldNotContain "DEBUG"
     }
 
     test("struct type declared inside a subroutine can be used for a direct instance") {
@@ -503,7 +650,41 @@ main {
         lines.none { it.startsWith("dc.l") && it.contains("p8i_p") } shouldBe true
         lines.none { it.startsWith("p8i_p:") } shouldBe true
         // field access uses the literal address
-        lines.count { it.contains("#49152") } shouldBe 2
+        lines.count { it.contains("move.") && it.contains("\$c000") } shouldBe 2
+    }
+
+    test("6502: direct struct instance fields use absolute addressing (classic codegen)") {
+        val src = $$"""
+%option no_sysinit, enable_floats
+%launcher none
+%address $1000
+main {
+    struct Point { ubyte x  uword y  float w }
+    Point p
+    ubyte @shared rb
+    uword @shared rw
+    float @shared rf
+    sub start() {
+        p.x = 42
+        p.x++
+        p.y = 5000
+        p.w = 2.5
+        rb = p.x
+        rw = p.y
+        rf = p.w
+    }
+}
+"""
+        val result = compileText(C64Target(), false, src, outputDir,
+            errors = ErrorReporterForTests(), writeAssembly = true, assemble = false,
+            newCodegen = false)!!
+        val asm = result.compilationOptions.outputDir.resolve(result.compilerAst.name + ".asm").readText()
+        val lines = asm.lines().map { it.trim() }
+        // optimal: absolute addressing, no zp scratch pointer setup for field access
+        lines.any { it.contains("sta  ") && it.contains("p8i_p") && !it.contains("P8ZP") } shouldBe true
+        lines.any { it.contains("inc  ") && it.contains("p8i_p") } shouldBe true
+        lines.any { it.contains("lda  ") && it.contains("p8i_p") && !it.contains("P8ZP") } shouldBe true
+        // (P8ZP_SCRATCH_PTR may still appear in unrelated library/system code, so no strict absence check)
     }
 
     test("6502: sizeof on a direct struct variable is the struct type size") {
@@ -620,5 +801,76 @@ main {
                 errors.errors.single() shouldContain message
             }
         }
+    }
+
+    test("subtracting 2 from a float field, optimized") {
+        val src = """
+%option no_sysinit, enable_floats
+%import floats
+main {
+    struct P { ubyte x  float f }
+    P p
+    uword @shared r1, r2
+    sub start() {
+        ^^P q = &&p
+        q.f = 3.5
+        q.f -= 2.0
+        r1 = (p.f * 10.0) as uword
+        p.f += 2.0
+        r2 = (p.f * 10.0) as uword
+    }
+}
+"""
+        for(optimize in listOf(false, true)) {
+            runVm(src, optimize) { vm, allocations ->
+                vm.memory.getUW(allocations.getValue("main.r1")) shouldBe 15u
+                vm.memory.getUW(allocations.getValue("main.r2")) shouldBe 35u
+            }
+        }
+    }
+
+    test("the value a float pointer field of a direct struct variable points to") {
+        val src = """
+%option no_sysinit, enable_floats
+%import floats
+main {
+    struct P { ubyte x  ^^float fp }
+    P p
+    float[2] values = [1.5, 2.5]
+    uword @shared r1, r2
+    sub start() {
+        p.fp = &values
+        p.fp^^ = 9.5
+        p.fp^^ *= 2.0
+        r1 = (values[0] * 10.0) as uword
+        p.fp++
+        p.fp^^ = 0.0
+        r2 = (values[1] * 10.0) as uword
+    }
+}
+"""
+        for(optimize in listOf(false, true)) {
+            runVm(src, optimize) { vm, allocations ->
+                vm.memory.getUW(allocations.getValue("main.r1")) shouldBe 190u
+                vm.memory.getUW(allocations.getValue("main.r2")) shouldBe 0u
+            }
+        }
+        compileText(C64Target(), true, src, outputDir, writeAssembly = true) shouldNotBe null
+    }
+
+    test("swap() of a struct instance with an element of a pointer field is an error") {
+        val src = """
+main {
+    struct P { ubyte x  ^^P next }
+    P a
+    P b
+    sub start() {
+        swap(a.next[0], b)
+    }
+}
+"""
+        val errors = ErrorReporterForTests()
+        compileText(VMTarget(), false, src, outputDir, errors = errors, writeAssembly = false) shouldBe null
+        errors.errors.any { "cannot take address of swap operand" in it } shouldBe true
     }
 })

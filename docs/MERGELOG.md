@@ -96,6 +96,61 @@ under a heading says that it was looked at. One line for each change, with the c
 
 ## Entries
 
+## master 32f82e9e1 .. a3850d7fd, merged 2026-11-22
+
+### Language and grammar
+- `swap()` works on struct variables and on elements of struct arrays: the values are exchanged with three
+  `sys.memcopy` through a temporary struct variable (48a826db0)
+- a direct struct variable can have a struct type from another block or module; such a block or module is not removed
+  as unused (5dcf746d9)
+
+### Builtin functions
+- `swap`: see above
+
+### Library
+- Amiga `custom`: interrupt handlers for bare-metal programs: `set_handler`/`restore_handler` for a level (1-7, a
+  Prog8 sub without floats), `set_level3_handler`, `enable_irq`/`disable_irq`/`ack_irq` with the `INTF_*` constants,
+  `set_ciaa_handler`/`set_ciab_handler` and their `_timer_` and `_tod_` names, `enable_`/`disable_` `ciaa`/`ciab`,
+  `read_ciaa_icr`/`read_ciab_icr`, and `restore_system` restores the handlers (35de1c328)
+
+### IR
+- nothing in the format; a field of a direct struct variable is loaded and stored with a direct memory operand
+  (`loadm`, `storem`, `[prog8_struct_instances.main_p+3]`, or the address plus the offset for a memory-mapped one)
+  instead of a pointer register; array fields and chains still use one (5dcf746d9, f7529dbd2)
+
+### Errors and warnings
+- new info for `swap()` of struct variables: it "copies the whole struct value" (48a826db0)
+
+### Command line
+nothing
+
+### Conventions of 6502 programs
+- byte, word and float fields of a direct struct variable use absolute addressing instead of a zero page pointer
+  (c9f874c55)
+
+### Bugs fixed
+- `-newcodegen` ignored the offset that comes with a fixed address (5dcf746d9)
+- U1 (an unused `%import lists` crashed the compiler) passes on `master` now, fixed by 5dcf746d9; removed from
+  `docs/UPSTREAM-ISSUES.md`
+- checked on `master` at a3850d7fd: all repros of `bugs/check.py`; only U1 passes. The repros that need an emulator
+  (U31, U40, U49, U59, U62, U63, U66, U69, U71, U73, U74, U76, U80, U82-U87, U90, U92) give the same .asm as on
+  `master` at 32f82e9e1
+- new bugs on `master`, fixed in the merge because they break programs that worked before or crash the compiler:
+  U126 (`p.x = 0` on a direct struct variable crashes the IR targets), U127 (`p.ptr^^ = value` writes the pointer
+  itself), U128 (`swap` of struct variables in an `if` or a loop crashes), U129 (`q.f -= 2.0` crashes the IR optimizer,
+  an older bug)
+
+### LLVM branch only
+- the direct memory operands need no change in `codeGenLlvm`; the output programs of `TestLlvmCompiler` have a new
+  program for fields of direct struct variables and swaps
+- conflict in `IRUnusedCodeRemover.kt` (U1): upstream's fix taken
+- conflict in `UnusedCodeRemover.kt`: the branch's `force_output` and upstream's struct declarations both keep a module
+- conflict in the symbol dumps: regenerated
+
+### Nothing for p8p8
+- two Amiga examples (`vertb-demo`, `tod-alarm-demo`), the Amiga library docs, the `ideas/` plans and `todo.rst`
+  (f8ff64ffd), and the version, 14.0-BETA4 (a3850d7fd)
+
 ## master df16719e7 .. 32f82e9e1, merged 2026-11-21
 
 ### Language and grammar
